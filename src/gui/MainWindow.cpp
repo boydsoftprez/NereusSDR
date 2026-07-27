@@ -925,6 +925,24 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     sw->setVfoFrequency(slice->frequency());
     newFlag->setMode(slice->dspMode());
 
+    // AUTO AGC-T on this flag. The toggle and its visual feedback were wired
+    // only in wireSliceToSpectrum -- Slice A's path -- so the AUTO button on
+    // every other flag did nothing when clicked and never lit. Bench-caught
+    // 2026-07-26 on a four-slice layout.
+    //
+    // Noise floor comes from THIS slice's stream, matching the auto-AGC tick:
+    // the visual would otherwise report stream 0's floor next to a threshold
+    // computed from the slice's own.
+    connect(newFlag, &VfoWidget::autoAgcToggled,
+            slice, &SliceModel::setAutoAgcEnabled);
+    connect(slice, &SliceModel::autoAgcEnabledChanged, this,
+            [this, flagRef = QPointer<VfoWidget>(newFlag), slice](bool on) {
+        if (!flagRef) { return; }
+        NoiseFloorTracker* nft = m_radioModel->noiseFloorTrackerForSlice(slice);
+        const float nf = nft ? nft->noiseFloor() : -200.0f;
+        flagRef->updateAgcAutoVisuals(on, nf, slice->autoAgcOffset());
+    });
+
     // Per-slice S-meter. The unqualified MeterPoller::smeterUpdated is wired
     // to Slice A's flag only (wireSliceToSpectrum), because the poller reads
     // one channel; every other flag's level bar sat dead. Filter the
@@ -1076,6 +1094,171 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
         if (flagPtr) { flagPtr->setTxAntenna(ant); }
     });
 
+
+    // ---- Moved from wireSliceToSpectrum (Slice A's private path) ----
+    //
+    // These were wired only for Slice A, so on every other flag Mute, BIN,
+    // SQL, the AGC-T slider, Pan, RIT/XIT, NR, NB, SNB, ANF, APF, Lock and
+    // the setup shortcuts did nothing at all: the flag never reached the
+    // model, so the per-slice model->WDSP work could not help them.
+    // createSliceFlag is now the single place a flag is wired.
+    connect(newFlag, &VfoWidget::rxBypassToggled,
+            &m_radioModel->alexControllerMutable(), &AlexController::setRxOutOnTx);
+    connect(slice, &SliceModel::lastRadeRxCallsignChanged,
+            newFlag, &VfoWidget::setRadeCallsign);
+    connect(slice, &SliceModel::ritEnabledChanged, this, [newFlag](bool on) {
+        newFlag->setRitEnabled(on);
+    });
+    connect(slice, &SliceModel::ritHzChanged, this, [newFlag](int hz) {
+        newFlag->setRitHz(hz);
+    });
+    connect(slice, &SliceModel::xitEnabledChanged, this, [newFlag](bool on) {
+        newFlag->setXitEnabled(on);
+    });
+    connect(slice, &SliceModel::xitHzChanged, this, [newFlag](int hz) {
+        newFlag->setXitHz(hz);
+    });
+    connect(slice, &SliceModel::nbModeChanged, newFlag, &VfoWidget::setNbMode);
+    newFlag->setNbMode(slice->nbMode());   // initial sync
+    connect(slice, &SliceModel::snbEnabledChanged, this, [newFlag](bool v) {
+        newFlag->setSnbEnabled(v);
+    });
+    connect(slice, &SliceModel::apfEnabledChanged, this, [newFlag](bool v) {
+        newFlag->setApfEnabled(v);
+    });
+    connect(slice, &SliceModel::apfTuneHzChanged, this, [newFlag](int hz) {
+        newFlag->setApfTuneHz(hz);
+    });
+    connect(newFlag, &VfoWidget::txFilterMatchRequested, this,
+            [this](int audioLow, int audioHigh) {
+        m_radioModel->transmitModel().setFilterLow(audioLow);
+        m_radioModel->transmitModel().setFilterHigh(audioHigh);
+    });
+    connect(newFlag, &VfoWidget::nbModeCycled, this, [slice] {
+        slice->setNbMode(NereusSDR::cycleNbMode(slice->nbMode()));
+    });
+    connect(newFlag, &VfoWidget::nrChanged, this, [this](bool on) {
+        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
+        if (rxCh) { rxCh->setNrEnabled(on); }
+    });
+    connect(newFlag, &VfoWidget::anfChanged, this, [this](bool on) {
+        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
+        if (rxCh) { rxCh->setAnfEnabled(on); }
+    });
+    connect(newFlag, &VfoWidget::nr2Changed, this, [slice](bool on) {
+        // NR2 = EMNR in Thetis naming. Toggle: NR2→active clears any other slot.
+        slice->setActiveNr(on ? NereusSDR::NrSlot::NR2 : NereusSDR::NrSlot::Off);
+    });
+    connect(newFlag, &VfoWidget::snbChanged, this, [slice](bool on) {
+        slice->setSnbEnabled(on);
+    });
+    connect(newFlag, &VfoWidget::apfChanged, this, [slice](bool on) {
+        slice->setApfEnabled(on);
+    });
+    connect(newFlag, &VfoWidget::apfTuneHzChanged, this, [slice](int hz) {
+        slice->setApfTuneHz(hz);
+    });
+    connect(slice, &SliceModel::mutedChanged, this, [newFlag](bool v) {
+        newFlag->setMuted(v);
+    });
+    connect(slice, &SliceModel::audioPanChanged, this, [newFlag](double p) {
+        newFlag->setAudioPan(p);
+    });
+    connect(slice, &SliceModel::ssqlEnabledChanged, this, [newFlag](bool v) {
+        newFlag->setSsqlEnabled(v);
+    });
+    connect(slice, &SliceModel::ssqlThreshChanged, this, [newFlag](double d) {
+        newFlag->setSsqlThresh(d);
+    });
+    connect(slice, &SliceModel::agcThresholdChanged, this, [newFlag](int v) {
+        newFlag->setAgcThreshold(v);
+    });
+    connect(slice, &SliceModel::binauralEnabledChanged, this, [newFlag](bool v) {
+        newFlag->setBinauralEnabled(v);
+    });
+    connect(newFlag, &VfoWidget::muteChanged, this, [slice](bool v) {
+        slice->setMuted(v);
+    });
+    connect(newFlag, &VfoWidget::panChanged, this, [slice](double p) {
+        slice->setAudioPan(p);
+    });
+    connect(newFlag, &VfoWidget::squelchEnabledChanged, this, [slice](bool v) {
+        slice->setSsqlEnabled(v);
+    });
+    connect(newFlag, &VfoWidget::squelchThreshChanged, this, [slice](int v) {
+        slice->setSsqlThresh(static_cast<double>(v));
+    });
+    connect(newFlag, &VfoWidget::agcThreshChanged, this, [slice](int v) {
+        slice->setAgcThreshold(v);
+    });
+    connect(newFlag, &VfoWidget::binauralChanged, this, [slice](bool v) {
+        slice->setBinauralEnabled(v);
+    });
+    connect(newFlag, &VfoWidget::quickModeRequested, this, [slice](int index) {
+        // Quick-mode buttons: 0=USB, 1=CW, 2=DIG (matching AetherSDR defaults)
+        static constexpr DSPMode kQuickModes[] = {DSPMode::USB, DSPMode::CWU, DSPMode::DIGU};
+        if (index >= 0 && index < 3) {
+            slice->setDspMode(kQuickModes[index]);
+        }
+    });
+    connect(newFlag, &VfoWidget::openSetupRequested, this, [this]() {
+        auto* dialog = new SetupDialog(m_radioModel, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        wireSetupDialog(dialog);
+        dialog->selectPage(QStringLiteral("AGC/ALC"));
+        dialog->show();
+    });
+    connect(newFlag, &VfoWidget::openNbSetupRequested, this, [this]() {
+        auto* dialog = new SetupDialog(m_radioModel, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        wireSetupDialog(dialog);
+        dialog->selectPage(QStringLiteral("NB/SNB"));
+        dialog->show();
+    });
+    connect(newFlag, &VfoWidget::openNrSetupRequested, this,
+            [this](NereusSDR::NrSlot slot) {
+        auto* dialog = new SetupDialog(m_radioModel, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        wireSetupDialog(dialog);
+        dialog->selectPage(QStringLiteral("NR/ANF"));
+        // Deep-link to the sub-tab matching the NR slot the user clicked
+        // (Task 18 polish 2026-04-23 — previously always opened NR1).
+        if (auto* nrPage = dialog->findChild<NrAnfSetupPage*>()) {
+            nrPage->selectSubtab(slot);
+        }
+        dialog->show();
+    });
+    connect(newFlag, &VfoWidget::ritEnabledChanged, this, [slice](bool on) {
+        slice->setRitEnabled(on);
+    });
+    connect(newFlag, &VfoWidget::ritHzChanged, this, [slice](int hz) {
+        slice->setRitHz(hz);
+    });
+    connect(newFlag, &VfoWidget::xitEnabledChanged, this, [slice](bool on) {
+        slice->setXitEnabled(on);
+    });
+    connect(newFlag, &VfoWidget::xitHzChanged, this, [slice](int hz) {
+        slice->setXitHz(hz);
+    });
+    connect(newFlag, &VfoWidget::stepCycleRequested, this, [slice]() {
+        int current = slice->stepHz();
+        int next = kStageOneStepLadder[0];
+        for (int i = 0; i < kStageOneStepLadderSize; ++i) {
+            if (kStageOneStepLadder[i] == current) {
+                next = kStageOneStepLadder[(i + 1) % kStageOneStepLadderSize];
+                break;
+            }
+        }
+        // setStepHz emits stepHzChanged which the :1626-1629 handler uses to
+        // propagate to activeSpectrumWidget()->setStepSize and newFlag->setStepHz.
+        slice->setStepHz(next);
+    });
+    connect(newFlag, &VfoWidget::lockChanged, this, [slice](bool locked) {
+        slice->setLocked(locked);
+    });
+    connect(slice, &SliceModel::lockedChanged, this, [newFlag](bool v) {
+        newFlag->setLocked(v);
+    });
     return newFlag;
 }
 
@@ -6704,13 +6887,14 @@ void MainWindow::wireSliceToSpectrum()
     activeSpectrumWidget()->setStepSize(slice->stepHz());
 
     // --- Create floating VFO flag widget (AetherSDR pattern) ---
-    VfoWidget* vfo = activeSpectrumWidget()->addVfoWidget(0);
+    // Slice A's flag is built and wired by createSliceFlag, exactly like every
+    // other slice's. This used to construct it by hand and then wire 67
+    // connects to it, while createSliceFlag wired far fewer -- two paths, one
+    // incomplete, which is why 23 flag controls were dead on B/C/D. One path
+    // now, so the two cannot drift again.
+    VfoWidget* vfo = createSliceFlag(slice, activeSpectrumWidget());
+    if (!vfo) { return; }
     m_vfoWidget = vfo;
-    // Phase 3F hotfix 2026-05-27: register Slice A's flag in the per-slice
-    // hash so the sliceAdded handler can detect "already created" for
-    // slice 0 and so that any future code walking m_vfoWidgetsBySlice
-    // finds Slice A too.
-    m_vfoWidgetsBySlice.insert(0, vfo);
     vfo->setSlice(slice);
     vfo->setFrequency(freq);
     vfo->setMode(slice->dspMode());
@@ -6743,11 +6927,6 @@ void MainWindow::wireSliceToSpectrum()
     // RadioModel::txSliceArbiter()->requestHandoff(), which drops MOX before
     // flipping the TX-bound slice (RF-safe). Sub-Epic D wires the matching
     // reverse path (txBoundSliceChanged then updates all flag badges) in T10.
-    connect(vfo, &VfoWidget::txHandoffRequested, this, [this](int sliceIndex) {
-        if (m_radioModel && m_radioModel->txSliceArbiter()) {
-            m_radioModel->txSliceArbiter()->requestHandoff(sliceIndex);
-        }
-    });
 
     // Phase 3F Sub-Epic E Task 4: VfoWidget context-menu intent signals.
     // Routes to RadioModel::requestSliceSampleRate / FilterPolicyDialog /
@@ -6758,36 +6937,9 @@ void MainWindow::wireSliceToSpectrum()
     // flags in createSliceFlag. The rate belongs to the DDC stream, so the
     // request goes to the stream rather than into a per-slice property
     // nothing downstream reads.
-    connect(vfo, &VfoWidget::sampleRateRequested, this,
-            [this](int sliceId, int hz) {
-        if (!m_radioModel) { return; }
-        m_radioModel->requestSliceSampleRate(sliceId, hz);
-    });
-    connect(vfo, &VfoWidget::filterPolicyRequested, this,
-            [this](int chainIdx) {
-        if (!m_radioModel) { return; }
-        auto* alex = &m_radioModel->alexControllerMutable();
-        FilterPolicyDialog dlg(chainIdx, alex, this);
-        dlg.exec();
-    });
-    connect(vfo, &VfoWidget::removeSliceRequested, this,
-            [this](int sliceIdx) {
-        if (!m_radioModel) { return; }
-        m_radioModel->removeSlice(sliceIdx);
-    });
     // Phase 3F closeout — AntennaPickerMenu pick forwards to SliceModel::setRxAntenna.
-    connect(vfo, &VfoWidget::antennaChangeRequested, this,
-            [this](int sliceIdx, const QString& antName) {
-        if (!m_radioModel) { return; }
-        const auto& slices = m_radioModel->slices();
-        if (sliceIdx >= 0 && sliceIdx < slices.size()) {
-            slices.at(sliceIdx)->setRxAntenna(antName);
-        }
-    });
 
     // Phase 3P-I-b T9 — VFO BYPS button ↔ AlexController::rxOutOnTx
-    connect(vfo, &VfoWidget::rxBypassToggled,
-            &m_radioModel->alexControllerMutable(), &AlexController::setRxOutOnTx);
     connect(&m_radioModel->alexController(), &AlexController::rxOutOnTxChanged,
             vfo, &VfoWidget::setRxBypassActive);
 
@@ -6825,8 +6977,6 @@ void MainWindow::wireSliceToSpectrum()
     // already holds a decoded callsign (e.g. from before the user opened
     // a panadapter container) paints correctly on first show.
     vfo->setRadeCallsign(slice->lastRadeRxCallsign());
-    connect(slice, &SliceModel::lastRadeRxCallsignChanged,
-            vfo, &VfoWidget::setRadeCallsign);
 
     // --- Slice → spectrum display ---
 
@@ -6834,68 +6984,7 @@ void MainWindow::wireSliceToSpectrum()
     // In CTUN mode (SmartSDR-style): pan stays fixed, VFO moves within it.
     // In traditional mode: pan follows VFO (auto-scroll handled in setVfoFrequency).
     // Band changes (large jumps) always recenter regardless of mode.
-    connect(slice, &SliceModel::frequencyChanged, this, [this, vfo, slice](double freq) {
-        if (m_handlingBandJump) {
-            return;
-        }
 
-        double center = activeSpectrumWidget()->centerFrequency();
-        double halfBw = activeSpectrumWidget()->bandwidth() / 2.0;
-        bool offScreen = (freq < center - halfBw) || (freq > center + halfBw);
-
-        if (!activeSpectrumWidget()->ctunEnabled() || offScreen) {
-            m_handlingBandJump = true;
-
-            bool wasCTUN = activeSpectrumWidget()->ctunEnabled();
-            m_radioModel->receiverManager()->setDdcFrequencyLocked(false);
-
-            activeSpectrumWidget()->setCenterFrequency(freq);
-
-            int rxIdx = slice->streamIndex();
-            if (rxIdx >= 0) {
-                m_radioModel->receiverManager()->forceHardwareFrequency(
-                    rxIdx, static_cast<quint64>(freq));
-            }
-            activeSpectrumWidget()->setDdcCenterFrequency(freq);
-
-            RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-            if (rxCh) {
-                rxCh->setShiftFrequency(0.0);
-            }
-
-            if (wasCTUN) {
-                m_radioModel->receiverManager()->setDdcFrequencyLocked(true);
-            }
-
-            m_handlingBandJump = false;
-        } else {
-            // From Thetis radio.rs:1417 -- WDSP shift = +(freq - center)
-            double shiftHz = freq - center;
-            RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-            if (rxCh) {
-                rxCh->setShiftFrequency(shiftHz);
-            }
-        }
-        activeSpectrumWidget()->setVfoFrequency(freq);
-        vfo->setFrequency(freq);
-
-        // Keep MaxBin's scan window aligned with the user's slice.  See
-        // WdspEngine::setMaxBinSliceOffsetHz for the architectural cite.
-        // sliceOffsetHz = sliceFreq - DDC center.  When CTUN is off the
-        // DDC NCO follows the slice and this term is zero; when CTUN is
-        // on the term is non-zero and the MaxBin scan range slides with
-        // the slice so the meter pumps on the user's modulation rather
-        // than the noise floor sitting at DDC center.
-        if (auto* eng = m_radioModel->wdspEngine()) {
-            const double ddcCenter = activeSpectrumWidget()->ddcCenterFrequency();
-            eng->setMaxBinSliceOffsetHz(/*disp=*/0, freq - ddcCenter);
-        }
-    });
-
-    connect(slice, &SliceModel::filterChanged, this, [this, vfo](int low, int high) {
-        activeSpectrumWidget()->setFilterOffset(low, high);
-        vfo->setFilter(low, high);
-    });
 
     // Task 42 (Phase 3P-II): reconfigure the Max Bin detector whenever the
     // IF passband changes so the passband-strongest-bin reading follows the
@@ -6963,290 +7052,68 @@ void MainWindow::wireSliceToSpectrum()
     connect(slice, &SliceModel::xitHzChanged, this,
             [pushXitOffset](int /*hz*/) { pushXitOffset(); });
 
-    connect(slice, &SliceModel::dspModeChanged, this, [this, vfo](DSPMode mode) {
-        // Plan 4 D9 (Cluster E): keep TX mode in sync so drawTxFilterOverlay
-        // maps audio Hz to the correct IQ-space sideband.
-        if (activeSpectrumWidget()) {
-            activeSpectrumWidget()->setTxMode(mode);
-        }
-        vfo->setMode(mode);
-        // Phase 3R L2: gate RADE applet visibility on either RADE
-        // sideband (RADE_U or RADE_L).  Show RadeApplet IN ADDITION to
-        // PhoneCwApplet when in RADE mode — they were originally
-        // mutually exclusive in L2 but bench feedback showed PhoneCw
-        // hosts the mic gain slider which is critical for RADE TX
-        // (leveler can compensate but the user still needs a way to
-        // adjust mic preamp). Both applets coexist in RADE mode; the
-        // PhoneCwApplet's Phone page applies generically since RADE
-        // rides a USB/LSB carrier.
-        const bool isRade = (mode == DSPMode::RADE_U
-                             || mode == DSPMode::RADE_L);
-        // Route through the visibility controller so the wrapper (not
-        // just the inner widget) shows/hides AND the menu entries grey
-        // out when not in RADE mode. The user's persisted visibility
-        // preference is preserved across mode changes.
-        if (m_appletVis) {
-            m_appletVis->setAvailable(QStringLiteral("Rade"), isRade);
-        }
-        if (m_phoneCwApplet) {
-            m_phoneCwApplet->setVisible(true);  // always visible
-        }
-        // Switch PhoneCwApplet page based on active mode. RADE rides
-        // a USB/LSB carrier so the Phone page is the correct surface.
-        if (m_phoneCwApplet) {
-            switch (mode) {
-                case DSPMode::CWL:
-                case DSPMode::CWU:
-                    m_phoneCwApplet->showPage(1);  // CW page
-                    break;
-                case DSPMode::FM:
-                    m_phoneCwApplet->showPage(2);  // FM page
-                    break;
-                default:
-                    m_phoneCwApplet->showPage(0);  // Phone page
-                                                   // (incl. RADE_U / RADE_L)
-                    break;
-            }
-        }
-    });
 
-    connect(slice, &SliceModel::agcModeChanged, this, [vfo](AGCMode mode) {
-        vfo->setAgcMode(mode);
-    });
 
-    connect(slice, &SliceModel::afGainChanged, this, [vfo](int gain) {
-        vfo->setAfGain(gain);
-    });
 
-    connect(slice, &SliceModel::rfGainChanged, this, [vfo](int gain) {
-        vfo->setRfGain(gain);
-    });
 
-    connect(slice, &SliceModel::stepHzChanged, this, [this, vfo](int hz) {
-        activeSpectrumWidget()->setStepSize(hz);
-        vfo->setStepHz(hz);
-    });
 
-    connect(slice, &SliceModel::rxAntennaChanged, this, [vfo](const QString& ant) {
-        vfo->setRxAntenna(ant);
-    });
 
-    connect(slice, &SliceModel::txAntennaChanged, this, [vfo](const QString& ant) {
-        vfo->setTxAntenna(ant);
-    });
 
     // --- SliceModel → VfoWidget: RIT/XIT inbound (S1.8a stubs) ---
-    connect(slice, &SliceModel::ritEnabledChanged, this, [vfo](bool on) {
-        vfo->setRitEnabled(on);
-    });
 
-    connect(slice, &SliceModel::ritHzChanged, this, [vfo](int hz) {
-        vfo->setRitHz(hz);
-    });
 
-    connect(slice, &SliceModel::xitEnabledChanged, this, [vfo](bool on) {
-        vfo->setXitEnabled(on);
-    });
 
-    connect(slice, &SliceModel::xitHzChanged, this, [vfo](int hz) {
-        vfo->setXitHz(hz);
-    });
 
     // --- SliceModel → VfoWidget: DSP tab inbound (S1.8b) ---
-    connect(slice, &SliceModel::nbModeChanged, vfo, &VfoWidget::setNbMode);
-    vfo->setNbMode(slice->nbMode());   // initial sync
 
     // Sub-epic C-1: NR bank sync — VfoWidget::setSlice also connects activeNrChanged
     // via onActiveNrChanged for the full 7-button bank; this redundant connection is
     // removed to avoid double-firing. setSlice handles both initial sync and updates.
     // (Legacy setNr2Enabled call removed here — onActiveNrChanged covers NR2.)
 
-    connect(slice, &SliceModel::snbEnabledChanged, this, [vfo](bool v) {
-        vfo->setSnbEnabled(v);
-    });
 
-    connect(slice, &SliceModel::apfEnabledChanged, this, [vfo](bool v) {
-        vfo->setApfEnabled(v);
-    });
 
-    connect(slice, &SliceModel::apfTuneHzChanged, this, [vfo](int hz) {
-        vfo->setApfTuneHz(hz);
-    });
 
     // --- VFO flag → slice ---
 
-    connect(vfo, &VfoWidget::frequencyChanged, this, [slice](double hz) {
-        slice->setFrequency(hz);
-    });
 
-    connect(vfo, &VfoWidget::modeChanged, this, [slice](DSPMode mode) {
-        slice->setDspMode(mode);
-    });
 
-    connect(vfo, &VfoWidget::filterChanged, this, [slice](int low, int high) {
-        slice->setFilter(low, high);
-    });
 
     // Shift+click on a filter preset on the flag — snap TX passband to
     // match the RX preset's audio Hz range (Thetis-style alignment shortcut).
-    connect(vfo, &VfoWidget::txFilterMatchRequested, this,
-            [this](int audioLow, int audioHigh) {
-        m_radioModel->transmitModel().setFilterLow(audioLow);
-        m_radioModel->transmitModel().setFilterHigh(audioHigh);
-    });
 
-    connect(vfo, &VfoWidget::agcModeChanged, this, [slice](AGCMode mode) {
-        slice->setAgcMode(mode);
-    });
 
-    connect(vfo, &VfoWidget::afGainChanged, this, [slice](int gain) {
-        slice->setAfGain(gain);
-    });
 
-    connect(vfo, &VfoWidget::rfGainChanged, this, [slice](int gain) {
-        slice->setRfGain(gain);
-    });
 
-    connect(vfo, &VfoWidget::rxAntennaChanged, this, [slice](const QString& ant) {
-        slice->setRxAntenna(ant);
-    });
 
-    connect(vfo, &VfoWidget::txAntennaChanged, this, [slice](const QString& ant) {
-        slice->setTxAntenna(ant);
-    });
 
     // NB cycling — nbModeCycled fires on user click; cycle the mode through
     // Off → NB → NB2 → Off via SliceModel. SliceModel's nbModeChanged feeds
     // back to setNbMode() (wired in the inbound block above).
     // From Thetis console.cs:43513 [v2.10.3.13].
-    connect(vfo, &VfoWidget::nbModeCycled, this, [slice] {
-        slice->setNbMode(NereusSDR::cycleNbMode(slice->nbMode()));
-    });
 
     // NR/ANF → RxChannel directly (not SliceModel properties)
-    connect(vfo, &VfoWidget::nrChanged, this, [this](bool on) {
-        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) { rxCh->setNrEnabled(on); }
-    });
-    connect(vfo, &VfoWidget::anfChanged, this, [this](bool on) {
-        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) { rxCh->setAnfEnabled(on); }
-    });
 
     // --- VfoWidget → SliceModel: DSP tab outbound (S1.8b) ---
-    connect(vfo, &VfoWidget::nr2Changed, this, [slice](bool on) {
-        // NR2 = EMNR in Thetis naming. Toggle: NR2→active clears any other slot.
-        slice->setActiveNr(on ? NereusSDR::NrSlot::NR2 : NereusSDR::NrSlot::Off);
-    });
-    connect(vfo, &VfoWidget::snbChanged, this, [slice](bool on) {
-        slice->setSnbEnabled(on);
-    });
-    connect(vfo, &VfoWidget::apfChanged, this, [slice](bool on) {
-        slice->setApfEnabled(on);
-    });
-    connect(vfo, &VfoWidget::apfTuneHzChanged, this, [slice](int hz) {
-        slice->setApfTuneHz(hz);
-    });
 
     // --- SliceModel → VfoWidget: Audio tab inbound (S1.8c stubs) ---
-    connect(slice, &SliceModel::mutedChanged, this, [vfo](bool v) {
-        vfo->setMuted(v);
-    });
-    connect(slice, &SliceModel::audioPanChanged, this, [vfo](double p) {
-        vfo->setAudioPan(p);
-    });
-    connect(slice, &SliceModel::ssqlEnabledChanged, this, [vfo](bool v) {
-        vfo->setSsqlEnabled(v);
-    });
-    connect(slice, &SliceModel::ssqlThreshChanged, this, [vfo](double d) {
-        vfo->setSsqlThresh(d);
-    });
-    connect(slice, &SliceModel::agcThresholdChanged, this, [vfo](int v) {
-        vfo->setAgcThreshold(v);
-    });
-    connect(slice, &SliceModel::binauralEnabledChanged, this, [vfo](bool v) {
-        vfo->setBinauralEnabled(v);
-    });
 
     // --- VfoWidget → SliceModel: Audio tab outbound (S1.8c stubs) ---
-    connect(vfo, &VfoWidget::muteChanged, this, [slice](bool v) {
-        slice->setMuted(v);
-    });
-    connect(vfo, &VfoWidget::panChanged, this, [slice](double p) {
-        slice->setAudioPan(p);
-    });
-    connect(vfo, &VfoWidget::squelchEnabledChanged, this, [slice](bool v) {
-        slice->setSsqlEnabled(v);
-    });
-    connect(vfo, &VfoWidget::squelchThreshChanged, this, [slice](int v) {
-        slice->setSsqlThresh(static_cast<double>(v));
-    });
-    connect(vfo, &VfoWidget::agcThreshChanged, this, [slice](int v) {
-        slice->setAgcThreshold(v);
-    });
-    connect(vfo, &VfoWidget::binauralChanged, this, [slice](bool v) {
-        slice->setBinauralEnabled(v);
-    });
-    connect(vfo, &VfoWidget::quickModeRequested, this, [slice](int index) {
-        // Quick-mode buttons: 0=USB, 1=CW, 2=DIG (matching AetherSDR defaults)
-        static constexpr DSPMode kQuickModes[] = {DSPMode::USB, DSPMode::CWU, DSPMode::DIGU};
-        if (index >= 0 && index < 3) {
-            slice->setDspMode(kQuickModes[index]);
-        }
-    });
 
     // --- VfoWidget → MainWindow: open Setup dialog to AGC/ALC page ---
-    connect(vfo, &VfoWidget::openSetupRequested, this, [this]() {
-        auto* dialog = new SetupDialog(m_radioModel, this);
-        dialog->setAttribute(Qt::WA_DeleteOnClose);
-        wireSetupDialog(dialog);
-        dialog->selectPage(QStringLiteral("AGC/ALC"));
-        dialog->show();
-    });
 
     // --- VfoWidget → Setup → DSP → NB/SNB page (right-click on NB or SNB).
     // Mirrors Thetis chkNB_MouseDown / chkDSPNB2_MouseDown (console.cs:44447
     // [v2.10.3.13]) which call ShowSetupTab(NB_Tab).
-    connect(vfo, &VfoWidget::openNbSetupRequested, this, [this]() {
-        auto* dialog = new SetupDialog(m_radioModel, this);
-        dialog->setAttribute(Qt::WA_DeleteOnClose);
-        wireSetupDialog(dialog);
-        dialog->selectPage(QStringLiteral("NB/SNB"));
-        dialog->show();
-    });
 
     // --- VfoWidget → Setup → DSP → NR/ANF page (Task 18, Sub-epic C-1).
     // Emitted from DspParamPopup "More Settings…" on any NR bank button.
     // Mirrors Thetis chkNR_MouseDown (console.cs [v2.10.3.13]) which calls
     // ShowSetupTab(NR_Tab). Sub-tab selection per NrSlot is deferred to Task 17.
-    connect(vfo, &VfoWidget::openNrSetupRequested, this,
-            [this](NereusSDR::NrSlot slot) {
-        auto* dialog = new SetupDialog(m_radioModel, this);
-        dialog->setAttribute(Qt::WA_DeleteOnClose);
-        wireSetupDialog(dialog);
-        dialog->selectPage(QStringLiteral("NR/ANF"));
-        // Deep-link to the sub-tab matching the NR slot the user clicked
-        // (Task 18 polish 2026-04-23 — previously always opened NR1).
-        if (auto* nrPage = dialog->findChild<NrAnfSetupPage*>()) {
-            nrPage->selectSubtab(slot);
-        }
-        dialog->show();
-    });
 
     // --- VfoWidget AUTO button → SliceModel auto-AGC toggle ---
-    connect(vfo, &VfoWidget::autoAgcToggled,
-            slice, &SliceModel::setAutoAgcEnabled);
 
     // --- SliceModel auto-AGC state → update visuals on both widgets ---
-    connect(slice, &SliceModel::autoAgcEnabledChanged, this, [this, vfo, slice](bool on) {
-        auto* nft = m_radioModel->noiseFloorTracker();
-        float nf = nft ? nft->noiseFloor() : -200.0f;
-        double offset = slice->autoAgcOffset();
-        vfo->updateAgcAutoVisuals(on, nf, offset);
-        if (m_rxApplet) {
-            m_rxApplet->updateAgcAutoVisuals(on, nf, offset);
-        }
-    });
 
     // --- Noise floor fast-attack triggers (slice is guaranteed non-null here) ---
     {
@@ -7266,61 +7133,24 @@ void MainWindow::wireSliceToSpectrum()
     }
 
     // --- VfoWidget → SliceModel: RIT/XIT outbound (S1.8a stubs) ---
-    connect(vfo, &VfoWidget::ritEnabledChanged, this, [slice](bool on) {
-        slice->setRitEnabled(on);
-    });
 
-    connect(vfo, &VfoWidget::ritHzChanged, this, [slice](int hz) {
-        slice->setRitHz(hz);
-    });
 
-    connect(vfo, &VfoWidget::xitEnabledChanged, this, [slice](bool on) {
-        slice->setXitEnabled(on);
-    });
 
-    connect(vfo, &VfoWidget::xitHzChanged, this, [slice](int hz) {
-        slice->setXitHz(hz);
-    });
 
     // --- VfoWidget → SliceModel: STEP cycle (S1.8a — wires to live setStepHz) ---
-    connect(vfo, &VfoWidget::stepCycleRequested, this, [slice]() {
-        int current = slice->stepHz();
-        int next = kStageOneStepLadder[0];
-        for (int i = 0; i < kStageOneStepLadderSize; ++i) {
-            if (kStageOneStepLadder[i] == current) {
-                next = kStageOneStepLadder[(i + 1) % kStageOneStepLadderSize];
-                break;
-            }
-        }
-        // setStepHz emits stepHzChanged which the :1626-1629 handler uses to
-        // propagate to activeSpectrumWidget()->setStepSize and vfo->setStepHz.
-        slice->setStepHz(next);
-    });
 
     // --- VfoWidget → SliceModel: lock state (S1.8a — verifying edge exists) ---
-    connect(vfo, &VfoWidget::lockChanged, this, [slice](bool locked) {
-        slice->setLocked(locked);
-    });
 
     // --- SliceModel → VfoWidget: lock state inbound (S1.8a review — I3) ---
     // Without this edge, programmatic changes to SliceModel::locked (e.g. from
     // a future CAT/TCI command) would not be reflected in either lock button.
-    connect(slice, &SliceModel::lockedChanged, this, [vfo](bool v) {
-        vfo->setLocked(v);
-    });
 
     // Phase 3F (Bug 2): wire Slice A's floating ✕ close button to removeSlice.
     // Slice A's close button is hidden by VfoWidget (last-slice invariant), so
     // this can only fire if a future change un-hides it; removeSlice refuses
     // to remove the final slice regardless, so this is safe and consistent
     // with the secondary-flag wiring in createSliceFlag().
-    connect(vfo, &VfoWidget::closeRequested, this, [this](int index) {
-        m_radioModel->removeSlice(index);
-    });
 
-    connect(vfo, &VfoWidget::sliceActivationRequested, this, [this](int index) {
-        m_radioModel->setActiveSlice(index);
-    });
 
     // --- Spectrum click-to-tune → slice ---
     connect(activeSpectrumWidget(), &SpectrumWidget::frequencyClicked,
