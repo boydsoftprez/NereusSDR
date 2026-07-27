@@ -379,9 +379,14 @@ ones.
 | 12 | Close a slice, then close a pan | Survivors keep working; no leftover button columns; radio not silent. |
 | 13 | `+PAN` -> `12h` | Three pans, letters A / B / C, all live. |
 | 14 | **Do not transmit** on two bands until row 1 is clean | TX low-pass fix is unverified on hardware. |
+| 15 | **ADC routing, unverified.** With rows 5-6 up (two slices, two bands), set the second slice's antenna to **RX2 / EXT** | That pan moves to **ADC1**: its `WIDE` pill clears and the bottom bar stops saying `BYPASS`, because the two slices no longer share a preselector. Needs a real feed on the RX2 jack to hear anything. Setting it back to ANT1 must restore `WIDE`. |
 
 ### Known-imperfect, do not file as new
 
+- **Row 15 needs the G2, not the G2E.** The G2E (HermesC10) has one ADC, so it
+  routes through `P2CodecHermes` and is pinned to ADC0 by construction. Two
+  slices on two bands will always bypass there, and no antenna pick can change
+  it. Not a defect.
 - **Float active pan**: the floated pan renders, but the pan left behind goes
   black. Pulling a widget out of the QSplitter costs its siblings their QRhi
   context. Diagnosed, not fixed; likely needs to stop reparenting the
