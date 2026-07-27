@@ -2246,7 +2246,27 @@ target_compile_definitions(tst_setup_dialog_pa_reset_wiring PRIVATE NEREUS_BUILD
 # connections require a pointer to member function" warning
 # (Hl2OptionsTab lambda + Qt::UniqueConnection). Both fixed; this test
 # pins them at zero.
+# Needs NEREUS_BUILD_TESTS since #272/#301: pages build lazily now, so the test
+# calls realizeAllPagesForTest() to keep every page inside the instrumented
+# window instead of asserting against a dialog that built nothing.
 nereus_add_test(tst_setup_dialog_qt_warnings)
+target_compile_definitions(tst_setup_dialog_qt_warnings PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Issues #272 + #301: lazy SetupDialog page construction ──────────────────
+# buildTree() used to construct all 55 setup pages from the SetupDialog ctor,
+# blocking the Qt main thread on every Tools -> Setup open. That stall starved
+# AudioEngine's drain timer (#301, repeated RX buffer on ANAN-10E/macOS) and on
+# slower hosts outlasted the P1 ep6 watchdog, so the link dropped and the
+# unclean audio teardown cascaded into a CLOCK_WATCHDOG_TIMEOUT BSOD
+# (#272, HL2/Windows 11). Pages now build on first visit.
+#
+# Pins: registration builds nothing; selecting a leaf realizes exactly that
+# leaf; revisits reuse the cached widget; a late-built page still reads live
+# controller state and persists edits; and every cross-page wire that used to
+# assume a sibling page already existed still fires (PA reset fan-out, parked
+# TciServer pointer, CFC dialog request, per-SKU PA capability push).
+nereus_add_test(tst_setup_dialog_lazy_pages)
+target_compile_definitions(tst_setup_dialog_lazy_pages PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-0 Task 14: MainWindow status-bar TX Inhibit + PA Status badge ───
 # Tests the label-state logic for the two safety indicator widgets added to
