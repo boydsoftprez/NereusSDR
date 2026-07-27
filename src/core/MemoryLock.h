@@ -50,6 +50,18 @@ bool lockMemory(const void* addr, std::size_t bytes, const char* tag = "");
 
 /// Release a previously-locked region.  Same addr / bytes contract
 /// as lock; aligns internally.  Safe to call with (nullptr, 0).
+///
+/// A no-op -- including for the stats -- when this region is not
+/// currently locked.  Callers routinely unlock unconditionally in
+/// destructors and realloc paths without checking whether the matching
+/// lockMemory() succeeded, which is the common case on Linux once
+/// RLIMIT_MEMLOCK is exhausted.  Internally only successfully-locked
+/// ranges are tracked, so bytesLocked / regionsLocked can never
+/// underflow.
+///
+/// If the region was locked with a different length than the one
+/// passed here (buffer resized between lock and unlock), the range
+/// that was actually locked is released.
 void unlockMemory(const void* addr, std::size_t bytes);
 
 /// Aggregate stats across all currently-locked regions.  Read-only;

@@ -5349,6 +5349,30 @@ nereus_add_test(tst_rfkit_page_master_gate)
 # reverts to barefoot.  Test seam: txScaleIs2kWForTesting() reads m_powerScaleMax.
 nereus_add_test(tst_smeter_widget_external_amp)
 
+# ── PR #291 Codex review fixes ────────────────────────────────────────────
+# Capture-path helpers behind the native-rate mic resampling path.  The
+# defects only appear on a device whose native rate differs from the
+# requested 48 kHz, which no CI runner has (tst_port_audio_bus QSKIPs
+# past every device-dependent case), so the logic is exercised through
+# the two pure static helpers instead.
+# Tests: reportsStreamChannelsWhenNotResampling / reportsMonoWhenResampling
+#   (negotiatedFormat must say mono while the callback downmixes, or
+#   pullTxMic strides a mono ring as stereo and halves the rate);
+#   downmixHandlesBufferSizesAbove1024 (the old fixed 1024-float stack
+#   array dropped every frame past 1024 at the 2048 buffer size the UI
+#   offers); downmixClampsToOutputCapacity (never writes past the
+#   caller's preallocated real-time scratch).
+nereus_add_test(tst_port_audio_capture_resample)
+
+# MemoryLock stat accounting.  Callers unlock unconditionally even when
+# the lock failed (routine once RLIMIT_MEMLOCK is exhausted) and POSIX
+# munlock() succeeds on a mapped-but-unlocked range, so the counters
+# underflowed and the perf overlay showed nonsense.
+# Tests: unlockOfNeverLockedRegionLeavesStatsUnchanged;
+#   regionCountNeverGoesNegative; lockThenUnlockIsBalanced;
+#   doubleUnlockDecrementsOnlyOnce; unlockWithMismatchedLengthStillBalances.
+nereus_add_test(tst_memory_lock_accounting)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix)
 # --------------------------------------------------------------------------
