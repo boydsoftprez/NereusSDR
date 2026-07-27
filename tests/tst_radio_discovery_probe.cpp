@@ -76,6 +76,8 @@ public:
         connect(m_socket, &QUdpSocket::readyRead, this, &FakeP1Probe::onReadyRead);
     }
     quint16 port() const { return m_socket->localPort(); }
+    // Raw P1 probe as it arrived on the wire, for byte-level assertions.
+    QByteArray lastP1Probe() const { return m_lastP1Probe; }
 private slots:
     void onReadyRead() {
         while (m_socket->hasPendingDatagrams()) {
@@ -89,6 +91,7 @@ private slots:
             if (buf.size() >= 3 && static_cast<quint8>(buf[0]) == 0xEF
                 && static_cast<quint8>(buf[1]) == 0xFE
                 && static_cast<quint8>(buf[2]) == 0x02) {
+                m_lastP1Probe = buf;
                 QByteArray reply(63, 0);
                 reply[0] = char(0xEF); reply[1] = char(0xFE); reply[2] = 0x02;
                 // MAC bytes 3..8
@@ -102,6 +105,7 @@ private slots:
     }
 private:
     QUdpSocket* m_socket;
+    QByteArray  m_lastP1Probe;
 };
 
 class TstRadioDiscoveryProbe : public QObject {
@@ -121,6 +125,41 @@ private slots:
         QCOMPARE(info.firmwareVersion, 75);
         QCOMPARE(info.macAddress, QStringLiteral("00:1C:C0:A2:14:8B"));
         QCOMPARE(info.protocol, ProtocolVersion::Protocol1);
+    }
+
+    // Regression guard, 2026-07-27 (ANAN-G2E disconnect lockup).
+    //
+    // The P1 discovery probe goes to UDP 1024, which is also the Protocol 2
+    // "General" command port.  P2 gateware claims any port-1024 datagram whose
+    // byte 4 is zero and parses the remainder as a General command
+    // (General_CC.v:90/106, TAPR Hermes_Protocol_2_C10_v11.0.5 for ANAN-G2E).
+    // With an all-zero tail that write clears HW_timer_enable (byte 38),
+    // freezing the board's ~2 s deadman, plus PA_enable and Alex_enable
+    // (bytes 58/59) — so a plain LAN scan reconfigures every P2 radio on the
+    // subnet and disarms its watchdog.
+    //
+    // Byte 4 must therefore stay non-zero.  P1 discovery is unaffected: every
+    // P1 gateware matches only the command byte and never reads byte 4.
+    void p1ProbeDoesNotImpersonateP2GeneralCommand() {
+        FakeP1Probe radio;
+        RadioDiscovery disc;
+        QSignalSpy spy(&disc, &RadioDiscovery::radioDiscovered);
+
+        disc.probeAddress(QHostAddress::LocalHost, radio.port(),
+                          std::chrono::milliseconds(500));
+        QVERIFY(spy.wait(1000));
+
+        const QByteArray probe = radio.lastP1Probe();
+        // Still a well-formed P1 discovery frame.
+        QCOMPARE(probe.size(), 63);
+        QCOMPARE(static_cast<quint8>(probe[0]), quint8(0xEF));
+        QCOMPARE(static_cast<quint8>(probe[1]), quint8(0xFE));
+        QCOMPARE(static_cast<quint8>(probe[2]), quint8(0x02));
+        // ...but byte 4 is non-zero, so P2 General_CC bails at its command
+        // check instead of latching our padding as a config write.
+        QVERIFY2(static_cast<quint8>(probe[4]) != 0x00,
+                 "P1 probe byte 4 is zero — P2 gateware will accept this frame "
+                 "as a General command and disarm its watchdog");
     }
 
     void timeoutEmitsProbeFailed() {

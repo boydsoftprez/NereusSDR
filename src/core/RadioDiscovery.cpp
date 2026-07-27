@@ -355,13 +355,55 @@ bool RadioDiscovery::parseP2Reply(const QByteArray& bytes, const QHostAddress& s
 //   3. Poll up to quietPollsBeforeResend × pollTimeoutMs for replies.
 //   4. Parse replies, de-duplicate by MAC, emit radioDiscovered / radioUpdated.
 // ---------------------------------------------------------------------------
+
+// Byte 4 of the P1 discovery frame. Thetis leaves the whole tail zeroed
+// (clsRadioDiscovery.cs:1301-1309 buildDiscoveryPacketP1); NereusSDR sets a
+// non-zero pad here deliberately.
+//
+// Why: a P1 discovery probe is broadcast to UDP 1024, which is also the P2
+// "General" command port. Protocol 2 gateware claims any port-1024 datagram
+// whose byte 4 is zero and parses the rest as a General command --
+// General_CC.v:90/106 [TAPR OpenHPSDR-Firmware, Hermes_Protocol_2_C10_v11.0.5,
+// ANAN-G2E]:
+//
+//     if (udp_rx_active && to_port == port)              // 1024
+//         4: if (udp_rx_data != 8'd0)  state <= END;     // not for this module
+//
+// Our all-zero tail then lands as a valid config: byte 38 clears
+// HW_timer_enable (General_CC.v:141), which freezes the board's ~2 s deadman
+// (Hermes.v:406-411) -- the only automatic path that can clear a stuck `run`
+// (High_Priority_CC.v:145-147). Bytes 58/59 clear PA_enable and Alex_enable.
+// So merely scanning the LAN reconfigures every P2 radio on it and disarms
+// their watchdog.
+//
+// A non-zero byte 4 makes General_CC bail at the command check while leaving
+// P1 discovery untouched: every P1 gateware tests only the command byte and
+// never reads byte 4. Verified across the TAPR P1 archives for Hermes v3.3,
+// Angelia (ANAN-100D), Orion (ANAN-200D), ANAN-10E/100B and HermesC10
+// (ANAN-G2E) -- all are `if (PHY_output[47:40] == 8'h02) // check for Metis
+// Discovery` in Rx_MAC.v, which then captures only the requester's IP/MAC/port.
+//
+// Value 0x02 mirrors the P1 command byte so the frame reads as deliberate
+// rather than corrupt on the wire.
+//
+// Gateware cited as hardware fact only, per CLAUDE.md; no gateware logic is
+// translated here.
+static constexpr char kP1ProbeByte4Pad = 0x02;
+
+static QByteArray buildP1DiscoveryProbe()
+{
+    QByteArray p(63, 0);
+    p[0] = static_cast<char>(0xEF);
+    p[1] = static_cast<char>(0xFE);
+    p[2] = static_cast<char>(0x02);
+    p[4] = kP1ProbeByte4Pad;   // keep P2 General_CC from claiming this frame
+    return p;
+}
+
 void RadioDiscovery::scanAllNics()
 {
     // From Thetis clsRadioDiscovery.cs buildDiscoveryPacketP1()
-    QByteArray p1Packet(63, 0);
-    p1Packet[0] = static_cast<char>(0xEF);
-    p1Packet[1] = static_cast<char>(0xFE);
-    p1Packet[2] = static_cast<char>(0x02);
+    QByteArray p1Packet = buildP1DiscoveryProbe();
 
     // From Thetis clsRadioDiscovery.cs buildDiscoveryPacketP2()
     QByteArray p2Packet(60, 0);
@@ -595,10 +637,9 @@ void RadioDiscovery::probeAddress(const QHostAddress& addr,
     // Both must be padded to the full discovery-frame size — real OpenHPSDR
     // firmware ignores short probes (only the broadcast scan path was sending
     // padded frames before; this matches scanAllNics's p1Packet/p2Packet shape).
-    QByteArray p1Packet(63, 0);
-    p1Packet[0] = static_cast<char>(0xEF);
-    p1Packet[1] = static_cast<char>(0xFE);
-    p1Packet[2] = static_cast<char>(0x02);
+    // Same byte-4 pad as the broadcast scan path; rationale at
+    // buildP1DiscoveryProbe() above.
+    QByteArray p1Packet = buildP1DiscoveryProbe();
 
     QByteArray p2Packet(60, 0);
     p2Packet[4] = static_cast<char>(0x02);
