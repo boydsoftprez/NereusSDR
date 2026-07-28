@@ -2026,6 +2026,31 @@ RadioModel::RadioModel(QObject* parent)
         // un-keying is what restores them.
         connect(m_moxController, &MoxController::moxStateChanged, this,
                 [this](bool) { refreshDdcAssignmentForRadioState(); });
+
+        // ── The MOX audio gate, which had never been connected ───────────
+        //
+        // AudioEngine has carried setMoxState() and the rxBlockReady gate
+        // since 3M-1b E.4, and AudioEngine.h:80 says "Phase L (RadioModel
+        // integration) wires MoxController::moxStateChanged -> setMoxState
+        // via signal/slot". That wire was never made, so m_moxActive stayed
+        // false for the life of the process and the gate only ever ran in
+        // tst_audio_engine_rx_leak_during_mox, via setMoxStateForTest.
+        //
+        // The effect on the air: RX audio was never muted on key-down. It
+        // is audible because PureSignal retunes DDC0 from 48 kHz to 192 kHz
+        // for the duration of a transmission (the DDCAssign above), so what
+        // the RX chain demodulates while keyed is not the band any more.
+        // Reported on the 2026-07-27 G2E bench as noise on MOX that Thetis
+        // does not produce; Thetis mutes RX on key-down
+        // (console.cs:27650-27771 [v2.10.3.15] drops RX1/RX1S/RX2 from the
+        // mix on every MOX transition).
+        //
+        // Both edges, and TUNE too: MoxController::setTune calls
+        // setMox(true/false), so it emits this same signal.
+        if (m_audioEngine) {
+            connect(m_moxController, &MoxController::moxStateChanged,
+                    m_audioEngine, &AudioEngine::setMoxState);
+        }
     }
 
     // ── Phase 3F Sub-Epic C Task 6: TxSliceArbiter per-MAC scope wiring ───
@@ -5845,7 +5870,19 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             if (!m_psccPump) {
                 m_psccPump = std::make_unique<PsccPump>(/*parent=*/nullptr);
                 m_psccPump->setMoxController(m_moxController);
-                m_psccPump->setTxChannelId(/*WDSP TX channel*/1);
+                // The TXA channel by symbol, never a literal. pscc() reads
+                // txa[channel].calcc.p without a null check
+                // (calcc.c:645-652), and calcc.p is only created by
+                // create_txa (txa.c:405), so naming a channel that never had
+                // a TXA opened segfaults the moment PureSignal pumps.
+                //
+                // This used to read 1, which was right when the RX pool
+                // started at channel 1 and TX sat below it. Phase 3F reserved
+                // [0, kMaxSliceChannels) for RX slices and moved the TXA above
+                // them (RadioModel.cpp:3010), which turned the literal into an
+                // RX channel and took the app down on key-down with
+                // PureSignal active.
+                m_psccPump->setTxChannelId(WdspEngine::kTxChannelId);
 
                 // Chunk D — iqDataReceived is forked to PsccPump from the
                 // existing wireConnectionSignals lambda (the one wired in

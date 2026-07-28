@@ -738,6 +738,11 @@ private:
     // slices keep playing.
     std::atomic<bool> m_moxActive{false};
 
+    // Which slice setMoxState() withdrew from the mixer's readiness barrier
+    // on key-down, so key-up re-admits that exact slice. Main thread only.
+    // -1 when nothing is withdrawn.
+    int m_moxWithdrawnSlice{-1};
+
     // Phase 3M-1c TX pump v3 — PC mic override gate.
     // Written by onMicSourceChanged() on the main thread (slot wired
     // by RadioModel to TransmitModel::micSourceChanged).  Read by the

@@ -1000,17 +1000,19 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // is the audio thread and setSliceStreaming() takes the slice-map
     // mutex. Same audible result, since the slice contributes nothing.
     //
-    // Execution still falls through to the drain below. That matters in
-    // the single-slice case, where nothing else would drive it: returning
-    // here would let the queued silence pile up until drop-oldest, leaving
-    // a ring's worth of backlog as permanent added latency after every
-    // transmission.
-    const bool moxGated =
-        m_moxActive.load(std::memory_order_acquire) && slice->isActiveSlice();
-
-    if (moxGated) {
-        m_masterMix.accumulateSilence(sliceId, frames);
-    } else {
+    // Nothing is queued and nothing is pushed: a gated slice must not put
+    // anything on the speakers bus, which is the PR #144 regression where RX
+    // audio leaked during TUN/MOX, pinned by
+    // tst_audio_engine_rx_leak_during_mox.
+    //
+    // Dropping out of the mix without wedging it is handled on the main
+    // thread in setMoxState(), which withdraws this slice from the readiness
+    // barrier for the duration of the transmission. So this really is just a
+    // return, and the slice's ring is left exactly as the transmission found
+    // it.
+    if (m_moxActive.load(std::memory_order_acquire) && slice->isActiveSlice()) {
+        return;  // silenced — active TX slice's RX audio gated during MOX
+    }
 
     // Always queue, even when muted. MasterMixer treats mute as a ramp
     // TARGET rather than a gate, so the slice fades out over ~5 ms
@@ -1021,7 +1023,6 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // which takes the slice-map mutex: this is the audio thread, and
     // CLAUDE.md's rule is that it never holds a lock.
     m_masterMix.accumulate(sliceId, samples, frames, slice->muted());
-    }
 
     // VAX tap receives raw demodulated audio — pre-MasterMixer gain/pan,
     // pre-master-volume — matching Thetis VAC behavior and the spec §3.4
@@ -1030,9 +1031,7 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // the master-mix `mix` scratch below) so the unity-gain fast path
     // stays zero-copy. See docs/architecture/2026-04-19-vax-design.md
     // §3.4 and §6.4.
-    // A MOX-gated slice feeds nothing downstream, exactly as it did when
-    // this gate was an early return: no mixer contribution and no VAX tap.
-    const int vaxCh = moxGated ? -1 : slice->vaxChannel();
+    const int vaxCh = slice->vaxChannel();
     if (vaxCh >= 1 && vaxCh <= 4) {
         const int vaxIdx = vaxCh - 1;
 
@@ -1398,6 +1397,42 @@ void AudioEngine::setMoxState(bool active)
     // No change-signal emitted — MOX state is authoritative in MoxController;
     // this is a cross-thread mirror only.
     m_moxActive.store(active, std::memory_order_release);
+
+    // Take the gated slice out of the mixer's readiness barrier for the
+    // duration of the transmission, and put it back afterwards.
+    //
+    // This is where Thetis does it too: console.cs:27650-27771 [v2.10.3.15]
+    // calls SetAAudioMixStates on every MOX transition, dropping RX1 / RX1S /
+    // RX2 from the mix and restoring them on unkey. Doing it here rather than
+    // on the audio thread is what makes that possible for us: setSliceStreaming
+    // takes the slice-map mutex, and CLAUDE.md forbids locking in rxBlockReady.
+    //
+    // Without this, rxBlockReady's MOX gate would stop feeding a slice that is
+    // still a barrier member, and the drain would wait on it for the whole
+    // transmission, silencing every other slice. The earlier fix for that fed
+    // the gated slice silence from the audio thread instead, which worked but
+    // churned the slice's ring on every transition (ensureRing, drop-oldest,
+    // and up to kRingBlocks of stale silence queued ahead of the real audio on
+    // unkey). Withdrawing membership leaves the ring completely untouched.
+    // Remember exactly which slice was withdrawn and re-admit that same one,
+    // rather than re-reading activeSlice() on the way out. The active slice
+    // can change during a transmission (TX handoff, a pan closing), and
+    // withdrawing X then re-admitting Y would strand X out of the mix with
+    // nothing to put it back: it would stay silent until something else
+    // re-admitted it, which is what "does not restore until the flag is
+    // retuned" looks like from the operator's seat.
+    if (active) {
+        m_moxWithdrawnSlice = -1;
+        if (m_radio != nullptr) {
+            if (SliceModel* slice = m_radio->activeSlice()) {
+                m_moxWithdrawnSlice = slice->sliceIndex();
+                m_masterMix.setSliceStreaming(m_moxWithdrawnSlice, false);
+            }
+        }
+    } else if (m_moxWithdrawnSlice >= 0) {
+        m_masterMix.setSliceStreaming(m_moxWithdrawnSlice, true);
+        m_moxWithdrawnSlice = -1;
+    }
 }
 
 // Plan: 3M-1b E.2. Pre-code review §4.4.

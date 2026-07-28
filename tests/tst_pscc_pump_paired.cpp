@@ -23,6 +23,7 @@
 #include <QtTest/QtTest>
 
 #include "core/PsccPump.h"
+#include "core/WdspEngine.h"
 
 using namespace NereusSDR;
 
@@ -30,6 +31,32 @@ class TestPsccPumpPaired : public QObject {
     Q_OBJECT
 
 private slots:
+    // The pump must default to the real TXA channel, never a literal.
+    //
+    // pscc() does `a = txa[channel].calcc.p; if (a->runcal)` with no null
+    // check (calcc.c:645-652). calcc.p is created inside create_txa
+    // (txa.c:405), so on a channel that never had a TXA opened it is NULL
+    // and pscc segfaults on the spot.
+    //
+    // This is not hypothetical. Phase 3F reserved channels [0, kMaxSliceChannels)
+    // as the RX slice block and moved the TXA to kTxChannelId above it
+    // (WdspEngine.h:214, and the pool-clamp rationale at RadioModel.cpp:3010).
+    // A `setTxChannelId(1)` literal survived that move, so keying up with
+    // PureSignal active called pscc on an RX channel and took the app down
+    // with SIGSEGV at 0x4, which is offsetof(runcal) off a null CALCC.
+    //
+    // Asserting against the constant rather than a number means the next
+    // time the channel map moves, this fails at build time instead of on
+    // the air. The other tests in this file set the id explicitly, so none
+    // of them could ever have caught a bad default.
+    void defaultTxChannelIsTheRealTxaChannel()
+    {
+        PsccPump pump;
+        QCOMPARE(pump.txChannelId(), WdspEngine::kTxChannelId);
+        // And it must sit outside the RX slice block, or it aliases an RXA.
+        QVERIFY(pump.txChannelId() >= WdspEngine::kMaxSliceChannels);
+    }
+
 
     // ── 1. Single packet → exactly one pscc call with the correct size ────
     //
