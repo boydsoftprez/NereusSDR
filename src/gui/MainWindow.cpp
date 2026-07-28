@@ -1199,10 +1199,6 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     connect(newFlag, &VfoWidget::nbModeCycled, this, [slice] {
         slice->setNbMode(NereusSDR::cycleNbMode(slice->nbMode()));
     });
-    connect(newFlag, &VfoWidget::nrChanged, this, [this](bool on) {
-        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) { rxCh->setNrEnabled(on); }
-    });
     connect(newFlag, &VfoWidget::anfChanged, this, [slice](bool on) {
         slice->setAnfEnabled(on);
     });

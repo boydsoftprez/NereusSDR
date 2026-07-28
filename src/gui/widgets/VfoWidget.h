@@ -487,7 +487,6 @@ signals:
     // chkNB_MouseDown (console.cs:44447 [v2.10.3.13]) which calls
     // SetupForm.ShowSetupTab(SetupTab.NB_Tab).
     void openNbSetupRequested();
-    void nrChanged(bool enabled);
     void anfChanged(bool enabled);
     void sliceActivationRequested(int sliceIndex);
     void closeRequested(int sliceIndex);
