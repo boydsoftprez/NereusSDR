@@ -245,6 +245,31 @@ private slots:
         QCOMPARE(spy.count(), 1);
         QCOMPARE(slice.shiftOffsetHz(), -25000.0);
     }
+
+    // ── Sub-Epic J Task 1: anfEnabled ────────────────────────────────────
+    // ANF was the one RXA setting with no home on the slice, which is why
+    // MainWindow routed it to rxChannel(0) while its neighbours SNB and APF
+    // went through SliceModel. Give it the same shape they have.
+    void anf_enabled_defaults_off_and_round_trips()
+    {
+        SliceModel slice;
+        QCOMPARE(slice.anfEnabled(), false);
+
+        QSignalSpy spy(&slice, &SliceModel::anfEnabledChanged);
+        slice.setAnfEnabled(true);
+        QCOMPARE(slice.anfEnabled(), true);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.first().first().toBool(), true);
+    }
+
+    void anf_enabled_setter_is_idempotent()
+    {
+        SliceModel slice;
+        slice.setAnfEnabled(true);
+        QSignalSpy spy(&slice, &SliceModel::anfEnabledChanged);
+        slice.setAnfEnabled(true);
+        QCOMPARE(spy.count(), 0);
+    }
 };
 
 QTEST_MAIN(TestSliceModelPhase3FProperties)

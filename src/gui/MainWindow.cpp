@@ -1203,9 +1203,8 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
         RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
         if (rxCh) { rxCh->setNrEnabled(on); }
     });
-    connect(newFlag, &VfoWidget::anfChanged, this, [this](bool on) {
-        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) { rxCh->setAnfEnabled(on); }
+    connect(newFlag, &VfoWidget::anfChanged, this, [slice](bool on) {
+        slice->setAnfEnabled(on);
     });
     connect(newFlag, &VfoWidget::nr2Changed, this, [slice](bool on) {
         // NR2 = EMNR in Thetis naming. Toggle: NR2→active clears any other slot.

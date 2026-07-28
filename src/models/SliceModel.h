@@ -329,6 +329,7 @@ class SliceModel : public QObject {
     Q_PROPERTY(double mnrBias      READ mnrBias      WRITE setMnrBias      NOTIFY mnrBiasChanged)
     Q_PROPERTY(double mnrGsmooth   READ mnrGsmooth   WRITE setMnrGsmooth   NOTIFY mnrGsmoothChanged)
     Q_PROPERTY(bool   snbEnabled      READ snbEnabled      WRITE setSnbEnabled      NOTIFY snbEnabledChanged)
+    Q_PROPERTY(bool   anfEnabled      READ anfEnabled      WRITE setAnfEnabled      NOTIFY anfEnabledChanged)
     Q_PROPERTY(bool   apfEnabled      READ apfEnabled      WRITE setApfEnabled      NOTIFY apfEnabledChanged)
     Q_PROPERTY(int    apfTuneHz       READ apfTuneHz       WRITE setApfTuneHz       NOTIFY apfTuneHzChanged)
     Q_PROPERTY(bool   binauralEnabled READ binauralEnabled WRITE setBinauralEnabled NOTIFY binauralEnabledChanged)
@@ -698,6 +699,9 @@ public:
     bool   snbEnabled()      const { return m_snbEnabled; }
     void   setSnbEnabled(bool v);
 
+    bool   anfEnabled()      const { return m_anfEnabled; }
+    void   setAnfEnabled(bool v);
+
     bool   apfEnabled()      const { return m_apfEnabled; }
     void   setApfEnabled(bool v);
 
@@ -937,6 +941,7 @@ signals:
     void mnrBiasChanged(double v);
     void mnrGsmoothChanged(double v);
     void snbEnabledChanged(bool v);
+    void anfEnabledChanged(bool v);
     void apfEnabledChanged(bool v);
     void apfTuneHzChanged(int hz);
     void binauralEnabledChanged(bool v);
@@ -1086,6 +1091,7 @@ private:
     double m_mnrGsmooth  = 0.70;   // MacNRFilter::DEF_GSMOOTH; range 0.0-1.0
 
     bool   m_snbEnabled{false};       // Neutral default — feature off at start
+    bool   m_anfEnabled{false};       // Neutral default, feature off at start
     bool   m_apfEnabled{false};       // Neutral default — feature off at start
     int    m_apfTuneHz{0};            // Neutral default — zero tune offset
     bool   m_binauralEnabled{false};  // Neutral default — feature off at start

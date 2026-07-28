@@ -1135,6 +1135,14 @@ void SliceModel::setSnbEnabled(bool v)
     }
 }
 
+void SliceModel::setAnfEnabled(bool v)
+{
+    if (m_anfEnabled != v) {
+        m_anfEnabled = v;
+        emit anfEnabledChanged(v);
+    }
+}
+
 void SliceModel::setApfEnabled(bool v)
 {
     if (m_apfEnabled != v) {
@@ -1708,6 +1716,7 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(sp + QStringLiteral("MnrGsmooth"),      m_mnrGsmooth);
 
     s.setValue(sp + QStringLiteral("SnbEnabled"), boolStr(m_snbEnabled));
+    s.setValue(sp + QStringLiteral("AnfEnabled"), boolStr(m_anfEnabled));
     s.setValue(sp + QStringLiteral("Locked"),     boolStr(m_locked));
     s.setValue(sp + QStringLiteral("Muted"),      boolStr(m_muted));
     s.setValue(sp + QStringLiteral("RitEnabled"), boolStr(m_ritEnabled));
@@ -1952,6 +1961,9 @@ void SliceModel::restoreFromSettings(Band band)
 
     if (s.contains(sp + QStringLiteral("SnbEnabled"))) {
         setSnbEnabled(s.value(sp + QStringLiteral("SnbEnabled")).toString() == QLatin1String("True"));
+    }
+    if (s.contains(sp + QStringLiteral("AnfEnabled"))) {
+        setAnfEnabled(s.value(sp + QStringLiteral("AnfEnabled")).toString() == QLatin1String("True"));
     }
     if (s.contains(sp + QStringLiteral("Locked"))) {
         setLocked(s.value(sp + QStringLiteral("Locked")).toString() == QLatin1String("True"));

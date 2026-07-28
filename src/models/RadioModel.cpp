@@ -8864,6 +8864,16 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         scheduleSettingsSave();
     });
 
+    // ANF is per-slice: it lives in RXA, one instance per WDSP channel.
+    // Same shape as activeNrChanged above.
+    connect(slice, &SliceModel::anfEnabledChanged, this, [this, slice](bool on) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
+        if (rxCh) {
+            rxCh->setAnfEnabled(on);
+        }
+        scheduleSettingsSave();
+    });
+
     // SNB → WDSP
     // From Thetis Project Files/Source/Console/console.cs:36347
     //   WDSP.SetRXASNBARun(WDSP.id(0, 0), chkDSPNB2.Checked)
