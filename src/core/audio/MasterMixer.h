@@ -63,6 +63,20 @@
 //     the timeout it replaces failed quietly, degrading audio in a way
 //     that took a bench session to localise.
 //
+//  4. Up-slew is ported; DOWN-slew is not. Thetis brackets a membership
+//     change with both: close_mixer raises slew.dflag and blocks until the
+//     fade-out completes before shutting the gates (aamix.c:471-478), then
+//     open_mixer fades back in. It can fade out because its mixer thread
+//     keeps turning independently of its producers, so it still has output
+//     blocks to shape after a stream stops feeding.
+//
+//     Ours cannot. The drain runs inline on the producer thread
+//     (divergence 1), so when the gated slice stops delivering there is no
+//     further output to apply a fade-out to: the audio simply stops
+//     arriving. Porting the down-slew would mean porting the mixer thread
+//     with it. The audible half that is reachable, and the half the bench
+//     actually reported, is the resume.
+//
 // Click-free join and leave is a per-slice gain ramp rather than a port
 // of Thetis's upslew/downslew state machine (aamix.c:280-...), which
 // gates the MIXED output on whether data is non-zero and is built for
@@ -94,6 +108,17 @@
 //                 a slice that is merely late can no longer be mistaken
 //                 for one that has stopped. Fixes the ANAN-G2E bench
 //                 defect where two pans produced scratchy, robotic audio.
+//                 Authored by J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Anthropic Claude Code.
+//   2026-07-27 -- Ported the master up-slew across a membership change.
+//                 The raised-cosine window is Warren Pratt's from
+//                 create_aaslew (aamix.c:86-92), armed where open_mixer
+//                 raises slew.uflag (aamix.c:494-496), and its 10 ms
+//                 length is the RX mixer's own tslewup from
+//                 cmaster.c:297-313. Fixes the ANAN-G2E bench report of a
+//                 "kerplunk at the end of the unkey": a slice re-admitted
+//                 after MOX resumed at full amplitude in one sample.
+//                 Down-slew is NOT ported; see divergence 4 below.
 //                 Authored by J.J. Boyd (KG4VCF), with AI-assisted
 //                 transformation via Anthropic Claude Code.
 // =================================================================
@@ -189,22 +214,6 @@ public:
     void accumulate(int sliceId, const float* samples, int frames,
                     bool muted = false);
 
-    // Audio thread: queue a block of silence for a slice that is being
-    // held off the mix but is still a barrier member, so the drain is not
-    // left waiting on it.
-    //
-    // This is the MOX gate: the active TX slice's RX audio is suppressed
-    // during transmit. Thetis withdraws the stream from the mix outright
-    // on every MOX transition (console.cs:27650-27771 [v2.10.3.15], via
-    // SetAAudioMixStates). We cannot, because the gate is evaluated on the
-    // audio thread and setSliceStreaming() takes the slice-map mutex,
-    // which CLAUDE.md forbids there. Feeding silence reaches the same
-    // audible result without the lock: the slice contributes nothing and
-    // everyone else keeps playing.
-    //
-    // Queued as a muted block, so the slice's gain ramps down at key-down
-    // and back up at key-up rather than stepping.
-    void accumulateSilence(int sliceId, int frames);
 
     // Audio thread: sum one block if every barrier member has frames
     // ready, and return how many frames were written to out. Returns 0
@@ -229,6 +238,39 @@ private:
     // Ring depth in blocks. Cadences match by construction (see the
     // header note), so this only has to cover jitter, not drift.
     static constexpr int kRingBlocks = 4;
+
+    // Master up-slew across a membership change, applied to the MIXED
+    // output. Without it a slice re-admitted after a transmission resumes
+    // at full amplitude in a single sample, which is the "kerplunk at the
+    // end of the unkey" from the 2026-07-27 G2E bench.
+    //
+    // Thetis fades instead: open_mixer raises the upslew flag and blocks
+    // until it finishes (aamix.c:493-505 [v2.10.3.15]), and every
+    // membership change runs through close_mixer / open_mixer via
+    // SetAAudioMixState (aamix.c:522).
+    //
+    // 10 ms, from the RX mixer's own parameters. create_aamix is called
+    // with tdelayup 0.000 / tslewup 0.010 / tdelaydown 0.000 /
+    // tslewdown 0.010 at cmaster.c:297-313 [v2.10.3.15]. Note the VAC
+    // mixer passes 0.0 for all four (ivac.c:106), so this is specifically
+    // the RX path's number, not a global default.
+    //
+    // Frames rather than seconds because the mixed output is always
+    // 48 kHz here (kBufferBaseRate), so Thetis's
+    //   ntup = (int)(tslewup * outrate)          [aamix.c:79]
+    // is a compile-time constant for us: 0.010 * 48000.
+    static constexpr int kSlewUpFrames = 480;
+
+    // The raised-cosine rise, built once. Ported from create_aaslew
+    // (aamix.c:86-92 [v2.10.3.15]):
+    //   delta = PI / (double)a->slew.ntup;
+    //   theta = 0.0;
+    //   for (i = 0; i <= a->slew.ntup; i++)
+    //   {
+    //       a->slew.cup[i] = 0.5 * (1.0 - cos (theta));
+    //       theta += delta;
+    //   }
+    static const float* upSlewWindow();
 
     struct SliceState {
         std::atomic<float> gain{1.0f};
@@ -267,11 +309,6 @@ private:
     // Grow (or first-allocate) a slice's ring to hold kRingBlocks blocks.
     static void ensureRing(SliceState& st, int frames);
 
-    // Shared body of accumulate() and accumulateSilence(). A null samples
-    // pointer queues silence; everything else (enrolment, drop-oldest,
-    // ring bookkeeping) is identical either way.
-    void queueBlock(int sliceId, const float* samples, int frames,
-                    bool muted);
 
     // Map guarded by m_sliceMapMutex on structural changes. Audio-thread
     // find() is a lock-free const lookup; this is safe under the invariant
@@ -281,6 +318,13 @@ private:
     mutable std::mutex m_sliceMapMutex;
 
     int m_rampFrames{kDefaultRampFrames};
+
+    // Position in the up-slew window. Starts COMPLETE, so a mixer nobody
+    // has touched behaves exactly as before and only an explicit
+    // membership change arms the fade. Written by the audio thread as it
+    // advances, reset to 0 by setSliceStreaming() on the control thread,
+    // which is Thetis's open_mixer raising the upslew flag.
+    std::atomic<int> m_slewPos{kSlewUpFrames};
 };
 
 } // namespace NereusSDR

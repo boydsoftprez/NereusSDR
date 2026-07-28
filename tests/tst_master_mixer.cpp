@@ -13,6 +13,8 @@
 #include <QtTest/QtTest>
 #include "core/audio/MasterMixer.h"
 #include <array>
+#include <vector>
+#include <cmath>
 
 using namespace NereusSDR;
 
@@ -238,6 +240,70 @@ private slots:
         mix.accumulate(1, blk.data(), 1);
         QCOMPARE(mix.tryDrain(out.data(), 1), 1);
         QCOMPARE(out[0], 0.5f);
+    }
+
+    // ── Master slew across a membership change ────────────────────────
+    //
+    // Re-admitting a slice must fade the MIXED output in, not resume it at
+    // full amplitude in one sample. That abrupt resume is the "kerplunk at
+    // the end of the unkey" reported on the 2026-07-27 G2E bench: MOX
+    // withdraws the TX slice, and on unkey its audio came back instantly.
+    //
+    // Thetis fades. create_aaslew builds a raised-cosine window
+    //   cup[i] = 0.5 * (1.0 - cos (theta)),  theta over [0, PI]
+    // (aamix.c:86-92 [v2.10.3.15]), and open_mixer sets the upslew flag and
+    // blocks until it completes (aamix.c:494-505) on every membership
+    // change made through SetAAudioMixState (aamix.c:522).
+    //
+    // The RX mixer asks for 10 ms of it: create_aamix is called with
+    // tdelayup 0.000 / tslewup 0.010 / tdelaydown 0.000 / tslewdown 0.010
+    // (cmaster.c:297-313 [v2.10.3.15]). Note the VAC mixer passes 0.0 for
+    // all four (ivac.c:106), so only the RX path slews.
+    //
+    // Ramp collapsed to one frame so this isolates the master slew from the
+    // per-slice anti-click ramp.
+    void readmittingASliceFadesTheMixIn() {
+        MasterMixer mix;
+        mix.setRampFrames(1);
+        mix.setSliceGain(1, 1.0f, 0.0f);
+
+        std::array<float, 8> in = {1.0f, 1.0f, 1.0f, 1.0f,
+                                   1.0f, 1.0f, 1.0f, 1.0f};  // 4 frames
+        std::array<float, 8> out{};
+
+        // Withdraw and re-admit, exactly as a MOX cycle does.
+        mix.setSliceStreaming(1, false);
+        mix.setSliceStreaming(1, true);
+
+        mix.accumulate(1, in.data(), 4);
+        QCOMPARE(mix.tryDrain(out.data(), 4), 4);
+
+        // First frame must be far below unity, and the output rising.
+        QVERIFY2(out[0] < 0.05f,
+                 qPrintable(QString("first frame %1 should be near silence")
+                                .arg(static_cast<double>(out[0]))));
+        QVERIFY(out[2] > out[0]);
+        QVERIFY(out[4] > out[2]);
+        QVERIFY(out[6] > out[4]);
+    }
+
+    // Once the slew has run its course the mix sits at unity, so a steady
+    // stream is not permanently attenuated.
+    void theMixReachesUnityAfterTheSlew() {
+        MasterMixer mix;
+        mix.setRampFrames(1);
+        mix.setSliceGain(1, 1.0f, 0.0f);
+        mix.setSliceStreaming(1, true);
+
+        // 10 ms at 48 kHz is 480 frames; run well past it.
+        std::vector<float> in(2048 * 2, 1.0f);
+        std::vector<float> out(2048 * 2, 0.0f);
+        for (int rep = 0; rep < 4; ++rep) {
+            mix.accumulate(1, in.data(), 512);
+            mix.tryDrain(out.data(), 512);
+        }
+        // Tail of the last block is past the slew and must be unity.
+        QVERIFY(std::abs(out[1022] - 1.0f) < 0.0001f);
     }
 
     void panFullLeftSuppressesRight() {

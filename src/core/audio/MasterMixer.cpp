@@ -55,6 +55,8 @@ warren@wpratt.com
 #include "MasterMixer.h"
 
 #include <algorithm>
+#include <cmath>
+#include <vector>
 #include <limits>
 
 namespace NereusSDR {
@@ -77,10 +79,37 @@ void MasterMixer::removeSlice(int sliceId) {
     m_slices.erase(sliceId);
 }
 
+const float* MasterMixer::upSlewWindow() {
+    // Built once, then read-only, so the audio thread never allocates.
+    static const std::vector<float> window = [] {
+        std::vector<float> w(static_cast<size_t>(kSlewUpFrames) + 1);
+        // Thetis uses M_PI via its own headers; spell it out so this does
+        // not depend on _USE_MATH_DEFINES being set on MSVC.
+        constexpr double kPi = 3.14159265358979323846;
+        const double delta = kPi / static_cast<double>(kSlewUpFrames);
+        double theta = 0.0;
+        for (int i = 0; i <= kSlewUpFrames; ++i) {
+            w[static_cast<size_t>(i)] =
+                static_cast<float>(0.5 * (1.0 - std::cos(theta)));
+            theta += delta;
+        }
+        return w;
+    }();
+    return window.data();
+}
+
 void MasterMixer::setSliceStreaming(int sliceId, bool streaming) {
     std::lock_guard<std::mutex> lk(m_sliceMapMutex);
     auto& st = m_slices[sliceId];
     st.streaming.store(streaming, std::memory_order_release);
+    if (streaming) {
+        // Arm the master up-slew, so whatever the mix produces next fades
+        // in rather than snapping to full amplitude. From Thetis
+        // open_mixer (aamix.c:494-496 [v2.10.3.15]), which sets the upslew
+        // flag on every membership change and then blocks until it runs:
+        //   InterlockedBitTestAndSet (&a->slew.uflag, 0);
+        m_slewPos.store(0, std::memory_order_release);
+    }
     if (!streaming) {
         // Drop it from the wait set now rather than waiting for the audio
         // thread to notice, so a drain already in flight stops blocking on
@@ -125,25 +154,11 @@ void MasterMixer::ensureRing(SliceState& st, int frames) {
 
 void MasterMixer::accumulate(int sliceId, const float* samples, int frames,
                              bool muted) {
-    if (samples == nullptr) { return; }
-    queueBlock(sliceId, samples, frames, muted);
-}
-
-void MasterMixer::accumulateSilence(int sliceId, int frames) {
-    // Queued as muted so the gain ramps to silence at key-down and back up
-    // at key-up. The block is already zeros, so the ramp costs nothing
-    // going in; it earns its keep coming out, where it stops the gated
-    // slice from stepping back to full gain in one sample.
-    queueBlock(sliceId, nullptr, frames, /*muted*/ true);
-}
-
-void MasterMixer::queueBlock(int sliceId, const float* samples, int frames,
-                             bool muted) {
     // Audio-thread hot path. No lock; rely on startup/connect-time
     // invariant that the map is stable while audio is streaming.
     auto it = m_slices.find(sliceId);
     if (it == m_slices.end()) { return; }
-    if (frames <= 0) { return; }
+    if (samples == nullptr || frames <= 0) { return; }
 
     SliceState& st = it->second;
     // Audio-thread write to the same atomic the UI-side setSliceMuted()
@@ -168,14 +183,8 @@ void MasterMixer::queueBlock(int sliceId, const float* samples, int frames,
     if (frames >= st.capFrames) {
         // Block bigger than the whole ring: keep only the newest tail.
         const int keep = st.capFrames;
-        if (samples != nullptr) {
-            const float* tail = samples + static_cast<size_t>(frames - keep) * 2;
-            std::copy(tail, tail + static_cast<size_t>(keep) * 2,
-                      st.ring.begin());
-        } else {
-            std::fill(st.ring.begin(),
-                      st.ring.begin() + static_cast<size_t>(keep) * 2, 0.0f);
-        }
+        const float* tail = samples + static_cast<size_t>(frames - keep) * 2;
+        std::copy(tail, tail + static_cast<size_t>(keep) * 2, st.ring.begin());
         st.rd = 0;
         st.wr = 0;
         st.avail = keep;
@@ -188,8 +197,8 @@ void MasterMixer::queueBlock(int sliceId, const float* samples, int frames,
     }
     for (int i = 0; i < frames; ++i) {
         const size_t w = static_cast<size_t>(st.wr) * 2;
-        st.ring[w + 0] = samples ? samples[static_cast<size_t>(i) * 2 + 0] : 0.0f;
-        st.ring[w + 1] = samples ? samples[static_cast<size_t>(i) * 2 + 1] : 0.0f;
+        st.ring[w + 0] = samples[static_cast<size_t>(i) * 2 + 0];
+        st.ring[w + 1] = samples[static_cast<size_t>(i) * 2 + 1];
         st.wr = (st.wr + 1) % st.capFrames;
     }
     st.avail += frames;
@@ -269,6 +278,25 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
             st.rd = (st.rd + 1) % st.capFrames;
         }
         st.avail -= take;
+    }
+
+    // ── Master up-slew ───────────────────────────────────────────────
+    // Applied to the summed output, not per slice, because that is what
+    // it is protecting: the seam where the mix as a whole resumes after a
+    // membership change. Thetis applies its window to a->out for the same
+    // reason (upslew, aamix.c:280-284 [v2.10.3.15]).
+    //
+    // Skipped entirely once the window has run out, so the steady-state
+    // path costs one relaxed load and a compare.
+    int pos = m_slewPos.load(std::memory_order_acquire);
+    if (pos < kSlewUpFrames) {
+        const float* w = upSlewWindow();
+        for (int i = 0; i < n && pos < kSlewUpFrames; ++i, ++pos) {
+            const float g = w[pos];
+            out[static_cast<size_t>(i) * 2 + 0] *= g;
+            out[static_cast<size_t>(i) * 2 + 1] *= g;
+        }
+        m_slewPos.store(pos, std::memory_order_release);
     }
 
     return n;
