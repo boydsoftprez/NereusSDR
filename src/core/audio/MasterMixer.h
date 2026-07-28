@@ -227,6 +227,22 @@ public:
     // Test seam: ramp length in frames (default kDefaultRampFrames).
     void setRampFrames(int frames);
 
+    // Control thread: slew length for THIS instance, in frames. 0 disables
+    // the fade entirely.
+    //
+    // The speakers mixer wants the 10 ms raised cosine (Thetis
+    // cmaster.c:297-313 [v2.10.3.15], tslewup 0.010). The anti-VOX mixer
+    // wants none: Thetis creates its "anti-vox mixer" with 0.000 on all
+    // four slew parameters (cmaster.c:159-175 [v2.10.3.15]), because the
+    // DEXP reference must be amplitude-faithful from the first sample
+    // after a transition.
+    //
+    // upSlewWindow() builds its cosine table sized for kSlewUpFrames, so an
+    // arbitrary length would index past the end of it. Only 0 (disabled)
+    // and kSlewUpFrames (the default) are reachable; anything else clamps
+    // to kSlewUpFrames.
+    void setSlewUpFrames(int frames);
+
     // Test seam: how many barrier members are currently enrolled.
     int producingSliceCount() const;
 
@@ -318,6 +334,14 @@ private:
     mutable std::mutex m_sliceMapMutex;
 
     int m_rampFrames{kDefaultRampFrames};
+
+    // Slew length for this instance, in frames. Guarded by
+    // m_sliceMapMutex on writes (setSlewUpFrames); read by the audio
+    // thread in tryDrain() without a lock, the same plain-member pattern
+    // m_rampFrames already uses. Only 0 or kSlewUpFrames is ever stored,
+    // see setSlewUpFrames(), so the audio thread never has to bounds-check
+    // against anything other than those two values.
+    int m_slewUpFrames{kSlewUpFrames};
 
     // Position in the up-slew window. Starts COMPLETE, so a mixer nobody
     // has touched behaves exactly as before and only an explicit

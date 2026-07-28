@@ -102,12 +102,16 @@ void MasterMixer::setSliceStreaming(int sliceId, bool streaming) {
     std::lock_guard<std::mutex> lk(m_sliceMapMutex);
     auto& st = m_slices[sliceId];
     st.streaming.store(streaming, std::memory_order_release);
-    if (streaming) {
+    if (streaming && m_slewUpFrames > 0) {
         // Arm the master up-slew, so whatever the mix produces next fades
         // in rather than snapping to full amplitude. From Thetis
         // open_mixer (aamix.c:494-496 [v2.10.3.15]), which sets the upslew
         // flag on every membership change and then blocks until it runs:
         //   InterlockedBitTestAndSet (&a->slew.uflag, 0);
+        //
+        // Skipped when this instance's slew is disabled (m_slewUpFrames ==
+        // 0, e.g. the anti-VOX mixer), so a disabled instance never arms a
+        // fade tryDrain() will not apply anyway.
         m_slewPos.store(0, std::memory_order_release);
     }
     if (!streaming) {
@@ -128,6 +132,18 @@ void MasterMixer::setSliceOpportunistic(int sliceId, bool opportunistic) {
 void MasterMixer::setRampFrames(int frames) {
     std::lock_guard<std::mutex> lk(m_sliceMapMutex);
     m_rampFrames = std::max(1, frames);
+}
+
+void MasterMixer::setSlewUpFrames(int frames) {
+    std::lock_guard<std::mutex> lk(m_sliceMapMutex);
+    // upSlewWindow() is built once for kSlewUpFrames entries, so only
+    // "disabled" and "the default" are representable lengths; anything
+    // else clamps to the default rather than indexing a table sized for a
+    // different length.
+    m_slewUpFrames = (frames <= 0) ? 0 : kSlewUpFrames;
+    // Park the position past the end so a shortened window cannot leave a
+    // drain mid-fade against a table it has outgrown.
+    m_slewPos.store(m_slewUpFrames, std::memory_order_release);
 }
 
 int MasterMixer::producingSliceCount() const {
@@ -286,12 +302,21 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
     // membership change. Thetis applies its window to a->out for the same
     // reason (upslew, aamix.c:280-284 [v2.10.3.15]).
     //
-    // Skipped entirely once the window has run out, so the steady-state
-    // path costs one relaxed load and a compare.
+    // m_slewUpFrames is this instance's length: kSlewUpFrames for the
+    // speakers mixer, 0 for the anti-VOX mixer (setSlewUpFrames() clamps
+    // to just those two, since upSlewWindow() is only built for
+    // kSlewUpFrames entries). Reading it as a plain int here, without the
+    // mutex setSlewUpFrames() takes to write it, follows the same
+    // established pattern as m_rampFrames above.
+    //
+    // Skipped entirely once the window has run out (or is disabled for
+    // this instance), so the steady-state path costs one relaxed load and
+    // a compare.
+    const int slewLen = m_slewUpFrames;
     int pos = m_slewPos.load(std::memory_order_acquire);
-    if (pos < kSlewUpFrames) {
+    if (slewLen > 0 && pos < slewLen) {
         const float* w = upSlewWindow();
-        for (int i = 0; i < n && pos < kSlewUpFrames; ++i, ++pos) {
+        for (int i = 0; i < n && pos < slewLen; ++i, ++pos) {
             const float g = w[pos];
             out[static_cast<size_t>(i) * 2 + 0] *= g;
             out[static_cast<size_t>(i) * 2 + 1] *= g;

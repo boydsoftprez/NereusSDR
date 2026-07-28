@@ -306,6 +306,32 @@ private slots:
         QVERIFY(std::abs(out[1022] - 1.0f) < 0.0001f);
     }
 
+    // The anti-VOX mixer must NOT slew. Thetis creates the RX mixer with
+    // tslewup 0.010 but the anti-VOX mixer with 0.000 on all four slew
+    // parameters (cmaster.c:297-313 vs cmaster.c:159-175 [v2.10.3.15]).
+    // The DEXP reference has to be amplitude-faithful from the first sample
+    // after a transition, so the slew length is per instance.
+    void slewCanBeDisabledPerInstance() {
+        MasterMixer mix;
+        mix.setRampFrames(1);
+        mix.setSlewUpFrames(0);
+        mix.setSliceGain(1, 1.0f, 0.0f);
+
+        std::array<float, 8> in = {1.0f, 1.0f, 1.0f, 1.0f,
+                                   1.0f, 1.0f, 1.0f, 1.0f};
+        std::array<float, 8> out{};
+
+        // Arming would normally fade the mix in over kSlewUpFrames.
+        mix.setSliceStreaming(1, false);
+        mix.setSliceStreaming(1, true);
+
+        mix.accumulate(1, in.data(), 4);
+        QCOMPARE(mix.tryDrain(out.data(), 4), 4);
+
+        // With slew disabled the first frame is already at full amplitude.
+        QVERIFY(std::abs(out[0] - 1.0f) < 0.0001f);
+    }
+
     void panFullLeftSuppressesRight() {
         MasterMixer mix;
         mix.setRampFrames(1);
