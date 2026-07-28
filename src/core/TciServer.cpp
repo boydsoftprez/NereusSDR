@@ -799,14 +799,28 @@ void TciServer::wireSliceForBroadcast(SliceModel* slice, int rxIndex)
 
     // ── NR (Noise Reduction) + ANF (Automatic Notch) -- single signal ──────
     // Source: Thetis NRChangedHandlers + ANFChangedHandlers at
-    // TCIServer.cs:6759 + 6761 [v2.10.3.15].  NereusSDR collapses NR1/NR2/
-    // NR3/NR4/ANF into a single NrSlot enum on SliceModel; activeNrChanged
-    // fires for ALL of them.  We re-read the RadioModel rxNr / rxNrIndex /
-    // rxAnf shims to emit Thetis-faithful tri-frame (rx_nr_enable +
-    // rx_nr_enable_ex + rx_anf_enable) so the wire format matches the init
-    // burst exactly.  Each emit uses tciAgcModeForWire-style normalisation:
-    // any active NR slot is "on" via the Thetis "0 = off" collapse already
-    // applied in buildInitialRadioStateLines.
+    // TCIServer.cs:6759 + 6761 [v2.10.3.15].  We re-read the RadioModel
+    // rxNr / rxNrIndex / rxAnf shims to emit Thetis-faithful tri-frame
+    // (rx_nr_enable + rx_nr_enable_ex + rx_anf_enable) so the wire format
+    // matches the init burst exactly.  Each emit uses tciAgcModeForWire-style
+    // normalisation: any active NR slot is "on" via the Thetis "0 = off"
+    // collapse already applied in buildInitialRadioStateLines.
+    //
+    // STALE PREMISE as of Phase 3F Sub-Epic J Task 1 (partly re-verified
+    // during Task 10's rxAnf routing fix): this comment used to describe
+    // NereusSDR as collapsing NR1-4 AND ANF into one NrSlot enum, so a
+    // single activeNrChanged signal covered both.  Task 1 gave ANF its own
+    // SliceModel::anfEnabled Q_PROPERTY, independent of activeNr, and Task
+    // 10 fixed RadioModel::setRxAnf/rxAnf to read/write it (previously they
+    // aliased the APF stub array).  anfOn below is now real, live state --
+    // but activeNrChanged no longer fires on a pure ANF toggle, so a
+    // connected TCI client only sees rx_anf_enable refresh as a side effect
+    // of the NR slot ALSO changing; toggling ANF alone (DSP menu, VFO flag)
+    // does not broadcast live (the init burst still reports it correctly on
+    // next connect).  The Thetis-faithful fix is a dedicated
+    // connect(slice, &SliceModel::anfEnabledChanged, ...) block, the same
+    // shape as apfEnabledChanged / binauralEnabledChanged below -- out of
+    // Task 10's stated scope, flagged here for a follow-up.
     connect(slice, &SliceModel::activeNrChanged, this,
             [this, rxIndex](NereusSDR::NrSlot /*slot*/) {
                 bool nrOn = false;
@@ -988,10 +1002,30 @@ void TciServer::hookGlobalBroadcasts()
     // ── AF volume (volume: + rx_volume: lines) ─────────────────────────────
     // Source: Thetis VolumeChangedHandlers at TCIServer.cs:6746 [v2.10.3.15]
     // routed to OnVolumeChanged -> sendVolume.  AudioEngine is the live
-    // volume holder.  Thetis emits sendVolume (linearToDbVolume, LINEAR
-    // curve) AND sendRxVolume for each rx (audioGainToDb, LOG curve) per
-    // TCIServer.cs:2554-2557 + 2652 [v2.10.3.15].  Both curves required
-    // (review P1 #1, 2026-05-22).
+    // volume holder.
+    //
+    // KNOWN GAP (found during Phase 3F Sub-Epic J Task 10's rx_volume
+    // investigation; out of that task's stated scope, so not changed here --
+    // flagged for a follow-up instead): the rx_volume broadcast below does
+    // NOT mirror real Thetis behavior, despite the citation this block used
+    // to carry.  Thetis's OnVolumeChanged (TCIServer.cs:7806-7817
+    // [v2.10.3.15]) calls ONLY sendVolume; it never touches rx_volume.
+    // Thetis's real rx_volume live source is a SEPARATE per-rx event --
+    // console.RXGainChangedHandlers routed to OnRxAfGainChanged
+    // (TCIServer.cs:6780 + 7722-7733 [v2.10.3.15]) -- which fires one
+    // rx_volume frame for whichever (rx, is_subrx) gain actually changed;
+    // see the per-listener RxAfGainChanged at TCIServer.cs:1118-1124
+    // [v2.10.3.15].  NereusSDR's per-slice analog already exists
+    // (SliceModel::afGainChanged, wired to WDSP in RadioModel.cpp) and the
+    // per-slice broadcast lifecycle right below in this file
+    // (wireSliceForBroadcast) already has 18 sibling connects of exactly
+    // this shape (apfEnabledChanged / binauralEnabledChanged / etc.) --
+    // afGainChanged is simply not one of them yet.  Until that lands, the
+    // handler below re-broadcasts all four rx_volume slots from the single
+    // radio-global afLinear on every MASTER volume change, which collapses
+    // Task 10's per-slice init-burst fix (buildInitialRadioStateLines in
+    // TciProtocol.cpp) back to one shared value the moment the operator
+    // touches the master AF slider after connect.
     if (auto* audio = m_model->audioEngine()) {
         connect(audio, &AudioEngine::volumeChanged, this,
                 [this](float volume) {
@@ -1002,10 +1036,10 @@ void TciServer::hookGlobalBroadcasts()
                     m_protocol->enqueueLocalBroadcast(
                         QStringLiteral("volume:%1;")
                             .arg(QString::number(volDb, 'f', 1)));
-                    // rx_volume: lines use LOG curve (audioGainToDb).  Until
-                    // sub-RX / per-RX gain modeling lands (Phase 3F multi-pan)
-                    // all four rx_volume slots reflect the same afLinear value
-                    // -- matches the init burst's collapsed-volume strategy.
+                    // rx_volume: lines use LOG curve (audioGainToDb).  See the
+                    // KNOWN GAP comment above this connect() -- this collapsed
+                    // four-slot re-broadcast does not match real Thetis wiring
+                    // and is scheduled for a follow-up, not this task.
                     const double gainDb = tciAudioGainToDb(linear / 100.0);
                     const QString gainStr = QString::number(gainDb, 'f', 2);
                     m_protocol->enqueueLocalBroadcast(
