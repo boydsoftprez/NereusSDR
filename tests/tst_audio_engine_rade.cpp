@@ -115,6 +115,15 @@ private slots:
         FakeAudioBus* speakersRaw = speakers.get();
         engine->setSpeakersBusForTest(std::move(speakers));
 
+        // Register the mixer slots, as connecting to a radio does
+        // (RadioModel::configureStreamPool -> AudioEngine::preregisterSlices).
+        // MasterMixer::accumulate() drops any slice id it has no entry for,
+        // so without this the RADE speech block never reaches the mix. It
+        // used to look like it did, because the speakers push was
+        // unconditional and an empty push still incremented pushCount().
+        radio->configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
+                                   /*defaultRateHz=*/192000);
+
         const int sliceId = radio->addSlice();
         SliceModel* slice = radio->sliceById(sliceId);
         QVERIFY(slice != nullptr);

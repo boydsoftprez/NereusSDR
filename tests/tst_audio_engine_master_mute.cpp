@@ -82,6 +82,19 @@ private:
         h.speakers = speakers.get();
         h.engine->setSpeakersBusForTest(std::move(speakers));
 
+        // Register the mixer slots, exactly as connecting to a radio does
+        // (RadioModel::configureStreamPool -> AudioEngine::preregisterSlices).
+        //
+        // MasterMixer::accumulate() drops any slice id it has no entry for,
+        // so without this the block never reaches the mix at all. That went
+        // unnoticed for as long as the speakers push was unconditional: an
+        // empty push still incremented pushCount(), so these tests read as
+        // passing while the audio was being discarded. Phase 3F gates the
+        // push on the mixer actually producing a block, which turns the same
+        // condition into pushCount() == 0.
+        h.radio->configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
+                                     /*defaultRateHz=*/192000);
+
         return h;
     }
 

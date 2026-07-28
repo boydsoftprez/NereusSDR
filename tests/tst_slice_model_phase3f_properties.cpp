@@ -25,29 +25,38 @@ private slots:
         QCOMPARE(slice.sliceLetter(), QChar('A'));
     }
 
-    void slice_letter_setter_round_trips()
+    // sliceLetter is DERIVED from sliceIndex, not stored, and the property is
+    // CONSTANT: there is no setter and no change signal. This test previously
+    // exercised a stored letter with setSliceLetter() plus a
+    // sliceLetterChanged signal, and was replaced when that storage was
+    // removed (SliceModel.h:479-497).
+    //
+    // The stored version had no production caller for its setter, so every
+    // slice reported the default 'A'. Readers guarded with
+    // `sliceLetter().isNull() ? QChar('A' + sliceIndex()) : ...` never took
+    // the fallback, because a defaulted QChar is 'A' and not null. Slice
+    // buttons therefore read A, A, A instead of A, B, C, and
+    // AntennaPickerMenu mislabelled every slice.
+    void slice_letter_is_derived_from_slice_index()
     {
         SliceModel slice;
-        slice.setSliceLetter(QChar('C'));
+        slice.setSliceIndex(1);
+        QCOMPARE(slice.sliceLetter(), QChar('B'));
+        slice.setSliceIndex(2);
         QCOMPARE(slice.sliceLetter(), QChar('C'));
     }
 
-    void slice_letter_setter_emits_signal()
+    // The regression the derivation exists to prevent: distinct slices must
+    // report distinct letters without anyone having to assign them.
+    void distinct_slices_report_distinct_letters()
     {
-        SliceModel slice;
-        QSignalSpy spy(&slice, &SliceModel::sliceLetterChanged);
-        slice.setSliceLetter(QChar('B'));
-        QCOMPARE(spy.count(), 1);
-        QCOMPARE(spy.first().first().toChar(), QChar('B'));
-    }
-
-    void slice_letter_setter_idempotent()
-    {
-        SliceModel slice;
-        slice.setSliceLetter(QChar('B'));
-        QSignalSpy spy(&slice, &SliceModel::sliceLetterChanged);
-        slice.setSliceLetter(QChar('B'));  // same value
-        QCOMPARE(spy.count(), 0);
+        SliceModel a, b, c;
+        a.setSliceIndex(0);
+        b.setSliceIndex(1);
+        c.setSliceIndex(2);
+        QCOMPARE(a.sliceLetter(), QChar('A'));
+        QCOMPARE(b.sliceLetter(), QChar('B'));
+        QCOMPARE(c.sliceLetter(), QChar('C'));
     }
 
     // ── Task 5: chainIndex ──────────────────────────────────────────────
