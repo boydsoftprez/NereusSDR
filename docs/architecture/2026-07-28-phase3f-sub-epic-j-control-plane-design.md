@@ -1,7 +1,9 @@
 # Phase 3F Sub-Epic J: per-slice control plane + anti-VOX mix
 
 Design doc. Authored 2026-07-28 by J.J. Boyd (KG4VCF), with AI-assisted
-drafting via Anthropic Claude Code.
+drafting via Anthropic Claude Code. Revised the same day after a
+fresh-model review pass verified the upstream claims against source;
+the corrections land in J5, J6, J9 and J10 below.
 
 Upstream reference: Thetis `v2.10.3.15` (`3759d096`).
 
@@ -140,19 +142,53 @@ active slice's state when the menu opens, so the check state is not stale.
 Re-bind on `activeSliceChanged`. Per-flag S-meters already follow their own
 slice and are unaffected.
 
+Plan note: verify what the container S-meter actually polls before wiring.
+`MeterPoller` binds one `RxChannel`, and the analog `SMeterWidget` carries
+four WDSP meter sources of its own; the re-bind must cover whichever of the
+two the visible meter reads.
+
 ### Multi-slice correctness
 
-**J5. CTUN and shift.**
+**J5. CTUN and shift: a centre move re-shifts every co-hosted slice.**
 `MainWindow.cpp:7290` and `:7302` write `rxChannel(0)` from slice A's
-dedicated `wireSliceToSpectrum` path. Route through the owning slice so a
-second slice on the same pan gets its own shift. `bindSliceToStream` already
-computes the correct offset; these sites must stop overriding it with A's.
+dedicated `wireSliceToSpectrum` path.
+
+Fixing whose channel gets written is necessary but not sufficient. The real
+contract is: **when the shared DDC centre moves, every slice on that stream
+needs its shift recomputed** as `frequency - newCentreHz`. The `:7290` CTUN
+path sets the DDC centre directly on the SpectrumWidget, bypassing the
+allocator, so the allocator's stream centre and the actual DDC centre can
+diverge, and a co-hosted slice B keeps a stale shift and demodulates the
+wrong signal even once its own channel is addressed. Same hazard family as
+the 2026-07-27 CTUN stranding fix (`1058500a`).
+
+Implementation routes centre moves through one place that walks
+`slicesOnStream(stream)` and re-shifts each member, and the allocator's
+record of the centre moves with it.
 
 **J6. Shared NB, honestly presented.**
 NB stays visible and usable on every flag, and toggling it on one visibly
 updates the others co-hosted on the same DDC. Decided over greying the
 control: a dead button forces a hover to discover why, whereas controls that
 move together explain themselves. Slices on different DDCs are unaffected.
+
+**Mechanism, and why UI linking alone is wrong.** Sub-Epic I Task 4b's
+ownership rule (`RxDspWorker.cpp:283-330`) is: the first slice to reach
+`processIq` owns the stream's single blanking pass and runs it **with its
+own NB settings**; co-hosts are bypassed so they cannot re-blank the buffer.
+Linking only the buttons would leave the blanker reading whichever slice
+happens to own the pass that chunk.
+
+So the link lives in the model: `RadioModel` mirrors `nbMode` across all
+slices bound to the same stream whenever any of them changes. With every
+co-hosted slice holding identical state, pass ownership stops mattering, and
+the flags follow through the existing `nbModeChanged` sync with no new UI
+plumbing.
+
+**Migration rule:** a slice joining an occupied stream adopts that stream's
+current NB state; a slice claiming an empty stream keeps its own. Per-band
+persistence keeps writing per slice, so slices that later separate onto
+different DDCs regain independent NB.
 
 ### New control surfaces
 
@@ -167,12 +203,26 @@ without doing it behind their back. Persist per slice.
 `TciProtocol.cpp:339` and `:542` defer per-slice audio to "Phase 3F
 multi-pan". Point them at the addressed slice.
 
+Plan note: TCI addresses receivers as receiver:channel pairs, and nothing
+yet fixes how those indices map onto slice ids. The plan must make that
+mapping explicit before touching the handlers; it is a protocol-facing
+decision, not an implementation detail.
+
 ### Prevention
 
-**J9. Ban the shortcut.**
-A check that fails when `src/gui/` calls `wdspEngine()->rxChannel(`. Every
-legitimate use goes through `SliceModel`. Without this the pattern returns:
-J1 exists because nothing stopped it.
+**J9. Audit, migrate, then ban the shortcut.**
+The true scope is wider than MainWindow: `grep -rn 'rxChannel(' src/gui/`
+hits **13 call sites across four files** (`MainWindow.cpp`,
+`setup/DspSetupPages.cpp`, `setup/DspOptionsPage.cpp`,
+`meters/MeterPoller.cpp`). The setup pages' live-apply paths are presumed
+slice-0 bypasses of the same kind as J1; `MeterPoller.cpp` may be legitimate
+internals that merely live under `src/gui/`.
+
+Order matters: audit all 13 first, migrate what the audit convicts, and only
+then land the check that fails on `wdspEngine()->rxChannel(` in `src/gui/`,
+with an explicit allowlist if the audit clears MeterPoller. Landing the
+check first would turn CI red against files this document never listed.
+Without the check the pattern returns: J1 exists because nothing stopped it.
 
 ### Anti-VOX
 
@@ -195,29 +245,63 @@ for (k = 0; k < pcm->cmXMTR; k++)
 ```
 `cmaster.c:371-372 [v2.10.3.15]`
 
-That mixer is a second `aamix` instance (`cmaster.c:159-175`), created with:
+That mixer is a second `aamix` instance (`cmaster.c:159-175`). Its creation
+call passes `active = 0`, but that is the pre-power-on default, **not the
+operating mode**. Membership is managed explicitly, through the very same
+machinery as the RX mixer:
 
-- `ninputs = cmRCVR * cmSubRCVR`, `what = (1 << (cmRCVR * cmSubRCVR)) - 1`
-  (mix everything), and **`active = 0`**: no stream is a barrier member, so it
-  never waits for a producer. This maps onto `MasterMixer`'s existing
-  `setSliceOpportunistic()`.
-- **All four slew parameters `0.000`**, unlike the RX mixer's `0.010`
-  (`cmaster.c:310-313`). No fade. This falls out for free, because our slew
-  only arms on a membership change and anti-VOX makes none.
-- Outbound is `SendAntiVOXData`.
+```c
+void SetAntiVOXSourceStates (int txid, int streams, int states)
+{
+    void* a = (void *)pcm->xmtr[txid].pavoxmix;
+    SetAAudioMixStates (a, -1, streams, states);
+}
+```
+`cmaster.c:584-588 [v2.10.3.15]`
 
-So: a second `MasterMixer` instance, every slice registered opportunistic,
-drained to `TxChannel::SendAntiVOXData`. Reuses the ring, sum and
-opportunistic machinery added 2026-07-27; no new DSP structure.
+and `console.cs:27650-27771` toggles it on every power and MOX transition,
+always with masks drawn from `RX1 + RX1S + RX2`. Three consequences:
+
+- **The anti-VOX mix is barrier-paced, exactly like the speakers mix.** An
+  earlier draft of this spec read the creation default and specified
+  opportunistic slots. That would have left the mix with no pacing at all:
+  drains happen per arrival, blocks alternate single-slice content under
+  clumped delivery, and the false-trigger failure this item exists to fix
+  returns through the reference signal itself. Membership instead mirrors
+  the speakers mixer, driven from the **same** `setSliceStreaming()`
+  withdraw and re-admit calls. The MOX case makes this mandatory, not
+  stylistic: the gated TX slice stops being fed during a transmission, so
+  if it stayed a member of this barrier it would wedge the anti-VOX mix for
+  the whole over.
+- **The TX monitor never feeds anti-VOX.** The upstream masks never include
+  MON, and monitor audio suppressing or triggering the operator's own VOX
+  would be feedback by definition. `kTxMonitorSlotId` is simply never
+  registered with this instance.
+- **No slew on this instance.** All four slew parameters are `0.000`,
+  unlike the RX mixer's `0.010` (`cmaster.c:310-313`). Because membership
+  now rides the same withdraw / re-admit calls as the speakers mixer, the
+  shared up-slew arming would fade this instance too; the anti-VOX
+  instance therefore runs with its slew disabled, which requires making
+  the slew length per-instance rather than a class constant. Matching
+  upstream's `0.000` keeps the DEXP reference amplitude-faithful from the
+  first sample after a transition.
+
+So: a second `MasterMixer` instance whose membership mirrors the speakers
+mixer, TX monitor excluded, slew disabled, drained in the same call stack
+immediately after the speakers drain, output to
+`TxChannel::SendAntiVOXData`. Reuses the ring, sum and barrier machinery
+added 2026-07-27; no new DSP structure.
 
 **Cadence constraint, and it is load-bearing.** The current slice-0 gate is
 not arbitrary. It guarantees exactly one block per `outSize / outRate`
 seconds, which is the cadence DEXP was configured for, and it holds because
 `inSize = 64 * rate / 48000` makes `inSize / inputRate == outSize / outRate`
-per stream. Moving to a mixer relocates where cadence comes from. The
-implementation must pin the drained block rate explicitly and test it,
-or anti-VOX is fed at the wrong rate and reproduces the same
-false-trigger failure by a different route.
+per stream. Moving to a mixer relocates where cadence comes from: with
+membership mirroring the speakers mixer, barrier pacing supplies it the
+same way it does for the speakers path. The implementation must still pin
+the drained block rate explicitly and test it, or anti-VOX is fed at the
+wrong rate and reproduces the same false-trigger failure by a different
+route.
 
 ---
 
@@ -231,17 +315,23 @@ Every item gets a failing test first.
 - **J3, J4**: after `activeSliceChanged`, the menu action and `MeterPoller`
   address the new slice.
 - **J5**: two slices on one pan retune to different frequencies and each
-  channel receives its own shift, at the `RxChannel` boundary.
-- **J6**: toggling NB on one co-hosted slice updates its co-host; slices on
-  different DDCs do not follow.
+  channel receives its own shift, at the `RxChannel` boundary; **and moving
+  the shared DDC centre (a CTUN drag) recomputes BOTH slices' shifts**, not
+  only the dragging slice's.
+- **J6**: toggling NB on one co-hosted slice updates its co-host's **model
+  state**, not merely its button; a slice joining an occupied stream adopts
+  the stream's NB state; slices on different DDCs do not follow each other.
 - **J7**: pan value reaches `MasterMixer` per slice; default is centre;
   round-trips through persistence.
 - **J8**: TCI volume for slice N addresses slice N.
 - **J9**: the check fails on a deliberately added `rxChannel(0)` in
-  `src/gui/`, and passes on the tree.
-- **J10**: the anti-VOX mixer sums all producing slices; a slice that stops
-  feeding never stalls it (opportunistic); **and the drained block rate
-  matches `outSize / outRate` across stream widths.**
+  `src/gui/`, and passes on the migrated tree with all 13 audited sites
+  resolved or explicitly allowlisted.
+- **J10**: the anti-VOX mixer sums all member slices per period; membership
+  follows the speakers mixer across a MOX withdraw / re-admit cycle without
+  wedging; the TX monitor never contributes; no up-slew is applied to its
+  output after a transition; **and the drained block rate matches
+  `outSize / outRate` across stream widths.**
 
 Full suite once at the end of the sub-epic, per standing preference. Targeted
 tests during iteration.
@@ -281,12 +371,18 @@ completion record for B is absent.
   zero slew
 - `ChannelMaster/cmaster.c:371-372` - every sub-receiver fed to the anti-VOX
   mixer
+- `ChannelMaster/cmaster.c:584-588` - `SetAntiVOXSourceStates` forwards to
+  `SetAAudioMixStates` on the pavoxmix: anti-VOX membership is explicit,
+  same machinery as the RX mixer
 - `ChannelMaster/cmaster.c:297-313` - RX mixer creation, `tslewup` /
   `tslewdown` `0.010`
 - `wdsp/dexp.c:313-316` - `asig = avsig - antivox_gain * antivox_level`
 
 ### NereusSDR
 
+- `src/models/RxDspWorker.cpp:283-330` - Task 4b blanker ownership: first
+  slice to `processIq` blanks with its own settings, co-hosts bypassed.
+  J6's model-level mirror exists because of this rule.
 - `docs/architecture/2026-07-24-phase3f-sub-epic-i-data-plane-plan.md` -
   data plane, and the deferrals this sub-epic picks up
 - `docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md` -
