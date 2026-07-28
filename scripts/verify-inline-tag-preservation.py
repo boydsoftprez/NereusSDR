@@ -89,15 +89,33 @@ FREEDV_DIR = Path(os.environ.get(
 # Cite detectors. We scan for the upstream filename + line token; the
 # stamp presence is verified by the sibling verify-inline-cites.py
 # hook, so we tolerate either stamp grammar here.
+
+# Shared line-spec grammar for every cite detector below. A cite may name
+# one line (`:4821`), a range (`:25008-25072`), a comma list
+# (`:340, 344, 350`), or several disjoint locations joined with `+` in
+# either the tight or spaced form:
+#
+#   freedv_reporter.cpp:79+93-153
+#   console.cs:2304-2337 + 5400-5448 + 5763
+#
+# `+` MUST stay in the separator class. Before it was added (Codex review,
+# PR #309) the match stopped at the first location, so a cite was counted
+# as checked while every tag in the discarded locations went unverified —
+# exactly the silent-drop this whole script exists to prevent. Keeping the
+# grammar in one constant is deliberate: the bug was four copies of the
+# same regex, and fixing three of them would have looked identical to
+# fixing all four.
+LINE_SPEC = r"(?P<lines>\d+(?:[+,\s-]+\d+)*)"
+
 RE_CITE_RAMDOR = re.compile(
     r"//\s*(?:From\s+Thetis|Source:)\s+"
     r"(?P<file>[\w./-]+\.(?:cs|c|h|cpp))"
-    r":(?P<lines>\d+(?:[,\s-]+\d+)*)"
+    r":" + LINE_SPEC
 )
 RE_CITE_MI0BOT = re.compile(
     r"//\s*(?:From\s+mi0bot|Source:\s*mi0bot)\s+"
     r"(?P<file>[\w./-]+\.(?:cs|c|h|cpp))"
-    r":(?P<lines>\d+(?:[,\s-]+\d+)*)"
+    r":" + LINE_SPEC
 )
 # Note: RE_CITE_DESKHPSDR is checked BEFORE RE_CITE_RAMDOR in the scan
 # loop. The ramdor regex uses a bare "Source:" prefix which would
@@ -115,7 +133,7 @@ RE_CITE_DESKHPSDR = re.compile(
     r"|From\s+deskhpsdr\s+"        # "From deskhpsdr " followed by any path
     r")"
     r"(?P<file>(?:deskhpsdr/)?[\w./-]+\.(?:c|h))"
-    r":(?P<lines>\d+(?:[,\s-]+\d+)*)"
+    r":" + LINE_SPEC
 )
 # freedv-gui, same shape and the same ordering requirement as deskhpsdr:
 # "Source: freedv-gui/src/main.cpp:1971-1996" is matched by the bare
@@ -130,7 +148,7 @@ RE_CITE_FREEDV = re.compile(
     r"|From\s+freedv-gui\s+"       # "From freedv-gui " followed by any path
     r")"
     r"(?P<file>(?:freedv-gui/)?[\w./-]+\.(?:c|h|cpp|cc|hpp))"
-    r":(?P<lines>\d+(?:[,\s-]+\d+)*)"
+    r":" + LINE_SPEC
 )
 
 # Inline tags we insist on preserving. The corpus is DISCOVERED from
@@ -214,24 +232,53 @@ def iter_source_files():
 
 
 def parse_lines_token(tok: str):
-    """`25008-25072` → [25008, 25072]; `340, 344, 350` → [340, 344, 350]."""
-    out = []
-    for chunk in re.split(r"[,\s]+", tok.strip()):
+    """`25008-25072` → [25008, 25072]; `340, 344, 350` → [340, 344, 350].
+
+    `+` joins disjoint locations and separates exactly like a comma:
+    `79+93-153` → [79, 93, 153]. It must be split here as well as matched
+    by LINE_SPEC — left in place it would make `79+93` a single chunk,
+    and the int() below would raise ValueError and silently drop BOTH
+    locations rather than just the second.
+    """
+    return [n for span in parse_lines_spans(tok) for n in
+            (span if span[0] != span[1] else span[:1])]
+
+
+def parse_lines_spans(tok: str) -> list[tuple[int, int]]:
+    """Split a cite's line token into DISJOINT (lo, hi) spans.
+
+    `25008-25072`      → [(25008, 25072)]        one contiguous range
+    `340, 344, 350`    → [(340,340), (344,344), (350,350)]
+    `79+93-153`        → [(79,79), (93,153)]
+    `2304-2337 + 5400-5448 + 5763`
+                       → [(2304,2337), (5400,5448), (5763,5763)]
+
+    Spans matter because the caller scans upstream for author tags.
+    Collapsing a cite to a flat list and scanning min..max bridges every
+    line between disjoint locations: the DisplaySetupPages.cpp:907 cite
+    above would sweep 2299..5768 of display.cs, roughly 3,500 lines, and
+    demand that every `//MW0LGE` in that block appear in a port that only
+    ever touched three small regions. That is the "invents violations"
+    half of this script's original bug — keep the components separate.
+    """
+    spans: list[tuple[int, int]] = []
+    for chunk in re.split(r"[+,\s]+", tok.strip()):
         if not chunk:
             continue
         if "-" in chunk:
             a, b = chunk.split("-", 1)
             try:
-                out.append(int(a))
-                out.append(int(b))
+                lo, hi = int(a), int(b)
             except ValueError:
                 continue
+            spans.append((lo, hi) if lo <= hi else (hi, lo))
         else:
             try:
-                out.append(int(chunk))
+                n = int(chunk)
             except ValueError:
                 continue
-    return out
+            spans.append((n, n))
+    return spans
 
 
 def resolve_upstream(cite_file: str, which: str) -> Path | None:
@@ -334,38 +381,45 @@ def find_header_end(text: list[str]) -> int:
     return 1  # no body found; treat whole file as body to be safe
 
 
-def extract_tags_from_region(src_path: Path, line_nums: list[int],
+def extract_tags_from_region(src_path: Path, spans: list[tuple[int, int]],
                              window: int = 5) -> set[tuple[int, str]]:
     """Pull every inline tag (callsign/named/version/dash) found within
-    ±window lines of each cited line, EXCLUDING tags that fall inside
+    ±window lines of each cited SPAN, EXCLUDING tags that fall inside
     the file's copyright/license header block (detected by
     find_header_end). File-header attribution is enforced separately
-    by verify-thetis-headers.py."""
+    by verify-thetis-headers.py.
+
+    Each span is padded and scanned on its own. Scanning min..max across
+    all spans instead would bridge the gaps between disjoint locations
+    and manufacture requirements from untouched upstream code — see
+    parse_lines_spans() for the cite that exposed this.
+    """
     try:
         text = src_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except Exception:
         return set()
     header_end = find_header_end(text)
     tags: set[tuple[int, str]] = set()
-    lo = max(1, min(line_nums) - window)
-    hi = min(len(text), max(line_nums) + window)
-    for i in range(lo - 1, hi):
-        if (i + 1) < header_end:
+    rows: set[int] = set()
+    for lo, hi in spans:
+        rows.update(range(max(1, lo - window), min(len(text), hi + window) + 1))
+    for row in sorted(rows):
+        if row < header_end:
             continue  # inside file header; not an inline tag
-        line = text[i]
+        line = text[row - 1]
         # version-prefixed tag
         for m in RE_VERSION_TAG.finditer(line):
-            tags.add((i + 1, m.group(2).upper()))
+            tags.add((row, m.group(2).upper()))
         # dash form
         for m in RE_DASH_TAG.finditer(line):
-            tags.add((i + 1, m.group(1).upper()))
+            tags.add((row, m.group(1).upper()))
         # known callsigns / named (require `//` on the line so we only
         # pick comments, not string literals)
         if "//" in line:
             tail = line.split("//", 1)[1]
             for tag in KNOWN_CALLSIGNS + KNOWN_NAMED:
                 if re.search(r"\b" + re.escape(tag) + r"\b", tail):
-                    tags.add((i + 1, tag.upper()))
+                    tags.add((row, tag.upper()))
     return tags
 
 
@@ -447,9 +501,10 @@ def main() -> int:
                     continue
                 cite_count += 1
                 cite_line = ln_idx + 1
-                line_nums = parse_lines_token(m.group("lines"))
-                if not line_nums:
+                spans = parse_lines_spans(m.group("lines"))
+                if not spans:
                     continue
+                line_nums = parse_lines_token(m.group("lines"))
                 upstream = resolve_upstream(m.group("file"), which)
                 if upstream is None:
                     findings.append({
@@ -463,7 +518,7 @@ def main() -> int:
                         "tag": None,
                     })
                     continue
-                source_tags = extract_tags_from_region(upstream, line_nums)
+                source_tags = extract_tags_from_region(upstream, spans)
                 for src_line, tag in sorted(source_tags):
                     if not port_contains_tag(port, cite_line, tag):
                         findings.append({
