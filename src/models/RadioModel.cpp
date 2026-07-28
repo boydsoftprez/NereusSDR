@@ -3738,6 +3738,21 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
     slice->setStreamIndex(placement.streamIndex);
     slice->setShiftOffsetHz(placement.shiftOffsetHz);
 
+    // Phase 3F Sub-Epic J Task 6: joining an occupied window adopts its
+    // blanker state; claiming an empty one keeps this slice's own. Without
+    // this, a slice migrating onto a stream that already agrees on NB2 would
+    // sit there reading its own stale Off until the next time some other
+    // co-host happened to touch the control. See the nbModeChanged mirror
+    // above, which keeps the stream in agreement from here on.
+    const QVector<int> nbPeers = slicesOnStream(placement.streamIndex);
+    for (int idx : nbPeers) {
+        SliceModel* peer = sliceById(idx);
+        if (peer && peer != slice) {
+            slice->setNbMode(peer->nbMode());
+            break;
+        }
+    }
+
     // Phase 3F Sub-Epic I closeout, defect G2: adopt the stream's rate.
     // SliceModel::sampleRateHz is the resolved rate of whichever stream is
     // hosting the slice, so a slice that migrates (evicted by a narrowing, or
@@ -3978,6 +3993,40 @@ int RadioModel::addSlice(const QString& initialPanId)
                 .arg(QChar('A' + slice->sliceIndex()))
                 .arg(lastGoodHz / 1.0e6, 0, 'f', 4)
                 .arg(m_lastPlacementRejectReason));
+    });
+
+    // ── Phase 3F Sub-Epic J Task 6 ───────────────────────────────────────
+    //
+    // The blanker belongs to the DDC stream, not the slice: ANB panb / NOB
+    // pnob live in struct _rcvr beside double* audio[cmMAXSubRcvr], one
+    // blanker for however many sub-receivers share the receiver (Thetis
+    // cmaster.h:74-82 [v2.10.3.15]). Sub-Epic I Task 4b's processIq loop
+    // (RxDspWorker.cpp) hands the stream's single blanking pass to whichever
+    // slice reaches it first and runs it WITH THAT SLICE'S SETTINGS, bypassing
+    // every other co-host so it cannot re-blank an already-blanked chunk.
+    // Linking only the buttons would leave the actual blanking behaviour
+    // depending on arrival order; mirroring the state instead means every
+    // co-host always agrees, so it does not matter who wins the race.
+    //
+    // Wired here rather than in wireSliceSignals, and for the same reason the
+    // frequencyChanged rollback handler above is: this is a contract between
+    // SliceModels, not a push to hardware, so it has to hold whether or not
+    // a radio is attached. wireSliceSignals's own nbModeChanged connect (the
+    // WDSP push) still only runs once m_connection exists, and stays there
+    // untouched.
+    connect(slice, &SliceModel::nbModeChanged, this, [this, slice](NereusSDR::NbMode m) {
+        if (m_mirroringNbMode) { return; }
+        m_mirroringNbMode = true;
+        const int stream = slice->streamIndex();
+        if (stream >= 0) {
+            for (int idx : slicesOnStream(stream)) {
+                SliceModel* peer = sliceById(idx);
+                if (peer && peer != slice) {
+                    peer->setNbMode(m);
+                }
+            }
+        }
+        m_mirroringNbMode = false;
     });
 
     // RF-SAFETY: when THIS slice holds the transmitter, its frequency and
@@ -8930,6 +8979,14 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     // NB mode (NB1 / NB2 / Off) → WDSP
     // From Thetis Project Files/Source/Console/console.cs — chkDSPNB1/chkDSPNB2 Checked
     // WDSP: third_party/wdsp/src/anb.c (SetRXAANBRun) + third_party/wdsp/src/nob.c (SetRXANOBRun)
+    //
+    // Phase 3F Sub-Epic J Task 6: the co-hosted-slice state mirror for this
+    // property is wired in addSlice, not here. This connect (like the rest
+    // of wireSliceSignals) only exists once m_connection is non-null, but
+    // the mirror is a client-side model contract between SliceModels that
+    // has to hold whether or not a radio is attached -- the same reasoning
+    // that put the frequencyChanged rollback handler in addSlice instead of
+    // here. See the connect beside it there for the mirror itself.
     connect(slice, &SliceModel::nbModeChanged, this, [this, slice](NereusSDR::NbMode m) {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
         if (rxCh) {

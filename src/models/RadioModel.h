@@ -2648,6 +2648,13 @@ private:
     // Everyone else still sees the rolled-back frequencyChanged.
     bool m_rollingBackFrequency{false};
 
+    // Phase 3F Sub-Epic J Task 6: guards the nbModeChanged mirror from
+    // re-entering itself. The blanker is per-DDC, not per-slice (Thetis
+    // cmaster.h:74-82 [v2.10.3.15]), so a change on one slice writes
+    // setNbMode on every co-host; each of those emits its own
+    // nbModeChanged, which would otherwise walk the stream again.
+    bool m_mirroringNbMode{false};
+
     // Phase 3F Sub-Epic I closeout, defect F4: the allocator's own words for
     // the last rejected placement, handed to the retune handler so its
     // status-bar line can explain what the hardware ran out of.

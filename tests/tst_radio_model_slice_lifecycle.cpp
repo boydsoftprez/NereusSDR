@@ -246,6 +246,52 @@ private slots:
         QCOMPARE(sc->shiftOffsetHz(), 0.0);
     }
 
+    // The noise blanker belongs to the DDC, not the slice: ANB panb / NOB
+    // pnob live in struct _rcvr beside double* audio[cmMAXSubRcvr]
+    // (Thetis cmaster.h:74-82 [v2.10.3.15]). Sub-Epic I Task 4b's rule is
+    // that the first slice to reach processIq blanks the chunk WITH ITS OWN
+    // SETTINGS and the co-hosts are bypassed, so linking only the buttons
+    // would leave the blanker reading whichever slice happened to own the
+    // pass. The state itself has to be mirrored.
+    void coHostedSlicesShareNbState()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
+
+        const int a = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sa = radio.sliceById(a);
+        sa->setFrequency(7'240'000.0);
+        const int b = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sb = radio.sliceById(b);
+        sb->setFrequency(7'245'000.0);
+        QCOMPARE(sa->streamIndex(), sb->streamIndex());
+
+        sa->setNbMode(NereusSDR::NbMode::NB);
+        QCOMPARE(sb->nbMode(), NereusSDR::NbMode::NB);
+
+        // And the other direction.
+        sb->setNbMode(NereusSDR::NbMode::Off);
+        QCOMPARE(sa->nbMode(), NereusSDR::NbMode::Off);
+    }
+
+    // A slice joining an occupied stream adopts that stream's NB state; a
+    // slice claiming an empty one keeps its own.
+    void aSliceJoiningAStreamAdoptsItsNbState()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
+
+        const int a = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sa = radio.sliceById(a);
+        sa->setFrequency(7'240'000.0);
+        sa->setNbMode(NereusSDR::NbMode::NB2);
+
+        const int b = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sb = radio.sliceById(b);
+        QCOMPARE(sa->streamIndex(), sb->streamIndex());
+        QCOMPARE(sb->nbMode(), NereusSDR::NbMode::NB2);
+    }
+
     // Single-slice operation is untouched: slice A is still id 0 and still
     // resolves.
     void sliceAIsStillIdZero()
