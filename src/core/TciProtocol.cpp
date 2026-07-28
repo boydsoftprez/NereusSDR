@@ -537,18 +537,35 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     // mapped via the LOG curve audioGainToDb (TCIServer.cs:4778-4787
     // [v2.10.3.15]).
     //
-    // NereusSDR architectural divergence: a single global AF gain (afLinear,
-    // 0..100) replaces the three Thetis sliders.  Per-RX-audio and per-sub-RX
-    // gains are deferred to Phase 3F multi-pan, which introduces the
-    // sub-receiver model.  Until then all three TCI rx_volume slots reflect
-    // the same afLinear value (operator sees a single AF knob in the UI).
-    // The bench impact: TCI clients see identical dB across rx_volume slots,
-    // but a single Volume control affects all of them -- semantically
-    // consistent with the single-knob UI.
-    const int afLinearVal = readIntGlobal("afLinear");
-    const double rx1vol    = tciAudioGainToDb(afLinearVal / 100.0);
-    const double rx1Subvol = tciAudioGainToDb(afLinearVal / 100.0);
-    const double rx2vol    = tciAudioGainToDb(afLinearVal / 100.0);
+    // Phase 3F Sub-Epic J Task 10 closeout: NereusSDR has no sub-receiver
+    // model (no analog of Thetis's RX1-sub slider), so a single per-slice AF
+    // gain -- SliceModel::afGain, read here via RadioModel::afGain(rx) --
+    // stands in for BOTH of a receiver's channels.  This mirrors the
+    // collapse Thetis itself already applies to RX2: sendRxVolume(1, 1,
+    // rx2vol) reuses rx2vol for RX2's "sub" slot too (TCIServer.cs:2557),
+    // because Thetis has no RX2-sub gain slider either.  Before this fix all
+    // four slots read the single radio-global afLinear (the separate master
+    // AF slider, Thetis's "AF" console field / handleVolume), so a client
+    // asking for receiver 1's volume got receiver 0's, and moving the master
+    // volume moved every slot at once.
+    //
+    // Mapping decision (protocol-facing, documented here per the handler
+    // convention): TCI receiver N, channel M -> slice id N.  Channel M is
+    // not consulted (both channels of a receiver report the same afGain, as
+    // above), and N maps straight to a slice id via sliceById(N) -- the same
+    // convention setMode/mode, setFilterBand/filterLow, setAgcMode/agcMode
+    // and every other per-rx shim in RadioModel.cpp already use (rx is
+    // passed straight to sliceById(rx), never remapped through a list
+    // position). RadioModel::afGain(rx) falls back to the active slice when
+    // sliceById(rx) resolves to nothing, rather than defaulting to 0 (which
+    // a TCI client would read as "muted") or silently reusing whatever
+    // sliceById(0) returns -- see RadioModel.cpp's afGain(int rx) for the
+    // fallback.
+    const int rx1AfGainVal = readIntPerRx("afGain", 0);
+    const int rx2AfGainVal = readIntPerRx("afGain", 1);
+    const double rx1vol    = tciAudioGainToDb(rx1AfGainVal / 100.0);
+    const double rx1Subvol = tciAudioGainToDb(rx1AfGainVal / 100.0);
+    const double rx2vol    = tciAudioGainToDb(rx2AfGainVal / 100.0);
 
     // Per-rx per-chan balance via rxBalance(rx, chan) shim.  Thetis maps
     // GetBal -> "40.0 - (pan * 0.8)" at sendInitialRadioState; the shim
@@ -675,7 +692,11 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     const bool globalMute = readBoolGlobal("globalMute");
     const bool rx0Mute    = readBoolPerRx("rxMute", 0);
     const bool rx1Mute    = readBoolPerRx("rxMute", 1);
-    const double volumeDb = tciLinearToDbVolume(afLinearVal);
+    // afLinear is the radio-global master AF slider (Thetis's separate "AF"
+    // console field), NOT the per-slice gain rx_volume reads above -- see
+    // the rx_volume mapping writeup earlier in this function for the split.
+    const int afLinearVal  = readIntGlobal("afLinear");
+    const double volumeDb  = tciLinearToDbVolume(afLinearVal);
 
     // monEnable -- From Thetis TCIServer.cs:2654 [v2.10.3.15] --
     // sendMONEnable(consoleThreadSafe.MON) where MON = chkMON.Checked

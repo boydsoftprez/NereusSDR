@@ -450,8 +450,12 @@ private slots:
     void stub_dsp_toggles_roundtrip() {
         RadioModel m;
         setupOneSlice(m);
-        // setRxBin / setRxApf / setRxNf / setRxEnable / setRxCtun / setRxAnf
-        // all share the same per-slice atomic-stub backing storage.
+        // setRxBin / setRxApf / setRxNf / setRxEnable / setRxCtun share the
+        // same per-slice atomic-stub backing storage (m_tciStubRx*).  setRxAnf
+        // used to reuse this same group (aliased onto the APF slot) until
+        // Phase 3F Sub-Epic J Task 10 routed it to SliceModel::anfEnabled --
+        // see anf_routes_to_slice_anf_enabled / anf_no_longer_aliases_apf
+        // below for that shim's own coverage.
         for (const QByteArray name :
              {"setRxBin", "setRxApf", "setRxNf",
               "setRxEnable", "setRxCtun"})
@@ -469,6 +473,62 @@ private slots:
                                       Q_ARG(int, 0));
             QVERIFY2(out, g.constData());
         }
+    }
+
+    // Phase 3F Sub-Epic J Task 10: setRxAnf/rxAnf now route through
+    // SliceModel::anfEnabled (added by Task 1) instead of the m_tciStubRxApf
+    // stub array they used to alias.  This is the production-side companion
+    // to tst_tci_dispatch_seam's dispatch-entry-point coverage for rx_volume;
+    // ANF has a real rx_anf_enable set/query dispatch case already (unlike
+    // rx_volume), so this shim is exercised directly here.
+    void anf_routes_to_slice_anf_enabled() {
+        RadioModel m;
+        SliceModel* slice = setupOneSlice(m);
+        QVERIFY(slice);
+        QVERIFY(!slice->anfEnabled());  // Neutral default per SliceModel.h.
+
+        QMetaObject::invokeMethod(&m, "setRxAnf",
+                                  Q_ARG(int, 0), Q_ARG(bool, true));
+        QVERIFY(slice->anfEnabled());
+
+        bool out = false;
+        QMetaObject::invokeMethod(&m, "rxAnf",
+                                  Q_RETURN_ARG(bool, out),
+                                  Q_ARG(int, 0));
+        QVERIFY(out);
+
+        QMetaObject::invokeMethod(&m, "setRxAnf",
+                                  Q_ARG(int, 0), Q_ARG(bool, false));
+        QVERIFY(!slice->anfEnabled());
+    }
+
+    // Regression guard for the exact bug this task fixed: before Task 10,
+    // setRxAnf(rx, true) wrote m_tciStubRxApf[rx] -- the SAME array
+    // setRxApf/rxApf read -- so toggling ANF via TCI silently flipped APF's
+    // reported state too.  This test would fail on the pre-fix code (it sets
+    // ANF on and asserts APF stayed off) and passes now that ANF is routed
+    // to its own SliceModel::anfEnabled property.
+    void anf_no_longer_aliases_apf() {
+        RadioModel m;
+        SliceModel* slice = setupOneSlice(m);
+        QVERIFY(slice);
+
+        bool apfBefore = true;  // poison value
+        QMetaObject::invokeMethod(&m, "rxApf",
+                                  Q_RETURN_ARG(bool, apfBefore),
+                                  Q_ARG(int, 0));
+        QVERIFY2(!apfBefore, "APF must default to off");
+
+        QMetaObject::invokeMethod(&m, "setRxAnf",
+                                  Q_ARG(int, 0), Q_ARG(bool, true));
+
+        bool apfAfter = true;  // poison value
+        QMetaObject::invokeMethod(&m, "rxApf",
+                                  Q_RETURN_ARG(bool, apfAfter),
+                                  Q_ARG(int, 0));
+        QVERIFY2(!apfAfter,
+                 "setRxAnf must not flip APF's stored state (pre-Task-10 "
+                 "bug: both shims aliased the same m_tciStubRxApf array)");
     }
 
     void calibration_getters_return_zero() {

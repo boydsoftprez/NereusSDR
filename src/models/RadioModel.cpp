@@ -11550,18 +11550,24 @@ int RadioModel::rxNrIndex(int rx) const
     }
     return 0;
 }
-// ANF: NereusSDR doesn't expose a separate ANF state -- Thetis's auto-notch
-// is a WDSP RXA stage independent of the NR slot system.  Stub until ANF
-// gets its own Q_PROPERTY on SliceModel.
+// ANF: Thetis's auto-notch is a WDSP RXA stage independent of the NR slot
+// system.  Phase 3F Sub-Epic J Task 1 gave it its own SliceModel Q_PROPERTY
+// (anfEnabled / setAnfEnabled / anfEnabledChanged), already wired to
+// RxChannel::setAnfEnabled in the per-slice connect block above.  This shim
+// used to store ANF state in m_tciStubRxApf -- the APF stub array -- so a
+// TCI client's rx_anf_enable set (a) silently flipped APF's stored bit too
+// (rxAnf(rx) and rxApf(rx) read the identical bool) and (b) never touched
+// real WDSP ANF at all, since nothing read m_tciStubRxApf back out into the
+// DSP chain.  Routed through sliceById(rx) now, matching every other
+// per-slice shim in this section; m_tciStubRxApf is untouched here and
+// still backs setRxApf/rxApf below (APF has not been migrated off it).
 void RadioModel::setRxAnf(int rx, bool on)
 {
-    if (rx >= 0 && rx < kTciStubSliceMax) {
-        m_tciStubRxApf[rx] = on;  // reuse: ANF stored alongside APF semantically
-    }
+    if (auto* s = sliceById(rx)) { s->setAnfEnabled(on); }
 }
 bool RadioModel::rxAnf(int rx) const
 {
-    if (rx >= 0 && rx < kTciStubSliceMax) { return m_tciStubRxApf[rx]; }
+    if (const auto* s = sliceById(rx)) { return s->anfEnabled(); }
     return false;
 }
 
@@ -11601,6 +11607,29 @@ bool RadioModel::rxEnable(int rx) const
 {
     if (rx >= 0 && rx < kTciStubSliceMax) { return m_tciStubRxEnable[rx]; }
     return false;
+}
+
+// ── Per-slice AF gain (rx_volume: query source) ─────────────────────────────
+//
+// Phase 3F Sub-Epic J Task 10: TCI receiver rx -> slice id rx via
+// sliceById(rx), the same convention every other per-rx shim in this
+// section already uses (setMode/mode, setFilterBand/filterLow, setAgcMode/
+// agcMode, setRxNb/rxNb, etc.).  Falls back to the active slice when no
+// slice with that id exists, rather than 0 (which a TCI client would read
+// as "muted") or silently aliasing whatever sliceById(0) happens to return
+// -- see TciProtocol.cpp's rx_volume block in buildInitialRadioStateLines
+// for the full receiver -> slice id writeup and the Thetis citations this
+// replaces.
+int RadioModel::afGain(int rx) const
+{
+    const SliceModel* s = sliceById(rx);
+    if (!s) {
+        s = activeSlice();
+    }
+    if (!s) {
+        return 0;
+    }
+    return s->afGain();
 }
 
 // ── Volume (radio-global) ───────────────────────────────────────────────────

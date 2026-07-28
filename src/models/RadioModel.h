@@ -1691,8 +1691,12 @@ public slots:
     Q_INVOKABLE void setRxNr(int rx, bool on, int nrIndex);
     Q_INVOKABLE bool rxNr(int rx) const;
     Q_INVOKABLE int  rxNrIndex(int rx) const;
-    // setRxAnf: maps bool to "activeNr == ANF" semantics (ANF is one of the
-    // NrSlot values).
+    // setRxAnf / rxAnf: routes to SliceModel::anfEnabled (Phase 3F Sub-Epic J
+    // Task 1 added ANF as its own Q_PROPERTY, independent of the activeNr
+    // slot enum).  Previously this pair stubbed ANF state into
+    // m_tciStubRxApf -- the APF array -- so toggling ANF via TCI silently
+    // flipped APF's stored bit too, and neither one touched real WDSP ANF.
+    // Sub-Epic J Task 10 (rx_volume) closeout fixed the routing.
     Q_INVOKABLE void setRxAnf(int rx, bool on);
     Q_INVOKABLE bool rxAnf(int rx) const;
 
@@ -1708,6 +1712,19 @@ public slots:
     Q_INVOKABLE bool rxNf(int rx) const;
     Q_INVOKABLE void setRxEnable(int rx, bool on);
     Q_INVOKABLE bool rxEnable(int rx) const;
+
+    // ── Per-slice AF gain (rx_volume: query source) ──────────────────────
+    // Distinct from afLinear() below: afLinear is the single radio-global
+    // master volume slider (Thetis console AF field, handleVolume /
+    // "volume:" line).  afGain(rx) is the per-receiver AF gain (Thetis
+    // RX0Gain/RX1Gain/RX2Gain, handleRxVolume / "rx_volume:" lines), routed
+    // to SliceModel::afGain (WDSP RXA panel gain1 -- see the afGainChanged
+    // connect in the constructor).  Getter-only: TciProtocol has no
+    // rx_volume set/query dispatch case today (only the init burst reads
+    // this), matching the calibration getters above.  See
+    // TciProtocol.cpp's buildInitialRadioStateLines rx_volume block for the
+    // receiver -> slice id mapping this feeds and its active-slice fallback.
+    Q_INVOKABLE int afGain(int rx) const;
 
     // ── Volume (linear int) ──────────────────────────────────────────────
     // setAfLinear: TCI sends 0..32767; we store and let the audio path read.
