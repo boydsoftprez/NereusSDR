@@ -14,13 +14,21 @@
 //
 // Test strategy:
 //   1. Construct SetupDialog with a RadioModel.
-//   2. Pull the WattMeter and Values pages via NEREUS_BUILD_TESTS seams.
+//   2. Realize the WattMeter and Values leaves, then pull the pages via
+//      NEREUS_BUILD_TESTS seams.
 //   3. Drive RadioStatus::powerChanged so the Values page's running
 //      peak/min trackers diverge from current.
 //   4. Click the WattMeter Reset button via the Phase 5A test seam.
 //   5. Verify the Values page's peak/min trackers collapse to current —
 //      that's only possible if SetupDialog actually wired the cross-page
 //      connect() correctly.
+//
+// Issues #272 + #301 (2026-07-27): SetupDialog now builds pages lazily, so the
+// two pages no longer exist at construction time. Both cases realize their
+// leaves explicitly via realizePageForTest() before pulling the pointers. The
+// property under test is unchanged: the cross-page reset fan-out fires.
+// Coverage for the reset when PA Values has *not* been visited yet lives in
+// tst_setup_dialog_lazy_pages.cpp.
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -57,8 +65,8 @@ private slots:
     // the resetPaValuesRequested -> resetPaValues() cross-page connect().
     void wattMeter_reset_button_clears_values_page_peak_min();
 
-    // Sanity: SetupDialog construction yields non-null pointers for
-    // both the WattMeter and Values pages. If either is null, the
+    // Sanity: realizing both PA leaves yields non-null pointers for
+    // the WattMeter and Values pages. If either is null, the
     // Phase 9 connect() is a no-op and downstream tests would silently
     // pass for the wrong reason.
     void both_pa_pages_are_constructed();
@@ -71,6 +79,11 @@ void TstSetupDialogPaResetWiring::wattMeter_reset_button_clears_values_page_peak
 {
     RadioModel model;
     SetupDialog dialog(&model);
+
+    // #272 / #301: pages are built on first visit, so realize both PA leaves
+    // before reaching for their pointers.
+    QVERIFY(dialog.realizePageForTest(QStringLiteral("Watt Meter")) != nullptr);
+    QVERIFY(dialog.realizePageForTest(QStringLiteral("PA Values"))  != nullptr);
 
     PaWattMeterPage* wattMeter = dialog.paWattMeterPageForTest();
     PaValuesPage*    values    = dialog.paValuesPageForTest();
@@ -97,12 +110,20 @@ void TstSetupDialogPaResetWiring::wattMeter_reset_button_clears_values_page_peak
 }
 
 // ---------------------------------------------------------------------------
-// Test 2: both pages exist after dialog construction.
+// Test 2: both pages exist once their leaves are realized.
+//
+// #272 / #301: pre-refactor this held straight after construction. Pages are
+// now built on first visit, so realize both leaves and then assert the
+// pointers land. tst_setup_dialog_lazy_pages.cpp asserts the complementary
+// property: that they are null before the visit.
 // ---------------------------------------------------------------------------
 void TstSetupDialogPaResetWiring::both_pa_pages_are_constructed()
 {
     RadioModel model;
     SetupDialog dialog(&model);
+
+    QVERIFY(dialog.realizePageForTest(QStringLiteral("Watt Meter")) != nullptr);
+    QVERIFY(dialog.realizePageForTest(QStringLiteral("PA Values"))  != nullptr);
 
     QVERIFY(dialog.paWattMeterPageForTest() != nullptr);
     QVERIFY(dialog.paValuesPageForTest()    != nullptr);
