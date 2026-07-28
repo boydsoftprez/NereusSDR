@@ -302,6 +302,31 @@ private slots:
         QVERIFY(radio.sliceById(0) != nullptr);
         QCOMPARE(radio.sliceById(0), radio.activeSlice());
     }
+
+    // Stereo pan was already per-slice before Sub-Epic J: the flag slider
+    // emits panChanged, MainWindow writes SliceModel::audioPan, and
+    // RadioModel pushes it to rxChannel(slice->sliceIndex())->setAudioPan.
+    // It routes through WDSP's per-channel panel pan rather than
+    // MasterMixer, which is the better place for it. Pinned so the epic
+    // does not "fix" something that works.
+    void audioPanIsIndependentPerSlice()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
+        const int a = radio.addSlice(QStringLiteral("pan-0"));
+        const int b = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sa = radio.sliceById(a);
+        SliceModel* sb = radio.sliceById(b);
+
+        QCOMPARE(sa->audioPan(), 0.0);
+        QCOMPARE(sb->audioPan(), 0.0);
+
+        sa->setAudioPan(-1.0);
+        sb->setAudioPan(1.0);
+
+        QCOMPARE(sa->audioPan(), -1.0);
+        QCOMPARE(sb->audioPan(), 1.0);
+    }
 };
 
 QTEST_MAIN(TestRadioModelSliceLifecycle)
