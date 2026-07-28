@@ -29,6 +29,8 @@ private slots:
     void exposesRf2ksConnection();
     void enablingTriggersConnect();
     void disablingTriggersDisconnect();
+    void currentRadioMacIsEmptyWhileOffline();
+    void currentRadioMacReturnsMacWhileConnected();
 
 private:
     static void primeConnectedRadio(NereusSDR::RadioModel& m,
@@ -136,6 +138,46 @@ void RfKitEnabledTest::disablingTriggersDisconnect() {
     QSignalSpy disSpy(m.rfKitConnection(), &NereusSDR::Rf2ksConnection::disconnected);
     m.setRfKitEnabled(false);
     QCOMPARE(disSpy.count(), 1);
+}
+
+// Codex review [P2] on PR #291.  currentRadioMac() is the gate both
+// RfKitPage and FourO3APage use to decide whether the peripherals UI is
+// live ("Editing peripherals for <radio>" vs "Connect to a radio...",
+// and whether the RF2K-S detail tab is interactive).
+//
+// m_lastRadioInfo is retained across a disconnect on purpose, so the
+// accessor kept returning the previous radio's MAC while nothing was
+// connected -- letting the operator edit, and even start, peripherals
+// scoped to a radio that had gone away.  The header contract already
+// said "returns m_lastRadioInfo.macAddress when connected, empty
+// otherwise"; the implementation had drifted from its own documentation.
+//
+// Gated on m_connectionState rather than isConnected(): the latter needs
+// a live RadioConnection object, which these tests deliberately do not
+// stand up.
+void RfKitEnabledTest::currentRadioMacIsEmptyWhileOffline()
+{
+    NereusSDR::RadioModel m;
+    primeConnectedRadio(m, QStringLiteral("aa:bb:cc:dd:ee:42"));
+    QCOMPARE(m.currentRadioMac(), QStringLiteral("aa:bb:cc:dd:ee:42"));
+
+    // Radio goes away.  m_lastRadioInfo is deliberately still populated.
+    m.setConnectionStateForTest(NereusSDR::ConnectionState::Disconnected);
+
+    QVERIFY2(m.currentRadioMac().isEmpty(),
+             "currentRadioMac() still reported the previous radio's MAC "
+             "while offline; the peripherals UI gates on this and would "
+             "stay live for a radio that is gone");
+}
+
+void RfKitEnabledTest::currentRadioMacReturnsMacWhileConnected()
+{
+    NereusSDR::RadioModel m;
+    primeConnectedRadio(m, QStringLiteral("aa:bb:cc:dd:ee:43"));
+
+    // The normal case must keep working -- a gate that always denies
+    // would pass the test above while breaking the whole peripherals UI.
+    QCOMPARE(m.currentRadioMac(), QStringLiteral("aa:bb:cc:dd:ee:43"));
 }
 
 QTEST_MAIN(RfKitEnabledTest)

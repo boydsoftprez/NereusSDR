@@ -203,6 +203,9 @@ void Rf2ksConnection::connectToAmp(const QString& host, quint16 port)
     m_port = port;
     m_consecutiveFailures = 0;
     m_reconnectBackoffMs = 500;  // doubled to 1000 ms on first scheduleReconnect()
+    // New session: replies still in flight from the previous one must not
+    // apply their host's state to this connection.
+    ++m_connectionGeneration;
 
     connect(&m_pollTimer, &QTimer::timeout, this, &Rf2ksConnection::pollOnce,
             Qt::UniqueConnection);
@@ -221,6 +224,10 @@ void Rf2ksConnection::disconnect()
 {
     m_pollTimer.stop();
     m_reconnectTimer.stop();
+    // Retire this session so a reply already in flight cannot complete
+    // into the connected branch of onReplyFinished() and revive the link
+    // the operator just shut down.
+    ++m_connectionGeneration;
     if (m_connected) {
         m_connected = false;
         emit disconnected();
@@ -300,6 +307,9 @@ void Rf2ksConnection::issueGet(const QString& path)
     auto* reply = m_nam->get(req);
     reply->setProperty("rfkitPath", path);
     reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
+    // See onReplyFinished(): a reply that outlives its session is dropped.
+    reply->setProperty("rfkitGeneration",
+                       QVariant::fromValue(m_connectionGeneration));
     connect(reply, &QNetworkReply::finished,
             this, &Rf2ksConnection::onReplyFinished);
 }
@@ -314,6 +324,21 @@ void Rf2ksConnection::onReplyFinished()
     const qint64 started  = reply->property("startedMs").toLongLong();
     const bool isWrite    = reply->property("rfkitIsWrite").toBool();
     const int rttMs       = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - started);
+
+    // Drop replies belonging to a retired session.  disconnect() and
+    // connectToAmp() both bump the generation, so a request still in
+    // flight when the operator disables RF-Kit -- or switches to a
+    // different amp -- lands here with a stale tag.  Neither its state
+    // nor its liveness proof applies any more: counting it as a success
+    // would set m_connected back to true and revive a link the operator
+    // just shut down, and counting it as a failure would charge the new
+    // session for the old one's error.  Codex review, PR #291.
+    const quint64 generation =
+        reply->property("rfkitGeneration").value<quint64>();
+    if (generation != m_connectionGeneration) {
+        reply->deleteLater();
+        return;
+    }
 
     if (reply->error() != QNetworkReply::NoError) {
         markPollFailure();
@@ -463,6 +488,10 @@ void Rf2ksConnection::issuePut(const QString& path, const QByteArray& body)
     // See onReplyFinished(): write acks carry no state body and must not be
     // fed to handleResponse().
     reply->setProperty("rfkitIsWrite", true);
+    // Same session tag as issueGet(): a write ack that outlives its
+    // session must not feed markPollSuccess() and revive the link.
+    reply->setProperty("rfkitGeneration",
+                       QVariant::fromValue(m_connectionGeneration));
     connect(reply, &QNetworkReply::finished,
             this, &Rf2ksConnection::onReplyFinished);
 }
@@ -486,6 +515,10 @@ void Rf2ksConnection::issuePost(const QString& path)
     // See onReplyFinished(): write acks carry no state body and must not be
     // fed to handleResponse().
     reply->setProperty("rfkitIsWrite", true);
+    // Same session tag as issueGet(): a write ack that outlives its
+    // session must not feed markPollSuccess() and revive the link.
+    reply->setProperty("rfkitGeneration",
+                       QVariant::fromValue(m_connectionGeneration));
     connect(reply, &QNetworkReply::finished,
             this, &Rf2ksConnection::onReplyFinished);
 }

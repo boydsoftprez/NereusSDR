@@ -2492,6 +2492,25 @@ void RadioModel::setRfKitEnabled(bool enabled)
 // so the operator can't reach the write path with an unbound MAC.
 QString RadioModel::currentRadioMac() const
 {
+    // Gated on the connection state, matching this accessor's documented
+    // contract in RadioModel.h ("returns m_lastRadioInfo.macAddress when
+    // connected, empty otherwise") -- the implementation had drifted from
+    // its own documentation and returned the MAC unconditionally.
+    //
+    // m_lastRadioInfo is deliberately retained across a disconnect, so the
+    // ungated version kept naming the previous radio forever.  RfKitPage
+    // and FourO3APage both use a non-empty result as their live/enabled
+    // gate, which let the operator edit -- and start -- peripherals scoped
+    // to a radio that was no longer there.  Codex review, PR #291.
+    //
+    // Deliberately m_connectionState rather than isConnected(): the latter
+    // requires a live RadioConnection object, and the Setup-page tests
+    // drive state through setConnectionStateForTest() without one.
+    // teardownPeripherals() reads no MAC, so nothing in the disconnect
+    // path depends on the old behaviour.
+    if (m_connectionState != ConnectionState::Connected) {
+        return QString{};
+    }
     return m_lastRadioInfo.macAddress;
 }
 

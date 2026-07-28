@@ -99,6 +99,10 @@ public:
     // assert that disconnect() actually cancels a scheduled reconnect.
     void testScheduleReconnect() { scheduleReconnect(); }
     bool testReconnectPending() const { return m_reconnectTimer.isActive(); }
+    // Test-only: is the REST poller running?  markPollFailure() stops it
+    // on the down transition so a dead amp is not polled through the
+    // whole backoff window.
+    bool testPollActive() const { return m_pollTimer.isActive(); }
 
 public slots:
     void connectToAmp(const QString& host, quint16 port = 8080);
@@ -188,6 +192,17 @@ private:
     int    m_rttAvgMs            = 0;
     int    m_reconnectAttempts   = 0;
     int    m_consecutiveFailures = 0;
+
+    // Session counter, bumped by connectToAmp() and disconnect().  Every
+    // reply carries the generation it was issued under; onReplyFinished()
+    // drops any whose generation has moved on.
+    //
+    // Without it, a GET still in flight when the operator disables RF-Kit
+    // completed afterwards, fell through to the "not connected yet" branch
+    // and set m_connected back to true -- reviving a connection the
+    // operator had just shut down.  The same race applied the previous
+    // host's state after switching amplifiers.  Codex review, PR #291.
+    quint64 m_connectionGeneration = 0;
 };
 
 } // namespace NereusSDR
