@@ -294,31 +294,16 @@ signals:
     // decimation panel rate.
     void bufferSizesChanged(int outSize, double outRate);
 
-    // Phase 3M-3a-iv: fires per drained chunk after the existing
-    // chunkDrained / rxBlockReady delivery. Consumed by
-    // TxWorkerThread::onAntiVoxSamplesReady to feed WDSP DEXP.
-    //
-    // Payload: (sliceId, interleaved L/R float buffer, sampleCount).
-    //
-    // From Thetis ChannelMaster cmaster.c:171 [v2.10.3.13]: aamix's
-    // SendAntiVOXData callback delivers exactly one audio_outsize block
-    // at audio_outrate. Single-RX equivalent here — no resample, no mix,
-    // one source — replaces the aamix port with a direct queued signal.
-    //
-    // Fires regardless of WDSP/AudioEngine wiring, mirroring chunkDrained,
-    // so tests without fake engines still observe the contract. When
-    // engines are wired the buffer carries the WDSP-decoded interleaved
-    // audio; when they are not, a zero-filled stereo buffer of the
-    // correct size is emitted instead.
-    //
-    // Phase 3F Sub-Epic I closeout, defect G1: this is a per-RADIO feed,
-    // NOT a per-stream one. Exactly one emission happens per drain
-    // interval no matter how many DDC streams are draining, raised only by
-    // the stream that hosts slice 0 (whose audio the buffer carries). Any
-    // higher rate would overrun the single block geometry DEXP was given
-    // through setAntiVoxBlockGeometry. Rationale and the dexp.c cites are
-    // at the emit site in RxDspWorker.cpp.
-    void antiVoxSampleReady(int sliceId, const QVector<float>& interleaved, int sampleCount);
+    // (Phase 3M-3a-iv added antiVoxSampleReady here: one slice-0 audio block
+    //  per drain interval, forked to TxWorkerThread::onAntiVoxSamplesReady to
+    //  feed WDSP DEXP. Phase 3F Sub-Epic J Task 9 retired it. The anti-VOX
+    //  reference is now AudioEngine::m_antiVoxMix, a second MasterMixer
+    //  summing every audible slice, matching Thetis cmaster.c:371-372
+    //  [v2.10.3.15]; AudioEngine::antiVoxBlockReady carries its drained
+    //  block. bufferSizesChanged above is still this class's contribution to
+    //  the chain, and still sets DEXP's block geometry. The retired feed's
+    //  cadence argument is preserved at the bottom of the drain loop in
+    //  RxDspWorker.cpp.)
 
     // Phase 3R K-bench: per-batch RADE feed.  Emitted from the DSP
     // thread with a 24 kHz interleaved-float32 I/Q buffer (real=audio,

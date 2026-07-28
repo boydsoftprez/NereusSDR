@@ -259,17 +259,9 @@ void RxDspWorker::processIqBatch(int receiverIndex,
                                     ? sliceIt->second
                                     : QVector<int>{};
 
-    // ── Phase 3F Sub-Epic I closeout, defect G1 ──────────────────────────
-    // The anti-VOX fork at the bottom of the drain loop is a per-RADIO feed,
-    // so it is gated on the stream that hosts slice 0 rather than raised by
-    // every draining stream. Computed here, once per batch, from the same
-    // binding snapshot the fan-out uses.
-    //
-    // Slice 0 is not pinned to stream 0 (a slice migrates streams as the
-    // operator retunes), so the gate asks "does this stream host slice 0",
-    // not "is this stream 0". See the emit site below for why the cadence
-    // matters.
-    const bool hostsSliceZero = slices.contains(0);
+    // (Phase 3F Sub-Epic I closeout defect G1 computed a hostsSliceZero flag
+    //  here to elect one stream to raise the anti-VOX fork. Sub-Epic J Task 9
+    //  retired that fork; see the note at the bottom of the drain loop.)
 
     // RxChannel::processIq writes sampleCount floats on the inactive-channel
     // memset path and outSampleCount via fexchange2, so the reusable output
@@ -507,53 +499,41 @@ void RxDspWorker::processIqBatch(int receiverIndex,
         emit chunkDrained(inSize);
         emit chunkDrainedForStream(receiverIndex, inSize);
 
-        // Phase 3M-3a-iv: fork the same RX audio block to TxWorkerThread
-        // for the WDSP DEXP anti-VOX detector. Slice 0 is the only consumer
-        // in the single-RX path; multi-RX mux lands with 3F.
+        // ── The anti-VOX fork used to live here ──────────────────────────
         //
-        // From Thetis ChannelMaster cmaster.c:159-175 [v2.10.3.13]: this
-        // is the single-RX equivalent of pavoxmix → SendAntiVOXData.
-        // No aamix instance is needed because there is one input, one
-        // sample rate, and no mixing — a queued signal/slot replaces the
-        // aamix port. When 3F multi-pan ships, this connection is replaced
-        // by a real aamix port; the TxWorkerThread side stays unchanged.
+        // Phase 3M-3a-iv forked the RX audio block from this spot to
+        // TxWorkerThread for the WDSP DEXP anti-VOX detector, gated on the
+        // stream hosting slice 0. Phase 3F Sub-Epic J Task 9 retired it:
+        // the reference is now AudioEngine::m_antiVoxMix, a second
+        // MasterMixer summing every audible slice, which is what Thetis
+        // does (every sub-receiver is pushed into the transmitter's
+        // anti-VOX mixer, cmaster.c:371-372 [v2.10.3.15]). Slice A's audio
+        // alone was the wrong reference the moment a second receiver
+        // became audible.
         //
-        // ── Tap-point signpost (3M-3a-iv post-bench refactor) ────────────
-        // The anti-VOX cancellation reference is forked here from
-        // RxDspWorker's demod output before it reaches AudioEngine.  This
-        // is correct as long as the audio bus stage applies no processing
-        // that diverges between outputs (per-bus EQ, gain, mute beyond
-        // master).  Today's single-output PC speaker path satisfies this
-        // assumption.  WHEN OUTPUT DIVERGENCE LANDS (radio-speaker output
-        // with independent processing, or per-bus EQ/gain), the anti-VOX
-        // tap MUST move from RxDspWorker to AudioEngine's post-mixer
-        // summing point so the cancellation reference matches the audio
-        // actually leaving the speakers.  This is a tap-point relocation
-        // only; the WDSP DEXP block and TxChannel::sendAntiVoxData wrapper
-        // stay unchanged.
+        // The reasoning is kept rather than deleted because it is the only
+        // place two constraints on that feed are written down, and both
+        // still bind, they are just satisfied somewhere else now.
         //
-        // Fires regardless of WDSP wiring (mirrors chunkDrained's
-        // contract): when engines are wired, the buffer carries the
-        // freshly decoded WDSP audio in m_interleavedOut; when not, a
-        // zero-filled stereo buffer of the correct outSize*2 floats is
-        // emitted so test fixtures without fake engines still observe
-        // the signal shape. The QVector<float> deep-copies on the queued
-        // connection, leaving m_interleavedOut owned by this thread.
+        // ── Tap-point signpost (3M-3a-iv post-bench refactor), RESOLVED ──
+        // The signpost that stood here said: forking the cancellation
+        // reference from RxDspWorker's demod output is correct only while
+        // the audio bus stage applies no processing that diverges between
+        // outputs (per-bus EQ, gain, mute beyond master), and WHEN OUTPUT
+        // DIVERGENCE LANDS the tap MUST move to AudioEngine's post-mixer
+        // summing point so the reference matches the audio actually
+        // leaving the speakers. Per-slice mute, gain and pan are exactly
+        // that divergence, and Task 9 made exactly that move. The tap is
+        // now AudioEngine's anti-VOX mixer drain in rxBlockReady; the WDSP
+        // DEXP block and the TxChannel::sendAntiVoxData wrapper were left
+        // unchanged, as the signpost predicted.
         //
-        // Phase 3F Sub-Epic I Task 4: this stays a SLICE 0 feed and it
-        // carries SLICE 0's audio specifically. m_interleavedOut is
-        // written only by the sliceIdx == 0 branch above (secondary
-        // slices use m_interleavedOutAux), so a multi-slice drain cannot
-        // leak whichever slice happened to run last into the DEXP
-        // detector.
-        //
-        // ── Phase 3F Sub-Epic I closeout, defect G1 ──────────────────────
-        // WHICH stream may raise it matters as much as which slice's audio
-        // it carries. This drain loop now runs once per DDC STREAM, not once
-        // per radio, and DEXP is configured with exactly one block geometry:
+        // ── Cadence: Sub-Epic I closeout defects G1 and H1 ───────────────
+        // DEXP is configured with exactly one block geometry:
         // TxWorkerThread::setAntiVoxBlockGeometry pushes SetAntiVOXSize
         // (outSize) and SetAntiVOXRate (48 kHz panel rate) once, from
-        // RxDspWorker::bufferSizesChanged.
+        // RxDspWorker::bufferSizesChanged, which is still emitted from this
+        // class and still the authority on the detector's dimensions.
         //
         // The detector integrates one block per delivery and no faster.
         // From Thetis wdsp/dexp.c:288-297 [v2.10.3.15]: on each xdexp() pass
@@ -567,41 +547,30 @@ void RxDspWorker::processIqBatch(int receiverIndex,
         // wdsp/dexp.c:708-715 [v2.10.3.15], SendAntiVOXData memcpys over
         // antivox_data and re-raises antivox_new, so a second block arriving
         // before the TXA pump consumes the first silently replaces it.
+        // Deliver too fast and antivox_level integrates faster than
+        // antivox_rate says it should; too slow and it goes stale. Either
+        // way `asig = avsig - antivox_gain * antivox_level` (dexp.c:313-316
+        // [v2.10.3.15]) comes out wrong, which is a false VOX trigger
+        // (unintended transmit) or a failure to cancel.
         //
-        // With two streams draining at the same rate, an ungated emit hands
-        // the detector twice the block rate it was told about. Half of those
-        // blocks carry a stale repeat of slice 0's previous chunk, because
-        // only slice 0's branch above writes m_interleavedOut and a stream
-        // without slice 0 never touches it. antivox_level then drives
-        // `asig = avsig - antivox_gain * antivox_level` (dexp.c:313-316
-        // [v2.10.3.15]) either too hard or not hard enough, which is a false
-        // VOX trigger (unintended transmit) or a failure to cancel.
-        //
-        // Gating on the stream that hosts slice 0 restores the configured
-        // cadence exactly. The drain interval is inSize / inputRate seconds,
-        // and Thetis sizes inSize = 64 * inputRate / 48000 with outSize 64
+        // The slice-0 gate held that cadence because this drain loop runs
+        // once per DDC STREAM, and an ungated emit would have handed the
+        // detector one block per draining stream instead of one per period.
+        // One stream was elected to raise it, and the arithmetic worked out
+        // exactly: the drain interval is inSize / inputRate seconds, Thetis
+        // sizes inSize = 64 * inputRate / 48000 with outSize 64
         // (RadioModel.cpp:6866 passes literal 64), so
-        // inSize / inputRate == outSize / outRate: one block per
-        // outSize/outRate seconds, which is what DEXP was configured for.
+        // inSize / inputRate == outSize / outRate. Defect H1 kept that
+        // exact once streams carried their own rates, since each stream's
+        // inSize is derived from its own rate through the same formula.
         //
-        // Phase 3F Sub-Epic I closeout, defect H1: still exact once streams
-        // carry their own rates. `inSize` above is now resolved from the
-        // ORIGINATING stream, and it is derived from that stream's rate
-        // through the same 64 * rate / 48000 formula, so the identity
-        // inSize / inputRate == outSize / outRate holds per stream. Slice 0's
-        // host therefore delivers one block per outSize/outRate seconds no
-        // matter what width the operator gave it.
-        if (hostsSliceZero) {
-            QVector<float> antiVoxBuffer(outSize * 2, 0.0f);
-            if (m_wdspEngine != nullptr && m_audioEngine != nullptr
-                && m_interleavedOut.size() >= outSize * 2) {
-                const float* src = m_interleavedOut.constData();
-                for (int i = 0; i < outSize * 2; ++i) {
-                    antiVoxBuffer[i] = src[i];
-                }
-            }
-            emit antiVoxSampleReady(0, antiVoxBuffer, outSize);
-        }
+        // THAT ARGUMENT NOW LIVES IN AudioEngine's DRAIN. The anti-VOX
+        // mixer's readiness barrier releases at most one summed block per
+        // audio period no matter how many streams or slices feed it, which
+        // is the same one-block-per-outSize/outRate-seconds contract
+        // arrived at by a different route: membership, not election.
+        // Pinned by tst_audio_engine_antivox_mix's
+        // theAntiVoxMixDrainsOneBlockPerPeriod.
     }
 
     emit batchProcessed();

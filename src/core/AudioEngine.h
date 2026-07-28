@@ -340,9 +340,12 @@ public:
     // Called by RxDspWorker when a slice produces an RX audio block.
     // samples is interleaved stereo float32, length = frames * 2.
     //
-    // (Anti-VOX shares the same demod block via RxDspWorker::antiVoxSampleReady.
-    //  See RxDspWorker.cpp tap-point note for the future tap-point-move scenario
-    //  when output divergence lands.)
+    // Feeds two mixers: m_masterMix for the speakers and m_antiVoxMix for
+    // the DEXP cancellation reference. Both are drained here, so anti-VOX
+    // hears the same summed audio the operator does. Phase 3F Sub-Epic J
+    // Task 9 moved that tap here from RxDspWorker, where it forked slice
+    // A's demod output alone; see the note at the bottom of RxDspWorker's
+    // drain loop.
     void rxBlockReady(int sliceId, const float* samples, int frames);
 
     /// TX-monitor block consumer. Called via Qt::DirectConnection from
@@ -615,9 +618,15 @@ signals:
     /// has already moved on. Same contract as txMonitorBlockReady's
     /// incoming samples.
     ///
-    /// Phase 3F Sub-Epic J Task 9. Nothing is connected to this yet: the
-    /// slice-0 feed in RxDspWorker::antiVoxSampleReady is still the live
-    /// path, and re-pointing TxWorkerThread's consumer is a follow-up.
+    /// Phase 3F Sub-Epic J Task 9. The consumer is
+    /// TxWorkerThread::onAntiVoxBlockReady, wired DirectConnection in
+    /// RadioModel::wireConnectionSignals. That slot exists precisely to
+    /// honour the contract above: it copies on the DSP thread while the
+    /// pointer is live, then does its own owned, queued hop to reach WDSP
+    /// DEXP. Any future consumer owes the same discipline. `const float*`
+    /// is not a registered metatype, so a queued connect fails loudly at
+    /// connect time rather than dangling, but do not rely on that as the
+    /// safety net.
     void antiVoxBlockReady(const float* samples, int frames);
 
     void volumeChanged(float volume);
