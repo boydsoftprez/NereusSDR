@@ -4,6 +4,15 @@
 // with two receivers running nothing said which one it meant. It used to
 // write rxChannel(0) unconditionally. The rule is that a control attached
 // to no slice targets the active slice.
+//
+// Task 4 extends this file with the same precondition check for the
+// container S-meter fix (MainWindow.cpp): MeterPoller::setRxChannel() is
+// re-invoked from a MainWindow lambda connected to activeSliceChanged, and
+// that lambda resolves the new channel via activeSlice()->sliceIndex().
+// MainWindow itself is too heavyweight to construct in a unit-test binary
+// (see tst_mainwindow_status_bar_safety.cpp), so this test pins the
+// RadioModel-level contract the lambda depends on instead of the lambda
+// itself.
 
 #include <QtTest/QtTest>
 #include "models/RadioModel.h"
@@ -44,6 +53,34 @@ private slots:
             target->setAnfEnabled(true);
         }
         QCOMPARE(sb->anfEnabled(), true);
+    }
+
+    // The container S-meter is attached to no flag. It must show the
+    // receiver the operator is working, not always slice A.
+    //
+    // This does not exercise MainWindow's re-bind lambda directly (nothing
+    // in this suite constructs MainWindow: it needs a live RadioModel,
+    // WDSP init and audio/network threads). It pins the two facts the
+    // lambda relies on: activeSliceChanged actually fires when focus moves,
+    // and activeSlice()->sliceIndex() resolves to the new slice's id (which
+    // doubles as its WDSP RX channel id), not the old one. Both of those
+    // were already true before this task (Task 3's test exercises the same
+    // RadioModel path), so this test passes before and after the MainWindow
+    // fix -- it is a precondition guard for the fix, not a regression test
+    // for it.
+    void the_container_meter_rebinds_when_focus_moves()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
+        const int a = radio.addSlice(QStringLiteral("pan-0"));
+        const int b = radio.addSlice(QStringLiteral("pan-0"));
+
+        QSignalSpy spy(&radio, &RadioModel::activeSliceChanged);
+        radio.setActiveSlice(b);
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(radio.activeSlice()->sliceIndex(), b);
+        QVERIFY(radio.activeSlice()->sliceIndex() != a);
     }
 };
 

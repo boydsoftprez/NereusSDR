@@ -3628,6 +3628,24 @@ void MainWindow::buildUI()
         });
     });
 
+    // Phase 3F Sub-Epic J Task 4: the container S-meter is attached to no
+    // flag, so it must show the active slice, not always slice A. The
+    // WDSP-init binding above is only the seed for the first slice --
+    // MeterPoller::pollSMeter() (which drives the analog SMeterWidget
+    // installed as AppletPanelWidget's fixed header, i.e. the widget this
+    // wiring targets) reads m_rxChannel exclusively and that pointer never
+    // moved after the seed, so the container meter showed RxChannel 0
+    // whatever the operator was working. The per-flag mini S-meters do not
+    // have this bug: they already resolve their own channel per slice via
+    // MeterPoller::pollSliceSMeters() (wdspEngine()->rxChannel(sliceId)), so
+    // they are untouched here.
+    connect(m_radioModel, &RadioModel::activeSliceChanged, this, [this](int) {
+        SliceModel* slice = m_radioModel->activeSlice();
+        if (!slice || !m_radioModel->wdspEngine()) { return; }
+        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(slice->sliceIndex());
+        if (rxCh) { m_meterPoller->setRxChannel(rxCh); }
+    });
+
     // H.2 (Phase 3M-1a): wire MoxController::moxStateChanged → MeterPoller::setInTx.
     // Switches the poll set between RX meters (TX off) and TX meters (TX on).
     // From Thetis dsp.cs:995-1050 [v2.10.3.13] CalculateTXMeter dispatch.
