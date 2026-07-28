@@ -5150,16 +5150,29 @@ void MainWindow::buildMenuBar()
     }
 
     // ── Single-toggle DSP actions ──────────────────────────────────────────
-    // ANF writes through RxChannel directly (SliceModel::anfEnabled is a
-    // Task 17 follow-up). Cross-surface sync is therefore not yet possible
-    // for ANF; the action emits its own toggled() but isn't checked from
-    // model state. SNB / APF / BIN go through SliceModel and are synced.
+    // ANF now goes through SliceModel::anfEnabled (Phase 3F Sub-Epic J
+    // Task 3) and is kept in sync below. SNB / APF / BIN go through
+    // SliceModel and are synced too.
     {
         QAction* anfAction = dspMenu->addAction(QStringLiteral("&ANF"));
         anfAction->setCheckable(true);
         connect(anfAction, &QAction::toggled, this, [this](bool on) {
-            RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-            if (rxCh) { rxCh->setAnfEnabled(on); }
+            // A control attached to no flag targets the active slice, which
+            // is whichever flag the operator last clicked. Resolved at
+            // invocation, not captured, so it follows focus.
+            if (SliceModel* slice = m_radioModel->activeSlice()) {
+                slice->setAnfEnabled(on);
+            }
+        });
+
+        // Reflect the active slice when focus moves, without re-emitting
+        // toggled back into the handler above.
+        connect(m_radioModel, &RadioModel::activeSliceChanged, this,
+                [this, anfAction](int) {
+            if (SliceModel* slice = m_radioModel->activeSlice()) {
+                QSignalBlocker block(anfAction);
+                anfAction->setChecked(slice->anfEnabled());
+            }
         });
     }
 
@@ -5240,9 +5253,10 @@ void MainWindow::buildMenuBar()
 
     // ── Sync NR / NB / SNB / APF / BIN checked state from slice 0 ──────────
     // Mirrors the AGC sync pattern above. Wired via sliceAdded so the
-    // connection survives slice teardown/re-create. ANF intentionally
-    // omitted — its state lives on RxChannel without a notify signal
-    // (SliceModel::anfEnabled is a Task 17 follow-up).
+    // connection survives slice teardown/re-create. ANF is not synced here:
+    // its check state follows activeSliceChanged instead (wired beside the
+    // action's creation above), since it must track whichever slice is
+    // active, not just slice 0.
     connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
         if (index != 0) { return; }
         SliceModel* slice = m_radioModel->activeSlice();

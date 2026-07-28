@@ -5698,6 +5698,10 @@ nereus_add_test(tst_memory_lock_accounting)
 #   txIqUnderrunIgnoresNonPositive.
 nereus_add_test(tst_perf_monitor_ring)
 
+# Phase 3F Sub-Epic J Task 3: a control attached to no slice targets the
+# active slice. The DSP menu used to write rxChannel(0) unconditionally.
+nereus_add_test(tst_dsp_menu_active_slice)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
