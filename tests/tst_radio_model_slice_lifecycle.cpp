@@ -18,6 +18,54 @@ using namespace NereusSDR;
 class TestRadioModelSliceLifecycle : public QObject {
     Q_OBJECT
 private slots:
+    // Bench report, ANAN-G2E 2026-07-28: a second receiver added on the same
+    // pan is "stuck to the exact dial freq as the first", and the B flag
+    // "just follows the A flag" instead of tuning independently.
+    //
+    // Opening on A's frequency is intentional (addSlice seeds a new slice
+    // from the active slice so it lands on the band being worked). What must
+    // then work is moving it: two slices sharing one DDC window are supposed
+    // to differ only by their shift oscillators, which is
+    // SliceStreamAllocator::retuneSlice returning JoinedExisting with
+    // shiftOffsetHz = frequencyHz - centreHz.
+    //
+    // This test is deliberately at the model layer, to establish whether the
+    // defect is here or above it in the flag wiring.
+    void secondSliceOnAPanTunesIndependently()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
+
+        // Order matters, and it mirrors what the operator does: tune the
+        // first receiver, THEN add a second one on the same pan. Seeding
+        // reads the active slice at add time, so adding both before tuning
+        // would seed B from the 14.225 MHz ctor default instead.
+        const int a = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sa = radio.sliceById(a);
+        QVERIFY(sa != nullptr);
+        sa->setFrequency(7'240'000.0);
+
+        const int b = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sb = radio.sliceById(b);
+        QVERIFY(sb != nullptr);
+
+        // B is seeded from A, so it starts co-channel. That part is by design.
+        QCOMPARE(sb->frequency(), sa->frequency());
+
+        // Move B 5 kHz up, comfortably inside a 192 kHz window.
+        sb->setFrequency(7'245'000.0);
+
+        // B must hold its new frequency, not snap back onto A.
+        QCOMPARE(sb->frequency(), 7'245'000.0);
+        QCOMPARE(sa->frequency(), 7'240'000.0);
+
+        // And they must differ by their shift oscillators, which is what
+        // actually makes them demodulate different signals.
+        QVERIFY2(!qFuzzyCompare(sa->shiftOffsetHz(), sb->shiftOffsetHz()),
+                 "both slices share a shift offset, so they demodulate the "
+                 "same frequency however the flags read");
+    }
+
     void addSliceOnPan_exists_and_is_callable()
     {
         // Disconnected RadioModel: maxSlices() == 1 (safe default) and
