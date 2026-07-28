@@ -507,6 +507,21 @@ public:
     /// WDSP RX channel id == slice index).
     QVector<int> slicesOnStream(int streamIndex) const;
 
+    /// Recompute every slice's shift oscillator against a new stream centre.
+    ///
+    /// A shared DDC window has one centre and N slices sitting at their own
+    /// offsets inside it. When the centre moves (a CTUN drag, a band jump),
+    /// each member's shift is (frequency - newCentreHz). Missing a co-host
+    /// leaves it demodulating the wrong signal while its flag still reads
+    /// the right number.
+    ///
+    /// Deliberately does NOT move the allocator's own centre: this is called
+    /// from the CTUN drag, which retunes the DDC through
+    /// ReceiverManager::forceHardwareFrequency precisely because it is
+    /// bypassing the allocator's placement policy. Callers that DO own the
+    /// placement (bindSliceToStream) already write the shift themselves.
+    void reshiftSlicesOnStream(int streamIndex, double newCentreHz);
+
     /// Phase 3F Sub-Epic I Task 7b: hardware DDC currently routed to
     /// `streamIndex`, or -1 when that stream is idle (or no codec has run).
     /// This is the codec's choice, republished; every slice on the stream

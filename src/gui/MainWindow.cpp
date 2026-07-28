@@ -1615,26 +1615,35 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
                 stream, static_cast<quint64>(centerHz));
         }
         sw->setDdcCenterFrequency(centerHz);
-        if (m_radioModel->wdspEngine()) {
-            if (RxChannel* ch =
-                    m_radioModel->wdspEngine()->rxChannel(s->sliceIndex())) {
-                ch->setShiftFrequency(s->frequency() - centerHz);
-            }
-        }
+        // Re-shift the WHOLE stream, not just this pan's slice. Addressing the
+        // dragged slice's own channel fixed the hardcoded rxChannel(0), but a
+        // shared DDC window still has one centre and N slices at their own
+        // offsets inside it, so a co-host on the same stream kept the offset it
+        // had before the drag and demodulated the wrong signal with its flag
+        // still reading right.
+        //
+        // From Thetis radio.cs:1417 [v2.10.3.15]: SetRXAShiftFreq receives
+        // +(freq - center). reshiftSlicesOnStream applies that per member.
+        m_radioModel->reshiftSlicesOnStream(stream, centerHz);
     });
 
-    // CTUN toggle clears this pan's slice shift rather than channel 0's.
+    // CTUN toggle restores this pan's whole stream rather than channel 0.
+    //
+    // Unpinning does not retune the DDC, so the members are still offset from
+    // an unmoved centre; zeroing the shift would drop the demodulator onto the
+    // DDC centre. Restore against where the DDC actually sits (the drag above
+    // bypasses the allocator via forceHardwareFrequency and writes the centre
+    // into this widget), and let the next VFO move settle the offsets to zero
+    // through the now-unpinned allocator.
     connect(sw, &SpectrumWidget::ctunEnabledChanged, this,
-            [this, panId](bool enabled) {
+            [this, panId, sw](bool enabled) {
         if (m_radioModel->receiverManager()) {
             m_radioModel->receiverManager()->setDdcFrequencyLocked(enabled);
         }
-        if (enabled || !m_radioModel->wdspEngine()) { return; }
+        if (enabled) { return; }
         if (SliceModel* s = sliceForPan(panId)) {
-            if (RxChannel* ch =
-                    m_radioModel->wdspEngine()->rxChannel(s->sliceIndex())) {
-                ch->setShiftFrequency(0.0);
-            }
+            m_radioModel->reshiftSlicesOnStream(s->streamIndex(),
+                                                sw->ddcCenterFrequency());
         }
     });
 
@@ -7311,25 +7320,42 @@ void MainWindow::wireSliceToSpectrum()
                     rxIdx, static_cast<quint64>(centerHz));
             }
             activeSpectrumWidget()->setDdcCenterFrequency(centerHz);
-            // Offset WDSP shift so audio stays on VFO frequency
-            // From Thetis radio.cs:1417 — SetRXAShiftFreq receives +(freq - center)
-            double shiftHz = slice->frequency() - centerHz;
-            RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-            if (rxCh) {
-                rxCh->setShiftFrequency(shiftHz);
-            }
+            // Offset the WDSP shift so audio stays on the VFO frequency -- for
+            // EVERY slice on this stream, not just the one that dragged. The
+            // window has one centre and N slices at their own offsets inside
+            // it, so this used to write rxChannel(0) and leave a co-hosted
+            // second receiver on a stale shift, demodulating the wrong signal
+            // while its flag still read the right number.
+            //
+            // From Thetis radio.cs:1417 [v2.10.3.15]: SetRXAShiftFreq receives
+            // +(freq - center). reshiftSlicesOnStream applies that per member,
+            // against each member's own frequency and own WDSP channel.
+            m_radioModel->reshiftSlicesOnStream(rxIdx, centerHz);
         }
     });
 
     // --- CTUN mode toggled → lock/unlock DDC ---
-    connect(activeSpectrumWidget(), &SpectrumWidget::ctunEnabledChanged,
-            this, [this](bool enabled) {
+    //
+    // Turning CTUN off releases the DDC pin but does not itself retune the
+    // DDC, so at this instant every slice on the stream is still offset from a
+    // centre that has not moved. Zeroing the shift (which this did, and only
+    // for channel 0) therefore dropped the demodulator onto the DDC centre
+    // while the flags went on reading their own frequencies. Restore each
+    // member against where the DDC actually sits instead; the next VFO move
+    // goes through the allocator, which retunes the now-unpinned stream and
+    // settles the offsets back to zero by itself.
+    //
+    // The pan's own DDC centre is the live figure here rather than the
+    // allocator's, because the CTUN drag above commands the DDC through
+    // ReceiverManager::forceHardwareFrequency, which deliberately bypasses the
+    // allocator and writes the result straight into this widget.
+    SpectrumWidget* const ctunPan = activeSpectrumWidget();
+    connect(ctunPan, &SpectrumWidget::ctunEnabledChanged,
+            this, [this, slice, ctunPan](bool enabled) {
         m_radioModel->receiverManager()->setDdcFrequencyLocked(enabled);
         if (!enabled) {
-            RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-            if (rxCh) {
-                rxCh->setShiftFrequency(0.0);
-            }
+            m_radioModel->reshiftSlicesOnStream(slice->streamIndex(),
+                                                ctunPan->ddcCenterFrequency());
         }
     });
 

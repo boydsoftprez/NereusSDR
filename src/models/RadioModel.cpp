@@ -3263,6 +3263,47 @@ QVector<int> RadioModel::slicesOnStream(int streamIndex) const
     return out;
 }
 
+// ── Phase 3F Sub-Epic J Task 5 ──────────────────────────────────────────────
+//
+// One window, one centre, N slices at their own offsets inside it. The CTUN
+// drag used to move the centre and then write ONE shift (channel 0's, on the
+// single-pan path), so with two slices sharing a DDC the co-host kept the
+// offset it had before the drag and quietly demodulated the wrong signal --
+// its flag still read the right number, which is what makes this class of
+// defect expensive to spot on the air. Same hazard family as the CTUN
+// stranding fix in 1058500a.
+//
+// Each member resolves its OWN WDSP channel through its own sliceIndex
+// (Sub-Epic I invariant: WDSP RX channel id == slice index); capturing one
+// channel and reusing it for the whole set would just relocate the bug.
+void RadioModel::reshiftSlicesOnStream(int streamIndex, double newCentreHz)
+{
+    if (streamIndex < 0) {
+        return;
+    }
+    const QVector<int> members = slicesOnStream(streamIndex);
+    for (int sliceIdx : members) {
+        SliceModel* s = sliceById(sliceIdx);
+        if (!s) {
+            continue;
+        }
+        const double shiftHz = s->frequency() - newCentreHz;
+        s->setShiftOffsetHz(shiftHz);
+        // Model and WDSP are written together on purpose. SliceModel is what
+        // the flag and the settings round-trip read; the channel is what
+        // actually demodulates. Leaving either behind reproduces the defect
+        // in the half that was skipped.
+        //
+        // From Thetis radio.cs:1417 [v2.10.3.15]: SetRXAShiftFreq receives
+        // +(freq - center).
+        if (m_wdspEngine) {
+            if (RxChannel* ch = m_wdspEngine->rxChannel(s->sliceIndex())) {
+                ch->setShiftFrequency(shiftHz);
+            }
+        }
+    }
+}
+
 int RadioModel::ddcForStream(int streamIndex) const
 {
     if (streamIndex < 0 || streamIndex >= static_cast<int>(m_streamDdc.size())) {

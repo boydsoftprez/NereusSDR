@@ -204,6 +204,48 @@ private slots:
         QCOMPARE(QChar('A' + reAdded), QChar('B'));
     }
 
+    // A shared DDC window has ONE centre. When CTUN moves it, every slice on
+    // that stream needs its shift recomputed as (frequency - newCentre), not
+    // just the slice that dragged. Otherwise the co-host keeps a stale shift
+    // and demodulates the wrong signal, which is the same hazard family as
+    // the 2026-07-27 CTUN stranding fix.
+    void movingTheDdcCentreReshiftsEveryCoHostedSlice()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
+
+        const int a = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sa = radio.sliceById(a);
+        QVERIFY(sa != nullptr);
+        sa->setFrequency(7'240'000.0);
+
+        const int b = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sb = radio.sliceById(b);
+        QVERIFY(sb != nullptr);
+        sb->setFrequency(7'245'000.0);
+
+        // Both must be on the same stream for this test to mean anything.
+        QCOMPARE(sa->streamIndex(), sb->streamIndex());
+        const int stream = sa->streamIndex();
+
+        // A third slice, far enough out to have claimed its own DDC. Its shift
+        // is the control: reshifting one stream must not reach across into a
+        // window it does not own.
+        const int c = radio.addSlice(QStringLiteral("pan-1"));
+        SliceModel* sc = radio.sliceById(c);
+        QVERIFY(sc != nullptr);
+        sc->setFrequency(14'200'000.0);
+        QVERIFY(sc->streamIndex() != stream);
+        QCOMPARE(sc->shiftOffsetHz(), 0.0);
+
+        const double newCentre = 7'250'000.0;
+        radio.reshiftSlicesOnStream(stream, newCentre);
+
+        QVERIFY(qFuzzyCompare(sa->shiftOffsetHz(), 7'240'000.0 - newCentre));
+        QVERIFY(qFuzzyCompare(sb->shiftOffsetHz(), 7'245'000.0 - newCentre));
+        QCOMPARE(sc->shiftOffsetHz(), 0.0);
+    }
+
     // Single-slice operation is untouched: slice A is still id 0 and still
     // resolves.
     void sliceAIsStillIdZero()
