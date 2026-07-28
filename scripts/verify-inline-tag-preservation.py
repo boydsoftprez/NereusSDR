@@ -15,10 +15,14 @@ Algorithm:
 - Scan every `.cpp/.cc/.c/.h/.hpp` under src/ and tests/ for cites
   matching `// From Thetis <file>:<line(s)> [@sha|vX.Y.Z]` or
   `// Source: mi0bot <file>:<line(s)> [@sha]`.
-- For each cite, open the cited file under ../Thetis or
-  ../mi0bot-Thetis (configurable), extract any inline contributor
-  tags in the cited line range ±5 lines, and require each tag to
-  appear within ±10 lines of the cite in the port.
+- For each cite, open the cited file under the ONE upstream that cite
+  names (../Thetis, ../mi0bot-Thetis, ../deskhpsdr or ../freedv-gui,
+  each configurable), extract any inline contributor tags in the
+  cited line range ±5 lines, and require each tag to appear within ±10
+  lines of the cite in the port.
+- Upstream clones are located by walking parent directories, so this
+  works from a plain checkout and from a linked worktree under
+  .claude/worktrees/ without either needing to know its own depth.
 - Tags recognized: developer callsigns (DH1KLM, MW0LGE, W2PA, MI0BOT,
   KD5TFD, OE3IDE, G8NJJ, NR0V, G0ORX, VK6APH) + `//-W2PA` dash form +
   `//[X.Y.Z]Author` version-prefixed form + named contributors
@@ -31,8 +35,9 @@ Usage:
 Exit code 0 iff no findings (strict) or always 0 in audit mode.
 
 Configuration:
-    NEREUS_THETIS_DIR      — override ../Thetis path
-    NEREUS_MI0BOT_DIR      — override ../mi0bot-Thetis path
+    NEREUS_THETIS_DIR:      override ../Thetis path
+    NEREUS_MI0BOT_DIR:      override ../mi0bot-Thetis path
+    NEREUS_FREEDV_DIR:      override ../freedv-gui path
 """
 from __future__ import annotations
 
@@ -46,15 +51,40 @@ REPO = Path(__file__).resolve().parent.parent
 SCAN_ROOTS = ["src", "tests"]
 SCAN_SUFFIXES = {".cpp", ".cc", ".c", ".h", ".hpp"}
 
+def discover_sibling(name: str) -> Path:
+    """Locate an upstream clone sitting beside the NereusSDR checkout.
+
+    CLAUDE.md places upstreams as siblings of the NereusSDR root
+    (../Thetis, ../mi0bot-Thetis).  Computing that from REPO is awkward
+    because REPO is the *worktree* root when this runs from inside
+    .claude/worktrees/<name>, and the repo root otherwise.  The previous
+    fixed `REPO.parent.parent.parent / name` arithmetic resolved to
+    "/Thetis" from a plain checkout and "<repo>/Thetis" from a worktree.
+    Neither path exists, so every local run hit the FATAL-and-skip branch
+    in main() and the hook has never actually verified a tag outside CI
+    (which supplies the paths by env var and was unaffected).
+
+    Walking ancestors is correct from both locations: a plain checkout
+    finds ../Thetis one level up, and a worktree finds it four levels up,
+    without either needing to know how deep it is.
+    """
+    for base in (REPO, *REPO.parents):
+        candidate = base / name
+        if candidate.is_dir():
+            return candidate
+    # Nothing found. Return the conventional location so the diagnostic
+    # in main() names the path a developer is expected to clone into.
+    return REPO.parent / name
+
+
 THETIS_DIR = Path(os.environ.get(
-    "NEREUS_THETIS_DIR",
-    REPO.parent.parent.parent / "Thetis")).expanduser()
+    "NEREUS_THETIS_DIR", discover_sibling("Thetis"))).expanduser()
 MI0BOT_DIR = Path(os.environ.get(
-    "NEREUS_MI0BOT_DIR",
-    REPO.parent.parent.parent / "mi0bot-Thetis")).expanduser()
+    "NEREUS_MI0BOT_DIR", discover_sibling("mi0bot-Thetis"))).expanduser()
 DESKHPSDR_DIR = Path(os.environ.get(
-    "NEREUS_DESKHPSDR_DIR",
-    "/Users/j.j.boyd/deskhpsdr")).expanduser()
+    "NEREUS_DESKHPSDR_DIR", discover_sibling("deskhpsdr"))).expanduser()
+FREEDV_DIR = Path(os.environ.get(
+    "NEREUS_FREEDV_DIR", discover_sibling("freedv-gui"))).expanduser()
 
 # Cite detectors. We scan for the upstream filename + line token; the
 # stamp presence is verified by the sibling verify-inline-cites.py
@@ -85,6 +115,21 @@ RE_CITE_DESKHPSDR = re.compile(
     r"|From\s+deskhpsdr\s+"        # "From deskhpsdr " followed by any path
     r")"
     r"(?P<file>(?:deskhpsdr/)?[\w./-]+\.(?:c|h))"
+    r":(?P<lines>\d+(?:[,\s-]+\d+)*)"
+)
+# freedv-gui, same shape and the same ordering requirement as deskhpsdr:
+# "Source: freedv-gui/src/main.cpp:1971-1996" is matched by the bare
+# "Source:" alternative in RE_CITE_RAMDOR, which then tries to resolve a
+# freedv-gui path under the Thetis clone and reports upstream-not-found.
+# The freedv-gui corpus is already merged into the tag list by
+# load_corpus(), so before this detector existed those cites loaded
+# contributor tags that nothing was ever checked against.
+RE_CITE_FREEDV = re.compile(
+    r"//\s*(?:"
+    r"Source:\s+(?=freedv-gui/)"   # "Source: " followed by freedv-gui/ path
+    r"|From\s+freedv-gui\s+"       # "From freedv-gui " followed by any path
+    r")"
+    r"(?P<file>(?:freedv-gui/)?[\w./-]+\.(?:c|h|cpp|cc|hpp))"
     r":(?P<lines>\d+(?:[,\s-]+\d+)*)"
 )
 
@@ -190,11 +235,19 @@ def parse_lines_token(tok: str):
 
 
 def resolve_upstream(cite_file: str, which: str) -> Path | None:
-    """Find the cited file under ramdor Thetis, mi0bot Thetis, or deskhpsdr."""
-    if which == "deskhpsdr":
-        # deskhpsdr cite paths are relative to repo root (e.g. "src/new_protocol.c")
-        # or just a bare filename. Try both direct and src/ prefix.
-        for base in _deskhpsdr_search_bases():
+    """Find the cited file under the ONE upstream the cite names.
+
+    `which` comes from whichever cite detector matched, and is honoured
+    exactly: a cite that says mi0bot is resolved against the mi0bot clone
+    and nowhere else. See the comment on the `bases` assignment below for
+    why falling back to a sibling upstream is actively harmful.
+    """
+    if which in ("deskhpsdr", "freedv-gui"):
+        # These cite paths are relative to the upstream repo root
+        # (e.g. "src/new_protocol.c") or just a bare filename. Try both
+        # direct and src/ prefix.
+        for base in (_deskhpsdr_search_bases() if which == "deskhpsdr"
+                     else _freedv_search_bases()):
             candidate = base / cite_file
             if candidate.is_file():
                 return candidate
@@ -208,7 +261,21 @@ def resolve_upstream(cite_file: str, which: str) -> Path | None:
                         return found
         return None
 
-    bases = [THETIS_DIR] if which == "ramdor" else [MI0BOT_DIR, THETIS_DIR]
+    # No cross-upstream fallback. mi0bot/OpenHPSDR-Thetis is a *fork* of
+    # ramdor/Thetis, so both clones carry same-named files (console.cs,
+    # clsHardwareSpecific.cs) whose contents and line numbering have
+    # diverged. Resolving an mi0bot cite against the ramdor clone opens
+    # unrelated code at the cited line number, harvests whatever author
+    # tags happen to sit near it, and then reports our port as missing
+    # tags it was never supposed to carry.
+    #
+    # That is not hypothetical: with the mi0bot clone absent this
+    # produced 5 confident FAILs on clean main (PaGainProfile.cpp,
+    # PaTelemetryScaling.{h,cpp}, tst_pa_gain_profile.cpp), each naming a
+    # real contributor (//N1GP, //DH1KLM) and each entirely spurious. A
+    # tool that fabricates GPL-attribution violations is worse than one
+    # that reports it cannot check, so an absent clone now warns.
+    bases = [THETIS_DIR] if which == "ramdor" else [MI0BOT_DIR]
     for base in bases:
         # Direct path
         candidate = base / cite_file
@@ -226,14 +293,24 @@ def resolve_upstream(cite_file: str, which: str) -> Path | None:
     return None
 
 
-def _deskhpsdr_search_bases() -> list[Path]:
-    """Return candidate deskhpsdr base directories, preferring env override."""
-    candidates = [DESKHPSDR_DIR]
-    for rel in ("../deskhpsdr", "../../deskhpsdr", "../../../deskhpsdr"):
-        p = (REPO / rel).resolve()
+def _sibling_search_bases(primary: Path, name: str) -> list[Path]:
+    """Candidate base directories for an upstream, env override first."""
+    candidates = [primary]
+    for base in (REPO, *REPO.parents):
+        p = (base / name).resolve()
         if p not in candidates:
             candidates.append(p)
     return [p for p in candidates if p.is_dir()]
+
+
+def _deskhpsdr_search_bases() -> list[Path]:
+    """Return candidate deskhpsdr base directories, preferring env override."""
+    return _sibling_search_bases(DESKHPSDR_DIR, "deskhpsdr")
+
+
+def _freedv_search_bases() -> list[Path]:
+    """Return candidate freedv-gui base directories, preferring env override."""
+    return _sibling_search_bases(FREEDV_DIR, "freedv-gui")
 
 
 def find_header_end(text: list[str]) -> int:
@@ -319,13 +396,31 @@ def main() -> int:
         print("Set NEREUS_THETIS_DIR or clone to ../Thetis", file=sys.stderr)
         return 2
 
+    # mi0bot is the authoritative upstream for HL2 ports, so a missing
+    # clone leaves every `// From mi0bot ...` cite unverified. It used to
+    # be worse than unverified: the resolver fell through to the ramdor
+    # clone and invented failures (see resolve_upstream). Say so loudly.
+    if not MI0BOT_DIR.is_dir():
+        print(f"WARN: mi0bot-Thetis not found at {MI0BOT_DIR}. Every "
+              f"`// From mi0bot ...` cite will emit upstream-not-found "
+              f"instead of being verified. Set NEREUS_MI0BOT_DIR or clone "
+              f"to a sibling directory.", file=sys.stderr)
+
     # deskhpsdr is optional for now — warn if absent so local runs without
     # the clone still pass, but CI that has it cloned will do full checks.
     if not _deskhpsdr_search_bases():
         print(f"WARN: deskhpsdr not found (searched {DESKHPSDR_DIR} and "
-              f"relative ../../../deskhpsdr). deskhpsdr cite checks will "
+              f"sibling directories). deskhpsdr cite checks will "
               f"emit upstream-not-found warnings rather than hard-failing. "
               f"Set NEREUS_DESKHPSDR_DIR or clone to a sibling directory.",
+              file=sys.stderr)
+
+    # freedv-gui, same treatment as deskhpsdr.
+    if not _freedv_search_bases():
+        print(f"WARN: freedv-gui not found (searched {FREEDV_DIR} and "
+              f"sibling directories). freedv-gui cite checks will "
+              f"emit upstream-not-found warnings rather than hard-failing. "
+              f"Set NEREUS_FREEDV_DIR or clone to a sibling directory.",
               file=sys.stderr)
 
     findings = []
@@ -345,6 +440,7 @@ def main() -> int:
             # (break at end of loop body).
             for rx, which in ((RE_CITE_MI0BOT, "mi0bot"),
                               (RE_CITE_DESKHPSDR, "deskhpsdr"),
+                              (RE_CITE_FREEDV, "freedv-gui"),
                               (RE_CITE_RAMDOR, "ramdor")):
                 m = rx.search(line)
                 if not m:
