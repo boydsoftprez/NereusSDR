@@ -59,6 +59,7 @@ mw0lge@grange-lane.co.uk
 #include "HpsdrModel.h"
 
 #include <QObject>
+#include <QDeadlineTimer>
 #include <QHostAddress>
 #include <QUdpSocket>
 #include <QTimer>
@@ -179,6 +180,22 @@ public:
     void startDiscovery();
     void stopDiscovery();
 
+    // Post-disconnect quiet period (2026-07-27, ANAN-G2E lockup).
+    //
+    // Wire captures show NereusSDR fires a broadcast discovery burst 7-15 ms
+    // after sending run=0 (disconnect reopens the ConnectionPanel, whose ctor
+    // auto-scans) and both observed G2E lockups happened inside that window,
+    // while Thetis goes completely silent after its stop frame and never
+    // wedges the same radio.  Probing a radio while its stop-transition state
+    // machines are still settling is a race Thetis never enters.
+    //
+    // Calling holdOffScans() defers — never drops — any startDiscovery() or
+    // probeAddress() issued before the deadline: the work runs when the quiet
+    // period expires, so the panel still populates and Connect flows still
+    // probe, just after the radio has finished stopping.
+    void holdOffScans(std::chrono::milliseconds quiet);
+    qint64 holdOffRemainingMs() const;
+
     DiscoveryProfile profile() const { return m_profile; }
     void setProfile(DiscoveryProfile profile) { m_profile = profile; }
 
@@ -208,6 +225,11 @@ public:
         m_lastSeen.insert(mac, lastSeenMs);
     }
     void forceStaleCheckForTest() { onStaleCheck(); }
+
+    // The holdOffScans deadline is process-wide (see s_scanHoldOff), so it
+    // survives across test functions and would defer probes in unrelated
+    // cases. Call from a QTest init() for a clean slate.
+    static void clearHoldOffForTest() { s_scanHoldOff = QDeadlineTimer(); }
 #endif
 
     // Public static parsers — exposed for unit-testing in Task 5.
@@ -259,6 +281,30 @@ private:
 
     QTimer m_continuousTimer;   // drives ongoing NIC re-scans while monitoring
     QTimer m_staleTimer;
+
+    // holdOffScans deadline.  Default-constructed QDeadlineTimer is already
+    // expired, which is the "no holdoff armed" state.
+    //
+    // PROCESS-WIDE, not per-instance (Codex review, PR #306).  The constraint
+    // belongs to the radio and the wire, not to any one RadioDiscovery object,
+    // and RadioModel::discovery() is not the only instance: e.g.
+    // AddCustomRadioDialog.cpp:589 constructs its own.  A per-object deadline
+    // would let that dialog probe a just-disconnected radio inside the quiet
+    // window and re-enter the post-stop race this exists to prevent.
+    //
+    // MONOTONIC, not wall-clock (Codex review, PR #306).  This was
+    // QDateTime::currentMSecsSinceEpoch() arithmetic, which an NTP step could
+    // move underneath us: a forward correction expires the holdoff early and
+    // lets a probe land inside the G2E stop-transition window this exists to
+    // avoid, and a backward correction defers discovery for as long as the
+    // correction was large.  QDeadlineTimer measures against a monotonic
+    // source, so clock synchronisation cannot shorten a radio-safety interval
+    // or wedge discovery.
+    static QDeadlineTimer s_scanHoldOff;
+
+    // Per-instance: stops a burst of startDiscovery() calls on THIS object
+    // from queueing multiple delayed scans.
+    bool m_deferredScanPending{false};
     QMap<QString, RadioInfo> m_radios;   // keyed by MAC address
     QMap<QString, qint64> m_lastSeen;    // MAC -> timestamp
     QString m_connectedMac;              // MAC currently in use by a RadioConnection; exempt from stale-removal
