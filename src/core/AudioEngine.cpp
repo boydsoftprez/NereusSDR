@@ -1228,6 +1228,14 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     if (avFrames > 0) {
         // DirectConnection only: avMix is thread_local scratch and the next
         // block overwrites it. See the signal's contract in AudioEngine.h.
+        //
+        // The consumer, TxWorkerThread::onAntiVoxBlockReady, therefore runs
+        // synchronously on this thread inside this emit. It returns on an
+        // atomic load while the operator has anti-VOX off, which is the
+        // default; with anti-VOX on it copies the block, which is one
+        // allocation per period on this thread. That is what the retired
+        // slice-0 fork did too, one frame up the stack in
+        // RxDspWorker::processIqBatch, except unconditionally.
         emit antiVoxBlockReady(avMix.data(), avFrames);
     }
 
