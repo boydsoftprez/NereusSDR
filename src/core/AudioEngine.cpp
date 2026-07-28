@@ -219,6 +219,12 @@ AudioEngine::AudioEngine(QObject* parent)
     //   asig = avsig - antivox_gain * antivox_level   (dexp.c:313-316)
     // then cancels too little: a false VOX trigger, meaning unintended
     // transmit, in exactly the window a transition opens.
+    //
+    // The per-slice anti-click ramp (kDefaultRampFrames, 5 ms) is left
+    // alone. It is ours rather than upstream's, it only bites on a slice's
+    // very first block after a join, and DEXP's hang time keeps the state
+    // machine out of DEXP_LOW, where antivox_level is recomputed
+    // (dexp.c:288 [v2.10.3.15]), for far longer than 5 ms after an unkey.
     m_antiVoxMix.setSlewUpFrames(0);
 
     // (Phase 3M-1c bench-fix-A added an m_micPumpTimer here that drove
@@ -1067,6 +1073,25 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // CLAUDE.md's rule is that it never holds a lock.
     m_masterMix.accumulate(sliceId, samples, frames, slice->muted());
 
+    // Anti-VOX hears exactly what the speakers hear. From Thetis
+    // cmaster.c:370-372 [v2.10.3.15], every sub-receiver's audio is handed
+    // to the transmitter's anti-VOX mixer in the same loop, and from the
+    // same buffer, that feeds the speakers mix:
+    //   xMixAudio (0, 0, chid (stream, j), pcm->rcvr[rx].audio[j]);
+    //   for (k = 0; k < pcm->cmXMTR; k++)
+    //       xMixAudio (pcm->xmtr[k].pavoxmix, -1, chid (stream, j), ...);
+    //
+    // Mute rides in for the same reason it does above, with one deliberate
+    // difference from upstream. Thetis reflects an RX mute in the speakers
+    // mixer's `what` mask only (audio.cs:1291-1309 [v2.10.3.15]) and leaves
+    // the anti-VOX mask alone, yet describes that mask's source as "use
+    // audio going to hardware minus MON" (cmaster.cs:946 [v2.10.3.15]). A
+    // muted slice contributes nothing to the speakers, so nothing of it is
+    // in the room for the microphone to pick up, and counting it would have
+    // DEXP subtract audio that was never there. Following the stated intent
+    // rather than the mask.
+    m_antiVoxMix.accumulate(sliceId, samples, frames, slice->muted());
+
     // VAX tap receives raw demodulated audio — pre-MasterMixer gain/pan,
     // pre-master-volume — matching Thetis VAC behavior and the spec §3.4
     // pseudocode. Per-channel mute skips the push; non-unity per-channel
@@ -1171,6 +1196,41 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // the push happens in the same call stack at the same instant it
     // always did: no added latency on the common path.
     const int mixed = m_masterMix.tryDrain(mix.data(), frames);
+
+    // Drain the anti-VOX reference in the same call stack, so both mixes are
+    // paced by their own barrier over the same period.
+    //
+    // Cadence is the whole point. The slice-0 gate this replaces guaranteed
+    // exactly one block per outSize/outRate seconds, which is what DEXP was
+    // configured for: SetAntiVOXSize / SetAntiVOXRate describe a block, and
+    // xdexp walks antivox_size samples through a single-pole IIR calibrated
+    // in sample steps at antivox_rate on each pass (dexp.c:288-297
+    // [v2.10.3.15]). Delivery is destructive, not accumulating
+    // (dexp.c:708-715 [v2.10.3.15]), so a second block inside one period
+    // silently replaces the first. Barrier pacing supplies that cadence now:
+    // one drained block per period whatever the stream width.
+    //
+    // Deliberately AHEAD of the `mixed <= 0` return below rather than after
+    // the speakers push. The two barriers are congruent today (same ids,
+    // same membership funnel, same feed), so the return would only ever skip
+    // a drain that was going to yield nothing anyway; sitting ahead of it
+    // means the anti-VOX reference does not silently inherit a future
+    // divergence in the speakers path. Nothing else separates the two: the
+    // master volume and master-mute gates below apply to `mix`, never to
+    // `avMix`, matching upstream, where each mixer carries its own volume
+    // and the anti-VOX instance is created at 1.0 (cmaster.c:167
+    // [v2.10.3.15]).
+    static thread_local std::vector<float> avMix;
+    if (static_cast<int>(avMix.size()) < frames * 2) {
+        avMix.resize(static_cast<size_t>(frames) * 2);
+    }
+    const int avFrames = m_antiVoxMix.tryDrain(avMix.data(), frames);
+    if (avFrames > 0) {
+        // DirectConnection only: avMix is thread_local scratch and the next
+        // block overwrites it. See the signal's contract in AudioEngine.h.
+        emit antiVoxBlockReady(avMix.data(), avFrames);
+    }
+
     if (mixed <= 0) {
         return;
     }

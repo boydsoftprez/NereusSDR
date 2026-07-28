@@ -324,7 +324,7 @@ public:
     // Plan: 3M-1b E.3.
     MasterMixer& masterMixForTest() { return m_masterMix; }
 
-    // Test seam — expose m_antiVoxMix so tests can assert what the anti-VOX
+    // Test seam: expose m_antiVoxMix so tests can assert what the anti-VOX
     // reference sums, what it refuses to sum, and how often it releases a
     // block. Phase 3F Sub-Epic J Task 9.
     MasterMixer& antiVoxMixForTest() { return m_antiVoxMix; }
@@ -602,6 +602,23 @@ signals:
     // Production wiring of QAudioSink::stateChanged → setFlowState
     // lands with the segment integration in sub-PR-4 / D.2.
     void flowStateChanged(NereusSDR::AudioEngine::FlowState state);
+
+    /// One mixed anti-VOX reference block, interleaved stereo float32,
+    /// length = frames * 2. Emitted from rxBlockReady on the DSP thread,
+    /// once per audio period, whenever the anti-VOX mixer's readiness
+    /// barrier releases a block.
+    ///
+    /// **DirectConnection ONLY.** `samples` points at a thread_local
+    /// scratch buffer that is valid for the duration of this synchronous
+    /// emit and is overwritten by the next block. A queued connection would
+    /// copy the pointer, not the audio, and hand the consumer a buffer that
+    /// has already moved on. Same contract as txMonitorBlockReady's
+    /// incoming samples.
+    ///
+    /// Phase 3F Sub-Epic J Task 9. Nothing is connected to this yet: the
+    /// slice-0 feed in RxDspWorker::antiVoxSampleReady is still the live
+    /// path, and re-pointing TxWorkerThread's consumer is a follow-up.
+    void antiVoxBlockReady(const float* samples, int frames);
 
     void volumeChanged(float volume);
     void masterMutedChanged(bool muted);

@@ -157,6 +157,46 @@ private slots:
         av.accumulate(1, blk.data(), 1);
         QCOMPARE(av.tryDrain(out.data(), 1), 1);
     }
+
+    // ── The feed is actually wired to the RX audio entry point. ───────────
+    //
+    // rxBlockReady is the single place slice audio arrives, and it must
+    // hand the same block to both mixes, then release one anti-VOX block
+    // per period. Connected DirectConnection because the emitted pointer is
+    // thread_local scratch that the next block overwrites, which is the
+    // contract the signal declares.
+
+    void rxBlockReadyFeedsAndDrainsTheAntiVoxMix()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
+        AudioEngine* engine = radio.audioEngine();
+        QVERIFY(engine != nullptr);
+        engine->antiVoxMixForTest().setRampFrames(1);
+
+        const int a = radio.addSlice();
+        QCOMPARE(a, 0);
+
+        int   emits      = 0;
+        int   gotFrames  = 0;
+        float gotFirst   = 0.0f;
+        QObject::connect(engine, &AudioEngine::antiVoxBlockReady, engine,
+                         [&](const float* s, int n) {
+                             ++emits;
+                             gotFrames = n;
+                             gotFirst  = s[0];
+                         },
+                         Qt::DirectConnection);
+
+        // 2 frames of interleaved stereo, all non-zero so a dropped feed
+        // shows up as silence rather than as a passing zero comparison.
+        const std::array<float, 4> block = {0.10f, 0.20f, -0.30f, -0.40f};
+        engine->rxBlockReady(a, block.data(), 2);
+
+        QCOMPARE(emits, 1);
+        QCOMPARE(gotFrames, 2);
+        QCOMPARE(gotFirst, 0.10f);
+    }
 };
 
 QTEST_MAIN(TstAudioEngineAntiVoxMix)
