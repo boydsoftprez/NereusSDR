@@ -186,6 +186,24 @@ signals:
     /// thread boundary without holding any audio-thread lock.
     void radeMicBlockReady(const QByteArray& speech16k);
 
+    /// Phase 3F Sub-Epic J Task 9: internal anti-VOX handoff.  Carries an
+    /// OWNED copy of one mixed anti-VOX reference block from
+    /// onAntiVoxBlockReady (which runs on the DSP thread) to
+    /// onAntiVoxSamplesReady (which runs on this object's own thread).
+    ///
+    /// Self-connected Qt::QueuedConnection in the constructor.  This is the
+    /// thread boundary, and it is crossed by value on purpose: the raw
+    /// pointer AudioEngine hands out must never travel across it.  A signal
+    /// rather than QMetaObject::invokeMethod for the same lifetime reason
+    /// recorded at RxDspWorker.h's radeIqReady: ~QObject
+    /// auto-disconnects and drops in-flight slot calls under the connection
+    /// lock, so a teardown racing the DSP thread cannot deliver into a
+    /// half-destroyed worker.
+    ///
+    /// Not for external use; nothing outside this class connects to it.
+    void antiVoxReferenceCopied(const QVector<float>& interleaved,
+                                int sampleCount);
+
 public slots:
     // ── Phase 3R Task K2: mode-aware TX path setter ─────────────────────
     //
@@ -225,13 +243,17 @@ public slots:
     void setRadeMicGainDb(int dB);
     void setRadeLeveler(bool on, int maxGainDb, int decayMs);
 
-    // ── Anti-VOX queued slots (3M-3a-iv) ─────────────────────────────────
+    // ── Anti-VOX slots (3M-3a-iv) ────────────────────────────────────────
     //
-    // These four slots form the worker-thread proxy for anti-VOX state and
-    // sample-feed.  Wired in RadioModel (Task 9) via QueuedConnection so
-    // emissions from the main thread (MoxController, RxDspWorker) deliver
-    // onto the worker's event queue and apply between waitForBlock cycles
-    // (cf. the run() narrative on cross-thread queued setter delivery).
+    // These slots form the worker-thread proxy for anti-VOX state and
+    // sample-feed.  The state setters are wired in RadioModel via
+    // QueuedConnection so emissions from the main thread (MoxController)
+    // deliver onto the worker's event queue and apply between waitForBlock
+    // cycles (cf. the run() narrative on cross-thread queued setter
+    // delivery).
+    //
+    // The sample feed is the exception and is wired DirectConnection: see
+    // onAntiVoxBlockReady, which owns the pointer contract.
     //
     // Architecture: TxChannel itself lives on this worker thread once
     // RadioModel::connectToRadio() runs moveToThread().  These wrappers
@@ -248,16 +270,49 @@ public slots:
     // From Thetis cmaster.cs:208-209 [v2.10.3.13] — SetAntiVOXRun.
     void setAntiVoxRun(bool run);
 
-    // onAntiVoxSamplesReady: receive RX audio fork from RxDspWorker and
-    // pump it into TxChannel::sendAntiVoxData when anti-VOX is enabled.
-    // Gates on m_antiVoxRun (acquire) so the float→double conversion in
-    // TxChannel is skipped when the user has anti-VOX off.
+    // onAntiVoxBlockReady: the anti-VOX reference block, straight off
+    // AudioEngine's mixer drain.
     //
-    // Single-RX equivalent of Thetis ChannelMaster aamix output stage
-    // (cmaster.c:159-175 [v2.10.3.13]) — aamix mixes N RXs into one
-    // anti-VOX stream and calls SendAntiVOXData; with one RX in 3M-3a-iv
-    // we skip the mixer entirely and pump the single RX block directly.
-    void onAntiVoxSamplesReady(int sliceId, const QVector<float>& interleaved, int sampleCount);
+    // **Qt::DirectConnection ONLY.**  `samples` points into thread_local
+    // scratch inside AudioEngine::rxBlockReady that the next audio period
+    // overwrites, so it is valid for the duration of this synchronous call
+    // and no longer.  This method therefore runs on the DSP thread, takes
+    // ownership of the audio while the pointer is still live, and hands the
+    // COPY to onAntiVoxSamplesReady through antiVoxReferenceCopied.  The
+    // raw pointer never crosses a thread boundary.
+    //
+    // Do not re-point this at a queued connection to "fix" anything.  Qt
+    // cannot marshal `const float*` (it is not a registered metatype), so a
+    // queued connect fails loudly at connect time and drops the call rather
+    // than dangling, but the correct shape is Direct plus the copy taken
+    // here, and that is what RadioModel wires.
+    //
+    // Gates on m_antiVoxRun (acquire) BEFORE the copy, so anti-VOX off (the
+    // default) costs the audio path one atomic load per period: no
+    // allocation, no posted event.  onAntiVoxSamplesReady re-checks the
+    // same gate for the benefit of direct callers.
+    //
+    // From Thetis cmaster.c:371-372 [v2.10.3.15]: every sub-receiver's
+    // audio goes to the transmitter's anti-VOX mixer, whose SendAntiVOXData
+    // callback (create_aamix argument at cmaster.c:171 [v2.10.3.15])
+    // delivers one mixed block.  AudioEngine::m_antiVoxMix is that mixer;
+    // this is its callback.
+    void onAntiVoxBlockReady(const float* samples, int frames);
+
+    // onAntiVoxSamplesReady: pump one owned anti-VOX reference block into
+    // TxChannel::sendAntiVoxData when anti-VOX is enabled.  Gates on
+    // m_antiVoxRun (acquire) so the float→double conversion in TxChannel is
+    // skipped when the user has anti-VOX off.
+    //
+    // Runs on this object's own thread (main), which is why the block
+    // arrives here by value: see antiVoxReferenceCopied above.
+    //
+    // Phase 3F Sub-Epic J Task 9 dropped the leading sliceId argument.  The
+    // buffer used to be slice A's audio and the slot gated on `sliceId != 0`
+    // to keep the single-RX feed honest; it is now the sum of every audible
+    // slice (Thetis cmaster.c:371-372 [v2.10.3.15]) and has no per-slice
+    // identity left to gate on.
+    void onAntiVoxSamplesReady(const QVector<float>& interleaved, int sampleCount);
 
     // setAntiVoxBlockGeometry: queued slot for RxDspWorker::bufferSizesChanged.
     // Calls both TxChannel::setAntiVoxSize and TxChannel::setAntiVoxRate so
@@ -357,6 +412,7 @@ private:
 
     // Anti-VOX run gate (3M-3a-iv).  Mirrors the most-recent
     // setAntiVoxRun(bool) call.  Read with acquire in
+    // onAntiVoxBlockReady (DSP thread) and again in
     // onAntiVoxSamplesReady, written with release in setAntiVoxRun.
     // Default false matches the existing TxChannel::m_antiVoxRunLast
     // default and the WDSP DEXP create-time `antivox_run = 0` argument

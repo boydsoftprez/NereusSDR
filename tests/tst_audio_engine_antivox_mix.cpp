@@ -197,6 +197,52 @@ private slots:
         QCOMPARE(gotFrames, 2);
         QCOMPARE(gotFirst, 0.10f);
     }
+
+    // ── Adding a slice does not change the BLOCK GEOMETRY. ────────────────
+    //
+    // DEXP is told its detector dimensions once, through
+    // TxWorkerThread::setAntiVoxBlockGeometry, which carries
+    // RxDspWorker::outSize and the 48 kHz panel rate. Slices sum into one
+    // another rather than concatenating, so a second audible receiver
+    // changes the block's CONTENT and never its LENGTH, and outSize stays
+    // the right answer with any number of slices up.
+    //
+    // Getting this wrong fails silently, which is why it is pinned here
+    // rather than left to reasoning: TxChannel::sendAntiVoxData rejects
+    // nsamples != m_antiVoxSize with a log line and returns, so a geometry
+    // drift stops feeding the detector altogether while everything else
+    // keeps running.
+
+    void addingASliceDoesNotChangeTheBlockLength()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
+        AudioEngine* engine = radio.audioEngine();
+        QVERIFY(engine != nullptr);
+        engine->antiVoxMixForTest().setRampFrames(1);
+
+        const int a = radio.addSlice();
+        const int b = radio.addSlice();
+        QVERIFY(a >= 0 && b >= 0 && a != b);
+
+        int emits     = 0;
+        int gotFrames = 0;
+        QObject::connect(engine, &AudioEngine::antiVoxBlockReady, engine,
+                         [&](const float*, int n) {
+                             ++emits;
+                             gotFrames = n;
+                         },
+                         Qt::DirectConnection);
+
+        const std::array<float, 4> block = {0.10f, 0.20f, -0.30f, -0.40f};
+
+        // Both slices deliver one 2-frame block. The barrier releases once.
+        engine->rxBlockReady(a, block.data(), 2);
+        engine->rxBlockReady(b, block.data(), 2);
+
+        QCOMPARE(emits, 1);
+        QCOMPARE(gotFrames, 2);   // not 4: summed, not concatenated
+    }
 };
 
 QTEST_MAIN(TstAudioEngineAntiVoxMix)

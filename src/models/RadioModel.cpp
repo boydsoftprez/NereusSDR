@@ -8003,17 +8003,19 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
 
     // ── Phase 3M-3a-iv Task 9: anti-VOX cancellation feed wiring ─────────
     //
-    // Closes the cancellation-feed wire chain end-to-end: the post-
-    // decimation RX audio block produced by RxDspWorker is forked into
-    // TxWorkerThread, which (when m_antiVoxRun is true) pumps it into
+    // Closes the cancellation-feed wire chain end-to-end: the mixed RX
+    // audio block produced by AudioEngine is handed to TxWorkerThread,
+    // which (when m_antiVoxRun is true) pumps it into
     // TxChannel::sendAntiVoxData → WDSP DEXP's anti-VOX detector.  The
     // detector then biases the VOX threshold downward so RX-bleed bursts
     // no longer trip VOX.
     //
-    // Single-RX equivalent of Thetis ChannelMaster aamix output stage
-    // (cmaster.c:159-175 [v2.10.3.13]) — aamix mixes N RXs into one
-    // anti-VOX stream and calls SendAntiVOXData; with one RX in 3M-3a-iv
-    // we skip the mixer entirely and pump the single RX block directly.
+    // Thetis equivalent: the per-transmitter aamix instance
+    // (cmaster.c:159-175 [v2.10.3.15]) that mixes N sub-receivers into one
+    // anti-VOX stream and calls SendAntiVOXData.  3M-3a-iv shipped without
+    // the mixer, pumping slice A's block directly because only one RX was
+    // ever audible; Phase 3F Sub-Epic J Task 9 put the real mixer in
+    // AudioEngine and re-pointed this chain at it.
     //
     // Placement note: these connects live at the end of
     // wireConnectionSignals (rather than the txSetup lambda where the
@@ -8023,14 +8025,28 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     // m_dspWorker (sender) and m_txWorker (constructed in the txSetup
     // lambda before connectToRadio called us) are alive.
     if (m_dspWorker != nullptr && m_txWorker != nullptr && m_moxController != nullptr) {
-        // 3M-3a-iv: RxDspWorker::antiVoxSampleReady → TxWorkerThread::onAntiVoxSamplesReady.
+        // ── Phase 3F Sub-Epic J Task 9 ───────────────────────────────────
+        // AudioEngine::antiVoxBlockReady → TxWorkerThread::onAntiVoxBlockReady.
         //
-        // Single-RX equivalent of Thetis ChannelMaster aamix output stage
-        // (cmaster.c:171 [v2.10.3.13]).  Queued so the DSP thread doesn't
-        // block on TxWorkerThread.
-        connect(m_dspWorker, &RxDspWorker::antiVoxSampleReady,
-                m_txWorker.get(), &TxWorkerThread::onAntiVoxSamplesReady,
-                Qt::QueuedConnection);
+        // Was RxDspWorker::antiVoxSampleReady, which forked the audio of
+        // whichever stream hosted slice 0 and so let the canceller hear
+        // receiver A alone.  The reference is now AudioEngine's second
+        // MasterMixer, summing every audible slice, which is what Thetis
+        // does: every sub-receiver is pushed into the transmitter's
+        // anti-VOX mixer (cmaster.c:371-372 [v2.10.3.15]).
+        //
+        // **Qt::DirectConnection is load-bearing, not a preference.**
+        // antiVoxBlockReady hands out a pointer into thread_local scratch
+        // inside AudioEngine::rxBlockReady that the next audio period
+        // overwrites.  Direct dispatch runs the slot synchronously on the
+        // DSP thread while that pointer is still live; onAntiVoxBlockReady
+        // copies there and does its own owned, queued hop onto the TX
+        // worker's thread.  Do not "simplify" this to a queued connect:
+        // Qt cannot marshal `const float*`, so it would fail at connect
+        // time and silently stop feeding the detector.
+        connect(m_audioEngine, &AudioEngine::antiVoxBlockReady,
+                m_txWorker.get(), &TxWorkerThread::onAntiVoxBlockReady,
+                Qt::DirectConnection);
 
         // 3M-3a-iv: RxDspWorker::bufferSizesChanged → TxWorkerThread::setAntiVoxBlockGeometry.
         //
