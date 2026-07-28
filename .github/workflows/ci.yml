@@ -101,7 +101,8 @@ jobs:
           path: |
             ${{ github.workspace }}/../Thetis
             ${{ github.workspace }}/../mi0bot-Thetis
-          key: thetis-clones-501e3f5-c26a8a4-v1
+            ${{ github.workspace }}/../freedv-gui
+          key: thetis-clones-501e3f5-c26a8a4-77e793a-v2
 
       - name: Clone Thetis + mi0bot-Thetis upstream (cache miss only)
         if: steps.thetis-cache.outputs.cache-hit != 'true'
@@ -125,6 +126,14 @@ jobs:
         # making the verifier flag four phantom missing tags on the
         # untouched HermesLite cite block we ported from c26a8a4.
         #
+        # drowe67/freedv-gui pinned to 77e793a to match every
+        # `[@77e793a]` inline cite stamp from Phase 3J-2 + 3R. Added
+        # 2026-07-28: the ~20 `// From freedv-gui <path>` cites in
+        # FreeDVReporterClient / PskReporterClient matched no detector
+        # in verify-inline-tag-preservation.py, so they were never
+        # counted and never verified. With the detector added, they need
+        # a clone here or they only ever report upstream-not-found.
+        #
         # Shallow fetch + checkout of the pinned SHA avoids cloning the
         # full git history. GitHub's git server allows `fetch --depth=1
         # <sha>` because uploadpack.allowReachableSHA1InWant is enabled.
@@ -139,6 +148,11 @@ jobs:
           git -C ../mi0bot-Thetis remote add origin https://github.com/mi0bot/OpenHPSDR-Thetis.git
           git -C ../mi0bot-Thetis fetch --depth=1 -q origin c26a8a4c7592605039be5f4b5973b33e04e91e54
           git -C ../mi0bot-Thetis checkout -q FETCH_HEAD
+          mkdir -p ../freedv-gui
+          git -C ../freedv-gui init -q
+          git -C ../freedv-gui remote add origin https://github.com/drowe67/freedv-gui.git
+          git -C ../freedv-gui fetch --depth=1 -q origin 77e793a37e0ecf6cfa99b7cf21a410fd154e9d94
+          git -C ../freedv-gui checkout -q FETCH_HEAD
 
       - name: Corpus drift — upstream author tags match committed corpus
         # Fails if upstream Thetis (ramdor or mi0bot fork) contains
@@ -158,6 +172,7 @@ jobs:
         env:
           NEREUS_THETIS_DIR: ${{ github.workspace }}/../Thetis
           NEREUS_MI0BOT_DIR: ${{ github.workspace }}/../mi0bot-Thetis
+          NEREUS_FREEDV_DIR: ${{ github.workspace }}/../freedv-gui
         run: python3 scripts/verify-inline-tag-preservation.py
 
       - name: Contributor indexes are up to date with corpus
