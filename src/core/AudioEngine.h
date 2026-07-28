@@ -324,6 +324,11 @@ public:
     // Plan: 3M-1b E.3.
     MasterMixer& masterMixForTest() { return m_masterMix; }
 
+    // Test seam — expose m_antiVoxMix so tests can assert what the anti-VOX
+    // reference sums, what it refuses to sum, and how often it releases a
+    // block. Phase 3F Sub-Epic J Task 9.
+    MasterMixer& antiVoxMixForTest() { return m_antiVoxMix; }
+
     /// Test seam — directly set MOX state without going through MoxController.
     /// Bypasses the signal/slot connection that RadioModel wires in Phase L so
     /// unit tests can drive the gate logic without a full radio fixture.
@@ -710,6 +715,27 @@ private:
     std::unique_ptr<IAudioBus> m_vaxTxBus;
     std::array<std::unique_ptr<IAudioBus>, 4> m_vaxBus;
     MasterMixer m_masterMix;
+
+    // Second mixer whose output is the anti-VOX reference, not the speakers.
+    //
+    // Thetis runs exactly this: a per-transmitter aamix instance
+    // (pcm->xmtr[i].pavoxmix, cmaster.c:159-175 [v2.10.3.15]) fed by every
+    // sub-receiver in the same loop that feeds the speakers mix
+    // (cmaster.c:371-372 [v2.10.3.15]), with membership managed explicitly
+    // through SetAAudioMixStates (cmaster.c:584-588 [v2.10.3.15]), the same
+    // call the RX mixer uses. `active = 0` in that create_aamix call is the
+    // pre-power-on default and nothing more: console.cs:27650-27771
+    // [v2.10.3.15] sets the membership mask on every power and MOX
+    // transition. So this instance is barrier-paced exactly like
+    // m_masterMix, and its membership rides the same setSliceStreaming
+    // calls.
+    //
+    // The TX monitor is deliberately never registered here. Upstream draws
+    // this mask from RX1 + RX1S + RX2 while handing the speakers mixer
+    // RX1 + RX1S + RX2 + MON on the line above it (console.cs:27650-27651
+    // [v2.10.3.15]), and monitor audio suppressing the operator's own VOX
+    // would be feedback by definition.
+    MasterMixer m_antiVoxMix;
 
     // Speakers format last negotiated. frames passed to rxBlockReady may
     // vary per block; the bus handles that internally via its ring. Kept

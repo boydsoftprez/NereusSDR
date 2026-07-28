@@ -1117,6 +1117,12 @@ nereus_add_test(tst_master_mixer)
 # ── Phase 3F Sub-Epic I closeout C1: multi-slice audio reaches the mixer ──
 nereus_add_test(tst_audio_engine_multi_slice_mix)
 
+# ── Phase 3F Sub-Epic J Task 9: anti-VOX hears every slice, not just A ────
+# Membership mirrors the speakers mixer, TX monitor excluded, zero slew,
+# and one drained block per audio period (the cadence DEXP was configured
+# for, which the retired slice-0 gate used to guarantee).
+nereus_add_test(tst_audio_engine_antivox_mix)
+
 # ── Phase 3O Sub-Phase 3: PortAudioBus ────────────────────────────────────
 nereus_add_test(tst_port_audio_bus)
 

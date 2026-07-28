@@ -202,6 +202,25 @@ AudioEngine::AudioEngine(QObject* parent)
     // drain for kStallTolerance periods on every TX transition.
     m_masterMix.setSliceOpportunistic(kTxMonitorSlotId, true);
 
+    // kTxMonitorSlotId is registered with m_masterMix and ONLY with
+    // m_masterMix. Upstream hands the speakers mixer RX1 + RX1S + RX2 + MON
+    // and the anti-VOX mixer RX1 + RX1S + RX2 on the very next line
+    // (console.cs:27650-27651 [v2.10.3.15]). Monitor audio suppressing the
+    // operator's own VOX would be feedback by definition, and an
+    // unregistered id is dropped by MasterMixer::accumulate, so leaving it
+    // out here is the whole enforcement.
+
+    // No fade on the anti-VOX reference. Thetis creates this mixer with
+    // 0.000 on all four slew parameters (cmaster.c:159-175 [v2.10.3.15]),
+    // unlike the RX mixer's 0.010 (cmaster.c:297-313 [v2.10.3.15]), because
+    // DEXP needs an amplitude-faithful reference from the first sample
+    // after a transition. A faded reference under-reports the audio the
+    // operator is actually hearing for the length of the fade, and
+    //   asig = avsig - antivox_gain * antivox_level   (dexp.c:313-316)
+    // then cancels too little: a false VOX trigger, meaning unintended
+    // transmit, in exactly the window a transition opens.
+    m_antiVoxMix.setSlewUpFrames(0);
+
     // (Phase 3M-1c bench-fix-A added an m_micPumpTimer here that drove
     //  pullTxMic at 5 ms cadence to keep the D.1 720-sample accumulator
     //  ticking after the E.1 push-slot refactor dropped TxChannel's
@@ -277,6 +296,15 @@ void AudioEngine::preregisterSlices(int count)
         // this generalises, so slice A behaviour is unchanged and the
         // extra ids are inert until a slice actually binds to them.
         m_masterMix.setSliceGain(id, 1.0f, 0.0f);
+
+        // Same slots on the anti-VOX instance, registered here for the same
+        // reason: accumulate() drops ids it has no entry for, and the map
+        // must not be mutated once the DSP thread is reading it lock-free.
+        // Unity gain rather than the operator's per-slice volume, because
+        // the reference is the receiver audio itself: upstream feeds
+        // pcm->rcvr[rx].audio[j] to both mixers unmodified and lets each
+        // apply its own (cmaster.c:370-372 [v2.10.3.15]).
+        m_antiVoxMix.setSliceGain(id, 1.0f, 0.0f);
     }
     if (wanted > m_preregisteredSlices) {
         m_preregisteredSlices = wanted;
@@ -286,6 +314,21 @@ void AudioEngine::preregisterSlices(int count)
 void AudioEngine::setSliceStreaming(int sliceId, bool streaming)
 {
     m_masterMix.setSliceStreaming(sliceId, streaming);
+
+    // Membership mirrors the speakers mixer, and every membership change in
+    // the engine funnels through here so the two cannot drift apart.
+    //
+    // Mandatory rather than stylistic. setMoxState withdraws the gated slice
+    // for the length of a transmission, and neither barrier has a timeout
+    // that would give up on a member (MasterMixer.h, divergence 3). A slice
+    // left enrolled here would wedge the anti-VOX mix for the whole over,
+    // leaving DEXP with a stale antivox_level exactly when the operator is
+    // keyed up.
+    //
+    // Upstream keeps the pair in step the same way: the two mixers are
+    // driven by adjacent SetAAudioMixStates / SetAntiVOXSourceStates calls
+    // on every transition (console.cs:27650-27651 [v2.10.3.15]).
+    m_antiVoxMix.setSliceStreaming(sliceId, streaming);
 }
 
 void AudioEngine::start()
@@ -1421,16 +1464,22 @@ void AudioEngine::setMoxState(bool active)
     // nothing to put it back: it would stay silent until something else
     // re-admitted it, which is what "does not restore until the flag is
     // retuned" looks like from the operator's seat.
+    //
+    // Routed through AudioEngine::setSliceStreaming rather than straight at
+    // m_masterMix, so the anti-VOX mixer is withdrawn and re-admitted in the
+    // same breath. Poking one mixer directly is how the two would drift
+    // apart, and a slice left enrolled in the anti-VOX barrier alone would
+    // wedge that mix for the whole transmission.
     if (active) {
         m_moxWithdrawnSlice = -1;
         if (m_radio != nullptr) {
             if (SliceModel* slice = m_radio->activeSlice()) {
                 m_moxWithdrawnSlice = slice->sliceIndex();
-                m_masterMix.setSliceStreaming(m_moxWithdrawnSlice, false);
+                setSliceStreaming(m_moxWithdrawnSlice, false);
             }
         }
     } else if (m_moxWithdrawnSlice >= 0) {
-        m_masterMix.setSliceStreaming(m_moxWithdrawnSlice, true);
+        setSliceStreaming(m_moxWithdrawnSlice, true);
         m_moxWithdrawnSlice = -1;
     }
 }
