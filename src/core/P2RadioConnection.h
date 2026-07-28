@@ -175,6 +175,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "BoardCapabilities.h"
 
 #include <QDateTime>
+#include <QDeadlineTimer>
 #include <QUdpSocket>
 #include <QTimer>
 #include <QVector>
@@ -398,8 +399,17 @@ private:
     // otherwise leave the radio keyed indefinitely.  Only ever active
     // immediately after a transmission, so it does not reintroduce RX-idle
     // polling.  See setMox() for the full rationale.
+    //
+    // MONOTONIC, not wall-clock (Codex review, PR #306).  This was
+    // QDateTime::currentMSecsSinceEpoch() arithmetic.  An NTP step forward
+    // inside the window would make the grace read as already expired, so a
+    // lost MOX-off datagram would stop being retransmitted and the radio
+    // could stay keyed — precisely the hazard the window exists to close.
+    // A step backward would hold RX polling open far past one second.
+    // QDeadlineTimer measures against a monotonic source.  Default-constructed
+    // is already expired, which is the "never armed" state.
     static constexpr qint64 kMoxOffGraceMs = 1000;
-    qint64 m_moxOffGraceUntilMs{0};
+    QDeadlineTimer m_moxOffGrace;
     bool withinMoxOffGrace() const;
 
     // --- Board capabilities (set in connectToRadio, used for clamp/dispatch) ---

@@ -885,8 +885,13 @@ void P2RadioConnection::setMox(bool enabled)
         // firmware deadman so it will not self-clear either.  A stuck
         // transmitter is a PA and interference hazard, so cover transient
         // loss with retransmissions rather than a single unacknowledged frame.
-        m_moxOffGraceUntilMs =
-            QDateTime::currentMSecsSinceEpoch() + kMoxOffGraceMs;
+        //
+        // Monotonic deadline (Codex review, PR #306): a wall-clock window can
+        // be stepped shut by NTP mid-unkey, which would strand a lost MOX-off
+        // frame unretransmitted.  Qt::PreciseTimer because this bounds a
+        // transmitter-safety window.
+        m_moxOffGrace = QDeadlineTimer(
+            std::chrono::milliseconds(kMoxOffGraceMs), Qt::PreciseTimer);
     }
     if (m_running) {
         sendCmdHighPriority();  // immediate emit on state change for low latency
@@ -896,8 +901,9 @@ void P2RadioConnection::setMox(bool enabled)
 // True while the post-unkey grace window is open.  See setMox().
 bool P2RadioConnection::withinMoxOffGrace() const
 {
-    return m_moxOffGraceUntilMs != 0
-           && QDateTime::currentMSecsSinceEpoch() < m_moxOffGraceUntilMs;
+    // Default-constructed QDeadlineTimer is already expired, so the
+    // never-armed case needs no separate sentinel check.
+    return !m_moxOffGrace.hasExpired();
 }
 
 // ---------------------------------------------------------------------------

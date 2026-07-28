@@ -59,6 +59,7 @@ mw0lge@grange-lane.co.uk
 #include "HpsdrModel.h"
 
 #include <QObject>
+#include <QDeadlineTimer>
 #include <QHostAddress>
 #include <QUdpSocket>
 #include <QTimer>
@@ -225,10 +226,10 @@ public:
     }
     void forceStaleCheckForTest() { onStaleCheck(); }
 
-    // The holdOffScans deadline is process-wide (see s_scanHoldOffUntilMs),
-    // so it survives across test functions and would defer probes in
-    // unrelated cases. Call from a QTest init() for a clean slate.
-    static void clearHoldOffForTest() { s_scanHoldOffUntilMs = 0; }
+    // The holdOffScans deadline is process-wide (see s_scanHoldOff), so it
+    // survives across test functions and would defer probes in unrelated
+    // cases. Call from a QTest init() for a clean slate.
+    static void clearHoldOffForTest() { s_scanHoldOff = QDeadlineTimer(); }
 #endif
 
     // Public static parsers — exposed for unit-testing in Task 5.
@@ -281,7 +282,8 @@ private:
     QTimer m_continuousTimer;   // drives ongoing NIC re-scans while monitoring
     QTimer m_staleTimer;
 
-    // holdOffScans deadline (ms since epoch, 0 = none).
+    // holdOffScans deadline.  Default-constructed QDeadlineTimer is already
+    // expired, which is the "no holdoff armed" state.
     //
     // PROCESS-WIDE, not per-instance (Codex review, PR #306).  The constraint
     // belongs to the radio and the wire, not to any one RadioDiscovery object,
@@ -289,7 +291,16 @@ private:
     // AddCustomRadioDialog.cpp:589 constructs its own.  A per-object deadline
     // would let that dialog probe a just-disconnected radio inside the quiet
     // window and re-enter the post-stop race this exists to prevent.
-    static qint64 s_scanHoldOffUntilMs;
+    //
+    // MONOTONIC, not wall-clock (Codex review, PR #306).  This was
+    // QDateTime::currentMSecsSinceEpoch() arithmetic, which an NTP step could
+    // move underneath us: a forward correction expires the holdoff early and
+    // lets a probe land inside the G2E stop-transition window this exists to
+    // avoid, and a backward correction defers discovery for as long as the
+    // correction was large.  QDeadlineTimer measures against a monotonic
+    // source, so clock synchronisation cannot shorten a radio-safety interval
+    // or wedge discovery.
+    static QDeadlineTimer s_scanHoldOff;
 
     // Per-instance: stops a burst of startDiscovery() calls on THIS object
     // from queueing multiple delayed scans.
