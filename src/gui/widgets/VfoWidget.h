@@ -374,6 +374,19 @@ public:
     /// top of each other."
     double frequency() const { return m_frequency; }
 
+    /// This flag's own filter edges, as signed Hz offsets from its slice
+    /// frequency (negative on the LSB side, exactly as SliceModel carries
+    /// them).
+    ///
+    /// Phase 3F: read back by SpectrumWidget::sliceMarkerGeometry() so each
+    /// co-hosted slice shades ITS OWN passband. Filter width is per slice, so
+    /// the pan's single m_filterLowHz/m_filterHighHz pair cannot stand in for
+    /// a neighbour's: a 500 Hz CW slice next to a 2.7 kHz SSB slice would draw
+    /// two identical bands. Bench-reported 2026-07-28: "The pass band of the
+    /// second flag disappears when not active."
+    int filterLow()  const { return m_filterLowHz; }
+    int filterHigh() const { return m_filterHighHz; }
+
     // --- RIT/XIT state setters (S1.8a — guarded against re-emit) ---
     void setRitEnabled(bool v);
     void setRitHz(int hz);
@@ -615,6 +628,12 @@ private:
     int m_sliceIndex{0};
     int m_stepHz{100};
     double m_frequency{14225000.0};
+    // Signed Hz offsets from m_frequency. Seeded with the same LSB defaults
+    // SpectrumWidget's pan-level m_filterLowHz/m_filterHighHz carry (Thetis
+    // LSB default), so a flag that has not yet been handed a filter draws the
+    // identical band the pan drew for it before the per-slice split.
+    int m_filterLowHz{-2850};
+    int m_filterHighHz{-150};
     DSPMode m_currentMode{DSPMode::USB};
     double m_smeterDbm{-127.0};
 

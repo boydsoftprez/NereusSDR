@@ -953,6 +953,30 @@ public slots:
     VfoWidget* vfoWidget(int sliceIndex) const;
     void updateVfoPositions();
 
+// Plain public, not public slots: the enclosing section above is a slots
+// block and moc rejects a nested struct inside one.
+public:
+    // ---- RX marker geometry (Phase 3F) ----
+
+    /// One RX marker's inputs: a slice centre, that slice's own signed filter
+    /// edges, and the flag whose bottom edge its triangle hangs from (null
+    /// when the pan is drawing its own VFO with no flag created yet).
+    struct SliceMarkerGeometry {
+        double centreHz{0.0};
+        int    filterLowHz{0};
+        int    filterHighHz{0};
+        const VfoWidget* flag{nullptr};
+    };
+
+    /// Every RX marker this pan must paint, one per hosted slice, in slice
+    /// order.
+    ///
+    /// This is drawVfoMarker()'s whole decision, split out so it is reachable
+    /// without a live QPainter or a shown QRhiWidget: the harness cannot
+    /// render this widget, so the geometry is what gets pinned and the pixel
+    /// emission is what does not. See tests/tst_pan_flag_positions.cpp.
+    QVector<SliceMarkerGeometry> sliceMarkerGeometry() const;
+
 public slots:
     // Phase 3Q-8: update connection state for the disconnect overlay.
     void setConnectionState(NereusSDR::ConnectionState s);
@@ -1302,7 +1326,13 @@ private:
                              double newCenterHz, double newBandwidthHz);
     // (clearWaterfallHistory moved to public slots: in sub-epic E task 4 review.)
 
+    // drawVfoMarker walks sliceMarkerGeometry() and hands each entry to
+    // drawSliceMarker, which paints one slice's passband fill, filter edges,
+    // VFO centre line and triangle. Split in Phase 3F so a pan hosting several
+    // slices paints one marker per slice instead of one per pan.
     void drawVfoMarker(QPainter& p, const QRect& specRect, const QRect& wfRect);
+    void drawSliceMarker(QPainter& p, const QRect& specRect, const QRect& wfRect,
+                         const SliceMarkerGeometry& g);
     void drawCursorInfo(QPainter& p, const QRect& specRect);
 
     // ---- Spot overlay (Phase 3J-2 Task E1) ----

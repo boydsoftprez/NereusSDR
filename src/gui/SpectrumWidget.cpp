@@ -4635,23 +4635,89 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
 }
 
 // ---- VFO marker + filter passband overlay ----
-// Ported from AetherSDR SpectrumWidget.cpp:3211-3294
-// Uses per-slice colors with exact alpha values from AetherSDR.
-void SpectrumWidget::drawVfoMarker(QPainter& p, const QRect& specRect, const QRect& wfRect)
+//
+// One marker per hosted slice, each from ITS OWN centre and ITS OWN filter
+// edges.
+//
+// This used to be one marker per pan, derived from m_vfoHz plus the pan's
+// single m_filterLowHz/m_filterHighHz pair. Both of those track whichever
+// slice most recently reached the pan -- MainWindow pushes setVfoFrequency on
+// every slice's frequencyChanged and setFilterOffset on every slice's
+// filterChanged, and activating a slice re-pushes both -- so a pan hosting two
+// slices shaded exactly one passband and it belonged to the last slice
+// touched. Bench-reported 2026-07-28: "The pass band of the second flag
+// disappears when not active. Let's keep it."
+//
+// Filter edges come from the flag, not the pan, because filter width is per
+// slice: reusing the pan's pair would draw a 2.7 kHz SSB band around a 500 Hz
+// CW slice. VfoWidget already receives both values from its SliceModel
+// (MainWindow::createSliceFlag seeds setFilter and re-pushes it on
+// filterChanged); it just discarded them before.
+//
+// Two behaviours are deliberately preserved:
+//   - A pan with no flag yet still marks its own VFO. wireSliceToSpectrum
+//     seeds setVfoFrequency BEFORE it builds the flag, and a paint can land in
+//     that window; dropping the fallback would blank the marker there.
+//   - A single-slice pan is unchanged. Its one flag carries the same frequency
+//     and the same filter the pan does, so the marker is identical to the
+//     pre-split one.
+//
+// Overlap between two slices' bands is left to whatever QPainter's default
+// compositing does with the translucent fill, exactly as a single band is
+// composited today. No blend rule, colour or opacity is introduced here.
+QVector<SpectrumWidget::SliceMarkerGeometry>
+SpectrumWidget::sliceMarkerGeometry() const
 {
-    if (m_vfoHz <= 0.0) {
-        return;
+    QVector<SliceMarkerGeometry> out;
+
+    if (m_vfoWidgets.isEmpty()) {
+        if (m_vfoHz > 0.0) {
+            out.append(SliceMarkerGeometry{m_vfoHz, m_filterLowHz,
+                                           m_filterHighHz, nullptr});
+        }
+        return out;
     }
 
-    int vfoX = hzToX(m_vfoHz, specRect);
+    // QMap, so this walks slices in index order and the paint order is stable
+    // frame to frame rather than hash-dependent.
+    out.reserve(m_vfoWidgets.size());
+    for (auto it = m_vfoWidgets.constBegin(); it != m_vfoWidgets.constEnd(); ++it) {
+        const VfoWidget* flag = it.value();
+        if (!flag || flag->frequency() <= 0.0) {
+            continue;
+        }
+        out.append(SliceMarkerGeometry{flag->frequency(), flag->filterLow(),
+                                       flag->filterHigh(), flag});
+    }
+    return out;
+}
+
+void SpectrumWidget::drawVfoMarker(QPainter& p, const QRect& specRect, const QRect& wfRect)
+{
+    for (const SliceMarkerGeometry& g : sliceMarkerGeometry()) {
+        drawSliceMarker(p, specRect, wfRect, g);
+    }
+}
+
+// Ported from AetherSDR SpectrumWidget.cpp:3211-3294
+// Uses per-slice colors with exact alpha values from AetherSDR.
+//
+// Body unchanged by the Phase 3F split; it reads its centre and filter edges
+// off the passed-in marker instead of the pan's m_vfoHz / m_filterLowHz /
+// m_filterHighHz, so the same paint runs once per hosted slice.
+void SpectrumWidget::drawSliceMarker(QPainter& p, const QRect& specRect,
+                                     const QRect& wfRect,
+                                     const SliceMarkerGeometry& g)
+{
+    int vfoX = hzToX(g.centreHz, specRect);
 
     // Per-slice color — from AetherSDR SliceColors.h:15-20
     // Slice 0 (A) = cyan, active
     static constexpr int kSliceR = 0x00, kSliceG = 0xd4, kSliceB = 0xff;
 
     // Filter passband rectangle
-    double loHz = m_vfoHz + m_filterLowHz;
-    double hiHz = m_vfoHz + m_filterHighHz;
+    double loHz = g.centreHz + g.filterLowHz;
+    double hiHz = g.centreHz + g.filterHighHz;
     int xLo = hzToX(loHz, specRect);
     int xHi = hzToX(hiHz, specRect);
     if (xLo > xHi) {
@@ -4708,10 +4774,14 @@ void SpectrumWidget::drawVfoMarker(QPainter& p, const QRect& specRect, const QRe
         static constexpr int kTriH = 10;
 
         int triTop = specRect.top();
-        // If VFO flag is present, position triangle below it
-        auto it = m_vfoWidgets.constFind(0);
-        if (it != m_vfoWidgets.constEnd() && it.value()->isVisible()) {
-            triTop = it.value()->y() + it.value()->height();
+        // If VFO flag is present, position triangle below it.
+        //
+        // THIS marker's flag, not m_vfoWidgets[0]. The slice-0 lookup was
+        // harmless while one marker was drawn per pan; with one per slice it
+        // would hang every triangle off slice A's flag height, which is only
+        // ever right by coincidence.
+        if (g.flag && g.flag->isVisible()) {
+            triTop = g.flag->y() + g.flag->height();
         }
         // Clamp to spectrum area
         triTop = std::max(triTop, specRect.top());

@@ -2120,6 +2120,10 @@ void VfoWidget::setMode(DSPMode mode)
 void VfoWidget::setFilter(int low, int high)
 {
     m_updatingFromModel = true;
+    // Kept, not just rendered as text: SpectrumWidget reads these back through
+    // filterLow()/filterHigh() to shade THIS slice's passband. See the header.
+    m_filterLowHz = low;
+    m_filterHighHz = high;
     m_filterWidthLbl->setText(formatFilterWidth(low, high));
     // Update checked state of filter buttons — match by stored property
     for (auto* btn : m_filterBtnContainer->findChildren<QPushButton*>()) {
