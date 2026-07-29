@@ -3076,7 +3076,10 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
 
     // Emit iqDataReceived for each receiver
     // Contract: hwReceiverIndex (0-based), interleaved float I/Q pairs, [-1, 1]
-    // Source: RadioConnection.h:82 iqDataReceived signal
+    // Declared by our own RadioConnection.h (iqDataReceived signal). Was
+    // written using `// Source: <file>:<line>` cite grammar, which the
+    // author-tag verifier reads as an upstream Thetis cite; it is an
+    // internal cross-reference, and the line number had drifted anyway.
     for (int r = 0; r < static_cast<int>(perRxVecs.size()); ++r) {
         if (!perRxVecs[static_cast<size_t>(r)].isEmpty()) {
             if (!m_firstEmitLogged) {

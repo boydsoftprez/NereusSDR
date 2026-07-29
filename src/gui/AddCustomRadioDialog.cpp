@@ -266,10 +266,15 @@ void AddCustomRadioDialog::buildUi()
     m_ipEdit->setValidator(new QRegularExpressionValidator(ipRe, m_ipEdit));
     form->addRow(QStringLiteral("IP Address:"), m_ipEdit);
 
-    // Port — from Thetis txtSpecificRadio default ":1024" (Designer.cs:64)
+    // Port: from Thetis txtSpecificRadio default ":1024"
+    // (frmAddCustomRadio.Designer.cs:105)
     m_portSpin = new QSpinBox(this);
     m_portSpin->setRange(1, 65535);
-    m_portSpin->setValue(1024);   // From Thetis Designer.cs:64 default "192.168.0.155:1024"
+    // From Thetis frmAddCustomRadio.Designer.cs:105 [v2.10.3.15]. Default
+    // txtSpecificRadio.Text = "192.168.0.155:1024". Cite previously read
+    // "Designer.cs:64": the filename was truncated to a suffix that matches
+    // no Thetis file, and the line number was wrong, so it never resolved.
+    m_portSpin->setValue(1024);
     m_portSpin->setStyleSheet(kFieldStyle);
     form->addRow(QStringLiteral("Port:"), m_portSpin);
 

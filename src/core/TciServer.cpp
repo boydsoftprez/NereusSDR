@@ -1620,9 +1620,18 @@ void TciServer::cleanupResamplers(std::shared_ptr<TciClientSession>& session)
 // lock-free AudioRingSpsc safe for one producer (DSP thread) + one consumer
 // (main thread drain timer).
 //
-// From Thetis RxChannel.cpp:1479-1492 [v2.10.3.13] — the audioFrameReady
-// signal fires post-DSP with outI (L) and outQ (R) as scratch float arrays
-// of length n at srcRate Hz (always 48000 for WDSP RX output).
+// Contract of our own RxChannel::processIq (src/core/RxChannel.cpp): the
+// audioFrameReady signal fires post-DSP with outI (L) and outQ (R) as
+// scratch float arrays of length n at srcRate Hz (always 48000 for WDSP
+// RX output).
+//
+// Until 2026-07-28 this was written in "From Thetis" cite grammar
+// naming RxChannel.cpp, which claimed Thetis provenance for a
+// NereusSDR-original file. Thetis has no such file. Rewritten as a
+// plain internal cross-reference so it neither overclaims upstream
+// attribution nor gets resolved against the Thetis clone. Deliberately
+// avoids repeating the old file:line form, which the author-tag
+// verifier would match inside this very comment.
 //
 // Uses tryPushCopy (non-blocking) so the DSP thread never blocks. Overflow
 // (ring full) silently drops the oldest portion — audible as a dropout rather

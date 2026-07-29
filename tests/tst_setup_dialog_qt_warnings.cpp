@@ -24,6 +24,12 @@
 // Strategy: install a QtMessageHandler before SetupDialog construction;
 // pattern-match each emitted message against the two known warnings;
 // assert zero matches.
+//
+// Issues #272 + #301 (2026-07-27): SetupDialog now builds its pages lazily, so
+// merely constructing it no longer touches DeviceCard or Hl2OptionsTab and the
+// original assertions would have gone vacuously green. Both cases now call
+// realizeAllPagesForTest() so every page is still constructed inside the
+// instrumented window, which is what keeps this test a real guard.
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -84,6 +90,10 @@ private slots:
 //
 // Pre-fix: 7 fired (3 from AudioDevicesPage's DeviceCards + 4 from
 // AudioVaxPage's VaxChannelCard DeviceCards). Post-fix: 0.
+//
+// #272 / #301: realizeAllPagesForTest() forces every page to be built inside
+// the instrumented window, since lazy construction means the ctor alone would
+// not reach AudioDevicesPage or AudioVaxPage at all.
 // ---------------------------------------------------------------------------
 void TstSetupDialogQtWarnings::
     setupDialog_construction_emits_no_layout_double_add_warnings()
@@ -96,7 +106,7 @@ void TstSetupDialogQtWarnings::
     {
         RadioModel model;
         SetupDialog dialog(&model);
-        Q_UNUSED(dialog);
+        dialog.realizeAllPagesForTest();
     }
 
     qInstallMessageHandler(prev);
@@ -120,6 +130,9 @@ void TstSetupDialogQtWarnings::
 // the assertion is "no warning fires during SetupDialog construction",
 // and that's true both when the tab is skipped and when it's built with
 // the fixed wiring.
+//
+// #272 / #301: realizeAllPagesForTest() is what now reaches HardwarePage,
+// since page construction no longer happens in the dialog ctor.
 // ---------------------------------------------------------------------------
 void TstSetupDialogQtWarnings::
     setupDialog_construction_emits_no_unique_lambda_connect_warnings()
@@ -132,7 +145,7 @@ void TstSetupDialogQtWarnings::
     {
         RadioModel model;
         SetupDialog dialog(&model);
-        Q_UNUSED(dialog);
+        dialog.realizeAllPagesForTest();
     }
 
     qInstallMessageHandler(prev);

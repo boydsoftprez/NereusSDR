@@ -116,10 +116,24 @@ mw0lge@grange-lane.co.uk
 #include <QColor>
 #include <QPainter>
 #include <QPixmap>
+#include <QElapsedTimer>
 #include <QIcon>
+#include <QLoggingCategory>
 #include <QTimer>
 
 namespace NereusSDR {
+
+// Timing instrumentation, sibling to SetupDialog.cpp's nereus.setup.timing.
+// Issue #301 reported the RX audio buffer looping when either the Settings
+// menu *or* the Connect-to-Radio dialog was opened, so both open paths need a
+// measurable construction cost. The Settings side was the multi-second
+// offender and is fixed by lazy page construction; this seam is what lets the
+// next repro say whether this dialog contributes at all, without a profiler.
+//
+// Disabled by default. Enable with either of:
+//   QT_LOGGING_RULES="nereus.connpanel.timing.debug=true"
+//   QT_LOGGING_RULES="*.timing.debug=true"   (covers nereus.setup.timing too)
+Q_LOGGING_CATEGORY(lcConnPanelTiming, "nereus.connpanel.timing")
 
 // ---------------------------------------------------------------------------
 // Color constants — from ucRadioList.cs ~:1115 (adapted to dark theme)
@@ -184,11 +198,16 @@ ConnectionPanel::ConnectionPanel(RadioModel* model, QWidget* parent)
     : QDialog(parent)
     , m_radioModel(model)
 {
+    // #301 instrumentation: total ctor cost, plus the buildUI() share of it.
+    QElapsedTimer ctorTimer;
+    ctorTimer.start();
+
     setWindowTitle(QStringLiteral("Connect to Radio"));
     setMinimumSize(800, 460);
     resize(900, 520);
 
     buildUI();
+    const qint64 buildUiMs = ctorTimer.elapsed();
 
     // Wire discovery signals
     RadioDiscovery* disc = m_radioModel->discovery();
@@ -262,6 +281,14 @@ ConnectionPanel::ConnectionPanel(RadioModel* model, QWidget* parent)
 
     // Initial status strip state
     updateStatusStrip();
+
+    // #301 instrumentation: see lcConnPanelTiming above. `rows` is the saved +
+    // already-discovered radio count, since per-row work is the only part of
+    // this ctor that scales with anything the operator controls.
+    qCDebug(lcConnPanelTiming)
+        << "ConnectionPanel ctor total elapsed (ms):" << ctorTimer.elapsed()
+        << "of which buildUI():" << buildUiMs
+        << "rows:" << m_radioTable->rowCount();
 }
 
 ConnectionPanel::~ConnectionPanel()

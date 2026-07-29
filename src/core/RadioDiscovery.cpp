@@ -148,15 +148,17 @@ RadioDiscovery::~RadioDiscovery()
 }
 
 // Process-wide quiet deadline — see the declaration for why this is not
-// per-instance.
-qint64 RadioDiscovery::s_scanHoldOffUntilMs = 0;
+// per-instance, and why it is monotonic rather than wall-clock.
+QDeadlineTimer RadioDiscovery::s_scanHoldOff;
 
 void RadioDiscovery::holdOffScans(std::chrono::milliseconds quiet)
 {
-    const qint64 until =
-        QDateTime::currentMSecsSinceEpoch() + qint64(quiet.count());
-    if (until > s_scanHoldOffUntilMs) {
-        s_scanHoldOffUntilMs = until;
+    // Keep whichever deadline is later so a short holdoff can never pull in a
+    // longer one already in flight.  Qt::PreciseTimer because this bounds a
+    // radio-safety interval, not a UI refresh.
+    const QDeadlineTimer candidate(quiet, Qt::PreciseTimer);
+    if (candidate > s_scanHoldOff) {
+        s_scanHoldOff = candidate;
     }
 }
 
@@ -164,8 +166,9 @@ void RadioDiscovery::holdOffScans(std::chrono::milliseconds quiet)
 // for the ANAN-G2E rationale.
 qint64 RadioDiscovery::holdOffRemainingMs() const
 {
-    const qint64 remaining =
-        s_scanHoldOffUntilMs - QDateTime::currentMSecsSinceEpoch();
+    // remainingTime() is monotonic and already clamps to 0 once expired; the
+    // guard covers the -1 "forever" encoding, which we never construct.
+    const qint64 remaining = s_scanHoldOff.remainingTime();
     return remaining > 0 ? remaining : 0;
 }
 
