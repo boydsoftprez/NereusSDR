@@ -183,6 +183,43 @@ SpectrumWidget* PanadapterStack::spectrum(const QString& panId) const
     return applet ? applet->spectrumWidget() : nullptr;
 }
 void PanadapterStack::setActivePan(const QString& id) { if (m_activePanId != id) { m_activePanId = id; emit activePanChanged(id); } }
+
+// The writer PanadapterApplet::activeSliceIndex() never had after its one-shot
+// seed in addSlice. See the header for the bench defect this closes.
+//
+// The scan is over single-digit pan counts on a user action, and it asks each
+// pan the one question that matters -- do you host this slice -- rather than
+// resolving through SliceModel::panKey(). panKey is the authoritative binding
+// for WHERE a slice belongs, but associatedSlices() is what
+// MainWindow::sliceForPan actually reads back, so keying off the same set is
+// what makes the pan's answer and this function's answer agree. Every pan that
+// lists the slice is updated rather than the first one found: if two ever
+// disagree, moving both is the state the operator can act on, where stopping
+// at the first would leave a pan silently tuning something else.
+void PanadapterStack::setActiveSliceOnHostingPan(int sliceId)
+{
+    const QList<PanadapterApplet*> pans = allApplets();
+    for (PanadapterApplet* applet : pans) {
+        if (!applet) { continue; }
+        if (!applet->associatedSlices().contains(sliceId)) { continue; }
+        applet->setActiveSliceIndex(sliceId);
+    }
+}
+
+// Keeps associatedSlices() honest across a pan change. See the header.
+void PanadapterStack::moveSliceToPan(int sliceId, const QString& destPanId)
+{
+    PanadapterApplet* dest = m_pans.value(destPanId, nullptr);
+    if (!dest) { return; }
+
+    const QList<PanadapterApplet*> pans = allApplets();
+    for (PanadapterApplet* applet : pans) {
+        if (!applet || applet == dest) { continue; }
+        applet->removeSlice(sliceId);
+    }
+    dest->addSlice(sliceId);
+}
+
 void PanadapterStack::floatPanadapter(const QString& panId)
 {
     // Sub-Epic D Task 8: detach the pan into a top-level PanFloatingWindow

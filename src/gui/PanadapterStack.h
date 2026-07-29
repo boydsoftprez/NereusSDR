@@ -79,6 +79,52 @@ public:
     QString activePanId() const { return m_activePanId; }
     void setActivePan(const QString& panId);
 
+    /// Point the pan that hosts this slice at it, and leave every other pan
+    /// alone.
+    ///
+    /// Bench report 2026-07-28, two slices on one pan: "when I click to tune
+    /// it always tunes flag A, not the last selected." There are two
+    /// independent notions of "active slice" -- RadioModel::activeSlice()
+    /// (global) and PanadapterApplet::activeSliceIndex() (per pan) -- and
+    /// only the global one had a writer once the pan was seeded.
+    /// PanadapterApplet::addSlice sets the pan's value exactly once, when the
+    /// pan has none, so a pan latched onto the first slice added to it for the
+    /// session. MainWindow::sliceForPan resolves the per-pan value, so
+    /// click-to-tune, the filter-edge drag, the CH tag and the pan TX pill all
+    /// kept acting on that first slice however many times the operator
+    /// selected another flag. This is the writer that was missing.
+    ///
+    /// Takes a slice ID (see RadioModel::sliceById), matching what
+    /// PanadapterApplet::activeSliceIndex() and associatedSlices() hold.
+    ///
+    /// Deliberately only the HOSTING pan: the standing project rule is that a
+    /// control drawn on a pan acts on that pan, so retargeting every pan at
+    /// the globally active slice would be the same defect wearing the other
+    /// hat -- pan-1's click-to-tune would jump to a slice pan-1 does not even
+    /// show. A slice no pan hosts moves nothing, so a pan is never left
+    /// pointing at something it cannot display.
+    void setActiveSliceOnHostingPan(int sliceId);
+
+    /// Re-home a slice from whichever pan(s) list it onto `destPanId`.
+    ///
+    /// The association is what setActiveSliceOnHostingPan and
+    /// MainWindow::sliceForPan both key off, so it has to survive a slice
+    /// changing pans. The SliceModel::panKeyChanged handler moved the
+    /// VfoWidget and nothing else, which left the old pan still listing the
+    /// slice in associatedSlices() -- and still able to hold it as that pan's
+    /// active slice, i.e. a pan tuning and painting the CH tag for a slice it
+    /// no longer hosts.
+    ///
+    /// PanadapterApplet::removeSlice does the re-pick on the pan being left
+    /// (promoting a co-hosted slice, or -1 when that was the last one), so
+    /// nothing here reproduces it.
+    ///
+    /// An unknown destination leaves every association untouched rather than
+    /// detaching the slice from the pan it is currently on: a slice hosted
+    /// nowhere has no click-to-tune at all, which is worse than one hosted by
+    /// the pan it started on.
+    void moveSliceToPan(int sliceId, const QString& destPanId);
+
     /// Detach a pan into a top-level PanFloatingWindow.
     void floatPanadapter(const QString& panId);
 

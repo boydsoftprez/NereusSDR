@@ -597,7 +597,29 @@ public:
     /// Positional because TxSliceArbiter and the persisted
     /// TxBoundSliceIndex key are positional too; converting the active /
     /// TX-bound axis to ids is Sub-Epic C territory.
+    ///
+    /// Prefer setActiveSliceById below for anything driven by a UI surface:
+    /// every per-slice widget carries the stable id, not the position.
     void setActiveSlice(int index);
+
+    /// Make the slice with this ID the active one.
+    ///
+    /// Same conversion, and the same reason, as requestTxHandoffToSlice: the
+    /// UI surfaces that select a slice all carry the stable slice ID
+    /// (VfoWidget::sliceActivationRequested emits what createSliceFlag
+    /// stamped from SliceModel::sliceIndex(); RxApplet::updateSliceButtons
+    /// keys its button group the same way), while setActiveSlice above
+    /// indexes m_slices positionally. Ids and positions diverge after any
+    /// mid-list removal, because removeSlice does not renumber survivors.
+    /// With A(0) B(1) C(2), closing B leaves C at id 2 / position 1: the
+    /// unconverted call asked for position 2 of a two-element list and
+    /// selected nothing at all, so clicking flag C did nothing.
+    ///
+    /// Returns false, changing nothing, when the id resolves to no slice.
+    /// Leaving the previous active slice in place matters: every
+    /// active-slice surface (container S-meter, RX applet, DSP menu) would
+    /// otherwise be stranded on nullptr by one stale click.
+    bool setActiveSliceById(int sliceId);
 
     /// Phase 3F Sub-Epic C Task 7: AetherSDR-faithful slice creation entry
     /// point.  Creates a new SliceModel (delegates to addSlice) and tags it

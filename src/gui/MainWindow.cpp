@@ -1012,13 +1012,21 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
         if (m_radioModel) { m_radioModel->removeSlice(idx); }
     });
     // Phase 3F (Bug 3): clicking this flag activates its slice so the RX
-    // applet (and active-slice surfaces) follow it. Slice A's flag has the
-    // matching wire in wireSliceToSpectrum. Mirrors AetherSDR's
-    // VfoWidget::sliceActivationRequested -> setActiveSlice (wireVfoWidget,
-    // MainWindow.cpp:14076 [@6a142807]).
+    // applet, the pan the flag sits on, and every other active-slice surface
+    // follow it. Every flag runs through here, Slice A's included, since the
+    // flag-path unification made createSliceFlag the one builder. Mirrors
+    // AetherSDR's VfoWidget::sliceActivationRequested -> setActiveSlice
+    // (wireVfoWidget, MainWindow.cpp:14076 [@6a142807]).
+    //
+    // setActiveSliceById, not setActiveSlice: VfoWidget carries the value
+    // createSliceFlag stamped from SliceModel::sliceIndex(), a stable slice
+    // ID, while setActiveSlice indexes m_slices positionally. With A(0) B(1)
+    // C(2), closing B leaves C at id 2 / position 1, and the unconverted call
+    // asked for position 2 of a two-element list -- so clicking flag C
+    // selected nothing at all.
     connect(newFlag, &VfoWidget::sliceActivationRequested, this,
-            [this](int idx) {
-        if (m_radioModel) { m_radioModel->setActiveSlice(idx); }
+            [this](int sliceId) {
+        if (m_radioModel) { m_radioModel->setActiveSliceById(sliceId); }
     });
     // Phase 3F closeout — AntennaPickerMenu selection forwards to
     // SliceModel::setRxAntenna. Sub-Epic E Task 5 consumer wire-up.
@@ -1764,11 +1772,17 @@ void MainWindow::ensureOverlayPanels()
         // Band clicks act on this pan's active slice rather than the globally
         // active one, for the same reason (#118 fixed the mode-vs-frequency
         // half of this; the pan-targeting half arrives with per-pan strips).
+        //
+        // sliceIndex() is a stable slice ID, so it goes through
+        // setActiveSliceById rather than the positional setActiveSlice --
+        // otherwise a band click on a pan whose slice had a higher id than the
+        // list is long (any mid-list removal) left the active slice where it
+        // was and onBandButtonClicked retuned the wrong slice.
         connect(panel, &SpectrumOverlayPanel::bandSelected, this,
                 [this, panId](const QString& name, double, const QString&) {
             if (!m_radioModel) { return; }
             if (SliceModel* s = sliceForPan(panId)) {
-                m_radioModel->setActiveSlice(s->sliceIndex());
+                m_radioModel->setActiveSliceById(s->sliceIndex());
             }
             m_radioModel->onBandButtonClicked(bandFromName(name));
         });
@@ -2182,6 +2196,45 @@ void MainWindow::buildUI()
             [this](int) { refreshMeterPollerSlices(); });
     wirePanStatusOverlayTriggers();
     wirePanBadgeHandlers();
+
+    // ── Bench 2026-07-28: click-to-tune always tuned flag A ────────────────
+    //
+    // The pan a slice lives on has to follow the operator's selection.
+    // RadioModel::activeSlice() (global) and
+    // PanadapterApplet::activeSliceIndex() (per pan) are independent, and
+    // only the global one had a writer once addSlice had seeded the pan --
+    // so a pan latched onto the first slice added to it and stayed there.
+    // MainWindow::sliceForPan reads the per-pan value, which is what
+    // click-to-tune, the filter-edge drag, the CH tag and the pan TX pill
+    // all act on, so selecting flag B moved every global surface and left
+    // all four still driving A. This is the missing writer.
+    //
+    // Direction is one way, pan follows global, and deliberately so:
+    //
+    //   * Every route the operator has for selecting a slice (a VfoWidget
+    //     flag press, an RxApplet slice tab, a band button, TCI) already
+    //     lands on RadioModel::setActiveSlice, so following it here covers
+    //     all of them in one wire instead of one per entry point.
+    //   * The reverse -- a pan's own re-pick promoting itself to the global
+    //     active slice -- is NOT wired. PanadapterApplet::removeSlice
+    //     re-picks silently when a pan loses its active slice, and letting a
+    //     background pan's bookkeeping steal the RX applet, the container
+    //     S-meter and the DSP menu out from under the operator is a change
+    //     to what they see, not to what tunes. RadioModel::removeSlice
+    //     already re-seats the global active slice on its own when the
+    //     removed one held it.
+    //
+    // Only the pan hosting the slice moves; setActiveSliceOnHostingPan is
+    // where that rule lives. activeSliceChanged carries a LIST POSITION, so
+    // the id is resolved through activeSlice()->sliceIndex() rather than
+    // used as it arrives.
+    connect(m_radioModel, &RadioModel::activeSliceChanged, this,
+            [this](int) {
+        if (!m_panStack || !m_radioModel) { return; }
+        if (SliceModel* active = m_radioModel->activeSlice()) {
+            m_panStack->setActiveSliceOnHostingPan(active->sliceIndex());
+        }
+    });
 
     // Phase 3F Sub-Epic D Task 15: restore persisted pan layout + splitter
     // sizes. Reads PanLayoutId from AppSettings (default "1") and asks the
@@ -2686,8 +2739,18 @@ void MainWindow::buildUI()
         // above handles initial placement). Ported from AetherSDR's
         // panIdChanged migration (MainWindow.cpp:11560 [@6a142807]).
         connect(slice, &SliceModel::panKeyChanged, this,
-                [this, slice](const QString&) {
+                [this, slice](const QString& newPanKey) {
             const int idx = slice->sliceIndex();
+            // The pan-to-slice association has to move with the flag. Without
+            // this the pan the slice left kept listing it in
+            // associatedSlices() and could keep it as that pan's active
+            // slice, so the old pan went on tuning, and painting the CH tag
+            // for, a slice now shown somewhere else. Ahead of the flag
+            // rebuild's early return below so the association is corrected on
+            // any path that reaches this handler.
+            if (m_panStack) {
+                m_panStack->moveSliceToPan(idx, newPanKey);
+            }
             if (idx == 0) { return; }  // Slice A flag is the dedicated path
             if (m_panStack) {
                 for (auto* applet : m_panStack->allApplets()) {
@@ -4118,9 +4181,14 @@ void MainWindow::populateDefaultMeter()
     // from AetherSDR (RxApplet::sliceActivationRequested ->
     // MainWindow::setActiveSlice at MainWindow.cpp:3277, and the
     // setActiveSliceInternal rebind at MainWindow.cpp:12132 [@6a142807]).
+    //
+    // setActiveSliceById for the same reason the flag path uses it:
+    // updateSliceButtons keys each tab's button-group id to the slice's own
+    // sliceIndex() rather than its list position, so the id has to be
+    // converted rather than indexed with.
     connect(m_rxApplet, &RxApplet::sliceActivationRequested, this,
-            [this](int sliceIndex) {
-        if (m_radioModel) { m_radioModel->setActiveSlice(sliceIndex); }
+            [this](int sliceId) {
+        if (m_radioModel) { m_radioModel->setActiveSliceById(sliceId); }
     });
 
     auto refreshSliceTabs = [this]() {

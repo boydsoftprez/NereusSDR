@@ -1604,6 +1604,22 @@ nereus_add_test(tst_pan_status_overlay)
 # NereusSDR-original: no upstream port.
 nereus_add_test(tst_pan_badge_click_wiring)
 
+# ── 2026-07-28 bench regression: click-to-tune always tuned flag A ──────────
+# Two slices on one pan, and clicking the spectrum retuned the first one added
+# however many times the operator selected the other flag. RadioModel's global
+# active slice and PanadapterApplet's per-pan one were independent, and only
+# the global one had a writer: PanadapterApplet::addSlice seeded the pan once
+# and nothing ever moved it. MainWindow::sliceForPan reads the pan's value, so
+# click-to-tune, the filter-edge drag, the CH tag and the pan TX pill all
+# latched onto whichever slice reached the pan first.
+# Locks: the pan that hosts the selected slice follows it, pans that do not
+# host it are left alone (per-pan controls act on their own pan), the slice-ID
+# to list-POSITION conversion the activation wires need after a mid-list
+# removal, and the migration invariant that no pan keeps pointing at a slice
+# it no longer hosts.
+# NereusSDR-original: no upstream port.
+nereus_add_test(tst_pan_active_slice_sync)
+
 # ── Phase 3F Sub-Epic D Task 7: FFTRouter receiver-to-pan fan-out ───────────
 # NereusSDR-original core class. One receiver (DDC) fans out to N pans
 # (different zoom levels of the same I/Q data) per AetherSDR overlay model.

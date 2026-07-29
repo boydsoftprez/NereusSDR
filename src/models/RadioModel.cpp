@@ -4921,6 +4921,20 @@ void RadioModel::setActiveSlice(int index)
     }
 }
 
+bool RadioModel::setActiveSliceById(int sliceId)
+{
+    SliceModel* target = sliceById(sliceId);
+    if (target == nullptr) { return false; }
+
+    // The conversion this function exists for, identical in shape to
+    // requestTxHandoffToSlice above.
+    const int position = m_slices.indexOf(target);
+    if (position < 0) { return false; }
+
+    setActiveSlice(position);
+    return true;
+}
+
 void RadioModel::onBandButtonClicked(Band band)
 {
     SliceModel* slice = activeSlice();
