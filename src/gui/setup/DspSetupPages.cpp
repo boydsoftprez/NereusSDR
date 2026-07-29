@@ -1406,10 +1406,23 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
     // create time, so "Setup → change before connect" still takes effect
     // on next connect. This just stops the crash.
     // (Codex review #120, P1 — 2026-04-23.)
+    //
+    // Phase 3F Sub-Epic J Task 11: routed through RadioModel::rxChannelForSlice()
+    // instead of wdspEngine()->rxChannel() directly -- src/gui/ no longer
+    // reaches into WdspEngine itself. Still channel 0, unchanged behaviour:
+    // the SetEXT*/SetRXASNBA* calls this gate protects are hardcoded to
+    // channel 0 below (id argument 0), same as before this migration. That
+    // is a separate, larger gap than this task's rxChannel() audit covers --
+    // NbFamily (src/core/NbFamily.cpp) already manages these exact NB1/SNB
+    // parameters per-channel (constructed one-per-RxChannel), so this whole
+    // page writing straight to channel 0 regardless of the active slice is
+    // a real bypass of that per-slice mechanism, just not one reachable by
+    // grepping for rxChannel(). Left for a follow-up that gives NB1/SNB
+    // detailed tuning its own SliceModel properties, the same shape Task 1
+    // gave anfEnabled.
     auto channelReady = [this]() -> bool {
         auto* rm = this->model();
-        if (!rm || !rm->wdspEngine()) { return false; }
-        return rm->wdspEngine()->rxChannel(0) != nullptr;
+        return rm && rm->rxChannelForSlice(0) != nullptr;
     };
 
     // Helper: integer slider, live value label showing "value / max" with unit.
