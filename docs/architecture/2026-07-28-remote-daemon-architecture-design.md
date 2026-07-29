@@ -4,11 +4,14 @@
 **Date:** 2026-07-28 (rev 2)
 **Author:** J.J. Boyd (KG4VCF), with AI-assisted drafting via Anthropic Claude Code
 
-> **All NereusSDR line numbers in this document are taken against
-> `origin/feature/phase3f-sub-epic-a-foundation` (PR #293), which §2.8 declares
-> as the baseline. They are NOT valid against `main`.** The baseline is an
-> unmerged 264-commit branch and is still moving, so these cites must be
-> re-derived when #293 merges rather than treated as stable.
+> **All NereusSDR line numbers in this document are PROVISIONAL.** They are
+> taken against `origin/feature/phase3f-sub-epic-a-foundation` (PR #293), which
+> §2.8 declares as the baseline, and are NOT valid against `main`. That branch
+> is 264 commits ahead of `main` and **32 commits behind it**, so the cites are
+> anchored to a stale ref. They are to be re-derived once in a single pass
+> after the branch is rebased onto `main`, and should not be relied on before
+> then. File paths, symbol names, and API shapes are stable; only the line
+> numbers are provisional.
 >
 > Thetis cites are against the local clone at tag `v2.10.3.15`, commit
 > `3759d096`, with `origin/master` named explicitly where it differs.
@@ -399,12 +402,35 @@ status.
 
 ### 4.1 Target split
 
-| Target | Contents | Qt modules |
-| --- | --- | --- |
-| `NereusCore` (OBJECT) | `CORE_SOURCES` (118) + `MODEL_SOURCES` (15) | Core, **Gui**, Network, WebSockets, Multimedia, **SerialPort**, ZLIB |
-| `NereusGui` (OBJECT) | `GUI_SOURCES` (244) + resources, links `NereusCore` | adds Widgets, Svg, GuiPrivate |
-| `NereusSDR` (exe) | `src/main.cpp` + `NereusGui` | full |
-| `nereusd` (exe) | `src/server_main.cpp` + `NereusCore` + remote sources | no Widgets, no Svg, no QRhi |
+| Target | Kind | Contents | Qt modules |
+| --- | --- | --- | --- |
+| `NereusCore` | **SHARED** | `CORE_SOURCES` (118) + `MODEL_SOURCES` (15) | Core, **Gui**, Network, WebSockets, Multimedia, **SerialPort**, ZLIB |
+| `NereusGui` | **SHARED** | `GUI_SOURCES` (244) + resources, links `NereusCore` | adds Widgets, Svg, GuiPrivate |
+| `NereusSDR` | exe | `src/main.cpp` + `NereusGui` | full |
+| `nereusd` | exe | `src/server_main.cpp` + `NereusCore` + remote sources | no Widgets, no Svg, no QRhi |
+
+**Shared, not OBJECT, and this is a link-time split rather than a subsystem
+split.** `origin/main` carries `2026-07-25-test-execution-speed-phase1-design.md`,
+which builds `NereusSDRObjs` as a single shared library and says "do not split
+it into subsystem libraries", on measured evidence (rebuilding all tests after
+touching one core file: 31.4 minutes as OBJECT against 29.5 seconds as SHARED,
+and `build/tests` falling from 12 GB to 1.6 GB).
+
+That decision is an input here, not a constraint, and the two are compatible
+anyway. Its measured win comes from shared linkage, which this design keeps.
+What it rejects is splitting by *subsystem*, which this is not: the cut here is
+the single boundary the daemon actually needs, between code that references a
+widget symbol and code that does not. Two shared libraries preserve the
+rebuild and disk win while giving `nereusd` a target it can link without Qt
+Widgets.
+
+Two consequences to settle during R1 rather than assume: per-library IPO
+(`NEREUSSDR_ENABLE_LTO`) must be re-evaluated against two shared targets, since
+the phase-1 doc already flags IPO as a risk on one; and symbol visibility needs
+an export macro, which an OBJECT library did not require.
+
+*Note: that phase-1 document exists on `main` and not on the 3F baseline, which
+is one reason §2.8's precondition is three-way.*
 
 **`Qt6::Gui` and `Qt6::SerialPort` are required by `NereusCore` and must be
 stated, not inherited.** Seven core and model entries need `<QColor>` or
@@ -416,7 +442,8 @@ stated, not inherited.** Seven core and model entries need `<QColor>` or
 
 **`NereusSDRObjs_LTO` exists on the baseline** (6 references in
 `CMakeLists.txt`, absent from `main`): a second full OBJECT library over the
-same sources. The split is therefore a 2xN matrix, not a 2-way split.
+same sources. Whether it survives the move to shared linkage is part of the
+IPO question above.
 
 The daemon build drops Qt Widgets, Qt Svg, the QRhi shader pipeline, and all
 244 GUI source entries.
@@ -540,17 +567,48 @@ Reflects `Q_PROPERTY` declarations over `QMetaObject`: enumerate, subscribe to
 Coverage on the baseline, **139 declarations** (`grep -c 'Q_PROPERTY('` per
 file against the 3F branch):
 
-| Model | Q_PROPERTY | Instances at runtime |
-| --- | --- | --- |
-| `SliceModel` | 98 | x `maxSlices` (up to 5) |
-| `TransmitModel` | 15 | x1 |
-| `TunerModel` | 13 | x1 |
-| `RadioModel` | 5 | x1 |
-| `PanadapterModel` | 4 | x pan count |
-| `MeterModel` | 4 | x1 |
+| Model | Q_PROPERTY | No WRITE accessor | Instances at runtime |
+| --- | --- | --- | --- |
+| `SliceModel` | 98 | 4 | x `maxSlices` (up to 5) |
+| `TransmitModel` | 15 | 3 | x1 |
+| `TunerModel` | 13 | **13** | x1 |
+| `RadioModel` | 5 | 4 | x1 |
+| `MeterModel` | 4 | **4** | x1 |
+| `PanadapterModel` | 4 | 0 | **excluded, client-only (§9.4)** |
 
-**The live mirrored surface is roughly 527 property instances on a 5-slice SKU
-with a 2x2 layout, not 139.** Two of the six are runtime collections.
+**The live mirrored surface is roughly 500 property instances on a 5-slice SKU,
+not 139.** `SliceModel` is a runtime collection.
+
+**Three classes of property, and the generic mechanism handles only one of
+them unaided:**
+
+**Bidirectional.** Operator-settable state. The mechanism as described works.
+
+**Read-only telemetry: 28 of the 139 have no WRITE accessor**, so
+`QMetaProperty::write()` returns false and a blind apply silently no-ops. This
+is not a corner: it is **all 13 of `TunerModel`** (the entire ATU surface),
+**all 4 of `MeterModel`** (`forwardPower`, `swr`, `alc`, `sMeter`), 4 on
+`RadioModel` including `connected`, 4 on `SliceModel`, and 3 on
+`TransmitModel`. Each needs either a mirror-side setter or a per-model
+`applyMirroredValue(name, variant)` hook. This also settles §8.1's open meter
+question: `MeterModel`'s four are in this set.
+
+**Derived, and dangerous: writable but daemon-authoritative.** Phase 3F added
+`SliceModel` properties that are writable yet owned by `RadioModel` and
+`SliceStreamAllocator`, not by the operator: `chainIndex`, `ddcIndex`,
+`streamIndex`, `shiftOffsetHz`, `panKey`, `sampleRateHz`, plus
+`widebandExtensionRequested` and `psPaused`. `SliceModel`'s own header says so
+of `sampleRateHz`: writing the property directly "moves the display only, and
+the next bind or rate change overwrites it"; the verb is
+`RadioModel::requestSliceSampleRate`.
+
+**A blind apply-on-the-far-side would desynchronise the allocator**, and echo
+suppression does not help because these are not echoes. Every mirrored property
+therefore carries a **direction classification**: derived properties are
+transmitted outbound and never applied inbound, and the client must use a
+command verb instead (`requestSliceSampleRate`, `bindSliceToStream`,
+`addSliceOnPan`, `requestTxHandoffToSlice`). §14 asserts that an inbound write
+to a derived property is rejected rather than applied.
 
 **Properties alone are insufficient**, and this is a structural gap rather than
 a documentation one:
@@ -674,9 +732,16 @@ one hit, and the match was the substring inside "conversion".
 version from both ends → authentication → capability exchange → state snapshot
 → snapshot-complete marker → TX gate opens (§12.2).
 
-**Version policy** must state what a mismatch does: refuse, or negotiate down
-to a common minor. A desktop GUI at R4 will be pointed at a Pi still running
-R2.
+**Version policy: refuse on major mismatch, negotiate down on minor.** Both
+ends advertise `major.minor`. Differing major means an incompatible wire
+contract, so the connection is refused with a message naming both versions
+rather than failing obscurely. Equal major with differing minor negotiates down
+to the lower, and each side gates optional behaviour on the agreed value. A
+desktop GUI at R4 pointed at a Pi still running R2 is the expected case, not an
+error case, and it must degrade to R2 behaviour rather than refuse.
+
+Major is incremented only for a breaking change to framing, identity, or the
+snapshot contract. Everything else is a minor bump plus a capability bit.
 
 **Capability descriptor**, advertised by the daemon: SKU, `maxSlices`,
 `userDdcCount`, available modes, PureSignal present, wideband present, TX
@@ -797,9 +862,29 @@ become a goal. The PGXL work already left a VITA-49-style discovery beacon
 (`FlexRadioDiscoveryBroadcaster.cpp:272`) and a minimal SmartSDR API server.
 Product decision, not a technical blocker.
 
-### 7.3 Coalescing (spectrum, meters and state only)
+### 7.3 Coalescing, and the reliability class of each envelope
 
-Audio is excluded (§7.2). What remains still justifies coalescing:
+**There are two coalesced envelopes, not one, because reliability is a
+property of the envelope and the payloads disagree about what they need.** An
+earlier revision left this unstated while §7.2, §7.3 and §10.4 each implied a
+different answer, and it determines the codec: a delta chain on an unreliable
+channel needs the loss detection in §9.4, while one on a reliable channel does
+not.
+
+| Envelope | Class | Carries |
+| --- | --- | --- |
+| Control | Reliable, ordered | State deltas, lifecycle events, snapshot, capability, keyframe requests, commands |
+| Media | Unreliable | Spectrum frames, meter updates |
+| (Audio) | Unreliable, own RTP stream | Not coalesced at all (§7.2) |
+
+Meters ride the unreliable envelope because they are periodic telemetry at
+10 fps; a dropped one is superseded 100 ms later. State deltas must not, because
+a lost delta desynchronises the mirror with no way to detect it.
+
+**Consequence for §9.4:** spectrum is on the unreliable envelope, so the
+encoder sequence number and keyframe-on-gap rule are mandatory, not optional.
+
+What remains still justifies coalescing:
 
 Per session per tick: up to N spectrum frames (one per subscribed pan, §9.5)
 plus meter updates at **10 fps** (`MeterPoller.h:168`, "Default 100ms (10 fps)
@@ -1040,12 +1125,40 @@ microphone uplink on capable links (§3.1).
 ### 9.4 Endpoint model, identity, and staleness
 
 **Endpoints are keyed by a session-scoped endpoint id minted by the client at
-subscribe time, never by the GUI's pan id.** Pan identity in the shipping code
-is a client-side, non-persisted, mutable QString minted by GUI code
-(`"pan-%1"`), `SliceModel::panKey` is never written to settings, and
-`PanadapterStack::applyLayout` silently retires every pan not named in the new
-layout. The daemon's subscription is `(endpointId → streamIndex)` and pan ids
-stay client-local. Teardown is an **explicit unsubscribe**, not an inference.
+subscribe time.** The daemon's subscription is `(endpointId → streamIndex)`,
+and teardown is an **explicit unsubscribe**, never an inference from
+visibility or layout.
+
+**A pan is a client concept. An endpoint is the wire concept. They are not
+the same object and must not be conflated.** An earlier revision said pan ids
+"stay client-local", which is wrong in two ways: `SliceModel::panKey` is a
+`Q_PROPERTY`, so a property-enumerating mirror ships pan ids by construction,
+and `RadioModel::connectToRadio` itself hardcodes `setPanKey("pan-0")`
+daemon-side. Pan ids therefore cross the wire whether we design for it or not.
+
+The resolution, which also settles what R1's "pan orchestration" means:
+
+**The daemon does not own pan objects.** There is no core-side pan model to
+own: `RadioModel::addPanadapter()` has no production caller, every consumer
+guards on `isEmpty()`, and `removePanadapter(int)` is positional. Rather than
+build one for the daemon's benefit, the daemon owns **streams and endpoints**,
+which is what it actually needs, and treats `panKey` as an opaque
+client-assigned label it stores and echoes back so the client can correlate.
+§15 R1's deliverable is therefore **slice and endpoint orchestration**, not
+pan orchestration.
+
+**`PanadapterModel`'s four values are client-owned, and the mirror must not
+fight the endpoint config over them.** `centerFrequency`, `bandwidth`,
+`dBmFloor` and `dBmCeiling` are exactly §9.4a's crop window and quantisation
+window. An earlier revision made them simultaneously daemon-mirrored and
+client-requested, with no precedence, so a band change firing the per-band grid
+restore would push new floor and ceiling values through `StateMirror` while the
+endpoint config asserted its own, and the display range would oscillate.
+
+`PanadapterModel` is therefore **excluded from the mirrored set** and lives
+client-side only. The per-band grid restore that drives it becomes a
+client-side reaction to the mirrored `bandChanged`, not a daemon push. This
+also removes the "x pan count" row from §6.1's instance table.
 
 **Per-endpoint configuration, client-requested:** pixel count, frame rate,
 frames-per-line, crop window, detector mode, averaging mode and tau, and the
@@ -1603,7 +1716,12 @@ it.
 
 | Decision | Choice |
 | --- | --- |
-| Baseline | Phase 3F (PR #293) as a **merge-order precondition**; all three PRs open, #291 not in #293 |
+| Baseline | Phase 3F (PR #293) as a **three-way merge-order precondition**: #291 into #293, #293 rebased onto `main`, then R1. Line cites re-derived after the rebase |
+| Build target kind | Two **shared** libraries. A link-time split, not the subsystem split `main`'s phase-1 doc rejects |
+| Pan ownership | Daemon owns streams and endpoints; pans are client concepts. `PanadapterModel` is excluded from the mirror |
+| Property directions | Three classes: bidirectional, read-only telemetry needing a shadow-apply path, and derived properties never applied inbound |
+| Version mismatch | Refuse on major, negotiate down on minor |
+| Envelope reliability | Two coalesced envelopes: reliable for control and state, unreliable for spectrum and meters |
 | DSP split point | Option C: daemon demodulates; client is control surface and renderer |
 | Upstream alignment | Build natively now; TCI WS/WSS becomes a later transport |
 | Spectrum source | `FFTEngine::fftReadyLinear` (linear power); `FFTRouter` is a topology oracle carrying no frames |
