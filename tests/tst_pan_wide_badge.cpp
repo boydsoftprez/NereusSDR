@@ -19,15 +19,18 @@
 //
 //   pan -> its slices -> their stream -> that stream's ADC -> BpfEffective
 //
-// setAdcForReceiver is called exactly once in production today (receiver 0
-// -> ADC 0, RadioModel.cpp), so every stream currently reports ADC0. These
-// cases drive setAdcForReceiver directly so the per-chain contract is
-// locked now and stays correct when ADC distribution lands.
+// Streams reach the second ADC through the codec: a slice on an RX-only
+// antenna is routed there by applyDdcAssignment, and RadioModel decodes that
+// placement out of the resulting DdcAssignment. These cases publish an
+// assignment directly (pinToAdcs below) so they can pin any slice to any
+// chain without going through antenna policy, which is a different subject
+// and is covered by tst_alex_per_adc_bpf_wire.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include "core/AppSettings.h"
+#include "core/DdcAssignment.h"
 #include "core/ReceiverManager.h"
 #include "core/accessories/AlexController.h"
 #include "gui/PanadapterApplet.h"
@@ -40,15 +43,24 @@ using namespace NereusSDR;
 
 namespace {
 
-// ReceiverManager only knows about receivers that were explicitly created:
-// setAdcForReceiver and receiverConfig both key off that map, and an unknown
-// index silently reports the default ADC0 (ReceiverManager.cpp:219-222,
-// 315-322). Production creates one receiver per stream at connect
-// (RadioModel.cpp:4946 + 5024-5028). These cases have no connection, so they
-// have to stand that pool up themselves or every slice lands on chain 0 and
-// the per-chain assertions below would pass for the wrong reason.
-void seedReceiverPool(RadioModel& model, int streamCount)
+// Stand up the two things a per-chain case needs and a bare RadioModel has
+// not got.
+//
+// 1. A BOARD WITH TWO FILTER CHAINS. RadioModel::chainForStream folds any ADC
+//    at or above BoardCapabilities::rxFilterChainCount onto chain 0, because
+//    on a one-chain board both ADCs really do sit behind the one preselector
+//    (defect D4). A model with no board reports the Unknown row, which is one
+//    chain, so without this every pin below would fold to chain 0 and these
+//    cases would assert nothing. Saturn is the ANAN-G2, the SKU the per-chain
+//    routing exists for.
+// 2. A RECEIVER PER STREAM. ReceiverManager only knows about receivers that
+//    were explicitly created, and an unknown index silently reports the
+//    default (ReceiverManager.cpp:219-222). Production creates one per stream
+//    at connect (RadioModel.cpp:5334-5338); these cases have no connection.
+void seedTwoChainRadio(RadioModel& model, int streamCount)
 {
+    model.setBoardForTest(HPSDRHW::Saturn);
+
     ReceiverManager* rm = model.receiverManager();
     QVERIFY(rm);
     for (int st = 0; st < streamCount; ++st) {
@@ -71,23 +83,62 @@ SliceModel* addSliceAt(RadioModel& model, double hz)
 }
 
 // Put a slice's stream on a given ADC. Call after every slice exists.
-void pinToAdc(RadioModel& model, SliceModel* slice, int adc)
+// Put each slice's stream on a given ADC, the way production does it.
+//
+// These cases used to call ReceiverManager::setAdcForReceiver. That stopped
+// being the source of truth with defect D1: the per-stream ADC now reaches the
+// model through exactly one door, a codec composing a DdcAssignment whose
+// adcCtrl bytes RadioModel::publishDdcAssignment decodes. Seeding the old
+// field leaves every slice on chain 0 while the per-chain assertions below
+// pass for the wrong reason, which is the failure mode the preconditions in
+// these cases were written to catch.
+//
+// One call carrying the whole map rather than one per slice, because that is
+// the shape of an assignment: the codec places every stream at once.
+//
+// DDC numbers are the Saturn / OrionMkII user table {2, 3, 4, 5, 6}
+// (P2CodecOrionMkII::applyDdcAssignment), so a five-stream pool spans BOTH
+// control bytes: DDC2 / DDC3 sit in adcCtrl1, DDC4-6 in adcCtrl2. Encoding is
+// two bits per DDC, from Thetis setup.cs:16928-16942 [v2.10.3.15].
+void pinToAdcs(RadioModel& model, const QList<QPair<SliceModel*, int>>& pins)
 {
-    QVERIFY(slice);
-    QVERIFY(model.receiverManager());
-    QVERIFY2(slice->streamIndex() >= 0,
-             "slice never bound a stream; the ADC pin has nothing to attach to");
-    model.receiverManager()->setAdcForReceiver(slice->streamIndex(), adc);
+    static constexpr int kStreamToDdc[5] = {2, 3, 4, 5, 6};
+
+    DdcAssignment a{};
+    for (int st = 0; st < 5; ++st) {
+        a.streamDdc[st] = kStreamToDdc[st];
+        a.ddcEnable |= (1 << kStreamToDdc[st]);
+    }
+
+    for (const QPair<SliceModel*, int>& pin : pins) {
+        QVERIFY(pin.first);
+        const int st = pin.first->streamIndex();
+        QVERIFY2(st >= 0 && st < 5,
+                 "slice never bound a stream; the ADC pin has nothing to attach to");
+        const int ddc = kStreamToDdc[st];
+        if (ddc < 4) {
+            a.adcCtrl1 = (a.adcCtrl1 & ~(3 << (ddc * 2)))
+                       | (pin.second << (ddc * 2));
+        } else {
+            const int sh = (ddc - 4) * 2;
+            a.adcCtrl2 = (a.adcCtrl2 & ~(3 << sh)) | (pin.second << sh);
+        }
+    }
+
+    model.publishDdcAssignmentForTest(a);
 }
 
 // Re-run the per-chain BPF analysis after the ADC pins moved.
 //
 // requestDdcAssignment is the production coalescing point for exactly this:
-// it ends in republishAlexAdcSlices, which is what groups slices by adcIndex
-// and recomputes AlexController's per-chain state (RadioModel.cpp:3340-3348).
-// Slice retunes reach it on their own; a bare setAdcForReceiver does not,
-// because today nothing in production moves a stream between ADCs after
-// connect.
+// it ends in republishAlexAdcSlices, which groups slices by chain and
+// recomputes AlexController's per-chain state. Slice retunes and antenna
+// changes reach it on their own; publishDdcAssignment does not, because it is
+// the client-side half and deliberately writes no wire frame.
+//
+// Safe to call after pinToAdcs even with no codec injected: computeDdcAssignment
+// then returns a bare DdcAssignment whose streamDdc entries are all -1, and the
+// ADC loop in publishDdcAssignment skips those, so the pins survive.
 void recomputeChains(RadioModel& model)
 {
     model.requestDdcAssignment();
@@ -111,13 +162,12 @@ private slots:
     {
         RadioModel model;
         model.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
-        seedReceiverPool(model, 5);
+        seedTwoChainRadio(model, 5);
 
         SliceModel* a = addSliceAt(model, 14200000.0);  // 20 m
         SliceModel* b = addSliceAt(model,  7150000.0);  // 40 m
         QVERIFY(a && b);
-        pinToAdc(model, a, 0);
-        pinToAdc(model, b, 0);
+        pinToAdcs(model, {{a, 0}, {b, 0}});
         recomputeChains(model);
 
         // Precondition: the chain really is bypassed.
@@ -144,20 +194,23 @@ private slots:
     {
         RadioModel model;
         model.configureStreamPool(5, 5, 192000);
-        seedReceiverPool(model, 5);
+        seedTwoChainRadio(model, 5);
 
         SliceModel* a = addSliceAt(model, 14200000.0);  // 20 m -> chain 0
         SliceModel* b = addSliceAt(model,  7150000.0);  // 40 m -> chain 0
         SliceModel* c = addSliceAt(model, 21200000.0);  // 15 m -> chain 1
         QVERIFY(a && b && c);
-        pinToAdc(model, a, 0);
-        pinToAdc(model, b, 0);
-        pinToAdc(model, c, 1);
+        pinToAdcs(model, {{a, 0}, {b, 0}, {c, 1}});
         recomputeChains(model);
 
-        // Precondition: the pins actually took. An empty chain also reports
-        // Filtered, so without this the case below would pass on a build
-        // where every slice silently landed on chain 0.
+        // Precondition: the pins actually took, on BOTH destinations
+        // publishDdcAssignment writes. An empty chain also reports Filtered,
+        // so without this the case below would pass on a build where every
+        // slice silently landed on chain 0. chainForStream is the one the
+        // badge reads; ReceiverManager's copy is the mirror.
+        QCOMPARE(model.chainForStream(a->streamIndex()), 0);
+        QCOMPARE(model.chainForStream(b->streamIndex()), 0);
+        QCOMPARE(model.chainForStream(c->streamIndex()), 1);
         ReceiverManager* rm = model.receiverManager();
         QCOMPARE(rm->receiverConfig(a->streamIndex()).adcIndex, 0);
         QCOMPARE(rm->receiverConfig(b->streamIndex()).adcIndex, 0);
@@ -184,11 +237,11 @@ private slots:
     {
         RadioModel model;
         model.configureStreamPool(5, 5, 192000);
-        seedReceiverPool(model, 5);
+        seedTwoChainRadio(model, 5);
 
         SliceModel* a = addSliceAt(model, 14200000.0);
         QVERIFY(a);
-        pinToAdc(model, a, 0);
+        pinToAdcs(model, {{a, 0}});
         recomputeChains(model);
         QCOMPARE(model.alexController().adcState(0).effective,
                  AlexController::BpfEffective::Filtered);
@@ -205,7 +258,7 @@ private slots:
     {
         RadioModel model;
         model.configureStreamPool(5, 5, 192000);
-        seedReceiverPool(model, 5);
+        seedTwoChainRadio(model, 5);
         addSliceAt(model, 14200000.0);
         addSliceAt(model,  7150000.0);   // chain 0 is bypassed
 
@@ -227,13 +280,12 @@ private slots:
     {
         RadioModel model;
         model.configureStreamPool(5, 5, 192000);
-        seedReceiverPool(model, 5);
+        seedTwoChainRadio(model, 5);
 
         SliceModel* a = addSliceAt(model, 14200000.0);  // 20 m
         SliceModel* b = addSliceAt(model,  7150000.0);  // 40 m
         QVERIFY(a && b);
-        pinToAdc(model, a, 0);
-        pinToAdc(model, b, 0);
+        pinToAdcs(model, {{a, 0}, {b, 0}});
         recomputeChains(model);
 
         const RadioModel::PanBypassState st =
@@ -266,7 +318,7 @@ private slots:
     {
         RadioModel wideband;
         wideband.configureStreamPool(5, 5, 192000);
-        seedReceiverPool(wideband, 5);
+        seedTwoChainRadio(wideband, 5);
         SliceModel* w = addSliceAt(wideband, 14200000.0);
         QVERIFY(w);
         w->setWidebandExtensionRequested(true);
@@ -281,7 +333,7 @@ private slots:
 
         RadioModel forced;
         forced.configureStreamPool(5, 5, 192000);
-        seedReceiverPool(forced, 5);
+        seedTwoChainRadio(forced, 5);
         SliceModel* f = addSliceAt(forced, 14200000.0);
         QVERIFY(f);
         forced.alexControllerMutable().setBpfMode(
@@ -344,15 +396,13 @@ private slots:
     {
         RadioModel model;
         model.configureStreamPool(5, 5, 192000);
-        seedReceiverPool(model, 5);
+        seedTwoChainRadio(model, 5);
 
         SliceModel* a = addSliceAt(model, 14200000.0);  // 20 m -> chain 0
         SliceModel* b = addSliceAt(model,  7150000.0);  // 40 m -> chain 0
         SliceModel* c = addSliceAt(model, 21200000.0);  // 15 m -> chain 1
         QVERIFY(a && b && c);
-        pinToAdc(model, a, 0);
-        pinToAdc(model, b, 0);
-        pinToAdc(model, c, 1);
+        pinToAdcs(model, {{a, 0}, {b, 0}, {c, 1}});
         recomputeChains(model);
 
         PanadapterApplet panWide(QStringLiteral("pan-0"));

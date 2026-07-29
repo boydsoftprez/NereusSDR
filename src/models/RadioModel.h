@@ -1350,6 +1350,26 @@ public:
         return currentCodecContext();
     }
 
+    // Publish a hand-built assignment through the real production path.
+    //
+    // Added with the D1 fix. The per-stream ADC now reaches the model in
+    // exactly one way: a codec composes a DdcAssignment and this function
+    // decodes its adcCtrl bytes. A test that wants a slice on chain 1 has to
+    // go through here or it is seeding a field nothing reads, which is the
+    // defect D1 was.
+    //
+    // Deliberately the whole function rather than a setter for m_streamAdc.
+    // A narrow ADC setter could drift from what publishDdcAssignment
+    // actually writes and the suite would never notice; routing through the
+    // real body means the decode (NereusSDR::adcForDdc) is under test too.
+    //
+    // For tests that want the codec's own answer instead of a hand-built
+    // one, inject a codec and use requestDdcAssignment: that is the fuller
+    // path and it is what tst_alex_per_adc_bpf_wire drives.
+    void publishDdcAssignmentForTest(const NereusSDR::DdcAssignment& a) {
+        publishDdcAssignment(a);
+    }
+
     // Per-radio peripherals scope: tests pin m_lastRadioInfo without
     // standing up a fake RadioConnection so peripheralValue / setPeripheralValue
     // can resolve their per-MAC scope.  Production code populates this via

@@ -31,6 +31,7 @@
 #include <QMetaProperty>
 
 #include "core/AppSettings.h"
+#include "core/DdcAssignment.h"
 #include "core/ReceiverManager.h"
 #include "gui/MainWindow.h"
 #include "gui/PanadapterApplet.h"
@@ -49,8 +50,24 @@ namespace {
 // pool up themselves or every slice lands on chain 0 and the per-chain
 // assertions below would pass for the wrong reason.
 // Same helper contract as tst_pan_wide_badge.cpp.
-void seedReceiverPool(RadioModel& model, int streamCount)
+// Stand up the two things a per-chain case needs and a bare RadioModel has
+// not got.
+//
+// 1. A BOARD WITH TWO FILTER CHAINS. RadioModel::chainForStream folds any ADC
+//    at or above BoardCapabilities::rxFilterChainCount onto chain 0, because
+//    on a one-chain board both ADCs really do sit behind the one preselector
+//    (defect D4). A model with no board reports the Unknown row, which is one
+//    chain, so without this every pin below would fold to chain 0 and these
+//    cases would assert nothing. Saturn is the ANAN-G2, the SKU the per-chain
+//    routing exists for.
+// 2. A RECEIVER PER STREAM. ReceiverManager only knows about receivers that
+//    were explicitly created, and an unknown index silently reports the
+//    default (ReceiverManager.cpp:219-222). Production creates one per stream
+//    at connect (RadioModel.cpp:5334-5338); these cases have no connection.
+void seedTwoChainRadio(RadioModel& model, int streamCount)
 {
+    model.setBoardForTest(HPSDRHW::Saturn);
+
     ReceiverManager* rm = model.receiverManager();
     QVERIFY(rm);
     for (int st = 0; st < streamCount; ++st) {
@@ -71,13 +88,49 @@ SliceModel* addSliceAt(RadioModel& model, double hz, DSPMode mode)
     return slice;
 }
 
-void pinToAdc(RadioModel& model, SliceModel* slice, int adc)
+// Put each slice's stream on a given ADC, the way production does it.
+//
+// These cases used to call ReceiverManager::setAdcForReceiver. That stopped
+// being the source of truth with defect D1: the per-stream ADC now reaches the
+// model through exactly one door, a codec composing a DdcAssignment whose
+// adcCtrl bytes RadioModel::publishDdcAssignment decodes. Seeding the old
+// field leaves every slice on chain 0 while the per-chain assertions below
+// pass for the wrong reason, which is the failure mode the preconditions in
+// these cases were written to catch.
+//
+// One call carrying the whole map rather than one per slice, because that is
+// the shape of an assignment: the codec places every stream at once.
+//
+// DDC numbers are the Saturn / OrionMkII user table {2, 3, 4, 5, 6}
+// (P2CodecOrionMkII::applyDdcAssignment), so a five-stream pool spans BOTH
+// control bytes: DDC2 / DDC3 sit in adcCtrl1, DDC4-6 in adcCtrl2. Encoding is
+// two bits per DDC, from Thetis setup.cs:16928-16942 [v2.10.3.15].
+void pinToAdcs(RadioModel& model, const QList<QPair<SliceModel*, int>>& pins)
 {
-    QVERIFY(slice);
-    QVERIFY(model.receiverManager());
-    QVERIFY2(slice->streamIndex() >= 0,
-             "slice never bound a stream; the ADC pin has nothing to attach to");
-    model.receiverManager()->setAdcForReceiver(slice->streamIndex(), adc);
+    static constexpr int kStreamToDdc[5] = {2, 3, 4, 5, 6};
+
+    DdcAssignment a{};
+    for (int st = 0; st < 5; ++st) {
+        a.streamDdc[st] = kStreamToDdc[st];
+        a.ddcEnable |= (1 << kStreamToDdc[st]);
+    }
+
+    for (const QPair<SliceModel*, int>& pin : pins) {
+        QVERIFY(pin.first);
+        const int st = pin.first->streamIndex();
+        QVERIFY2(st >= 0 && st < 5,
+                 "slice never bound a stream; the ADC pin has nothing to attach to");
+        const int ddc = kStreamToDdc[st];
+        if (ddc < 4) {
+            a.adcCtrl1 = (a.adcCtrl1 & ~(3 << (ddc * 2)))
+                       | (pin.second << (ddc * 2));
+        } else {
+            const int sh = (ddc - 4) * 2;
+            a.adcCtrl2 = (a.adcCtrl2 & ~(3 << sh)) | (pin.second << sh);
+        }
+    }
+
+    model.publishDdcAssignmentForTest(a);
 }
 
 // The fan-out exactly as MainWindow::refreshPanStatusOverlays drives it:
@@ -125,7 +178,7 @@ private slots:
     {
         RadioModel model;
         model.configureStreamPool(5, 5, 192000);
-        seedReceiverPool(model, 5);
+        seedTwoChainRadio(model, 5);
 
         SliceModel* a = addSliceAt(model, 7150000.0, DSPMode::LSB);
         QVERIFY(a);
@@ -146,7 +199,7 @@ private slots:
     {
         RadioModel model;
         model.configureStreamPool(5, 5, 192000);
-        seedReceiverPool(model, 5);
+        seedTwoChainRadio(model, 5);
 
         SliceModel* a = addSliceAt(model, 14200000.0, DSPMode::USB);
         SliceModel* b = addSliceAt(model, 21200000.0, DSPMode::CWU);
@@ -181,7 +234,7 @@ private slots:
     {
         RadioModel model;
         model.configureStreamPool(5, 5, 192000);
-        seedReceiverPool(model, 5);
+        seedTwoChainRadio(model, 5);
 
         SliceModel* a = addSliceAt(model, 14200000.0, DSPMode::USB);
         SliceModel* b = addSliceAt(model,  7150000.0, DSPMode::LSB);
@@ -206,7 +259,7 @@ private slots:
     {
         RadioModel model;
         model.configureStreamPool(5, 5, 192000);
-        seedReceiverPool(model, 5);
+        seedTwoChainRadio(model, 5);
 
         SliceModel* a = addSliceAt(model, 14200000.0, DSPMode::USB);
         QVERIFY(a);
@@ -236,13 +289,12 @@ private slots:
     {
         RadioModel model;
         model.configureStreamPool(5, 5, 192000);
-        seedReceiverPool(model, 5);
+        seedTwoChainRadio(model, 5);
 
         SliceModel* a = addSliceAt(model, 14200000.0, DSPMode::USB);
         SliceModel* b = addSliceAt(model, 21200000.0, DSPMode::USB);
         QVERIFY(a && b);
-        pinToAdc(model, a, 0);
-        pinToAdc(model, b, 1);
+        pinToAdcs(model, {{a, 0}, {b, 1}});
 
         PanadapterApplet panA(QStringLiteral("pan-0"));
         panA.addSlice(a->sliceIndex());
@@ -264,11 +316,11 @@ private slots:
     {
         RadioModel model;
         model.configureStreamPool(5, 5, 192000);
-        seedReceiverPool(model, 5);
+        seedTwoChainRadio(model, 5);
 
         SliceModel* a = addSliceAt(model, 14200000.0, DSPMode::USB);
         QVERIFY(a);
-        pinToAdc(model, a, 1);
+        pinToAdcs(model, {{a, 1}});
 
         QCOMPARE(model.sliceChainIndex(a->sliceIndex()), 1);
 
@@ -293,7 +345,7 @@ private slots:
     {
         RadioModel model;
         model.configureStreamPool(5, 5, 192000);
-        seedReceiverPool(model, 5);
+        seedTwoChainRadio(model, 5);
 
         SliceModel* a = addSliceAt(model, 14200000.0, DSPMode::USB);
         SliceModel* b = addSliceAt(model,  7150000.0, DSPMode::LSB);
@@ -307,7 +359,7 @@ private slots:
         QCOMPARE(model.slices().indexOf(model.sliceById(idC)), 1);
         QCOMPARE(model.sliceById(idC)->sliceIndex(), idC);
 
-        pinToAdc(model, model.sliceById(idC), 1);
+        pinToAdcs(model, {{model.sliceById(idC), 1}});
         QCOMPARE(model.sliceChainIndex(idC), 1);
 
         PanadapterApplet pan(QStringLiteral("pan-0"));
