@@ -237,6 +237,8 @@ public:
     // overrides bits 2-3 with 0x08.  cntrl2 is masked similarly per-codec.
     void setRxAdcCtrl1(quint8 reg);
     void setRxAdcCtrl2(quint8 reg);
+    quint8 rxAdcCtrl1() const noexcept { return m_rxAdcCtrl1; }
+    quint8 rxAdcCtrl2() const noexcept { return m_rxAdcCtrl2; }
 
 signals:
     void activeReceiverCountChanged(int count);

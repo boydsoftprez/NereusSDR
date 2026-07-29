@@ -1325,6 +1325,14 @@ public:
         return buildStreamConfigsForCodec();
     }
 
+    // Companion to the above for the other half of the codec's inputs.
+    // Added with the D2 fix (CodecContext::adcCtrl was never seeded on
+    // Protocol 2), so a test can assert the seed without standing up a
+    // connection to observe it through a wire frame.
+    NereusSDR::CodecContext currentCodecContextForTest() const {
+        return currentCodecContext();
+    }
+
     // Per-radio peripherals scope: tests pin m_lastRadioInfo without
     // standing up a fake RadioConnection so peripheralValue / setPeripheralValue
     // can resolve their per-MAC scope.  Production code populates this via

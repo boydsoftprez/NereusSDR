@@ -413,6 +413,11 @@ struct CodecContext {
     // surfaced while diagnosing #263. The P1 codecs now read
     // `p1AdcCntrl` for bank 4; `adcCtrl` is retained for any
     // P2-specific code path still reading it.
+    //
+    // Seeded by RadioModel::currentCodecContext() from defaultRxAdcCtrl()
+    // below. The struct default stays 0 so a bare CodecContext{} in a unit
+    // test describes "no ADC routing asked for" rather than silently
+    // asserting a board shape the test never named.
     quint16 adcCtrl{0};
 
     // P1-specific ADC routing (Thetis `P1_adc_cntrl` global; 14 bits,
@@ -477,6 +482,42 @@ struct CodecContext {
     int     hl2TxLatency{0};     // 7-bit
     bool    hl2ResetOnDisconnect{false};
 };
+
+/// Board-gated seed for `CodecContext::adcCtrl` (the P2 per-DDC ADC routing
+/// word: `cntrl1` in the low byte, `cntrl2` in the high byte).
+///
+/// From Thetis console.cs:15099 [v2.10.3.15]:
+///   private int rx_adc_ctrl1 = 4;
+/// From Thetis console.cs:15135 [v2.10.3.15]:
+///   private int rx_adc_ctrl2 = 0;
+///
+/// The 4 is not an opaque constant. The word is two bits per DDC, and
+/// Thetis's own composer spells the encoding out one line at a time at
+/// setup.cs:16928-16942 [v2.10.3.15]:
+///   if (radDDC1ADC1.Checked) val += 1 << 2; // bits 3 & 2 set to 01 => DDC1 to ADC1
+/// so 4 means exactly "DDC1 on ADC1, every other DDC on ADC0", and
+/// console.cs:15117-15131 [v2.10.3.15] decodes it back the same way
+/// (`mask = 3 << (ddc * 2)`, with adcCtrl2 covering DDC4-7 as DDC(n-4)).
+///
+/// Why it matters: the diversity DDC0/DDC1 sync pair has to straddle both
+/// physical inputs. Left at 0 the pair sits on ADC0 twice, which is one
+/// antenna combined with itself and no diversity at all. NereusSDR shipped
+/// that way on Protocol 2 because nothing ever assigned `adcCtrl`.
+///
+/// Why this gates on ADC count when Thetis does not: upstream keeps the 4 in
+/// one global and lets each board's UpdateDDCs branch decide whether to read
+/// it. The 1-ADC branches never do, hardcoding cntrl1 instead
+/// (console.cs:8399 / 8443 / 8455 [v2.10.3.15]), so the global is harmless
+/// there. NereusSDR has more than one consumer of the seed, so gating at the
+/// source is the cheaper invariant: a 1-ADC board is never handed an ADC1
+/// selector in the first place. Same shape as the Protocol 1 seed at
+/// P1RadioConnection.cpp applyBoardQuirks().
+constexpr quint16 defaultRxAdcCtrl(int adcCount) noexcept
+{
+    // Low byte = rx_adc_ctrl1, high byte = rx_adc_ctrl2 (0 upstream, and
+    // NereusSDR has no control that would move DDC4-7 off ADC0 either).
+    return (adcCount >= 2) ? quint16(0x0004) : quint16(0x0000);
+}
 
 // PureSignal DDC config bytes/words emitted by per-board codec.
 // Consumed by ReceiverManager::updateDdcAssignment() (Phase 3M-4 Task 6)

@@ -10526,6 +10526,26 @@ void RadioModel::applyHpsdrModel(HPSDRModel m)
     m_transmitModel.setHpsdrModel(m_hardwareProfile.model);
     if (m_receiverManager) {
         m_receiverManager->setHpsdrModel(m_hardwareProfile.model);
+
+        // Defect D2, second consumer. ReceiverManager keeps its own shadow of
+        // the per-DDC ADC routing word for the Phase 3M-4 PureSignal path
+        // (updateDdcAssignment -> applyPureSignalDdcConfig -> applyPsDdcConfig),
+        // which is a wire writer independent of the Phase 3F codec path.
+        // setRxAdcCtrl1 / setRxAdcCtrl2 had no production caller at all, so
+        // that shadow sat at 0 while the codec path was about to start
+        // seeding 4, and the two writers would have disagreed about where
+        // DDC1 lives.
+        //
+        // The disagreement is currently invisible on the wire -- the PS
+        // branches mask the field out with `(adcCtrl1 & 0xf3) | 0x08` and
+        // ReceiverManager::setDiversityEnabled has no production caller
+        // either -- but "invisible today" is exactly the condition under
+        // which two copies of a value drift apart, which is the defect class
+        // being closed here. Seed both from the same board-gated source.
+        const quint16 seed =
+            NereusSDR::defaultRxAdcCtrl(boardCapabilities().adcCount);
+        m_receiverManager->setRxAdcCtrl1(static_cast<quint8>(seed & 0xff));
+        m_receiverManager->setRxAdcCtrl2(static_cast<quint8>((seed >> 8) & 0x3f));
     }
 }
 
@@ -13104,6 +13124,26 @@ NereusSDR::CodecContext RadioModel::currentCodecContext() const
     // inputs, so computeDdcAssignment and describeSuspendedStreams cannot
     // disagree about whether PureSignal is transmitting.
     NereusSDR::CodecContext ctx{};
+
+    // Defect D2: the per-DDC ADC routing word. Thetis's fresh-install value
+    // is rx_adc_ctrl1 = 4 (console.cs:15099 [v2.10.3.15]) with
+    // rx_adc_ctrl2 = 0 (console.cs:15135), and setup.cs:16934 [v2.10.3.15]
+    // states what the 4 encodes: "bits 3 & 2 set to 01 => DDC1 to ADC1".
+    //
+    // NereusSDR never assigned this on Protocol 2 -- P2RadioConnection's
+    // buildCodecContext does not touch it, and this function builds a bare
+    // CodecContext rather than calling that -- so the codecs' `a.adcCtrl1 =
+    // ctx.adcCtrl & 0xff` faithfully copied a zero. The visible consequence
+    // was in diversity: the DDC0/DDC1 sync pair both landed on ADC0, one
+    // physical input sampled twice, which is not diversity at all.
+    //
+    // Seeded before the test seam below, not after, so the forced-state
+    // path (setDdcContextForTest, which exists to reach the PureSignal and
+    // diversity branches without a live radio) exercises the same ADC map
+    // production does. defaultRxAdcCtrl gates on the board's ADC count so a
+    // 1-ADC SKU is never handed an ADC1 selector.
+    ctx.adcCtrl = NereusSDR::defaultRxAdcCtrl(boardCapabilities().adcCount);
+
     if (m_ddcCtxForTest) {
         ctx.mox           = m_ddcCtxMoxForTest;
         ctx.puresignalRun = m_ddcCtxPsForTest;

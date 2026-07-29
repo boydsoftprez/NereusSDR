@@ -958,6 +958,52 @@ private slots:
 
         QCOMPARE(a.adcCtrl1 & 0x30, 0x00);
     }
+
+    // ── D2: the diversity DDC0/DDC1 pair must straddle both ADCs ──────────
+    //
+    // Thetis's fresh-install rx_adc_ctrl1 is 4 (console.cs:15099
+    // [v2.10.3.15]), and setup.cs:16934 [v2.10.3.15] spells out what 4
+    // encodes: `if (radDDC1ADC1.Checked) val += 1 << 2;` with the comment
+    // "bits 3 & 2 set to 01 => DDC1 to ADC1". So 4 means DDC0 on ADC0 and
+    // DDC1 on ADC1 -- the two physical inputs a diversity pair has to
+    // combine. NereusSDR never seeded CodecContext::adcCtrl on Protocol 2,
+    // so the pair sat on ADC0 twice and diversity combined one antenna with
+    // itself.
+    void diversity_pair_straddles_both_adcs_when_seeded_thetis_default()
+    {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        ctx.diversity = true;
+        ctx.adcCtrl = NereusSDR::defaultRxAdcCtrl(2);   // 2-ADC board
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].frequencyHz = 14225000;
+        slices[0].sampleRateHz = 192000;
+        slices[0].diversityRequested = true;
+        slices[0].antennaIndex = 1;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        // The pair itself, unchanged from the pre-existing diversity test.
+        QCOMPARE(a.ddcEnable & 0x07, 0x03);
+        QCOMPARE(a.syncEnable & 0x02, 0x02);
+        // DDC0 (bits 1&0) on ADC0.
+        QCOMPARE(a.adcCtrl1 & 0x03, 0x00);
+        // DDC1 (bits 3&2) on ADC1 -- 01 << 2.
+        QCOMPARE(a.adcCtrl1 & 0x0c, 1 << 2);
+    }
+
+    // A 1-ADC board must never be handed an ADC1 selector. Thetis leaves
+    // rx_adc_ctrl1 at 4 globally and relies on each 1-ADC UpdateDDCs branch
+    // hardcoding cntrl1 (console.cs:8399 / 8443 / 8455 [v2.10.3.15]);
+    // NereusSDR gates at the seed instead, so the wrong value never enters
+    // the context in the first place.
+    void one_adc_board_seeds_no_second_chain()
+    {
+        QCOMPARE(NereusSDR::defaultRxAdcCtrl(1), quint16(0x0000));
+        QCOMPARE(NereusSDR::defaultRxAdcCtrl(2), quint16(0x0004));
+    }
 };
 
 QTEST_MAIN(TestCodec5SliceAssignment)
