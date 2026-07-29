@@ -1143,6 +1143,93 @@ void SliceModel::setAnfEnabled(bool v)
     }
 }
 
+// ── NB1 / NB2 / SNB detailed tuning ─────────────────────────────────────────
+// Ranges mirror Thetis's NumericUpDown limits byte-for-byte (grpDSPNB
+// setup.designer.cs:44399-44604, grpDSPSNB :44280-44398 [v2.10.3.13]).
+// Clamping here rather than at the UI edge keeps a TCI client or a corrupt
+// settings file from handing WDSP a value the upstream widget could never
+// produce; SetEXTANBTau and friends take the number without validating it.
+//
+// The idempotency guard is load-bearing beyond the usual signal hygiene: the
+// NB1 / NB2 setters feed RadioModel's cross-slice mirror, so a setter that
+// re-emitted on an unchanged value would bounce between co-hosted slices.
+void SliceModel::setNb1Threshold(int v)
+{
+    const int clamped = qBound(1, v, 1000);
+    if (m_nb1Threshold != clamped) {
+        m_nb1Threshold = clamped;
+        emit nb1ThresholdChanged(clamped);
+    }
+}
+
+void SliceModel::setNb1TransitionMs(double v)
+{
+    const double clamped = qBound(0.01, v, 2.00);
+    if (!qFuzzyCompare(m_nb1TransitionMs, clamped)) {
+        m_nb1TransitionMs = clamped;
+        emit nb1TransitionMsChanged(clamped);
+    }
+}
+
+void SliceModel::setNb1LeadMs(double v)
+{
+    const double clamped = qBound(0.01, v, 2.00);
+    if (!qFuzzyCompare(m_nb1LeadMs, clamped)) {
+        m_nb1LeadMs = clamped;
+        emit nb1LeadMsChanged(clamped);
+    }
+}
+
+void SliceModel::setNb1LagMs(double v)
+{
+    const double clamped = qBound(0.01, v, 2.00);
+    if (!qFuzzyCompare(m_nb1LagMs, clamped)) {
+        m_nb1LagMs = clamped;
+        emit nb1LagMsChanged(clamped);
+    }
+}
+
+// comboDSPNOBmode has five entries: Zero / Sample and Hold / Mean-Hold /
+// Hold and Sample / Linear Interpolate (setup.designer.cs:44434 [v2.10.3.13]).
+void SliceModel::setNb2Mode(int v)
+{
+    const int clamped = qBound(0, v, 4);
+    if (m_nb2Mode != clamped) {
+        m_nb2Mode = clamped;
+        emit nb2ModeChanged(clamped);
+    }
+}
+
+void SliceModel::setSnbK1(double v)
+{
+    const double clamped = qBound(2.0, v, 20.0);
+    if (!qFuzzyCompare(m_snbK1, clamped)) {
+        m_snbK1 = clamped;
+        emit snbK1Changed(clamped);
+    }
+}
+
+void SliceModel::setSnbK2(double v)
+{
+    const double clamped = qBound(4.0, v, 60.0);
+    if (!qFuzzyCompare(m_snbK2, clamped)) {
+        m_snbK2 = clamped;
+        emit snbK2Changed(clamped);
+    }
+}
+
+// No Thetis Setup control for this one: Thetis picks SNB output bandwidth per
+// mode at rxa.cs:112-124. The range is NereusSDR's own native override,
+// unchanged from the slider it replaces.
+void SliceModel::setSnbOutputBandwidthHz(int v)
+{
+    const int clamped = qBound(100, v, 96000);
+    if (m_snbOutputBandwidthHz != clamped) {
+        m_snbOutputBandwidthHz = clamped;
+        emit snbOutputBandwidthHzChanged(clamped);
+    }
+}
+
 void SliceModel::setApfEnabled(bool v)
 {
     if (m_apfEnabled != v) {
@@ -1717,6 +1804,19 @@ void SliceModel::saveToSettings(Band band)
 
     s.setValue(sp + QStringLiteral("SnbEnabled"), boolStr(m_snbEnabled));
     s.setValue(sp + QStringLiteral("AnfEnabled"), boolStr(m_anfEnabled));
+    // NB1 / NB2 / SNB detailed tuning. Per slice per band like everything
+    // else here, even though NB1 and NB2 behave as stream-shared while two
+    // slices are co-hosted: the mirror lives in RadioModel and only applies
+    // while they share a DDC, so slices that later separate must still have
+    // their own stored values to go back to.
+    s.setValue(sp + QStringLiteral("Nb1Threshold"),    m_nb1Threshold);
+    s.setValue(sp + QStringLiteral("Nb1TransitionMs"), m_nb1TransitionMs);
+    s.setValue(sp + QStringLiteral("Nb1LeadMs"),       m_nb1LeadMs);
+    s.setValue(sp + QStringLiteral("Nb1LagMs"),        m_nb1LagMs);
+    s.setValue(sp + QStringLiteral("Nb2Mode"),         m_nb2Mode);
+    s.setValue(sp + QStringLiteral("SnbK1"),           m_snbK1);
+    s.setValue(sp + QStringLiteral("SnbK2"),           m_snbK2);
+    s.setValue(sp + QStringLiteral("SnbOutputBandwidthHz"), m_snbOutputBandwidthHz);
     s.setValue(sp + QStringLiteral("Locked"),     boolStr(m_locked));
     s.setValue(sp + QStringLiteral("Muted"),      boolStr(m_muted));
     s.setValue(sp + QStringLiteral("RitEnabled"), boolStr(m_ritEnabled));
@@ -1965,6 +2065,58 @@ void SliceModel::restoreFromSettings(Band band)
     if (s.contains(sp + QStringLiteral("AnfEnabled"))) {
         setAnfEnabled(s.value(sp + QStringLiteral("AnfEnabled")).toString() == QLatin1String("True"));
     }
+
+    // NB1 / NB2 / SNB detailed tuning, with a one-way migration off the old
+    // radio-global keys. Before these became per-slice properties the NB/SNB
+    // setup page wrote one global value per knob and pushed it to channel 0;
+    // an operator who had tuned the blanker would otherwise silently lose
+    // that tuning on upgrade. So when a slice has no stored value of its own,
+    // fall back to the legacy global before falling back to the default.
+    // Nothing writes the legacy keys any more, so this decays naturally: once
+    // a slice has been saved, its own key wins for good.
+    auto restoreInt = [&](const char* perSlice, const char* legacyGlobal,
+                          int fallback, auto&& setter) {
+        const QString key = sp + QLatin1String(perSlice);
+        if (s.contains(key)) {
+            setter(s.value(key).toInt());
+        } else if (s.contains(QLatin1String(legacyGlobal))) {
+            setter(s.value(QLatin1String(legacyGlobal)).toInt());
+        } else {
+            setter(fallback);
+        }
+    };
+    auto restoreDouble = [&](const char* perSlice, const char* legacyGlobal,
+                             double legacyScale, double fallback, auto&& setter) {
+        const QString key = sp + QLatin1String(perSlice);
+        if (s.contains(key)) {
+            setter(s.value(key).toDouble());
+        } else if (s.contains(QLatin1String(legacyGlobal))) {
+            setter(s.value(QLatin1String(legacyGlobal)).toDouble() * legacyScale);
+        } else {
+            setter(fallback);
+        }
+    };
+
+    restoreInt("Nb1Threshold", "NbDefaultThresholdSlider", 30,
+               [this](int v) { setNb1Threshold(v); });
+    // The legacy transition / lead / lag keys stored the SLIDER integer at
+    // x100 scale (1 == 0.01 ms), so migrating them needs the divide the
+    // setup page used to apply on the way to WDSP.
+    restoreDouble("Nb1TransitionMs", "NbDefaultTransition", 0.01, 0.01,
+                  [this](double v) { setNb1TransitionMs(v); });
+    restoreDouble("Nb1LeadMs", "NbDefaultLead", 0.01, 0.01,
+                  [this](double v) { setNb1LeadMs(v); });
+    restoreDouble("Nb1LagMs", "NbDefaultLag", 0.01, 0.01,
+                  [this](double v) { setNb1LagMs(v); });
+    restoreInt("Nb2Mode", "Nb2DefaultMode", 0,
+               [this](int v) { setNb2Mode(v); });
+    // The legacy SNB keys already stored real units, so scale is 1.0.
+    restoreDouble("SnbK1", "SnbDefaultK1", 1.0, 8.0,
+                  [this](double v) { setSnbK1(v); });
+    restoreDouble("SnbK2", "SnbDefaultK2", 1.0, 20.0,
+                  [this](double v) { setSnbK2(v); });
+    restoreInt("SnbOutputBandwidthHz", "SnbDefaultOutputBW", 6000,
+               [this](int v) { setSnbOutputBandwidthHz(v); });
     if (s.contains(sp + QStringLiteral("Locked"))) {
         setLocked(s.value(sp + QStringLiteral("Locked")).toString() == QLatin1String("True"));
     }

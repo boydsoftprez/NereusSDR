@@ -1124,6 +1124,53 @@ void RxChannel::setSnbEnabled(bool enabled)
     if (m_nb) m_nb->setSnbEnabled(enabled);
 }
 
+// ── NB1 / NB2 / SNB detailed tuning ─────────────────────────────────────────
+// Re-added per slice after the Sub-Epic J follow-up. These were removed
+// 2026-04-22 in favour of the NB/SNB setup page calling WDSP directly, but
+// that page hardcoded channel 0, so tuning the blanker always hit receiver A
+// whichever receiver the operator was working. SliceModel owns the state now
+// and RadioModel pushes it here for the addressed slice, the same route every
+// other per-slice DSP setting takes.
+void RxChannel::setNbThreshold(double threshold)
+{
+    if (m_nb) m_nb->setNbThreshold(threshold);
+}
+
+void RxChannel::setNbTransitionMs(double ms)
+{
+    if (m_nb) m_nb->setNbTauMs(ms);
+}
+
+void RxChannel::setNbLeadMs(double ms)
+{
+    if (m_nb) m_nb->setNbLeadMs(ms);
+}
+
+void RxChannel::setNbLagMs(double ms)
+{
+    if (m_nb) m_nb->setNbLagMs(ms);
+}
+
+void RxChannel::setNb2Mode(int mode)
+{
+    if (m_nb) m_nb->setNb2Mode(mode);
+}
+
+void RxChannel::setSnbK1(double k1)
+{
+    if (m_nb) m_nb->setSnbK1(k1);
+}
+
+void RxChannel::setSnbK2(double k2)
+{
+    if (m_nb) m_nb->setSnbK2(k2);
+}
+
+void RxChannel::setSnbOutputBandwidthHz(int bandwidthHz)
+{
+    if (m_nb) m_nb->setSnbOutputBandwidthHz(bandwidthHz);
+}
+
 // ---------------------------------------------------------------------------
 // APF — Audio Peak Filter
 // ---------------------------------------------------------------------------

@@ -292,6 +292,127 @@ private slots:
         QCOMPARE(sb->nbMode(), NereusSDR::NbMode::NB2);
     }
 
+    // Sub-Epic J follow-up. The NB tuning knobs share the blanker's fate for
+    // exactly the reason nbMode does, and it is settled by where WDSP keeps
+    // the state, not by intuition:
+    //
+    //   SetEXTANBThreshold / Tau / Advtime / Hangtime  -> ANB a = panb[id]
+    //     (Thetis wdsp/nob.c:376-423 [v2.10.3.15])
+    //   SetEXTNOBMode                                  -> NOB a = pnob[id]
+    //     (Thetis wdsp/nobII.c:658-663 [v2.10.3.15])
+    //
+    // panb / pnob are the very members struct _rcvr holds one of per receiver
+    // (cmaster.h:74-82 [v2.10.3.15]), beside double* audio[cmMAXSubRcvr].
+    // Sub-Epic I Task 4b hands the stream's single blanking pass to whichever
+    // co-host reaches processIq first and runs it with THAT slice's settings,
+    // so co-hosts that disagree on the tuning produce a result that depends on
+    // arrival order, exactly the hazard the nbMode mirror exists to remove.
+    void coHostedSlicesShareNbTuning()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
+
+        const int a = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sa = radio.sliceById(a);
+        sa->setFrequency(7'240'000.0);
+        const int b = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sb = radio.sliceById(b);
+        sb->setFrequency(7'245'000.0);
+        QCOMPARE(sa->streamIndex(), sb->streamIndex());
+
+        sa->setNb1Threshold(250);
+        sa->setNb1TransitionMs(0.5);
+        sa->setNb1LeadMs(0.25);
+        sa->setNb1LagMs(0.75);
+        sa->setNb2Mode(3);
+
+        QCOMPARE(sb->nb1Threshold(), 250);
+        QCOMPARE(sb->nb1TransitionMs(), 0.5);
+        QCOMPARE(sb->nb1LeadMs(), 0.25);
+        QCOMPARE(sb->nb1LagMs(), 0.75);
+        QCOMPARE(sb->nb2Mode(), 3);
+
+        // And the other direction.
+        sb->setNb1Threshold(90);
+        QCOMPARE(sa->nb1Threshold(), 90);
+    }
+
+    // SNB is the other half of the same decision and must NOT mirror. Its
+    // setters are channel-scoped, not receiver-scoped:
+    //   SetRXASNBAk1 / k2 / OutputBandwidth -> rxa[channel].snba.p->...
+    //     (Thetis wdsp/snb.c:621-670 [v2.10.3.15])
+    // One snba per RXA channel means one per slice, so two co-hosted slices
+    // genuinely can run different SNB settings, and linking them would take
+    // away control the hardware topology actually allows.
+    void coHostedSlicesKeepIndependentSnbTuning()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
+
+        const int a = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sa = radio.sliceById(a);
+        sa->setFrequency(7'240'000.0);
+        const int b = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sb = radio.sliceById(b);
+        sb->setFrequency(7'245'000.0);
+        QCOMPARE(sa->streamIndex(), sb->streamIndex());
+
+        sa->setSnbK1(12.5);
+        sa->setSnbK2(40.0);
+        sa->setSnbOutputBandwidthHz(3000);
+
+        QCOMPARE(sb->snbK1(), 8.0);
+        QCOMPARE(sb->snbK2(), 20.0);
+        QCOMPARE(sb->snbOutputBandwidthHz(), 6000);
+    }
+
+    // Same migration rule the nbMode mirror follows: joining an occupied
+    // window adopts its tuning, so a slice does not sit on a shared blanker
+    // reporting settings that are not the ones in force.
+    void aSliceJoiningAStreamAdoptsItsNbTuning()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
+
+        const int a = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sa = radio.sliceById(a);
+        sa->setFrequency(7'240'000.0);
+        sa->setNb1Threshold(180);
+        sa->setNb2Mode(2);
+        sa->setSnbK1(15.0);
+
+        const int b = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sb = radio.sliceById(b);
+        QCOMPARE(sa->streamIndex(), sb->streamIndex());
+
+        QCOMPARE(sb->nb1Threshold(), 180);
+        QCOMPARE(sb->nb2Mode(), 2);
+        // SNB is per channel, so the joiner keeps its own.
+        QCOMPARE(sb->snbK1(), 8.0);
+    }
+
+    // Slices on DIFFERENT streams must not follow each other, or the mirror
+    // has stopped modelling the hardware and started being a global.
+    void slicesOnDifferentStreamsDoNotShareNbTuning()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
+
+        const int a = radio.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sa = radio.sliceById(a);
+        sa->setFrequency(7'240'000.0);
+
+        // Far enough away that it cannot share A's window.
+        const int b = radio.addSlice(QStringLiteral("pan-1"));
+        SliceModel* sb = radio.sliceById(b);
+        sb->setFrequency(14'200'000.0);
+        QVERIFY2(sa->streamIndex() != sb->streamIndex(),
+                 "test setup: the two slices must land on different streams");
+
+        sa->setNb1Threshold(250);
+        QCOMPARE(sb->nb1Threshold(), 30);
+    }
+
     // Single-slice operation is untouched: slice A is still id 0 and still
     // resolves.
     void sliceAIsStillIdZero()

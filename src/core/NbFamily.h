@@ -239,6 +239,15 @@ public:
     void setNbTauMs(double ms);
     void setNbLeadMs(double advMs);    // "lead" ≡ advtime
     void setNbLagMs(double hangMs);    // "lag"  ≡ hangtime
+    void setNb2Mode(int mode);         // comboDSPNOBmode, 0..4
+
+    // SNB per-knob setters. Same WDSP calls seedSnbFromSettings makes, but
+    // with a caller-supplied value instead of a re-read of the old global
+    // AppSettings keys, so SliceModel can own SNB tuning per slice. Same
+    // post-OpenChannel precondition: rxa[channelId].snba must exist.
+    void setSnbK1(double k1);
+    void setSnbK2(double k2);
+    void setSnbOutputBandwidthHz(int bandwidthHz);
 
     // Live sample-rate + buffer-size propagation. Mirrors the missing chunk
     // of Thetis cmaster.c:464-470 SetXcmInrate [v2.10.3.13] case 0 receiver:

@@ -270,6 +270,105 @@ private slots:
         slice.setAnfEnabled(true);
         QCOMPARE(spy.count(), 0);
     }
+
+    // ── Sub-Epic J follow-up: NB1 / NB2 / SNB detailed tuning ────────────
+    // Setup -> DSP -> NB/SNB wrote these eight straight to WDSP with a
+    // hardcoded channel 0, so tuning the blanker always hit receiver A
+    // whichever receiver the operator was working.  The bypass was invisible
+    // to the Sub-Epic J rxChannel() audit because the calls go to WDSP by
+    // another route (SetEXTANB* / SetEXTNOB* / SetRXASNBA*), not through
+    // WdspEngine::rxChannel at all.
+    //
+    // Defaults are Thetis's, carried over from the global AppSettings keys
+    // this page used to write: udDSPNB=30, udDSPNBTransition / Lead / Lag
+    // =0.01 ms, comboDSPNOBmode=0, udDSPSNBThresh1=8.0, udDSPSNBThresh2=20.0
+    // (setup.designer.cs grpDSPNB + grpDSPSNB [v2.10.3.13]), and NereusSDR's
+    // own 6000 Hz SNB output bandwidth.
+    void nb_and_snb_tuning_defaults_match_thetis()
+    {
+        SliceModel slice;
+        QCOMPARE(slice.nb1Threshold(), 30);
+        QCOMPARE(slice.nb1TransitionMs(), 0.01);
+        QCOMPARE(slice.nb1LeadMs(), 0.01);
+        QCOMPARE(slice.nb1LagMs(), 0.01);
+        QCOMPARE(slice.nb2Mode(), 0);
+        QCOMPARE(slice.snbK1(), 8.0);
+        QCOMPARE(slice.snbK2(), 20.0);
+        QCOMPARE(slice.snbOutputBandwidthHz(), 6000);
+    }
+
+    void nb_and_snb_tuning_round_trips_and_signals()
+    {
+        SliceModel slice;
+
+        QSignalSpy thr(&slice, &SliceModel::nb1ThresholdChanged);
+        slice.setNb1Threshold(250);
+        QCOMPARE(slice.nb1Threshold(), 250);
+        QCOMPARE(thr.count(), 1);
+
+        QSignalSpy trans(&slice, &SliceModel::nb1TransitionMsChanged);
+        slice.setNb1TransitionMs(0.5);
+        QCOMPARE(slice.nb1TransitionMs(), 0.5);
+        QCOMPARE(trans.count(), 1);
+
+        QSignalSpy lead(&slice, &SliceModel::nb1LeadMsChanged);
+        slice.setNb1LeadMs(0.25);
+        QCOMPARE(slice.nb1LeadMs(), 0.25);
+        QCOMPARE(lead.count(), 1);
+
+        QSignalSpy lag(&slice, &SliceModel::nb1LagMsChanged);
+        slice.setNb1LagMs(0.75);
+        QCOMPARE(slice.nb1LagMs(), 0.75);
+        QCOMPARE(lag.count(), 1);
+
+        QSignalSpy mode(&slice, &SliceModel::nb2ModeChanged);
+        slice.setNb2Mode(3);
+        QCOMPARE(slice.nb2Mode(), 3);
+        QCOMPARE(mode.count(), 1);
+
+        QSignalSpy k1(&slice, &SliceModel::snbK1Changed);
+        slice.setSnbK1(12.5);
+        QCOMPARE(slice.snbK1(), 12.5);
+        QCOMPARE(k1.count(), 1);
+
+        QSignalSpy k2(&slice, &SliceModel::snbK2Changed);
+        slice.setSnbK2(40.0);
+        QCOMPARE(slice.snbK2(), 40.0);
+        QCOMPARE(k2.count(), 1);
+
+        QSignalSpy bw(&slice, &SliceModel::snbOutputBandwidthHzChanged);
+        slice.setSnbOutputBandwidthHz(3000);
+        QCOMPARE(slice.snbOutputBandwidthHz(), 3000);
+        QCOMPARE(bw.count(), 1);
+    }
+
+    // Idempotency guard, same rule the rest of SliceModel follows.  It also
+    // matters structurally here: the NB1 / NB2 setters feed a cross-slice
+    // mirror in RadioModel, and a setter that re-emits on an unchanged value
+    // would make that mirror recurse.
+    void nb_and_snb_tuning_setters_are_idempotent()
+    {
+        SliceModel slice;
+        slice.setNb1Threshold(250);
+        slice.setNb1TransitionMs(0.5);
+        slice.setNb2Mode(3);
+        slice.setSnbK1(12.5);
+
+        QSignalSpy thr(&slice, &SliceModel::nb1ThresholdChanged);
+        QSignalSpy trans(&slice, &SliceModel::nb1TransitionMsChanged);
+        QSignalSpy mode(&slice, &SliceModel::nb2ModeChanged);
+        QSignalSpy k1(&slice, &SliceModel::snbK1Changed);
+
+        slice.setNb1Threshold(250);
+        slice.setNb1TransitionMs(0.5);
+        slice.setNb2Mode(3);
+        slice.setSnbK1(12.5);
+
+        QCOMPARE(thr.count(), 0);
+        QCOMPARE(trans.count(), 0);
+        QCOMPARE(mode.count(), 0);
+        QCOMPARE(k1.count(), 0);
+    }
 };
 
 QTEST_MAIN(TestSliceModelPhase3FProperties)

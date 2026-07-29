@@ -67,7 +67,6 @@
 #include "core/RadioConnection.h"
 #include "core/wdsp_api.h"
 #include "models/RadioModel.h"
-#include "core/WdspEngine.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
 
@@ -1396,34 +1395,24 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
     // Sliders with inline live-value labels. Tooltips use Thetis's own user-
     // facing text (from setup.designer.cs ToolTip attributes [v2.10.3.13]).
     // Ranges / defaults mirror Thetis NumericUpDown widgets byte-for-byte.
-    auto& s = AppSettings::instance();
-
-    // Gate: the WDSP SetEXT* / SetRXASNBA* setters dereference
-    // panb[0]/pnob[0]/channels[0] — if no RX channel has been created
-    // (user opened Setup dialog before connecting to a radio), calling
-    // them will null-deref inside WDSP. The slider value is still
-    // persisted via AppSettings and seeded into NbFamily at channel
-    // create time, so "Setup → change before connect" still takes effect
-    // on next connect. This just stops the crash.
-    // (Codex review #120, P1 — 2026-04-23.)
     //
-    // Phase 3F Sub-Epic J Task 11: routed through RadioModel::rxChannelForSlice()
-    // instead of wdspEngine()->rxChannel() directly -- src/gui/ no longer
-    // reaches into WdspEngine itself. Still channel 0, unchanged behaviour:
-    // the SetEXT*/SetRXASNBA* calls this gate protects are hardcoded to
-    // channel 0 below (id argument 0), same as before this migration. That
-    // is a separate, larger gap than this task's rxChannel() audit covers --
-    // NbFamily (src/core/NbFamily.cpp) already manages these exact NB1/SNB
-    // parameters per-channel (constructed one-per-RxChannel), so this whole
-    // page writing straight to channel 0 regardless of the active slice is
-    // a real bypass of that per-slice mechanism, just not one reachable by
-    // grepping for rxChannel(). Left for a follow-up that gives NB1/SNB
-    // detailed tuning its own SliceModel properties, the same shape Task 1
-    // gave anfEnabled.
-    auto channelReady = [this]() -> bool {
-        auto* rm = this->model();
-        return rm && rm->rxChannelForSlice(0) != nullptr;
-    };
+    // Every control here used to write AppSettings plus a raw WDSP call with
+    // a hardcoded channel 0 (SetEXTANB* / SetEXTNOBMode / SetRXASNBA*), so
+    // tuning the blanker always acted on receiver A whichever receiver the
+    // operator was working. That bypass did not show up in Sub-Epic J's
+    // rxChannel() audit because it reached WDSP by a different route. The
+    // eight knobs now live on SliceModel and RadioModel pushes each to
+    // rxChannel(slice->sliceIndex()), the same path every other per-slice DSP
+    // setting takes, which is also why the old null-channel crash gate is
+    // gone: RadioModel's push resolves the channel and no-ops when there
+    // isn't one.
+    //
+    // Slice-tracking policy: binds to model->activeSlice() at construction,
+    // matching the sibling NrAnfSetupPage and AgcAlcSetupPage. Setup is not
+    // attached to any flag, so the rule is that it targets the active slice;
+    // switching slices needs a close and reopen of the dialog. Full dynamic
+    // rebind is deferred with the rest of the pages.
+    SliceModel* slice = model ? model->activeSlice() : nullptr;
 
     // Helper: integer slider, live value label showing "value / max" with unit.
     // Returns the slider so caller can wire valueChanged.
@@ -1483,58 +1472,74 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
     QGroupBox* nb1Grp = addSection("NB1");
     QVBoxLayout* nb1Lay = qobject_cast<QVBoxLayout*>(nb1Grp->layout());
 
-    // Threshold — udDSPNB: 1-1000, default 30. WDSP threshold = 0.165 × value.
+    // Tell the operator the truth about what these five reach. WDSP keeps one
+    // noise blanker per RECEIVER, not per slice: SetEXTANB* writes panb[id]
+    // and SetEXTNOBMode writes pnob[id] (Thetis wdsp/nob.c:376-423 +
+    // wdsp/nobII.c:658-663 [v2.10.3.15]), the single ANB / NOB members of
+    // struct _rcvr (cmaster.h:74-82). Two receivers sharing one DDC window
+    // therefore cannot have independent blankers, so NereusSDR mirrors these
+    // across co-hosted slices rather than pretending otherwise. Saying so here
+    // beats letting the operator discover it by watching another receiver's
+    // settings move.
+    {
+        auto* nb1Note = new QLabel(
+            tr("Shared by every receiver on the same DDC. Adjusting these "
+               "changes the blanker for all of them."));
+        nb1Note->setWordWrap(true);
+        nb1Note->setStyleSheet(QStringLiteral("color: #8aa8c0; font-size: 11px;"));
+        nb1Lay->addWidget(nb1Note);
+    }
+
+    // Threshold — udDSPNB: 1-1000, default 30. WDSP threshold = 0.165 × value,
+    // applied by RadioModel on the way to SetEXTANBThreshold.
     QSlider* nb1Thresh = addIntSlider(nb1Lay, tr("Threshold"),
         1, 1000,
-        s.value(QStringLiteral("NbDefaultThresholdSlider"), 30).toInt(),
+        slice ? slice->nb1Threshold() : 30,
         QString{},
         tr("Controls the detection threshold for impulse noise.\n"
            "Lower = more aggressive (blanks weaker impulses too).\n"
            "Higher = more conservative (only strong clicks get blanked)."));
-    connect(nb1Thresh, &QSlider::valueChanged, [channelReady](int v) {
-        AppSettings::instance().setValue(QStringLiteral("NbDefaultThresholdSlider"), v);
-        if (channelReady()) { SetEXTANBThreshold(0, 0.165 * static_cast<double>(v)); }
+    connect(nb1Thresh, &QSlider::valueChanged, this, [slice](int v) {
+        if (slice) { slice->setNb1Threshold(v); }
     });
 
     // Transition — udDSPNBTransition: 0.01-2.00 ms, step 0.01, default 0.01.
     // Slider internal: 1-200 (×100 scale). Label shows "X.XX / 2.00 ms".
     QSlider* nb1Trans = addScaledSlider(nb1Lay, tr("Transition"),
         1, 200,
-        s.value(QStringLiteral("NbDefaultTransition"), 1).toInt(),
+        slice ? qRound(slice->nb1TransitionMs() * 100.0) : 1,
         100.0, 2, tr(" ms"),
         tr("Time to decrease/increase to/from zero amplitude around an\n"
            "impulse. Controls how gradually the blanker fades in and out\n"
            "— very short = crisp click; longer = gentler but audible."));
-    connect(nb1Trans, &QSlider::valueChanged, [channelReady](int v) {
-        AppSettings::instance().setValue(QStringLiteral("NbDefaultTransition"), v);
-        // v/100 ms → × 0.001 s = v * 1e-5 s.
-        if (channelReady()) { SetEXTANBTau(0, static_cast<double>(v) * 1e-5); }
+    connect(nb1Trans, &QSlider::valueChanged, this, [slice](int v) {
+        // Slider is the x100 integer; the model stores real milliseconds and
+        // RadioModel does the ms -> seconds conversion on the way to WDSP.
+        if (slice) { slice->setNb1TransitionMs(static_cast<double>(v) / 100.0); }
     });
 
     // Lead — udDSPNBLead: 0.01-2.00 ms, default 0.01.
     QSlider* nb1Lead = addScaledSlider(nb1Lay, tr("Lead"),
         1, 200,
-        s.value(QStringLiteral("NbDefaultLead"), 1).toInt(),
+        slice ? qRound(slice->nb1LeadMs() * 100.0) : 1,
         100.0, 2, tr(" ms"),
         tr("Time at zero amplitude BEFORE the detected impulse. Blanks\n"
            "the leading edge of the click that the detector would\n"
            "otherwise miss. Raise slightly if clicks still get through."));
-    connect(nb1Lead, &QSlider::valueChanged, [channelReady](int v) {
-        AppSettings::instance().setValue(QStringLiteral("NbDefaultLead"), v);
-        if (channelReady()) { SetEXTANBAdvtime(0, static_cast<double>(v) * 1e-5); }
+    connect(nb1Lead, &QSlider::valueChanged, this, [slice](int v) {
+        if (slice) { slice->setNb1LeadMs(static_cast<double>(v) / 100.0); }
     });
 
     // Lag — udDSPNBLag: 0.01-2.00 ms, default 0.01.
     QSlider* nb1Lag = addScaledSlider(nb1Lay, tr("Lag"),
         1, 200,
-        s.value(QStringLiteral("NbDefaultLag"), 1).toInt(),
+        slice ? qRound(slice->nb1LagMs() * 100.0) : 1,
         100.0, 2, tr(" ms"),
         tr("Time to remain at zero amplitude AFTER the impulse. Blanks\n"
            "the decay tail of the click. Raise this if pops still have\n"
            "an audible ringing after the initial transient."));
-    connect(nb1Lag, &QSlider::valueChanged, [channelReady](int v) {
-        AppSettings::instance().setValue(QStringLiteral("NbDefaultLag"), v);
-        if (channelReady()) { SetEXTANBHangtime(0, static_cast<double>(v) * 1e-5); }
+    connect(nb1Lag, &QSlider::valueChanged, this, [slice](int v) {
+        if (slice) { slice->setNb1LagMs(static_cast<double>(v) / 100.0); }
     });
 
     // NB2 Mode — Thetis comboDSPNOBmode.
@@ -1542,7 +1547,7 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
     // Item text matches Thetis comboDSPNOBmode verbatim (setup.designer.cs:44434 [v2.10.3.13]).
     nb1Mode->addItems({tr("Zero"), tr("Sample && Hold"), tr("Mean-Hold"),
                        tr("Hold && Sample"), tr("Linear Interpolate")});
-    nb1Mode->setCurrentIndex(s.value(QStringLiteral("Nb2DefaultMode"), 0).toInt());
+    nb1Mode->setCurrentIndex(slice ? slice->nb2Mode() : 0);
     nb1Mode->setToolTip(tr(
         "Method used to fill in the blanked samples when NB2 triggers.\n"
         "Zero silences the impulse entirely; the other modes synthesise\n"
@@ -1550,9 +1555,8 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         "audible artifacts on voice peaks."));
     addLabeledCombo(nb1Lay, "NB2 Mode", nb1Mode);
     connect(nb1Mode, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            [channelReady](int v) {
-        AppSettings::instance().setValue(QStringLiteral("Nb2DefaultMode"), v);
-        if (channelReady()) { SetEXTNOBMode(0, v); }
+            this, [slice](int v) {
+        if (slice) { slice->setNb2Mode(v); }
     });
 
     // ── NB2 Threshold — intentionally absent (Thetis parity) ─────────────────
@@ -1564,35 +1568,43 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
     QGroupBox* snbGrp = addSection("SNB");
     QVBoxLayout* snbLay = qobject_cast<QVBoxLayout*>(snbGrp->layout());
 
+    // The other half of the same story, and the reason the NB1 note above is
+    // worth stating: SNB genuinely IS per receiver. SetRXASNBA* writes
+    // rxa[channel].snba (Thetis wdsp/snb.c:621-670 [v2.10.3.15]), one per WDSP
+    // channel, and NereusSDR gives every slice its own channel.
+    {
+        auto* snbNote = new QLabel(
+            tr("Applies to the selected receiver only."));
+        snbNote->setWordWrap(true);
+        snbNote->setStyleSheet(QStringLiteral("color: #8aa8c0; font-size: 11px;"));
+        snbLay->addWidget(snbNote);
+    }
+
     // Threshold 1 — udDSPSNBThresh1: 2.0-20.0, step 0.1, default 8.0.
     // Slider internal: 20-200 (×10 scale).
     QSlider* snbK1 = addScaledSlider(snbLay, tr("Threshold 1"),
         20, 200,
-        qRound(s.value(QStringLiteral("SnbDefaultK1"), 8.0).toDouble() * 10.0),
+        qRound((slice ? slice->snbK1() : 8.0) * 10.0),
         10.0, 1, QString{},
         tr("Multiple of the running noise power at which a sample is\n"
            "flagged as a candidate outlier. Lower = more aggressive\n"
            "first-pass detection; higher = miss weaker noise."));
-    connect(snbK1, &QSlider::valueChanged, [channelReady](int v) {
-        const double real = static_cast<double>(v) / 10.0;
-        AppSettings::instance().setValue(QStringLiteral("SnbDefaultK1"), real);
-        if (channelReady()) { SetRXASNBAk1(0, real); }
+    connect(snbK1, &QSlider::valueChanged, this, [slice](int v) {
+        if (slice) { slice->setSnbK1(static_cast<double>(v) / 10.0); }
     });
 
     // Threshold 2 — udDSPSNBThresh2: 4.0-60.0, step 0.1, default 20.0.
     // Slider internal: 40-600 (×10 scale).
     QSlider* snbK2 = addScaledSlider(snbLay, tr("Threshold 2"),
         40, 600,
-        qRound(s.value(QStringLiteral("SnbDefaultK2"), 20.0).toDouble() * 10.0),
+        qRound((slice ? slice->snbK2() : 20.0) * 10.0),
         10.0, 1, QString{},
         tr("Multiplier applied to the final detection threshold — confirms\n"
            "candidates from Threshold 1 as real noise outliers. Lower =\n"
            "more aggressive overall blanking; higher = fewer false triggers\n"
            "on genuine voice peaks."));
-    connect(snbK2, &QSlider::valueChanged, [channelReady](int v) {
-        const double real = static_cast<double>(v) / 10.0;
-        AppSettings::instance().setValue(QStringLiteral("SnbDefaultK2"), real);
-        if (channelReady()) { SetRXASNBAk2(0, real); }
+    connect(snbK2, &QSlider::valueChanged, this, [slice](int v) {
+        if (slice) { slice->setSnbK2(static_cast<double>(v) / 10.0); }
     });
 
     // SNB Output Bandwidth — NOT in Thetis Setup page. Thetis sets it
@@ -1600,17 +1612,25 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
     // global override.
     QSlider* snbOutBw = addIntSlider(snbLay, tr("Output Bandwidth"),
         100, 96000,
-        s.value(QStringLiteral("SnbDefaultOutputBW"), 6000).toInt(),
+        slice ? slice->snbOutputBandwidthHz() : 6000,
         tr(" Hz"),
         tr("Width of the audio band SNB operates on, centred on zero.\n"
            "Smaller = focuses the blanker on the active passband;\n"
            "larger = covers wider modes (FM, DRM). Default 6000 Hz\n"
            "covers SSB + AM comfortably."));
-    connect(snbOutBw, &QSlider::valueChanged, [channelReady](int v) {
-        AppSettings::instance().setValue(QStringLiteral("SnbDefaultOutputBW"), v);
-        const double half = static_cast<double>(v) / 2.0;
-        if (channelReady()) { SetRXASNBAOutputBandwidth(0, -half, half); }
+    connect(snbOutBw, &QSlider::valueChanged, this, [slice](int v) {
+        if (slice) { slice->setSnbOutputBandwidthHz(v); }
     });
+
+    // No slice yet means Setup was opened before any receiver existed. The
+    // controls have nothing to address, so disable rather than silently
+    // dropping the operator's adjustments.
+    if (!slice) {
+        nb1Grp->setEnabled(false);
+        snbGrp->setEnabled(false);
+        nb1Grp->setToolTip(tr("Connect to a radio to tune the noise blanker."));
+        snbGrp->setToolTip(tr("Connect to a radio to tune the noise blanker."));
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

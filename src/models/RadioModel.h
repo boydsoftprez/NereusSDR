@@ -2844,6 +2844,13 @@ private:
     // setNbMode on every co-host; each of those emits its own
     // nbModeChanged, which would otherwise walk the stream again.
     bool m_mirroringNbMode{false};
+    // Re-entrancy guard for the NB1 / NB2 detailed-tuning mirror, which
+    // spreads one slice's blanker tuning across every co-host on the same
+    // DDC. Separate from m_mirroringNbMode: the two mirrors run off different
+    // signals and a shared flag would let one suppress the other. Shared
+    // across the five tuning knobs is fine, because each mirror only ever
+    // writes the same property it fired on, so they never nest.
+    bool m_mirroringNbTuning{false};
 
     // Phase 3F Sub-Epic I closeout, defect F4: the allocator's own words for
     // the last rejected placement, handed to the retune handler so its

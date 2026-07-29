@@ -3156,8 +3156,12 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
 
     // The demodulation-critical subset. Everything here decides whether the
     // audio coming out of fexchange2 is the right signal at all; the rest of
-    // the per-slice DSP surface (NR, SNB, APF, squelch, binaural, pan) still
-    // follows the active slice and lands in a later sub-epic.
+    // the per-slice DSP surface (NR, SNB, APF, squelch, binaural, pan, and the
+    // NB1 / NB2 / SNB detailed tuning) still follows the active slice and
+    // lands in a later sub-epic. Note this is the INITIAL seed only: once a
+    // channel is up, every one of those settings has a live per-slice push in
+    // wireSliceSignals that resolves rxChannel(slice->sliceIndex()), so
+    // operator changes reach the right slice either way.
     ch->setMode(slice->dspMode());
     ch->setFilterFreqs(slice->filterLow(), slice->filterHigh());
     ch->setAgcMode(slice->agcMode());
@@ -3901,6 +3905,18 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
         SliceModel* peer = sliceById(idx);
         if (peer && peer != slice) {
             slice->setNbMode(peer->nbMode());
+            // The NB1 / NB2 tuning knobs adopt for the same reason the mode
+            // does: they configure the stream's single blanker (panb / pnob
+            // per receiver, Thetis cmaster.h:74-82 [v2.10.3.15]), so a joiner
+            // reporting its own stored numbers would be describing settings
+            // that are not the ones in force. SNB is excluded: it is per WDSP
+            // channel (rxa[channel].snba, wdsp/snb.c:621-670 [v2.10.3.15]),
+            // so the joiner keeps its own.
+            slice->setNb1Threshold(peer->nb1Threshold());
+            slice->setNb1TransitionMs(peer->nb1TransitionMs());
+            slice->setNb1LeadMs(peer->nb1LeadMs());
+            slice->setNb1LagMs(peer->nb1LagMs());
+            slice->setNb2Mode(peer->nb2Mode());
             break;
         }
     }
@@ -4165,6 +4181,60 @@ int RadioModel::addSlice(const QString& initialPanId)
             }
         }
         m_mirroringNbMode = false;
+    });
+
+    // Phase 3F Sub-Epic J follow-up: the NB1 and NB2 TUNING knobs share the
+    // blanker's fate for exactly the reason nbMode does, and it is settled by
+    // where WDSP keeps the state rather than by intuition:
+    //
+    //   SetEXTANBThreshold / Tau / Advtime / Hangtime  -> ANB a = panb[id]
+    //     (Thetis wdsp/nob.c:376-423 [v2.10.3.15])
+    //   SetEXTNOBMode                                  -> NOB a = pnob[id]
+    //     (Thetis wdsp/nobII.c:658-663 [v2.10.3.15])
+    //
+    // panb and pnob are the members struct _rcvr holds ONE of per receiver,
+    // beside double* audio[cmMAXSubRcvr] (cmaster.h:74-82 [v2.10.3.15]).
+    // Sub-Epic I Task 4b hands the stream's single blanking pass to whichever
+    // co-host reaches processIq first and runs it with THAT slice's settings,
+    // so co-hosts that disagree on the tuning give a result that depends on
+    // arrival order. Mirroring makes ownership of the pass irrelevant.
+    //
+    // SNB is deliberately absent: SetRXASNBA* writes rxa[channel].snba
+    // (wdsp/snb.c:621-670 [v2.10.3.15]), one per WDSP channel, and every
+    // slice has its own channel. Linking those would remove control the
+    // topology actually permits.
+    //
+    // Wired here rather than in wireSliceSignals for the same reason the
+    // nbMode mirror above is: it is a contract between SliceModels, not a
+    // push to hardware, so it must hold whether or not a radio is attached.
+    auto mirrorNbTuning = [this, slice](auto getter, auto setter) {
+        if (m_mirroringNbTuning) { return; }
+        m_mirroringNbTuning = true;
+        const int stream = slice->streamIndex();
+        if (stream >= 0) {
+            for (int idx : slicesOnStream(stream)) {
+                SliceModel* peer = sliceById(idx);
+                if (peer && peer != slice) {
+                    (peer->*setter)((slice->*getter)());
+                }
+            }
+        }
+        m_mirroringNbTuning = false;
+    };
+    connect(slice, &SliceModel::nb1ThresholdChanged, this, [mirrorNbTuning](int) {
+        mirrorNbTuning(&SliceModel::nb1Threshold, &SliceModel::setNb1Threshold);
+    });
+    connect(slice, &SliceModel::nb1TransitionMsChanged, this, [mirrorNbTuning](double) {
+        mirrorNbTuning(&SliceModel::nb1TransitionMs, &SliceModel::setNb1TransitionMs);
+    });
+    connect(slice, &SliceModel::nb1LeadMsChanged, this, [mirrorNbTuning](double) {
+        mirrorNbTuning(&SliceModel::nb1LeadMs, &SliceModel::setNb1LeadMs);
+    });
+    connect(slice, &SliceModel::nb1LagMsChanged, this, [mirrorNbTuning](double) {
+        mirrorNbTuning(&SliceModel::nb1LagMs, &SliceModel::setNb1LagMs);
+    });
+    connect(slice, &SliceModel::nb2ModeChanged, this, [mirrorNbTuning](int) {
+        mirrorNbTuning(&SliceModel::nb2Mode, &SliceModel::setNb2Mode);
     });
 
     // RF-SAFETY: when THIS slice holds the transmitter, its frequency and
@@ -5518,11 +5588,28 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 rxCh->setAgcHangThreshold(m_activeSlice->agcHangThreshold());
                 rxCh->setAgcFixedGain(m_activeSlice->agcFixedGain());
                 rxCh->setAgcMaxGain(m_activeSlice->agcMaxGain());
-                // NB mode is per-band; tuning is global per-channel and
-                // lives inside NbFamily (seeded from AppSettings at ctor,
-                // live-pushed from Setup → DSP → NB/SNB). Per-slice NB
-                // tuning pass-through removed 2026-04-22.
+                // NB mode is per-band, and so is the detailed tuning beside
+                // it. The tuning pass-through was removed 2026-04-22 in favour
+                // of NbFamily seeding from radio-global AppSettings, but the
+                // Setup page that live-pushed those globals wrote channel 0
+                // unconditionally, so a second receiver could never be tuned.
+                // Restored per slice by the Sub-Epic J follow-up.
+                //
+                // Seeding here matters as much as the live pushes: a slice
+                // restored from settings before its channel exists gets no
+                // live push (the connect resolves no channel and no-ops), so
+                // without this the channel would run on NbFamily's ctor
+                // defaults while the model reported the operator's values.
                 rxCh->setNbMode(m_activeSlice->nbMode());
+                // From Thetis setup.cs:8606 [v2.10.3.15] for the 0.165 scale.
+                rxCh->setNbThreshold(0.165 * static_cast<double>(m_activeSlice->nb1Threshold()));
+                rxCh->setNbTransitionMs(m_activeSlice->nb1TransitionMs());
+                rxCh->setNbLeadMs(m_activeSlice->nb1LeadMs());
+                rxCh->setNbLagMs(m_activeSlice->nb1LagMs());
+                rxCh->setNb2Mode(m_activeSlice->nb2Mode());
+                rxCh->setSnbK1(m_activeSlice->snbK1());
+                rxCh->setSnbK2(m_activeSlice->snbK2());
+                rxCh->setSnbOutputBandwidthHz(m_activeSlice->snbOutputBandwidthHz());
 
                 // Sub-epic C-1 Task 19: push full NR config to the active slice's
                 // RxChannel on radio connect.
@@ -9104,9 +9191,70 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         scheduleSettingsSave();
     });
 
-    // NB tuning wiring removed 2026-04-22 — no longer per-slice. All NB
-    // tuning lives inside NbFamily, seeded from AppSettings at ctor and
-    // live-pushed from Setup → DSP → NB/SNB handlers in DspSetupPages.cpp.
+    // ── NB1 / NB2 / SNB detailed tuning → WDSP ──────────────────────────────
+    // Restored as per-slice pushes by the Sub-Epic J follow-up. The wiring was
+    // removed 2026-04-22 in favour of Setup → DSP → NB/SNB calling
+    // SetEXTANB* / SetEXTNOB* / SetRXASNBA* directly, but every one of those
+    // calls passed a hardcoded channel 0, so eight tuning controls acted on
+    // receiver A no matter which receiver was selected. That bypass was
+    // invisible to Sub-Epic J's rxChannel() audit because it reached WDSP by
+    // another route entirely.
+    //
+    // The five NB1 / NB2 knobs are additionally mirrored across co-hosted
+    // slices (see the mirror in addSlice); this push is what puts the agreed
+    // value on each slice's own channel. SNB is per channel and unmirrored.
+    connect(slice, &SliceModel::nb1ThresholdChanged, this, [this, slice](int v) {
+        if (RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex())) {
+            // From Thetis setup.cs:8606 [v2.10.3.15]
+            //   console.radio.GetDSPRX(0, 0).NBThreshold = 0.165 * (double)(udDSPNB.Value);
+            // The UI value is scaled into the WDSP domain by 0.165 before it
+            // reaches SetEXTANBThreshold.
+            rxCh->setNbThreshold(0.165 * static_cast<double>(v));
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nb1TransitionMsChanged, this, [this, slice](double v) {
+        if (RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex())) {
+            rxCh->setNbTransitionMs(v);
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nb1LeadMsChanged, this, [this, slice](double v) {
+        if (RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex())) {
+            rxCh->setNbLeadMs(v);
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nb1LagMsChanged, this, [this, slice](double v) {
+        if (RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex())) {
+            rxCh->setNbLagMs(v);
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nb2ModeChanged, this, [this, slice](int v) {
+        if (RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex())) {
+            rxCh->setNb2Mode(v);
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::snbK1Changed, this, [this, slice](double v) {
+        if (RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex())) {
+            rxCh->setSnbK1(v);
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::snbK2Changed, this, [this, slice](double v) {
+        if (RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex())) {
+            rxCh->setSnbK2(v);
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::snbOutputBandwidthHzChanged, this, [this, slice](int v) {
+        if (RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex())) {
+            rxCh->setSnbOutputBandwidthHz(v);
+        }
+        scheduleSettingsSave();
+    });
 
     // APF → WDSP
     // From Thetis Project Files/Source/Console/radio.cs:1910-1927
