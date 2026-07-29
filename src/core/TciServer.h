@@ -153,6 +153,14 @@ public:
     // the AlwaysStreamIQ override path).
     int activeIqSubscriberCount(int receiver) const;
 
+    // Test-only: the shared TciProtocol whose pending-notification queue every
+    // broadcast lands in before the 5 ms drain timer hands it to clients.
+    // Exposed so broadcast tests can assert on frame CONTENT (which receiver a
+    // frame addresses) rather than on signal-receiver counts, which cannot
+    // distinguish "wired to the right slice" from "wired at all".  Same
+    // unguarded test-hook convention as injectAudioFrameForTest above.
+    TciProtocol* protocolForTest() const { return m_protocol.get(); }
+
 signals:
     // Emitted after the server begins listening.  port is the actual bound port
     // (useful when start() was called with port=0).

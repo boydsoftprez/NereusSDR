@@ -4599,6 +4599,14 @@ if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_tci_server_lifecycle)
     target_link_libraries(tst_tci_server_lifecycle PRIVATE Qt6::WebSockets)
 
+    # Phase 3F Sub-Epic J follow-up: the LIVE broadcast path is per-slice.
+    # Task 10 fixed only the init burst, so rx_volume collapsed back to one
+    # shared value on the first master-volume change after connect, and
+    # rx_anf_enable stopped broadcasting once ANF was decoupled from the NR
+    # slot enum.  Asserts frame content on the real broadcast queue.
+    nereus_add_test(tst_tci_live_broadcast_per_slice)
+    target_link_libraries(tst_tci_live_broadcast_per_slice PRIVATE Qt6::WebSockets)
+
     # Phase 3J-1 Task 2.2: server-driven 20s ping with payload "Thetis"
     nereus_add_test(tst_tci_server_ping)
     target_link_libraries(tst_tci_server_ping PRIVATE Qt6::WebSockets)
