@@ -138,6 +138,9 @@ class WidebandFftEngine;
 // 3M-1a G.1: forward declarations for TX-side components.
 class MoxController;
 class TxChannel;
+// Phase 3F Sub-Epic J Task 11: forward decl for rxChannelForSlice()'s
+// return type (see below, near txChannel()).
+class RxChannel;
 // Phase 3F Sub-Epic C: TX-slice arbiter (single-TX invariant + RF-safe handoff).
 class TxSliceArbiter;
 // 3M-1b L.1: forward declarations for mic-source strategy objects.
@@ -858,6 +861,18 @@ public:
     // in TxChannel drives fexchange2 → sendTxIq (SPSC ring) while running.
     // Wired by 3M-1a Task G.1 (bench fix: TUNE carrier now reaches the radio).
     TxChannel* txChannel() const { return m_txChannel; }
+
+    // Phase 3F Sub-Epic J Task 11: the one place GUI code may resolve a
+    // slice's WDSP channel. Mirrors txChannel()'s shape. Added so MainWindow
+    // and the Setup pages can stop calling wdspEngine()->rxChannel()
+    // directly -- that direct reach is what let ANF-on-slice-B toggle slice
+    // A (this same sub-epic, Task 1). RadioModel stays the only layer that
+    // touches WdspEngine::rxChannel(); everything under src/gui/ goes
+    // through this accessor instead (enforced by
+    // scripts/verify-no-gui-dsp-access.py).
+    // Returns nullptr if WDSP has not initialised yet or sliceIndex has no
+    // channel.
+    RxChannel* rxChannelForSlice(int sliceIndex) const;
 
     // Phase 3P-II: PGXL / TGXL / Tuner accessors.
     // PgxlConnection and TgxlConnection are QObject children of RadioModel

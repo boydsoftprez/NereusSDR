@@ -3263,6 +3263,22 @@ QVector<int> RadioModel::slicesOnStream(int streamIndex) const
     return out;
 }
 
+// ── Phase 3F Sub-Epic J Task 11 ──────────────────────────────────────────────
+//
+// The only place GUI code may resolve a slice's WDSP channel. A thin
+// forward to WdspEngine::rxChannel(), kept here (rather than inlined in the
+// header) because RadioModel.h only forward-declares WdspEngine.
+// scripts/verify-no-gui-dsp-access.py fails the build if anything under
+// src/gui/ calls wdspEngine()->rxChannel() directly; this accessor is the
+// sanctioned replacement for the handful of GUI sites (CTUN shift push,
+// MeterPoller channel wiring, Setup-page channel-readiness gates) that
+// legitimately need the pointer but were reaching straight into the engine
+// to get it.
+RxChannel* RadioModel::rxChannelForSlice(int sliceIndex) const
+{
+    return m_wdspEngine ? m_wdspEngine->rxChannel(sliceIndex) : nullptr;
+}
+
 // ── Phase 3F Sub-Epic J Task 5 ──────────────────────────────────────────────
 //
 // One window, one centre, N slices at their own offsets inside it. The CTUN
