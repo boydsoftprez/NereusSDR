@@ -2053,6 +2053,23 @@ RadioModel::RadioModel(QObject* parent)
         }
     }
 
+    // The gate silences whichever slice is active AT THE TIME OF THE BLOCK,
+    // but setMoxState samples activeSlice() once, at the transition. Handing
+    // TX to another slice mid-over (or closing the pan that owned it) moves
+    // the gate without moving the barrier withdrawal, which leaves the newly
+    // silenced slice enrolled with nothing to deliver -- and the drain waits
+    // on every member with no timeout (MasterMixer.h, divergence 3), so the
+    // whole mix stops for the rest of the transmission.
+    //
+    // The argument is dropped deliberately: activeSliceChanged carries a LIST
+    // POSITION (see the emits in setActiveSlice and removeSlice), while the
+    // mixer is keyed by stable slice id. AudioEngine re-reads activeSlice()
+    // itself rather than converting one to the other.
+    if (m_audioEngine) {
+        connect(this, &RadioModel::activeSliceChanged,
+                m_audioEngine, &AudioEngine::onActiveSliceChanged);
+    }
+
     // ── Phase 3F Sub-Epic C Task 6: TxSliceArbiter per-MAC scope wiring ───
     // currentRadioChanged is emitted from onConnectionStateChanged once the
     // hardware profile is loaded and m_lastRadioInfo is populated (see

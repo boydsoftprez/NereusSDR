@@ -490,6 +490,17 @@ public:
     void setMoxState(bool active);
     bool moxState() const { return m_moxActive.load(std::memory_order_acquire); }
 
+    /// Re-take the MOX barrier withdrawal against whichever slice is active
+    /// NOW. No-op unless MOX is on. Wired by RadioModel to
+    /// RadioModel::activeSliceChanged.
+    ///
+    /// rxBlockReady's gate reads SliceModel::isActiveSlice() live, so moving
+    /// the active slice mid-over re-points which slice is silenced. The
+    /// barrier withdrawal has to follow it: the newly gated slice stops
+    /// feeding, and if it is still a barrier member the drain waits on it for
+    /// the rest of the transmission and the whole mix goes with it.
+    void onActiveSliceChanged();
+
     /// TX monitor (MON) enable. When true, TXA siphon audio is mixed into
     /// the master output during MOX (the user hears themselves).
     ///

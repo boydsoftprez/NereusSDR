@@ -3496,6 +3496,15 @@ target_compile_definitions(tst_audio_engine_tx_monitor_block PRIVATE NEREUS_BUIL
 nereus_add_test(tst_audio_engine_rx_leak_during_mox)
 target_compile_definitions(tst_audio_engine_rx_leak_during_mox PRIVATE NEREUS_BUILD_TESTS)
 
+# ── 2026-07-28 ANAN-G2E bench regression: the MOX gate never released ────────
+# Drives the real MoxController -> AudioEngine::setMoxState wire that
+# RadioModel's constructor makes, across the walk-interruption and
+# active-slice-move sequences an operator can produce with MOX and TUNE.
+# Asserts on both halves of the gate: m_moxActive returning to false, and
+# the withdrawn slice getting back into the mixer's readiness barrier.
+nereus_add_test(tst_audio_engine_mox_gate_release)
+target_compile_definitions(tst_audio_engine_mox_gate_release PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1b Task F.1: PcMicSource ────────────────────────────────────────
 # Verifies that PcMicSource::pullSamples correctly dispatches to
 # AudioEngine::pullTxMic via the NEREUS_BUILD_TESTS seam:

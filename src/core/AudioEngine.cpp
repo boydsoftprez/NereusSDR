@@ -1538,18 +1538,67 @@ void AudioEngine::setMoxState(bool active)
     // same breath. Poking one mixer directly is how the two would drift
     // apart, and a slice left enrolled in the anti-VOX barrier alone would
     // wedge that mix for the whole transmission.
-    if (active) {
-        m_moxWithdrawnSlice = -1;
-        if (m_radio != nullptr) {
-            if (SliceModel* slice = m_radio->activeSlice()) {
-                m_moxWithdrawnSlice = slice->sliceIndex();
-                setSliceStreaming(m_moxWithdrawnSlice, false);
-            }
-        }
-    } else if (m_moxWithdrawnSlice >= 0) {
+    // Release whatever is currently withdrawn FIRST, on both edges, and only
+    // then take a new withdrawal. Not just tidiness: moxStateChanged does not
+    // alternate, and the earlier `if (active) ... else ...` shape assumed it
+    // did.
+    //
+    // MoxController commits m_mox synchronously but emits moxStateChanged at
+    // the END of a timer walk, and stopAllTimers() (MoxController.cpp:552)
+    // cancels a pending emit when the next transition arrives before the walk
+    // finishes. Re-keying inside the 30 ms release window therefore delivers
+    // two `true` edges with no `false` between them. Clearing
+    // m_moxWithdrawnSlice on the second one and re-reading activeSlice() then
+    // stranded the first slice: withdrawn from both readiness barriers with
+    // nothing left to put it back, and the barriers have no timeout that
+    // would release it (MasterMixer.h, divergence 3). It stayed out for the
+    // life of the process, so the mix stopped being paced by it and its
+    // contribution went clumped -- the artefact the barrier exists to
+    // prevent.
+    //
+    // Upstream cannot reach this because it does not track a delta at all.
+    // UpdateAAudioMixerStates (console.cs:27631 [v2.10.3.15]) restates
+    // ABSOLUTE membership for every stream on every transition --
+    //   SetAAudioMixStates(ptr, id, streams, states)   cmaster.cs:255
+    // takes an addressed-stream mask AND a desired-state mask -- and
+    // chkMOX_CheckedChanged2 calls it on both edges (console.cs:29630 RX->TX,
+    // console.cs:29672 TX->RX [v2.10.3.15]). Releasing before taking is the
+    // one-slot equivalent: correct for any edge sequence, not only for a
+    // strictly alternating one.
+    if (m_moxWithdrawnSlice >= 0) {
         setSliceStreaming(m_moxWithdrawnSlice, true);
         m_moxWithdrawnSlice = -1;
     }
+
+    if (active && m_radio != nullptr) {
+        if (SliceModel* slice = m_radio->activeSlice()) {
+            m_moxWithdrawnSlice = slice->sliceIndex();
+            setSliceStreaming(m_moxWithdrawnSlice, false);
+        }
+    }
+}
+
+void AudioEngine::onActiveSliceChanged()
+{
+    // The withdrawal above samples activeSlice() at the edge; rxBlockReady's
+    // gate reads isActiveSlice() on every block. Moving the active slice
+    // mid-over separates the two: the newly active slice is gated and stops
+    // feeding, but it was never withdrawn, so it stays a barrier member with
+    // nothing queued and the drain waits on it (MasterMixer.cpp tryDrain).
+    // Meanwhile the slice that WAS withdrawn is feeding again but is not a
+    // member. Measured cost on a two-slice bench harness: the mix drops from
+    // one push per period to none for the rest of the transmission.
+    //
+    // Re-running the same release-then-take keeps the withdrawal pointed at
+    // whatever the gate is currently silencing. This is the half of
+    // UpdateAAudioMixerStates (console.cs:27631 [v2.10.3.15]) that a one-slot
+    // delta cannot get for free: upstream recomputes absolute membership for
+    // every stream from current conditions each time it is called, so its
+    // masks cannot drift away from what is actually being fed.
+    if (!m_moxActive.load(std::memory_order_acquire)) {
+        return;  // nothing withdrawn while MOX is off
+    }
+    setMoxState(true);
 }
 
 // Plan: 3M-1b E.2. Pre-code review §4.4.
