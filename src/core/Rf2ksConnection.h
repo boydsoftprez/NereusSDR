@@ -103,6 +103,10 @@ public:
     // on the down transition so a dead amp is not polled through the
     // whole backoff window.
     bool testPollActive() const { return m_pollTimer.isActive(); }
+    // Test-only: drive one poll/probe failure without a network stack, so a
+    // test can walk the down transition and the reconnect-probe-failed path
+    // that keeps the retry schedule alive.
+    void testMarkPollFailure() { markPollFailure(); }
 
 public slots:
     void connectToAmp(const QString& host, quint16 port = 8080);

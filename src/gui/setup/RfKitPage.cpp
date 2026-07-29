@@ -264,6 +264,17 @@ void RfKitPage::saveRf2ksSettings()
     // explicit flush pattern used by AudioVaxPage, DeviceCard, and
     // HardwarePage.
     AppSettings::instance().save();
+
+    // Push the two operator preferences into the live connection.  Save
+    // used to only persist them, so with RF-Kit already connected,
+    // unticking Auto-reconnect still permitted the next retry and a new
+    // poll interval did nothing until some later model-driven reapply
+    // happened to run.  applyRfKitOperatorSettings() re-reads both keys
+    // from AppSettings, so it must run after the writes above, and it
+    // no-ops when there is no connection.  Codex review, PR #291.
+    if (m_model) {
+        m_model->applyRfKitOperatorSettings();
+    }
 }
 
 void RfKitPage::reloadFromPeripherals()

@@ -580,6 +580,16 @@ public:
     // RF-Kit Connect B (amp forward power) at the radio's higher emit rate.
     bool isAnyExternalAmpInOperate() const;
 
+    // RF-Kit-only counterpart to the predicate above: true when the RF2K-S
+    // is connected AND reporting OPERATE, ignoring PGXL entirely.
+    //
+    // Needed because externalAmpFwdSwrUpdated carries RF-Kit telemetry
+    // exclusively, so gating that feed on the cross-vendor predicate let a
+    // PGXL in OPERATE wave through RF-Kit /power polls from an amp sitting
+    // in STANDBY, overwriting the live PGXL meter with RF-Kit's 0 W.  A
+    // per-source feed needs a per-source gate.  Codex review, PR #291.
+    bool isRfKitInOperate() const;
+
     // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
     // Constructed once in the ctor (Qt parent-ownership). Non-null from
     // construction time. Shared with PgxlInterlockPage (non-owning read/write)

@@ -2736,12 +2736,20 @@ bool RadioModel::isAnyExternalAmpInOperate() const
     // predicate true forever after it dropped, pinning MainWindow to the
     // 2 kW scale and suppressing the radio's barefoot power updates.
     // Codex review, PR #291.
-    if (m_rfKitConnection
-        && m_rfKitConnection->isConnected()
-        && m_rfKitConnection->operateMode() == QStringLiteral("OPERATE")) {
+    if (isRfKitInOperate()) {
         return true;
     }
     return false;
+}
+
+bool RadioModel::isRfKitInOperate() const
+{
+    // Same liveness requirement as the RF-Kit branch above: m_operateMode is
+    // a cache with no disconnect invalidation, so an amp last seen in
+    // OPERATE would otherwise read as amplifying forever after it dropped.
+    return m_rfKitConnection
+        && m_rfKitConnection->isConnected()
+        && m_rfKitConnection->operateMode() == QStringLiteral("OPERATE");
 }
 
 const BoardCapabilities& RadioModel::boardCapabilities() const
