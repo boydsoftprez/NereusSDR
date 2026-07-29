@@ -71,6 +71,7 @@ struct AntennaRouting {
 // setAlex1HPF(_rx1_dds_freq), and `prbpfilter2` (Alex1, ADC1) fed from
 // setAlex2HPF(rx2_dds_freq_mhz).
 //   From Thetis console.cs:15401 + 15435-15443 [v2.10.3.15]
+//[2.10.3.13]MW0LGE
 //   From Thetis ChannelMaster/network.c:1040-1050 [v2.10.3.15]
 //   Upstream inline attribution preserved verbatim (console.cs:15441):
 //     HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM

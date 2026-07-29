@@ -167,6 +167,7 @@ DdcAssignment P1CodecAnvelinaPro3::applyDdcAssignment(
         if (slices[0].live) { a.streamDdc[0] = 2; }
     } else if (ctx.diversity) {
         // From Thetis console.cs:8232-8240 [v2.10.3.15] (no-mox, diversity):
+        // [2.10.3.13]MW0LGE p1 !
         //   P1_DDCConfig = DDCEnable = DDC0;  (P1_DDCConfig = 1 via DDC0=1 bitmask)
         //   SyncEnable = DDC1;
         //   Rate[0] = rx1_rate; Rate[1] = rx1_rate;

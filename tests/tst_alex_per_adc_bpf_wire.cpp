@@ -652,6 +652,7 @@ private slots:
     // ADC1's decision drives Alex1 independently of ADC0's. This is the shape
     // the reporter asked for: two chains, two answers.
     // From Thetis console.cs:15435-15442 [v2.10.3.15], setAlex2HPF is fed from
+    //[2.10.3.13]MW0LGE
     // rx2_dds_freq_mhz while Alex0 is fed from _rx1_dds_freq.
     // Upstream inline attribution preserved verbatim (console.cs:15441):
     //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM

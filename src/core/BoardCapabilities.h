@@ -239,6 +239,7 @@ struct BoardCapabilities {
     // THIS IS NOT adcCount, and it is not hasAlex2. Thetis drives a second
     // chain for exactly one model list:
     //   From Thetis console.cs:15435-15443 [v2.10.3.15] UpdateRX2DDSFreq:
+    //[2.10.3.13]MW0LGE
     //     if (HardwareSpecific.Model == HPSDRModel.ORIONMKII ||
     //         HardwareSpecific.Model == HPSDRModel.ANAN7000D ||
     //         HardwareSpecific.Model == HPSDRModel.ANAN8000D ||

@@ -368,6 +368,8 @@ warren@wpratt.com
 #include <QToolTip>
 #include <QMenuBar>
 #include <QMenu>
+#include <QMetaMethod>
+#include <QMetaProperty>
 #include <QAction>
 #include <QSignalBlocker>
 #include <QActionGroup>

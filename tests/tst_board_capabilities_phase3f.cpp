@@ -233,6 +233,7 @@ private slots:
     // The upstream rule, expressed as a set rather than per row.
     //
     // From Thetis console.cs:15435-15443 [v2.10.3.15] UpdateRX2DDSFreq:
+    //[2.10.3.13]MW0LGE
     //   ORIONMKII, ANAN7000D, ANAN8000D, ANAN_G2, ANAN_G2_1K, ANVELINAPRO3,
     //   REDPITAYA -> setAlex2HPF(rx2_dds_freq_mhz)
     // Upstream inline attribution preserved verbatim (console.cs:15441):

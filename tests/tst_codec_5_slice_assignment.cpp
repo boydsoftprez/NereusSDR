@@ -190,6 +190,7 @@ private slots:
 
         // Diversity: DDC0+1 enabled+synced at slice rate, DDC2 freed
         // From Thetis console.cs:8232-8240 [v2.10.3.15]:
+        // [2.10.3.13]MW0LGE p1 !
         //   DDCEnable = DDC0; SyncEnable = DDC1;
         //   Rate[0] = Rate[1] = rx1_rate; (DDC2 disabled)
         QCOMPARE(a.ddcEnable & 0x07, 0x03);

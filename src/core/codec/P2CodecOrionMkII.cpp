@@ -1250,6 +1250,7 @@ DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
         a.syncEnable |= 0x02;                       // DDC1 syncs to DDC0
         if (slices[0].live) {
             // From Thetis console.cs:8237-8238 [v2.10.3.15]: Rate[0]=Rate[1]=rx1_rate
+            // [2.10.3.13]MW0LGE p1 !
             a.rate[0] = slices[0].sampleRateHz;
             a.rate[1] = slices[0].sampleRateHz;
             a.rate[2] = 0;

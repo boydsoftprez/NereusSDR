@@ -9723,6 +9723,7 @@ void RadioModel::applyAlexAntennaForBand(Band band, bool isTx)
 //      from setAlex1HPF(_rx1_dds_freq); Alex1 (`prbpfilter2`) is ADC1's, fed
 //      from setAlex2HPF(rx2_dds_freq_mhz).
 //        From Thetis console.cs:15401 + 15435-15443 [v2.10.3.15]
+//[2.10.3.13]MW0LGE
 //        From Thetis ChannelMaster/network.c:1040-1050 [v2.10.3.15]
 //        Upstream inline attribution preserved verbatim (console.cs:15441):
 //          HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
@@ -10047,6 +10048,7 @@ int RadioModel::sliceChainIndex(int sliceId) const
 // the same number on every SKU:
 //
 //   From Thetis console.cs:15435-15443 [v2.10.3.15] UpdateRX2DDSFreq:
+//[2.10.3.13]MW0LGE
 //   setAlex2HPF, the only writer of the chain-1 filter word, runs for
 //   ORIONMKII, ANAN7000D, ANAN8000D, ANAN_G2, ANAN_G2_1K, ANVELINAPRO3 and
 //   REDPITAYA and for nothing else.

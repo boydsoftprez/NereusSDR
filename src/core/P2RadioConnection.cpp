@@ -1156,6 +1156,7 @@ void P2RadioConnection::setAntennaRouting(AntennaRouting r)
 // setAlex1HPF(_rx1_dds_freq); Alex1 (`prbpfilter2`, bytes 1428-1431) carries
 // ADC1's and is fed from setAlex2HPF(rx2_dds_freq_mhz).
 //   From Thetis console.cs:15401 + 15435-15443 [v2.10.3.15]
+//[2.10.3.13]MW0LGE
 //   From Thetis ChannelMaster/network.c:1040-1050 [v2.10.3.15]
 //   From Thetis ChannelMaster/netInterface.c:604-651 [v2.10.3.15]
 //   Upstream inline attribution preserved verbatim (console.cs:15441):
