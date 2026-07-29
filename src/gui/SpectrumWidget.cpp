@@ -7834,21 +7834,44 @@ void SpectrumWidget::updateVfoPositions()
 
     int specH = static_cast<int>(height() * m_spectrumFrac);
     QRect specRect(0, 0, width() - effectiveStripW(), specH);
-    int vfoX = hzToX(m_vfoHz, specRect);
 
+    // Each flag is placed from ITS OWN slice frequency, not from the pan's
+    // m_vfoHz.
+    //
+    // m_vfoHz is a single per-pan value that tracks whichever slice most
+    // recently called setVfoFrequency, so deriving one vfoX from it and moving
+    // every flag there stacked all the co-hosted flags on one x and made them
+    // move together. The models were never wrong -- tst_radio_model_slice_
+    // lifecycle pins that two slices sharing a DDC window hold independent
+    // frequencies and independent shift offsets -- this was placement alone.
+    // Bench-reported 2026-07-28: "If I add B flag to panadapter 1, A and B are
+    // still overlaid and stuck on top of each other."
+    //
+    // A single-slice pan is unchanged: its one flag carries the same frequency
+    // the pan does, so the x it lands on is identical to the pre-fix one.
     for (auto it = m_vfoWidgets.begin(); it != m_vfoWidgets.end(); ++it) {
         VfoWidget* vfo = it.value();
         if (vfo->width() <= 0) {
             vfo->adjustSize();
         }
-        // Hide VFO flag when off-screen (SmartSDR pattern)
-        if (m_vfoOffScreen != VfoOffScreen::None) {
+        // Hide VFO flag when off-screen (SmartSDR pattern).
+        //
+        // Per flag, for the same reason as the placement above: the pan-level
+        // m_vfoOffScreen answers "is the PAN's VFO outside the window", which
+        // hid a perfectly on-window flag whenever some other slice on the same
+        // pan was tuned away. m_vfoOffScreen still drives the pan's own
+        // off-screen chevron (drawOffScreenIndicator) and is left alone.
+        const double flagHz = vfo->frequency();
+        if (flagHz < leftEdge || flagHz > rightEdge) {
             vfo->hide();
         } else {
-            if (!vfo->isVisible()) {
+            // isHidden(), not isVisible(): a flag on a pan that has not been
+            // shown yet reads !isVisible() forever, which turned this into an
+            // unconditional show() on every pass.
+            if (vfo->isHidden()) {
                 vfo->show();
             }
-            vfo->updatePosition(vfoX, 0);
+            vfo->updatePosition(hzToX(flagHz, specRect), 0);
             vfo->raise();
         }
     }

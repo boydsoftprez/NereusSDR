@@ -5708,6 +5708,12 @@ nereus_add_test(tst_perf_monitor_ring)
 # active slice. The DSP menu used to write rxChannel(0) unconditionally.
 nereus_add_test(tst_dsp_menu_active_slice)
 
+# Phase 3F: a pan hosting several slices places each flag at its OWN slice
+# frequency. updateVfoPositions() derived one x from the pan's single m_vfoHz
+# and moved every flag to it, so co-hosted flags stacked on top of each other
+# and tracked whichever slice moved last. Bench-reported 2026-07-28.
+nereus_add_test(tst_pan_flag_positions)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

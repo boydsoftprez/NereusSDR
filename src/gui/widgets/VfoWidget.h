@@ -364,6 +364,16 @@ public:
     void setAntennaList(const QStringList& ants);
     void setSmeter(double dbm);
 
+    /// This flag's own slice frequency, in Hz.
+    ///
+    /// Phase 3F: read back by SpectrumWidget::updateVfoPositions so each flag
+    /// on a shared pan is placed at ITS slice's frequency. The pan's m_vfoHz
+    /// is a single value that tracks whichever slice most recently called
+    /// setVfoFrequency, so placing from it stacked every co-hosted flag at one
+    /// x. Bench-reported 2026-07-28: "A and B are still overlaid and stuck on
+    /// top of each other."
+    double frequency() const { return m_frequency; }
+
     // --- RIT/XIT state setters (S1.8a — guarded against re-emit) ---
     void setRitEnabled(bool v);
     void setRitHz(int hz);
