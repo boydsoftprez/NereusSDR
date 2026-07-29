@@ -2495,13 +2495,23 @@ void MainWindow::buildUI()
             rescaleAllPowerMeters);
 
     // Phase 3F Sub-Epic D Task 11: gate the bottom-bar CH 1 stacked
-    // indicator widget on the connected radio's adcCount (visible only
-    // on 2-ADC SKUs). buildStatusBar() ships chain1Widget hidden by
-    // default; this slot toggles it on/off as the user switches radios.
+    // indicator widget on whether the connected radio drives a second RX
+    // filter chain. buildStatusBar() ships chain1Widget hidden by default;
+    // this slot toggles it on/off as the user switches radios.
+    //
+    // Defect D4: this used to read adcCount, which names the wrong thing. The
+    // indicator reports a CHAIN's band-pass state, and ANAN-100D / ANAN-200D
+    // have two ADCs behind one filter bank: the setAlex2HPF model list at
+    // Thetis console.cs:15435-15443 [v2.10.3.15] never hands them a second
+    // filter word. Showing CH 1 there offered the operator a second chain to
+    // reason about, and a Filter Policy override to set on it, that the radio
+    // does not have.
+    // Upstream inline attribution preserved verbatim (console.cs:15441):
+    //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
     auto updateChain1Visibility = [this]() {
         if (!m_chain1IndicatorWidget) { return; }
         const auto caps = m_radioModel->boardCapabilities();
-        m_chain1IndicatorWidget->setVisible(caps.adcCount >= 2);
+        m_chain1IndicatorWidget->setVisible(caps.rxFilterChainCount >= 2);
     };
     connect(m_radioModel, &RadioModel::currentRadioChanged, this,
             updateChain1Visibility);
@@ -6025,8 +6035,8 @@ void MainWindow::buildStatusBar()
     // header + reasonText body), wired to AlexController::bpfStateChanged
     // below so the body text + colour reflect the live per-ADC BPF
     // state. CH 0 is always shown; CH 1 is shown only when the
-    // connected radio's BoardCapabilities reports adcCount >= 2 (gated
-    // in the currentRadioChanged handler below).
+    // connected radio's BoardCapabilities reports rxFilterChainCount >= 2
+    // (gated in the currentRadioChanged handler below).
     auto makeChainIndicator = [&](int adc) -> QWidget* {
         auto* w  = new QWidget(barWidget);
         auto* vl = new QVBoxLayout(w);

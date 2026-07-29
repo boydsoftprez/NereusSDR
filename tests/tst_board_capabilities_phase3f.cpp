@@ -208,6 +208,83 @@ private slots:
         QCOMPARE(caps.widebandAdcs, 2);
     }
 
+    // ── rxFilterChainCount (defect D4) ───────────────────────────────────
+    //
+    // Design doc §16.1.2. A chain is one independently addressable RX
+    // preselector bank plus the ADC behind it, and it is the unit the two
+    // Alex words address. Guards the rule, not the rows.
+
+    // A chain includes the ADC behind it, so a board cannot drive more
+    // chains than it has ADCs (§16.1.1).
+    void rx_filter_chain_count_never_exceeds_adc_count()
+    {
+        for (const auto& caps : BoardCapsTable::all()) {
+            QVERIFY2(caps.rxFilterChainCount >= 1,
+                     qPrintable(QStringLiteral("%1: rxFilterChainCount must be at least 1")
+                                    .arg(QString::fromLatin1(caps.displayName))));
+            QVERIFY2(caps.rxFilterChainCount <= caps.adcCount,
+                     qPrintable(QStringLiteral("%1: rxFilterChainCount %2 exceeds adcCount %3")
+                                    .arg(QString::fromLatin1(caps.displayName))
+                                    .arg(caps.rxFilterChainCount)
+                                    .arg(caps.adcCount)));
+        }
+    }
+
+    // The upstream rule, expressed as a set rather than per row.
+    //
+    // From Thetis console.cs:15435-15443 [v2.10.3.15] UpdateRX2DDSFreq:
+    //   ORIONMKII, ANAN7000D, ANAN8000D, ANAN_G2, ANAN_G2_1K, ANVELINAPRO3,
+    //   REDPITAYA -> setAlex2HPF(rx2_dds_freq_mhz)
+    // Upstream inline attribution preserved verbatim (console.cs:15441):
+    //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    // Resolving those seven through clsHardwareSpecific.cs:86-190
+    // [v2.10.3.15] gives exactly HPSDRHW.OrionMKII and HPSDRHW.Saturn.
+    //
+    // SaturnMKII and Andromeda are NereusSDR rows upstream cannot answer for
+    // (no HPSDRModel resolves to HPSDRHW.SaturnMKII, and Thetis has no
+    // Andromeda HW value at all). Both are Saturn-derived rows for
+    // Saturn-class hardware and both dispatch to a codec that antenna-routes
+    // to ADC1, so declaring one chain on them would recreate D1 there.
+    void rx_filter_chain_count_matches_the_upstream_model_list()
+    {
+        const QSet<HPSDRHW> twoChain {
+            HPSDRHW::OrionMKII,    // ORIONMKII / 7000D / 8000D / ANVELINAPRO3 / REDPITAYA
+            HPSDRHW::Saturn,       // ANAN_G2 / ANAN_G2_1K
+            HPSDRHW::SaturnMKII,   // NereusSDR: Saturn-derived
+            HPSDRHW::Andromeda,    // NereusSDR: Saturn-derived
+        };
+
+        for (const auto& caps : BoardCapsTable::all()) {
+            const int expected = twoChain.contains(caps.board) ? 2 : 1;
+            QCOMPARE(caps.rxFilterChainCount, expected);
+        }
+    }
+
+    // Why the field exists rather than reusing adcCount. ANAN-100D (Angelia)
+    // and ANAN-200D (Orion) are NetworkIO.SetRxADC(2)
+    // (clsHardwareSpecific.cs:123 and :140 [v2.10.3.15]) yet are absent from
+    // the setAlex2HPF list, so their Alex1 HPF nibble is never written. Two
+    // ADCs, one driven filter chain.
+    void adc_count_does_not_predict_filter_chain_count()
+    {
+        for (HPSDRHW hw : {HPSDRHW::Angelia, HPSDRHW::Orion}) {
+            const BoardCapabilities& caps = BoardCapsTable::forBoard(hw);
+            QCOMPARE(caps.adcCount, 2);
+            QCOMPARE(caps.rxFilterChainCount, 1);
+        }
+    }
+
+    // And why not hasAlex2 either. Ours tracks Thetis's SetMKIIBPF, a
+    // different concept: HermesC10 (ANAN-G2E) is SetMKIIBPF(1) but
+    // SetRxADC(1) (clsHardwareSpecific.cs:128-133 [v2.10.3.15]) and is not
+    // in the setAlex2HPF list.
+    void has_alex2_does_not_predict_filter_chain_count()
+    {
+        const BoardCapabilities& caps = BoardCapsTable::forBoard(HPSDRHW::HermesC10);
+        QVERIFY(caps.hasAlex2);
+        QCOMPARE(caps.rxFilterChainCount, 1);
+    }
+
     // Phase 3F Sub-Epic I Task 1: per-SKU userDdcCount population tests.
     // Values from docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md
     // §2 "Resolved values per SKU" (User DDCs column). User DDCs are the DDCs

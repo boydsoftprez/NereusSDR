@@ -19,11 +19,14 @@
 #include <QSignalSpy>
 
 #include "core/AppSettings.h"
+#include "core/BoardCapabilities.h"
 #include "core/RadioConnection.h"
+#include "core/ReceiverManager.h"
 #include "core/accessories/AlexController.h"
 #include "core/codec/AlexFilterMap.h"
 #include "core/codec/CodecContext.h"
 #include "core/codec/P2CodecOrionMkII.h"
+#include "core/codec/P2CodecSaturn.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -159,8 +162,9 @@ private slots:
         const int b = model.addSlice();
         model.slices().at(b)->setFrequency(7150000.0);    // 40 m
 
-        // Every stream sits on ADC0 today (setAdcForReceiver is called once,
-        // receiver 0 -> ADC 0), so both slices share one chain.
+        // No codec is injected here, so no assignment is published and every
+        // stream keeps m_streamAdc's ADC0 default: both slices share one
+        // chain. The EXT1 cases below inject one and take the other branch.
         QCOMPARE(model.alexController().adcState(0).effective,
                  AlexController::BpfEffective::Bypass);
 
@@ -228,6 +232,240 @@ private slots:
                      qPrintable(QStringLiteral("no push at %1 MHz").arg(r.mhz)));
             QCOMPARE(mock->bpfCalls.last().hpfBitsAdc0,
                      int(codec::alex::computeHpf(r.mhz)));
+
+            model.injectConnectionForTest(nullptr);
+            delete mock;
+        }
+    }
+
+    // ── D1: the grouping key follows the wire, not a pinned ADC0 ─────────
+    //
+    // Defect D1 (ct1iqi-audit.md). Commit 99709649 made the WIRE route a
+    // slice on an RX-only antenna to ADC1, and 7cc35f20 made that reach the
+    // ANAN-G2. The filter analysis kept grouping by
+    // ReceiverManager::receiverConfig(stream).adcIndex, which only
+    // setAdcForReceiver writes and which was only ever called once with 0.
+    // So the two disagreed: the radio really moved the DDC, and
+    // AlexController still counted the slice on chain 0, saw two bands on one
+    // chain, and bypassed BOTH chains.
+    //
+    // Every case below constructs P2CodecSaturn and sets the board to
+    // HPSDRHW::Saturn, because Saturn IS the ANAN-G2 this is wrong on today.
+    // D3 hid for two days behind tests that built P2CodecOrionMkII.
+    void saturn_slice_on_ext1_gets_its_own_chain_decision()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::Saturn);
+        model.configureStreamPool(5, 5, 192000);
+        P2CodecSaturn codec;
+        model.receiverManager()->setP2Codec(&codec);
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(7150000.0);     // 40 m, ANT1
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(14200000.0);    // 20 m
+        // Select it first, as the operator does before touching its flag:
+        // AlexController holds the antenna per BAND, and RadioModel syncs the
+        // resulting label back onto the ACTIVE slice only
+        // (AlexController::antennaChanged handler, T13). Setting it on a
+        // background slice would push the label onto whichever slice happened
+        // to be selected.
+        model.setActiveSlice(b);
+        model.slices().at(b)->setRxAntenna(QStringLiteral("EXT1"));
+
+        // Chain 0 keeps 40 m to itself; chain 1 owns 20 m. Neither bypasses.
+        QCOMPARE(model.alexController().adcState(0).effective,
+                 AlexController::BpfEffective::Filtered);
+        QCOMPARE(model.alexController().adcState(0).currentBpfBand, Band::Band40m);
+        QCOMPARE(model.alexController().adcState(1).effective,
+                 AlexController::BpfEffective::Filtered);
+        QCOMPARE(model.alexController().adcState(1).currentBpfBand, Band::Band20m);
+
+        QVERIFY(!mock->bpfCalls.isEmpty());
+        const AlexRxBpf last = mock->bpfCalls.last();
+        QCOMPARE(last.hpfBitsAdc0,
+                 int(codec::alex::computeRxPreselector(7.15, HPSDRHW::Saturn)));
+        QCOMPARE(last.hpfBitsAdc1,
+                 int(codec::alex::computeRxPreselector(14.2, HPSDRHW::Saturn)));
+        QVERIFY(last.hpfBitsAdc0 != 0x20);
+        QVERIFY(last.hpfBitsAdc1 != 0x20);
+
+        delete mock;
+    }
+
+    // Bench row 15's second half: putting the slice back on ANT1 must put
+    // both slices back on one chain, which is two bands again, which is
+    // BYPASS again. The chain-1 word goes back to "no decision".
+    void saturn_moving_back_to_ant1_recombines_the_two_slices()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::Saturn);
+        model.configureStreamPool(5, 5, 192000);
+        P2CodecSaturn codec;
+        model.receiverManager()->setP2Codec(&codec);
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(7150000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(14200000.0);
+        model.setActiveSlice(b);
+        model.slices().at(b)->setRxAntenna(QStringLiteral("EXT1"));
+        QCOMPARE(model.alexController().adcState(0).effective,
+                 AlexController::BpfEffective::Filtered);
+
+        model.slices().at(b)->setRxAntenna(QStringLiteral("ANT1"));
+
+        QCOMPARE(model.alexController().adcState(0).effective,
+                 AlexController::BpfEffective::Bypass);
+        QVERIFY(!mock->bpfCalls.isEmpty());
+        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc0, 0x20);
+        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc1, -1);
+
+        delete mock;
+    }
+
+    // The CH tag and the WIDE pill read sliceChainIndex, so it has to move
+    // with the wire too. A pan naming CH 0 for a slice the radio put on ADC1
+    // is the same defect wearing a different hat.
+    void saturn_slice_on_ext1_reports_chain_1_to_the_ui()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::Saturn);
+        model.configureStreamPool(5, 5, 192000);
+        P2CodecSaturn codec;
+        model.receiverManager()->setP2Codec(&codec);
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(7150000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(14200000.0);
+        model.setActiveSlice(b);
+        model.slices().at(b)->setRxAntenna(QStringLiteral("EXT1"));
+
+        QCOMPARE(model.sliceChainIndex(model.slices().at(a)->sliceIndex()), 0);
+        QCOMPARE(model.sliceChainIndex(model.slices().at(b)->sliceIndex()), 1);
+
+        delete mock;
+    }
+
+    // ── D4: a chain the board does not have never gets a word ────────────
+    //
+    // Angelia is the ANAN-100D: NetworkIO.SetRxADC(2) at
+    // clsHardwareSpecific.cs:123 [v2.10.3.15], so adcCount == 2, yet it is
+    // absent from the setAlex2HPF model list at console.cs:15435-15443
+    // [v2.10.3.15], so rxFilterChainCount == 1. Two ADCs, one driven filter
+    // chain. It dispatches to P2CodecOrionMkII (the `default:` case at
+    // P2RadioConnection.cpp:2318), which DOES antenna-route, so the wire
+    // really can put a DDC on ADC1 here -- and there is still only one
+    // preselector in front of both ADCs, so that slice's band must be
+    // counted on chain 0 and no chain-1 word may be composed.
+    //
+    // This is the case that would have shipped broken if D1 had landed
+    // without the gate.
+    void angelia_two_adcs_one_filter_chain_writes_no_chain1_word()
+    {
+        QCOMPARE(BoardCapsTable::forBoard(HPSDRHW::Angelia).adcCount, 2);
+        QCOMPARE(BoardCapsTable::forBoard(HPSDRHW::Angelia).rxFilterChainCount, 1);
+
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::Angelia);
+        model.configureStreamPool(5, 5, 192000);
+        P2CodecOrionMkII codec;
+        model.receiverManager()->setP2Codec(&codec);
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(7150000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(14200000.0);
+        model.setActiveSlice(b);
+        model.slices().at(b)->setRxAntenna(QStringLiteral("EXT1"));
+
+        // Both slices are behind the one chain, so the one chain sees two
+        // bands and bypasses. Chain 1 is not a thing on this board.
+        QCOMPARE(model.sliceChainIndex(model.slices().at(b)->sliceIndex()), 0);
+        QCOMPARE(model.alexController().adcState(0).effective,
+                 AlexController::BpfEffective::Bypass);
+
+        QVERIFY(!mock->bpfCalls.isEmpty());
+        for (const AlexRxBpf& call : std::as_const(mock->bpfCalls)) {
+            QCOMPARE(call.hpfBitsAdc1, -1);
+        }
+
+        delete mock;
+    }
+
+    // ── Diversity: both chains, identically ──────────────────────────────
+    //
+    // CT1IQI's requirement on PR #293: under diversity Alex0 and Alex1 must
+    // be set identical, "and that may mean identically bypassed". The
+    // DDC0/DDC1 sync pair samples ONE signal through TWO front ends, so a
+    // mismatched preselector between them puts a different group delay on
+    // each leg and the combiner has nothing to combine.
+    void diversity_filters_both_chains_identically()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::Saturn);
+        model.configureStreamPool(5, 5, 192000);
+        P2CodecSaturn codec;
+        model.receiverManager()->setP2Codec(&codec);
+        model.setDdcContextForTest(/*mox*/false, /*ps*/false, /*diversity*/true);
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);
+
+        QVERIFY(!mock->bpfCalls.isEmpty());
+        const AlexRxBpf last = mock->bpfCalls.last();
+        QCOMPARE(last.hpfBitsAdc0,
+                 int(codec::alex::computeRxPreselector(14.2, HPSDRHW::Saturn)));
+        QCOMPARE(last.hpfBitsAdc1, last.hpfBitsAdc0);
+        QVERIFY(last.hpfBitsAdc1 >= 0);   // a real decision, not the mirror
+
+        delete mock;
+    }
+
+    // The "identically bypassed" half. A second slice on another band, on
+    // either chain, must take BOTH legs wide together rather than leaving
+    // one filtered.
+    void diversity_bypasses_both_chains_identically()
+    {
+        for (const QString ant : {QStringLiteral("ANT1"), QStringLiteral("EXT1")}) {
+            RadioModel model;
+            model.setBoardForTest(HPSDRHW::Saturn);
+            model.configureStreamPool(5, 5, 192000);
+            P2CodecSaturn codec;
+            model.receiverManager()->setP2Codec(&codec);
+            model.setDdcContextForTest(false, false, /*diversity*/true);
+            auto* mock = new MockConnection();
+            model.injectConnectionForTest(mock);
+
+            const int a = model.addSlice();
+            model.slices().at(a)->setFrequency(14200000.0);   // 20 m
+            const int b = model.addSlice();
+            model.slices().at(b)->setFrequency(7150000.0);    // 40 m
+            model.setActiveSlice(b);
+            model.slices().at(b)->setRxAntenna(ant);
+
+            QVERIFY(!mock->bpfCalls.isEmpty());
+            const AlexRxBpf last = mock->bpfCalls.last();
+            QVERIFY2(last.hpfBitsAdc0 == 0x20,
+                     qPrintable(QStringLiteral("chain 0 not bypassed with second slice on %1").arg(ant)));
+            QVERIFY2(last.hpfBitsAdc1 == last.hpfBitsAdc0,
+                     qPrintable(QStringLiteral("chains differ with second slice on %1").arg(ant)));
 
             model.injectConnectionForTest(nullptr);
             delete mock;

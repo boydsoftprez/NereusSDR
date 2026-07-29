@@ -3247,6 +3247,11 @@ void RadioModel::releaseStreamBindings()
         m_streamAllocator.deactivateStream(st);
     }
     m_streamDdc.fill(-1);
+    // Defect D1: a torn-down stream is on no chain, so its last ADC must not
+    // outlive it. Left behind, a slice rebound to that stream on the next
+    // connection would be credited to chain 1 on a radio that never put it
+    // there, and the chain-1 filter would follow it.
+    m_streamAdc.fill(0);
 }
 
 int RadioModel::streamPoolSize() const
@@ -9362,6 +9367,24 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
                 }
             }
         }
+
+        // Defect D1: the antenna is a codec input, so the codec has to run
+        // again when it moves. SliceConfig::antennaIndex is what
+        // P2CodecOrionMkII::applyDdcAssignment turns into the DDC's ADC
+        // selector, and nothing here asked for a recompute, so picking EXT1
+        // left the DDC on ADC0 until the operator happened to retune, rebind
+        // or close a slice -- the three events that already call
+        // requestDdcAssignment.
+        //
+        // Unconditional rather than gated on the antenna having changed
+        // chains: this is the same call every VFO tick already makes
+        // (frequencyChanged -> bindSliceToStream -> requestDdcAssignment; see
+        // the change-gate note in ReceiverManager::setDdcMapping), and it is
+        // idempotent, so one more on an antenna click costs nothing and
+        // needs no second copy of the codec's antenna-to-ADC policy here to
+        // decide whether to skip.
+        requestDdcAssignment();
+
         scheduleSettingsSave();
     });
     connect(slice, &SliceModel::txAntennaChanged, this, [this](const QString& ant) {
@@ -9762,36 +9785,75 @@ void RadioModel::republishAlexAdcSlices()
     constexpr int kAdcCount  = 2;
     constexpr int kSliceSlots = 5;
 
+    // How many of those two the connected board actually drives (defect D4).
+    // Not adcCount: see chainForStream for the ANAN-100D / 200D counterexample
+    // and the upstream cite.
+    const int chainCount =
+        std::clamp(boardCapabilities().rxFilterChainCount, 1, kAdcCount);
+
+    // ── Diversity: one decision, applied to both chains ──────────────────
+    //
+    // Raised by CT1IQI on PR #293: under diversity Alex0 and Alex1 must be
+    // set identical, and that may mean identically bypassed.
+    //
+    // The reason is the DDC pair itself. Diversity runs DDC0 and DDC1 as a
+    // synchronous pair (P2CodecOrionMkII: ddcEnable |= 0x03, syncEnable |=
+    // 0x02) with DDC0 on ADC0 and DDC1 on ADC1, sampling ONE signal through
+    // TWO front ends so the combiner can weight them against each other. Two
+    // different preselectors on those legs means two different amplitude and
+    // group-delay responses, and the combiner has nothing coherent left to
+    // work with. A filtered leg against a bypassed leg is the worst version
+    // of that.
+    //
+    // So when the pair is engaged, every slice counts on BOTH chains. That
+    // makes the two band sets identical by construction, which makes the two
+    // decisions identical by construction -- one range and both chains filter
+    // it, more than one and both chains bypass together. There is no separate
+    // mirroring step to keep in sync.
+    //
+    // Thetis cannot be ported here: it has no bypass-on-multi-band concept at
+    // all, and its diversity is two receivers on two chains where the chain
+    // count and the receiver count are the same number. It never faces five
+    // slices over two chains, so it never had to answer this. NereusSDR-
+    // original policy, stated per the reporter's requirement.
+    const bool diversityPair = diversityActive() && chainCount >= 2;
+
     std::array<std::array<Band, kSliceSlots>, kAdcCount> bands;
     for (auto& perAdc : bands) { perAdc.fill(Band::Count); }
     std::array<int, kAdcCount>    counts   {0, 0};
     std::array<double, kAdcCount> lowestHz {0.0, 0.0};
+
+    auto addToChain = [&bands, &counts, &lowestHz](int chain, Band band, double hz) {
+        if (chain < 0 || chain >= kAdcCount) { return; }
+        if (counts[chain] >= kSliceSlots)    { return; }
+        bands[chain][counts[chain]] = band;
+        if (counts[chain] == 0 || hz < lowestHz[chain]) { lowestHz[chain] = hz; }
+        ++counts[chain];
+    };
 
     for (SliceModel* s : std::as_const(m_slices)) {
         if (s == nullptr) { continue; }
 
         // An unbound slice has no DDC, so it is not on any chain and must not
         // drag a filter wide on behalf of a receiver that is not running.
-        const int stream = s->streamIndex();
-        if (stream < 0) { continue; }
-
-        // Stream to ADC. Every stream reports ADC0 today: setAdcForReceiver is
-        // called once (receiver 0 -> ADC 0) and everything else sits on the
-        // ReceiverConfig default. Distributing streams across both ADCs is the
-        // separate "codec routing (antenna-driven)" work in design §4; group by
-        // whatever adcIndex reports so this is already correct when it lands.
-        const int adc = m_receiverManager
-                            ? m_receiverManager->receiverConfig(stream).adcIndex
-                            : 0;
-        if (adc < 0 || adc >= kAdcCount) { continue; }
-        if (counts[adc] >= kSliceSlots)  { continue; }
+        // chainForStream returns -1 for exactly that case.
+        const int chain = chainForStream(s->streamIndex());
+        if (chain < 0) { continue; }
 
         const double hz = s->frequency();
-        bands[adc][counts[adc]] = bandFromFrequency(hz);
-        if (counts[adc] == 0 || hz < lowestHz[adc]) { lowestHz[adc] = hz; }
-        ++counts[adc];
+        const Band   b  = bandFromFrequency(hz);
+
+        if (diversityPair) {
+            for (int c = 0; c < chainCount; ++c) { addToChain(c, b, hz); }
+        } else {
+            addToChain(chain, b, hz);
+        }
     }
 
+    // Every chain AlexController models is notified, including one the board
+    // does not have: the array for it is empty, which is the correct input for
+    // a chain with nothing on it and which clears any state left over from a
+    // previously connected two-chain radio.
     for (int adc = 0; adc < kAdcCount; ++adc) {
         m_alexController.notifySlicesOnAdc(adc, bands[adc]);
     }
@@ -9803,7 +9865,15 @@ void RadioModel::republishAlexAdcSlices()
     // prbpfilter2's HPF nibble.
     // Upstream inline attribution preserved verbatim (console.cs:15441):
     //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
-    auto hpfBitsFor = [this, &counts, &lowestHz](int adc) -> int {
+    auto hpfBitsFor = [this, &counts, &lowestHz, chainCount](int adc) -> int {
+        // Defect D4. A board that does not drive this chain never gets a word
+        // composed for it, whatever the slice grouping says. chainForStream
+        // already folds every stream onto chain 0 on such a board, so this is
+        // belt to that brace -- but it is the brace that sits next to the wire
+        // write, and the invariant it states ("no word for a chain the board
+        // has not got") is the one that matters if the fold is ever changed.
+        if (adc >= chainCount) { return -1; }
+
         if (counts[adc] == 0) { return -1; }
 
         const AlexController::AlexAdcState& st = m_alexController.adcState(adc);
@@ -9864,13 +9934,12 @@ void RadioModel::republishAlexAdcSlices()
 //
 //     pan -> its slices -> their stream -> that stream's ADC -> effective
 //
-// Grouping by adcIndex (rather than assuming chain 0) is deliberate even
-// though setAdcForReceiver is called exactly once in production today, at
-// requestDdcAssignment, so every stream currently reports ADC0. Distributing
-// streams across both ADCs is the separate "codec routing (antenna-driven)"
-// work in design §4; reading whatever adcIndex reports means this is already
-// correct when that lands, and means the per-chain unit cases can drive it
-// directly today.
+// The chain comes from chainForStream, which is the shared resolver: it reads
+// the ADC publishDdcAssignment decoded out of the codec's own assignment, and
+// folds it onto chain 0 on a board with fewer filter chains than ADCs. Before
+// the D1 fix this read ReceiverConfig::adcIndex inline and that field was
+// pinned at 0, so a pan showing a slice the radio had moved to ADC1 reported
+// chain 0's bypass state.
 //
 // Deliberately a pure query with no caching. It runs once per pan on the
 // same triggers as rebuildFftRouting (single-digit slices, single-digit
@@ -9961,12 +10030,53 @@ int RadioModel::sliceChainIndex(int sliceId) const
 
     // No DDC stream means no chain. Distinct from chain 0: callers have to be
     // able to tell "fed by nothing" from "fed by the first ADC".
-    const int stream = s->streamIndex();
-    if (stream < 0) { return -1; }
+    return chainForStream(s->streamIndex());
+}
 
-    return m_receiverManager
-               ? m_receiverManager->receiverConfig(stream).adcIndex
-               : 0;
+// ---------------------------------------------------------------------------
+// chainForStream: stream -> filter chain, the one place that hop is resolved.
+//
+// Defect D1. The ADC half of this used to be read inline in three places
+// (republishAlexAdcSlices, sliceChainIndex, bypassReasonForAdc), each of them
+// grouping by ReceiverConfig::adcIndex, which nothing in production ever
+// wrote to anything but 0. publishDdcAssignment now records the codec's real
+// answer in m_streamAdc; this is the single read of it.
+//
+// Defect D4 lives here too, in the fold to chain 0. adcIndex is an ADC index
+// and rxFilterChainCount is a count of preselector banks, and they are not
+// the same number on every SKU:
+//
+//   From Thetis console.cs:15435-15443 [v2.10.3.15] UpdateRX2DDSFreq:
+//   setAlex2HPF, the only writer of the chain-1 filter word, runs for
+//   ORIONMKII, ANAN7000D, ANAN8000D, ANAN_G2, ANAN_G2_1K, ANVELINAPRO3 and
+//   REDPITAYA and for nothing else.
+//   Upstream inline attribution preserved verbatim (console.cs:15441):
+//     HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+//
+// ANAN-100D and ANAN-200D are absent from that list yet are both
+// NetworkIO.SetRxADC(2) (clsHardwareSpecific.cs:123 and :140 [v2.10.3.15]).
+// Two ADCs behind one filter bank. A stream routed to ADC1 on such a board is
+// still behind chain 0's filter, so its range must be counted against chain 0
+// or the chain would be filtered to a band that slice is not on and the slice
+// would go deaf. Folding is the physical answer there, not a safety clamp.
+//
+// It is also what stops a chain-1 filter word being composed for a board with
+// no chain 1: with every stream folded onto chain 0, republishAlexAdcSlices
+// finds chain 1 empty and pushes -1 for it.
+// ---------------------------------------------------------------------------
+int RadioModel::chainForStream(int stream) const
+{
+    if (stream < 0 || stream >= static_cast<int>(m_streamAdc.size())) {
+        return -1;
+    }
+
+    const int adc = m_streamAdc[static_cast<size_t>(stream)];
+    if (adc <= 0) { return 0; }
+
+    // adc can legitimately exceed the chain count (a 2-ADC / 1-chain board),
+    // and under PureSignal the ADC field can name ADC2, the PA feedback
+    // input, which is not a receive chain at all. Both fold to chain 0.
+    return (adc < boardCapabilities().rxFilterChainCount) ? adc : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -10011,12 +10121,8 @@ QString RadioModel::bypassReasonForAdc(
     QSet<Band> seen;
     for (SliceModel* s : m_slices) {
         if (s == nullptr) { continue; }
-        const int stream = s->streamIndex();
-        if (stream < 0) { continue; }
-        const int sliceAdc = m_receiverManager
-                                 ? m_receiverManager->receiverConfig(stream).adcIndex
-                                 : 0;
-        if (sliceAdc != adc) { continue; }
+        const int sliceChain = chainForStream(s->streamIndex());
+        if (sliceChain != adc) { continue; }
         const Band b = bandFromFrequency(s->frequency());
         if (seen.contains(b)) { continue; }
         seen.insert(b);
@@ -13147,13 +13253,31 @@ NereusSDR::CodecContext RadioModel::currentCodecContext() const
     if (m_ddcCtxForTest) {
         ctx.mox           = m_ddcCtxMoxForTest;
         ctx.puresignalRun = m_ddcCtxPsForTest;
-        ctx.diversity     = m_ddcCtxDivForTest;
+        ctx.diversity     = diversityActive();
         return ctx;
     }
     ctx.mox           = m_moxController ? m_moxController->isMox() : false;
     ctx.puresignalRun = (m_pureSignal && m_pureSignal->isAutoCalEnabled());
-    ctx.diversity     = m_slices.isEmpty() ? false : m_slices.first()->diversityEnabled();
+    ctx.diversity     = diversityActive();
     return ctx;
+}
+
+bool RadioModel::diversityActive() const
+{
+    // Extracted from currentCodecContext with the D1 fix, so the Alex
+    // per-chain decision and the DDC assignment read one answer. They must
+    // agree: the diversity pair is DDC0 on ADC0 and DDC1 on ADC1 sampling one
+    // signal through two front ends, and if the codec engages the pair while
+    // the filter analysis thinks it did not, the two legs get different
+    // preselectors and there is nothing coherent left to combine.
+    //
+    // Slice A only, and that is a known limitation rather than a choice here:
+    // WDSP's pdiv[] is a 2-slot array keyed by External Diversity id, so
+    // Sub-Epic G gates the whole path to Slice A (RadioModel.cpp guard in
+    // wireSliceSignals). Reading slice A's flag matches what the codec has
+    // always read.
+    if (m_ddcCtxForTest) { return m_ddcCtxDivForTest; }
+    return m_slices.isEmpty() ? false : m_slices.first()->diversityEnabled();
 }
 
 NereusSDR::DdcAssignment RadioModel::computeDdcAssignment() const
@@ -13238,6 +13362,57 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
             const int ddc = assignment.streamDdc[st];
             if (ddc >= 0) {
                 m_receiverManager->setDdcMapping(st, ddc);
+            }
+        }
+    }
+
+    // ── Defect D1: publish the ADC the codec actually chose ──────────────
+    //
+    // ReceiverConfig::adcIndex is what the Alex per-chain analysis groups by
+    // (chainForStream -> republishAlexAdcSlices / sliceChainIndex /
+    // bypassReasonForAdc). Before this loop its only writer in the whole tree
+    // was setAdcForReceiver, called once, with 0, for receiver 0. Every slice
+    // therefore reported ADC0 no matter what the radio had been told.
+    //
+    // That was harmless while nothing moved a DDC off ADC0. Commit 99709649
+    // ended that by routing a slice on an RX-only antenna to ADC1, and
+    // 7cc35f20 made it reach the ANAN-G2. From then on the wire and the
+    // filter analysis disagreed: the radio moved the DDC, AlexController
+    // still counted the slice on chain 0, saw two bands on one chain, and
+    // bypassed BOTH chains when one of them should have been filtered.
+    //
+    // Read back rather than re-derive. adcForDdc decodes the same two ADC
+    // control bytes the codec just composed and P2RadioConnection is about to
+    // send, so the model reports what the radio was told. Deriving the ADC
+    // here from the antenna a second time would be a second copy of the
+    // codec's policy, free to drift from it.
+    //
+    // NOT gated on protocol: unlike setDdcMapping above, adcIndex is not a
+    // routing key, so publishing it on P1 cannot misroute a packet. It is
+    // also inert there in practice, because every P1 SKU in the table has
+    // rxFilterChainCount == 1 and chainForStream folds the whole radio onto
+    // chain 0.
+    //
+    // The stored value is the true ADC, not the chain. Callers that want the
+    // chain go through chainForStream, which is where the one-chain fold
+    // lives; ReceiverConfig::adcIndex keeps meaning what its name says.
+    //
+    // Written to m_streamAdc AND mirrored into ReceiverManager. One writer,
+    // one source (this assignment), two destinations -- the same fan-out
+    // m_streamDdc / setDdcMapping does a few lines up. m_streamAdc is the one
+    // chainForStream reads, because a ReceiverConfig only exists once
+    // connectToRadio has created a receiver for that stream; the
+    // ReceiverManager copy is there so its long-standing adcIndex field stops
+    // reporting 0 for a DDC the radio moved, which is the lie D1 was built on.
+    {
+        const int streams = std::min(m_streamAllocator.streamCount(), 5);
+        for (int st = 0; st < streams; ++st) {
+            const int ddc = assignment.streamDdc[st];
+            if (ddc < 0) { continue; }   // suspended: keep the last known ADC
+            const int adc = NereusSDR::adcForDdc(assignment, ddc);
+            m_streamAdc[static_cast<size_t>(st)] = adc;
+            if (m_receiverManager) {
+                m_receiverManager->setAdcForReceiver(st, adc);
             }
         }
     }

@@ -289,12 +289,67 @@ The decision tree above shipped with neither. `AlexController::notifySlicesOnAdc
 
 Both halves now exist:
 
-- **Producer**: `RadioModel::republishAlexAdcSlices()` groups the bound slices by the ADC their stream sits on (`ReceiverManager::receiverConfig(stream).adcIndex`) and hands each group to `notifySlicesOnAdc`. It runs from `requestDdcAssignment()`, which is already the coalescing point for slice bind / retune / removal, and once more on `ConnectionState::Connected`.
+- **Producer**: `RadioModel::republishAlexAdcSlices()` groups the bound slices by the filter chain their stream sits on (`RadioModel::chainForStream`) and hands each group to `notifySlicesOnAdc`. It runs from `requestDdcAssignment()`, which is already the coalescing point for slice bind / retune / removal / antenna change, and once more on `ConnectionState::Connected`.
 - **Consumer**: `RadioConnection::setAlexRxBpf(AlexRxBpf)` carries `{hpfBitsAdc0, hpfBitsAdc1}` in the Thetis HPF bit encoding, `-1` meaning "no slice on this ADC, keep the existing bits". P2 routes ADC0 into Alex0 and ADC1 into Alex1; P1 has one filter word on the wire and takes ADC0's decision only.
 
 `Filtered` selects from the **lowest** slice frequency on the chain. With a single band on the chain that is byte-for-byte what the old frequency-derived path produced, which is what keeps the single-slice wire locks green.
 
-Still open, and deliberately not built here: nothing distributes streams across both ADCs yet (`setAdcForReceiver` is called exactly once, receiver 0 to ADC 0), so ADC1 always reports "no decision" in practice. The grouping is written per-ADC so it is already correct the day the antenna-driven codec routing above lands.
+##### Closing the grouping key (defect D1, 2026-07-29)
+
+The producer originally grouped by `ReceiverManager::receiverConfig(stream).adcIndex`. Nothing
+distributed streams across both ADCs at the time, and `setAdcForReceiver` was called exactly once
+(receiver 0 to ADC 0), so ADC1 reported "no decision" in practice and the wire agreed with the
+analysis by accident.
+
+The antenna-driven codec routing then landed and ended that accident: a slice on an RX-only antenna
+really is routed to ADC1, first on the OrionMkII family and then on the ANAN-G2. The analysis kept
+counting it on chain 0, found two ranges on one chain, and bypassed **both** chains when one of them
+should have been filtered.
+
+The key is now `RadioModel::chainForStream(stream)`, the single resolver behind all three readers
+(`republishAlexAdcSlices`, `sliceChainIndex`, `bypassReasonForAdc`). It reads `RadioModel::m_streamAdc`,
+which `publishDdcAssignment` fills by decoding the same two ADC-control bytes the codec just composed
+(`NereusSDR::adcForDdc`, the inverse of the codec's encode). Reading the assignment back rather than
+re-deriving the ADC from the antenna keeps one copy of that policy, in the codec.
+
+Held on `RadioModel` rather than read out of `ReceiverManager` because a `ReceiverConfig` exists only
+for a receiver `connectToRadio` has created; without a connection there is nothing to answer from and
+the model would silently report ADC0 for everything, which is the defect again. `publishDdcAssignment`
+still mirrors the value into `ReceiverManager::setAdcForReceiver` so its long-standing `adcIndex` field
+stops reporting 0 for a DDC the radio moved.
+
+Two rules ride along with the key:
+
+- **Chain, not ADC.** `chainForStream` folds any ADC index at or above `rxFilterChainCount` onto chain 0
+  (§16.1.2). On a two-ADC / one-chain SKU both ADCs sit behind one preselector, so a stream on ADC1 is
+  genuinely behind chain 0 and its range has to be counted there. `hpfBitsFor` refuses to compose a word
+  for a chain at or above the count as well, so no board is handed a filter word for hardware it lacks.
+- **Diversity.** While the DDC0/DDC1 sync pair is engaged, every slice counts on **both** chains, so the
+  two band sets are identical by construction and the two decisions are identical by construction,
+  including when that decision is bypass. See "Diversity: identical chains" below.
+
+##### Diversity: identical chains
+
+Raised by CT1IQI on PR #293: under diversity Alex0 and Alex1 must be set identical, and that may mean
+identically bypassed. Diversity runs DDC0 on ADC0 and DDC1 on ADC1 as a synchronous pair sampling one
+signal through two front ends. Different preselectors on the two legs means different amplitude and
+group-delay responses and nothing coherent for the combiner to weight; a filtered leg against a
+bypassed leg is the worst case of that.
+
+`republishAlexAdcSlices` implements this by adding every slice to both chains' band sets while
+`RadioModel::diversityActive()` is true, rather than by computing one chain and copying it to the
+other. There is no mirroring step to keep in sync, and the "identically bypassed" case falls out for
+free: two ranges in the shared set take both chains wide together.
+
+Thetis cannot be ported here. It has no bypass-on-multi-band concept anywhere, and its diversity is
+two receivers on two chains, so the chain count and the receiver count are the same number and the
+question never arises. NereusSDR puts up to five slices on two chains. NereusSDR-original policy,
+written to the reporter's stated requirement.
+
+`P2CodecOrionMkII::buildAlex1` still mirrors Alex0's HPF onto Alex1 when ADC1 has no decision, and
+that fallback must stay: it is the G2E pcap-verified behaviour for "no diversity and nothing on ADC1".
+Before D1 it was also what made diversity come out right, by accident. It could never express the
+bypass case, because it masks `0x20` off.
 
 #### Divergence from Thetis: bypass, not widen
 
@@ -1285,8 +1340,24 @@ is in the list. So chain count **is** expressible as a per-`HPSDRHW` row:
 
 ```
 rxFilterChainCount = 2  when board == HPSDRHW::OrionMKII || board == HPSDRHW::Saturn
+                        || board == HPSDRHW::SaturnMKII || board == HPSDRHW::Andromeda
 rxFilterChainCount = 1  otherwise
 ```
+
+The last two are NereusSDR rows upstream cannot answer for, added to this rule when the field was
+implemented (defect D4, 2026-07-29):
+
+- **`HPSDRHW::SaturnMKII`** appears once in all of Thetis (`enums.cs:399 [v2.10.3.15]`,
+  `SaturnMKII = 11, // ANAN-G2: MKII board?`) and no `HPSDRModel` resolves to it, so
+  `console.cs:15435-15443` has nothing to say about it. `kSaturnMKII` is a Saturn-derived row for the
+  ANAN-G2 MkII board revision and dispatches to `P2CodecSaturn`, which antenna-routes to ADC1. Two is
+  the value that keeps the wire and the filter analysis agreeing there.
+- **`HPSDRHW::Andromeda`** has no Thetis `HPSDRHW` entry at all (the enum ends at `HermesC10 = 20`),
+  is a NereusSDR-original SKU slot at integer 21, and its row is derived from `kSaturn` throughout.
+  Same reasoning, same value. Revisit with the rest of that row when Andromeda hardware specs land.
+
+Declaring one chain on either would recreate defect D1 for that SKU: the codec would route an
+RX-only-antenna slice to ADC1 while the analysis folded it back onto chain 0.
 
 `adcCount` does **not** predict this. ANAN-100D and ANAN-200D are `SetRxADC(2)`
 (`clsHardwareSpecific.cs [v2.10.3.15]`) yet are absent from the `setAlex2HPF` list, and
@@ -1450,11 +1521,11 @@ Alex attenuator relay writes (`ChannelMaster/netInterface.c:421-423 [v2.10.3.15]
 User-visible consequence today: a G2E operator is shown an Alex-2 Filters tab
 (`AntennaAlexTab.cpp:160-164`) that Thetis never shows, for a second bank the radio does not have.
 
-Proposed replacement fields (all derivable per `HPSDRHW`, all cited):
+Proposed replacement fields (all derivable per `HPSDRHW`, all cited). `rxFilterChainCount` is no longer proposed: it shipped with defect D4 (2026-07-29) and lives on `BoardCapabilities`. The rest are still design-only.
 
 | New field | Value | Source |
 | --- | --- | --- |
-| `rxFilterChainCount` | 2 for `{OrionMKII, Saturn}`, else 1 | `console.cs:15435-15443 [v2.10.3.15]` |
+| `rxFilterChainCount` | 2 for `{OrionMKII, Saturn}` plus the NereusSDR-only Saturn-derived rows `{SaturnMKII, Andromeda}` (§16.1.2), else 1 | `console.cs:15435-15443 [v2.10.3.15]` |
 | `rxFilterLadderChain0` | `Bpf1` for `{OrionMKII, Saturn, HermesC10}`, else `LegacyHpf` | `console.cs:6829-6831 [v2.10.3.15]` |
 | `mkiiBpfWireStyle` | true when `SetMKIIBPF(1)` | `clsHardwareSpecific.cs [v2.10.3.15]` per model |
 | `showsAlex2SetupTab` | membership in the tab list | `setup.cs:6458-6464 [v2.10.3.15]` |
@@ -2019,7 +2090,7 @@ a maintainer call, §16.7 Q5.
 | --- | --- | --- |
 | `SpectrumStatusOverlay` WIDE pill | painted, `setWideBpf` has **zero callers** (`SpectrumStatusOverlay.h:57`) | Drive it from the router plan through the pan's stream. Tooltips per §16.4.4. |
 | `SpectrumStatusOverlay` CH pill | always painted (`SpectrumStatusOverlay.cpp:146-153`), `m_chainIndex` has no production writer (`setChainIndex` callers are tests only) | Write the real chain index from the router. **Hide the pill entirely when `!caps.hasAlexFilters`**, which restores the 3P-I-a contract ("HL2/Atlas hide all antenna UI on `!caps.hasAlex \|\| antennaInputCount < 3`"). Today `makeChainIndicator(0)` is added unconditionally (`src/gui/MainWindow.cpp:5053`). |
-| Bottom-bar chain indicators | already consume `bpfStateChanged` (`src/gui/MainWindow.cpp:1627-1643`) | Gate CH 0 on `hasAlexFilters`; CH 1 is already gated on `adcCount >= 2` (`:1615-1618`) and should move to `rxFilterChainCount >= 2`. |
+| Bottom-bar chain indicators | already consume `bpfStateChanged` (`src/gui/MainWindow.cpp:1627-1643`) | Gate CH 0 on `hasAlexFilters`. **CH 1 moved to `rxFilterChainCount >= 2` with defect D4 (2026-07-29)**; it had been on `adcCount >= 2`, which offered a second chain, and a Filter Policy override for it, on the two-ADC / one-chain SKUs. |
 | `FilterPolicyDialog` | Auto / Force band / Force bypass radios exist (`FilterPolicyDialog.cpp:72-76`); HPF checkbox is scaffolded per its own header comment | Add a read-only "Currently: `<reasonText>`" line and a **Why?** expander listing each stream on the chain with its frequency and its filter range. This is the discoverability answer. Apply must call back into the router; today it does not republish at all (`:112-117`). |
 | `HardwareDdcRoutingPage` | per-DDC ADC table writes AppSettings only (`:145, 153`) | Feed it into `FilterChainInput` as the per-stream **pin**. Add an explicit `Auto` row value so the operator can un-pin. Pins are per MAC, per DDC, and override everything except MOX freeze. |
 | `AntennaPickerMenu` | labels non-current entries "(switches chain)" and the current one `Chain %1 - current` (`AntennaPickerMenu.cpp:51, 58`) | **Both strings are wrong** and teach a model the hardware does not have (§16.1.6). Remove the chain wording. Also: `EXT1` / `EXT2` / `BYPS` are added with bare `addAction()` and no connect (`:66-68`), so they are inert on every slice. |

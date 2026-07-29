@@ -579,6 +579,10 @@ const BoardCapabilities kOrionMKII = {
     .board            = HPSDRHW::OrionMKII,
     .protocol         = ProtocolVersion::Protocol2,
     .adcCount         = 2,
+    // Two driven RX filter chains. ORIONMKII, ANAN7000D, ANAN8000D,
+    // ANVELINAPRO3 and REDPITAYA all resolve to this HW row and all five are
+    // in the setAlex2HPF model list at console.cs:15435-15443 [v2.10.3.15].
+    .rxFilterChainCount = 2,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: OrionMKII/7000D/8000D/AnvelinaPro3/RedPitaya 5-slice cap (2-ADC P2; DDC0+1 reserved)
     .userDdcCount     = 5,   // Phase 3F Sub-Epic I: OrionMKII/7000D/8000D/AnvelinaPro3/RedPitaya user DDCs = DDC2-6 (design doc §2)
@@ -951,6 +955,10 @@ const BoardCapabilities kSaturn = {
     .board            = HPSDRHW::Saturn,
     .protocol         = ProtocolVersion::Protocol2,
     .adcCount         = 2,
+    // Two driven RX filter chains. ANAN_G2 and ANAN_G2_1K both resolve here
+    // (clsHardwareSpecific.cs:164-177 [v2.10.3.15]) and both are in the
+    // setAlex2HPF model list at console.cs:15435-15443 [v2.10.3.15].
+    .rxFilterChainCount = 2,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: Saturn/ANAN-G2/G2-1K 5-slice cap (2-ADC P2; DDC0+1 reserved)
     .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Saturn/ANAN-G2/G2-1K user DDCs = DDC2-6 (design doc §2)
@@ -1006,6 +1014,13 @@ const BoardCapabilities kSaturnMKII = {
     .board            = HPSDRHW::SaturnMKII,
     .protocol         = ProtocolVersion::Protocol2,
     .adcCount         = 2,
+    // Two driven RX filter chains, taken from the physical board rather than
+    // from upstream list membership: HPSDRHW.SaturnMKII appears once in all
+    // of Thetis (enums.cs:399 [v2.10.3.15], "ANAN-G2: MKII board?") and no
+    // HPSDRModel resolves to it, so console.cs:15435-15443 cannot answer for
+    // it. This row describes the ANAN-G2 MkII board revision, so it inherits
+    // the ANAN-G2's two chains along with the rest of kSaturn.
+    .rxFilterChainCount = 2,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: SaturnMKII 5-slice cap (2-ADC P2 Saturn variant; DDC0+1 reserved)
     .userDdcCount     = 5,   // Phase 3F Sub-Epic I: SaturnMKII user DDCs = DDC2-6 (design doc §2)
@@ -1063,6 +1078,12 @@ const BoardCapabilities kAndromeda = {
     .board            = HPSDRHW::Andromeda,
     .protocol         = ProtocolVersion::Protocol2,
     .adcCount         = 2,
+    // Two driven RX filter chains, derived from kSaturn like the rest of this
+    // row. Thetis has no HPSDRHW entry for Andromeda at all (enums.cs:389-402
+    // [v2.10.3.15] stops at HermesC10), so console.cs:15435-15443 cannot
+    // answer for it and this is a NereusSDR judgement, not an upstream fact.
+    // Revisit with the rest of the row when Andromeda hardware specs land.
+    .rxFilterChainCount = 2,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: Andromeda 5-slice cap (2-ADC P2; DDC0+1 reserved per Saturn class)
     .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Andromeda user DDCs = DDC2-6 (design doc §2)

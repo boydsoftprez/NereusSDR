@@ -585,6 +585,22 @@ quint32 P2CodecOrionMkII::buildAlex1(const CodecContext& ctx) const
     // separate source entirely (setAlex2HPF(rx2_dds_freq_mhz) →
     // SetAlex2HPFBits → prbpfilter2, console.cs:15435-15442 [v2.10.3.15]),
     // and in that case bit 12 IS Alex1's own bypass.
+    //
+    // DO NOT DELETE THE MIRROR because diversity looks after itself now.
+    // It reads like the thing that keeps diversity's two legs matched, and
+    // until the D1 fix it accidentally was: with nothing ever reaching ADC1,
+    // every diversity run took this branch and got Alex0's filter copied
+    // across, which is the right answer for the wrong reason. The right
+    // reason now lives in RadioModel::republishAlexAdcSlices, which counts
+    // every slice on BOTH chains while the DDC0/DDC1 sync pair is engaged, so
+    // ctx.alexHpfBitsAdc1 is a real decision there and equals ADC0's by
+    // construction -- including when that decision is bypass, which this
+    // branch could never express because it masks 0x20 off.
+    //
+    // The mirror is still load-bearing for its own case: no diversity, and no
+    // slice on ADC1. That is the state the G2E pcap was captured in, and
+    // Thetis really does leave prbpfilter2's HPF nibble alone there. Removing
+    // it would start writing a chain-1 word out of a decision nobody made.
     // Upstream inline attribution preserved verbatim (console.cs:15441):
     //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
     //   From Thetis ChannelMaster/netInterface.c:634-651 [v2.10.3.15]

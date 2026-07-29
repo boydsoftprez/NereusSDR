@@ -229,6 +229,43 @@ struct BoardCapabilities {
     ProtocolVersion protocol;
 
     int  adcCount;
+
+    // Phase 3F: how many RX preselector filter chains this board actually
+    // drives. A chain is one independently addressable RX filter bank plus
+    // the ADC behind it, and it is the unit the two Alex words address
+    // (Alex0 / prbpfilter for chain 0, Alex1 / prbpfilter2 for chain 1).
+    // Design doc 2026-05-26-phase3f-multi-pan-multi-slice-design.md §16.1.1-2.
+    //
+    // THIS IS NOT adcCount, and it is not hasAlex2. Thetis drives a second
+    // chain for exactly one model list:
+    //   From Thetis console.cs:15435-15443 [v2.10.3.15] UpdateRX2DDSFreq:
+    //     if (HardwareSpecific.Model == HPSDRModel.ORIONMKII ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN7000D ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN8000D ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN_G2 ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN_G2_1K ||
+    //         HardwareSpecific.Model == HPSDRModel.ANVELINAPRO3 ||
+    //         HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    //     {
+    //         setAlex2HPF(rx2_dds_freq_mhz);
+    //     }
+    // Resolving those seven models through clsHardwareSpecific.cs:86-190
+    // [v2.10.3.15] gives exactly HPSDRHW.OrionMKII and HPSDRHW.Saturn, and
+    // every model under those two HW values is in the list, so the count is
+    // expressible per board row.
+    //
+    // adcCount does NOT predict it. ANAN-100D (Angelia) and ANAN-200D (Orion)
+    // are both NetworkIO.SetRxADC(2) at clsHardwareSpecific.cs:123 and :137
+    // [v2.10.3.15] yet neither is in the setAlex2HPF list: two ADCs, one
+    // driven filter chain. hasAlex2 does not predict it either, being true on
+    // our HermesC10 row (SetMKIIBPF(1), a different upstream concept) for a
+    // 1-ADC board that upstream never hands a second filter word.
+    //
+    // Load-bearing since the antenna-driven ADC routing started reaching the
+    // wire: without this gate a slice on an RX-only antenna would have a
+    // chain-1 filter word composed for a chain the board does not have.
+    int  rxFilterChainCount {1};
+
     int  maxReceivers;
 
     // Phase 3F: user-facing slice cap, distinct from maxReceivers (= total DDC count).

@@ -330,6 +330,23 @@ public:
     /// off nothing, which is not the same as being on chain 0.
     int sliceChainIndex(int sliceId) const;
 
+    /// The filter chain feeding one DDC stream, or -1 when the stream index
+    /// is not a stream. sliceChainIndex is the by-slice front end of this;
+    /// republishAlexAdcSlices and bypassReasonForAdc take the stream form
+    /// because they are already iterating streams.
+    ///
+    /// CHAIN, not ADC, and the distinction is load-bearing (defect D4). A
+    /// chain is one preselector bank plus the ADC behind it (design §16.1.1),
+    /// and a board can have more ADCs than chains: ANAN-100D and ANAN-200D
+    /// are both NetworkIO.SetRxADC(2) yet neither appears in the setAlex2HPF
+    /// model list at Thetis console.cs:15435-15443 [v2.10.3.15], so both
+    /// their ADCs sit behind one filter bank. On such a board a stream really
+    /// can be routed to ADC1 and is still behind chain 0, so it is folded
+    /// onto chain 0 here. That is the physical truth on a one-chain board,
+    /// not a workaround: with one bank in front of both ADCs, every slice's
+    /// range has to be counted against that one bank.
+    int chainForStream(int stream) const;
+
     /// Operator-facing sentence naming WHY the given chain is bypassed.
     /// One string per cause, per design doc §16.4.4. Public so the Filter
     /// Policy dialog can show the same wording the badge tooltip carries.
@@ -2465,6 +2482,14 @@ public:
     /// describeSuspendedStreams cannot disagree about them.
     NereusSDR::CodecContext currentCodecContext() const;
 
+    /// Whether the radio is running the diversity DDC pair right now.
+    /// Extracted from currentCodecContext so republishAlexAdcSlices reads the
+    /// same answer the codec branched on, including under the
+    /// setDdcContextForTest seam. Two reads of this would be two chances for
+    /// the filter decision and the DDC map to disagree about the same
+    /// transmit-critical state.
+    bool diversityActive() const;
+
     // Phase 3F Sub-Epic I Task 7b: publish a computed assignment onto the
     // client-side model. Routes each stream's hardware DDC to its logical
     // receiver via ReceiverManager::setDdcMapping, stamps every slice with
@@ -2699,6 +2724,24 @@ private:
     // indexed by stream. -1 = that stream is idle, so an emptied stream
     // leaves no stale DDC behind. Backs ddcForStream().
     std::array<int, 5> m_streamDdc{{-1, -1, -1, -1, -1}};
+
+    // Defect D1: the ADC that same assignment routed each stream to, decoded
+    // from its adcCtrl bytes. Backs chainForStream(), which is what the Alex
+    // per-chain filter decision groups by.
+    //
+    // Held here rather than read back out of ReceiverManager, even though
+    // publishDdcAssignment mirrors it there too. ReceiverConfig only exists
+    // for a receiver that has been created, and connectToRadio creates one
+    // per stream, so a RadioModel driven without a connection (every unit
+    // test, and the pre-connect model state) has no ReceiverConfig to answer
+    // from and would silently report ADC0 for everything. That is precisely
+    // the failure mode D1 was: an ADC field that always says 0 and a wire
+    // that says otherwise.
+    //
+    // 0 rather than -1 for an idle stream: chainForStream returns -1 for
+    // "not on a chain" off the stream index itself, and a stream with no DDC
+    // has no ADC to name.
+    std::array<int, 5> m_streamAdc{{0, 0, 0, 0, 0}};
 
     // Phase 3F Sub-Epic I closeout, defect F3: last-published set of streams
     // that host slices but have no DDC. Change-gates the streamsSuspended

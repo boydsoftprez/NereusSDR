@@ -76,4 +76,30 @@ struct DdcAssignment {
     int streamDdc[5] = {-1, -1, -1, -1, -1};
 };
 
+/// Which ADC a given DDC is routed to, decoded out of an assignment's two
+/// ADC-control bytes. The exact inverse of the encode the codecs perform in
+/// applyDdcAssignment, so the client-side model reads back what the wire was
+/// told rather than re-deriving it from the antenna and drifting.
+///
+/// Bit layout from Thetis setup.cs:16928-16942 [v2.10.3.15], which states it
+/// a line at a time while composing RXADCCtrl1 from the Setup radio buttons:
+///   if (radDDC1ADC1.Checked) val += 1 << 2; // bits 3 & 2 set to 01 => DDC1 to ADC1
+/// so two bits per DDC, DDC0 at bits 1&0, DDC1 at bits 3&2, and so on;
+/// 00 = ADC0, 01 = ADC1, 10 = ADC2 (the PureSignal feedback input).
+/// Thetis decodes it the same way in GetADCInUse at console.cs:15110-15132
+/// [v2.10.3.15] (`mask = 3 << (ddc * 2)`), with adcCtrl2 covering DDC4-7 as
+/// DDC(n-4).
+///
+/// One deliberate divergence from GetADCInUse: it returns -1 for a DDC index
+/// outside 0-7 and this returns 0. Every caller here feeds the answer into a
+/// filter-chain decision, and an unrecognised DDC must land on the first
+/// chain rather than be credited to a second one the board may not have.
+constexpr int adcForDdc(const DdcAssignment& a, int ddc)
+{
+    if (ddc < 0 || ddc > 7) { return 0; }
+    const int word  = (ddc < 4) ? a.adcCtrl1 : a.adcCtrl2;
+    const int shift = ((ddc < 4) ? ddc : (ddc - 4)) * 2;
+    return (word >> shift) & 0x3;
+}
+
 } // namespace NereusSDR

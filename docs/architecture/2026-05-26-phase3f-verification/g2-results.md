@@ -353,6 +353,7 @@ permanently and never re-resolved.
 |---|---|---|
 | Per-slice S-meter (slices B+ had none) | `9c70e153` | two slices, both flag level bars move independently |
 | Per-slice DSP controls (65 handlers were Slice A only, all writing `rxChannel(0)`) | `ea2ccbc0` | change AGC or NR on B: A unaffected, B actually changes |
+| Alex per-chain grouping key pinned to ADC0 while the wire routed to ADC1 (D1), plus the missing chain-count gate (D4) | this commit | bench rows 15-16 |
 
 The DSP one is 970 lines through the live control path and the suite does not
 cover per-slice DSP behaviour. Green means it compiles and does not regress
@@ -379,14 +380,20 @@ ones.
 | 12 | Close a slice, then close a pan | Survivors keep working; no leftover button columns; radio not silent. |
 | 13 | `+PAN` -> `12h` | Three pans, letters A / B / C, all live. |
 | 14 | **Do not transmit** on two bands until row 1 is clean | TX low-pass fix is unverified on hardware. |
-| 15 | **ADC routing, unverified.** With rows 5-6 up (two slices, two bands), set the second slice's antenna to **RX2 / EXT** | That pan moves to **ADC1**: its `WIDE` pill clears and the bottom bar stops saying `BYPASS`, because the two slices no longer share a preselector. Needs a real feed on the RX2 jack to hear anything. Setting it back to ANT1 must restore `WIDE`. |
+| 15 | **ADC routing, unverified.** With rows 5-6 up (two slices on two bands), **click the second slice's flag to select it**, then set its antenna to **RX2 / EXT1**. Selecting first is not optional: the antenna is held per band and the resulting label is synced onto whichever slice is active. | That slice's DDC moves to **ADC1**, so the two slices no longer share a preselector. Its pan's `WIDE` pill clears and its `CH` pill reads `CH 1`. The bottom bar shows both chains filtered and neither saying `BYPASS`: `CH 0: 40m` and `CH 1: 20m`. The first pan is unchanged. Needs a real feed on the RX2 jack to HEAR anything, but the filter decision is observable without one. |
+| 16 | Set that same slice's antenna back to **ANT1** | Both slices share chain 0 again. `WIDE` returns on both pans, both `CH` pills read `CH 0`, and the bottom bar returns to `CH 0: BYPASS (multi-band: 40m + 20m)`. `CH 1` goes back to its idle text. |
 
 ### Known-imperfect, do not file as new
 
-- **Row 15 needs the G2, not the G2E.** The G2E (HermesC10) has one ADC, so it
-  routes through `P2CodecHermes` and is pinned to ADC0 by construction. Two
+- **Rows 15-16 need the G2, not the G2E.** The G2E (HermesC10) has one ADC, so
+  it routes through `P2CodecHermes` and is pinned to ADC0 by construction. Two
   slices on two bands will always bypass there, and no antenna pick can change
   it. Not a defect.
+- **`CH 1` in the bottom bar only appears on a two-chain SKU.** It is gated on
+  `BoardCapabilities::rxFilterChainCount >= 2`, which is the ANAN-G2 and the
+  OrionMkII family. On an ANAN-100D or ANAN-200D there are two ADCs but one
+  preselector in front of both, so there is no second chain to report and the
+  indicator stays hidden. Not a defect either.
 - **Float active pan**: the floated pan renders, but the pan left behind goes
   black. Pulling a widget out of the QSplitter costs its siblings their QRhi
   context. Diagnosed, not fixed; likely needs to stop reparenting the
