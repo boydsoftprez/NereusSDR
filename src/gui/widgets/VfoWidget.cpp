@@ -2735,6 +2735,25 @@ void VfoWidget::positionFloatingButtons()
     }
 }
 
+// The active-flag-on-top invariant (Bench 2026-07-28, Sub-Epic J): this
+// flag's own close/lock/record/play buttons are parented to the
+// SpectrumWidget, not to this flag (see destroyFloatingButtons above), so
+// QWidget::raise() on the flag body alone is not enough -- the buttons are
+// separate siblings and stay wherever they were last left, which can be
+// behind a flag that used to sit above this one. Same btns[] order as
+// positionFloatingButtons() above: buttons first, flag body last, so the
+// body also ends up above its own buttons.
+void VfoWidget::raiseAboveSiblings()
+{
+    QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn};
+    for (QPushButton* btn : btns) {
+        if (btn) {
+            btn->raise();
+        }
+    }
+    raise();
+}
+
 // ---- Positioning ----
 
 void VfoWidget::updatePosition(int vfoX, int specTop, FlagDir dir)

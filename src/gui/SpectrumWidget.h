@@ -953,6 +953,30 @@ public slots:
     VfoWidget* vfoWidget(int sliceIndex) const;
     void updateVfoPositions();
 
+    /// Pin sliceIndex's flag to the front of this pan's stacking order.
+    ///
+    /// Bench-reported 2026-07-28 (Sub-Epic J): with Slice A selected, Slice
+    /// B's flag still covered A's, clipping A's frequency readout to
+    /// ".955.300". z-order was creation order -- addVfoWidget's one-shot
+    /// raise() -- crossed with updateVfoPositions()'s own per-frame raise()
+    /// over m_vfoWidgets (a QMap sorted by slice index), which puts whichever
+    /// slice has the HIGHER index on top after every single position pass,
+    /// with no regard for which one the operator selected.
+    ///
+    /// A one-shot raise() here would not survive that: updateVfoPositions()
+    /// runs every render frame (see its own comment) and would re-apply the
+    /// raw ascending order on the very next pass. m_frontSliceIndex is the
+    /// pin updateVfoPositions() re-asserts at the end of its own loop so the
+    /// front flag survives the next frame too, and every one after it, until
+    /// this is called again.
+    ///
+    /// A sliceIndex this pan does not host (not yet built, or hosted by a
+    /// different pan) leaves the pin set but is a harmless no-op here: only
+    /// the pan that actually hosts the active slice re-orders, exactly as
+    /// PanadapterStack::setActiveSliceOnHostingPan already scopes the rest of
+    /// the active-slice machinery to the hosting pan alone.
+    void setFrontSliceIndex(int sliceIndex);
+
 // Plain public, not public slots: the enclosing section above is a slots
 // block and moc rejects a nested struct inside one.
 public:
@@ -1707,6 +1731,17 @@ private:
 
     // ---- VFO flag widgets ----
     QMap<int, VfoWidget*> m_vfoWidgets;
+
+    // Which slice's flag stays on top -- see setFrontSliceIndex(). -1 = no
+    // pin; updateVfoPositions() falls back to its own ascending-index order.
+    int m_frontSliceIndex{-1};
+
+    // Re-applies the m_frontSliceIndex pin. Called by setFrontSliceIndex()
+    // for an immediate effect, and again at the end of every
+    // updateVfoPositions() pass, because that loop unconditionally raises
+    // every visible flag once per frame and would otherwise undo the pin on
+    // the very next frame.
+    void raiseFrontVfoWidget();
 
     // ---- CTUN mode ----
     bool   m_ctunEnabled{true};  // true = SmartSDR-style (pan independent of VFO)

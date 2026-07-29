@@ -21,9 +21,24 @@
 // got a shaded passband. The geometry half of that decision now lives in
 // SpectrumWidget::sliceMarkerGeometry(), which is what the marker cases below
 // pin -- the pixel emission needs a shown QRhiWidget and stays untested.
+//
+// Third bench report, Sub-Epic J, same two flags: "with Slice A selected,
+// Slice B's flag covered A's, clipping A's frequency readout to ".955.300"
+// instead of "3.955.300"." Both flags were correctly PLACED by the fixes
+// above; which one painted on TOP was still wrong. addVfoWidget's raise() at
+// creation is a one-shot: updateVfoPositions() -- which runs every render
+// frame, see its own comment -- separately raises every visible flag each
+// pass in m_vfoWidgets' ascending slice-index order, which puts whichever
+// slice has the HIGHER index on top after every frame regardless of which
+// one is active. setFrontSliceIndex() is the pin that survives that loop.
+// See SpectrumWidget.h/.cpp for the full rationale. Qt's sibling stacking
+// order is the parent's QObject::children() list order (raise()/lower() are
+// implemented by reordering it), so it is assertable here without a shown,
+// rendering QRhiWidget.
 // =================================================================
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QPushButton>
 
 #include "gui/SpectrumWidget.h"
 #include "gui/widgets/VfoWidget.h"
@@ -56,6 +71,20 @@ void placePan(SpectrumWidget& w)
     w.setSampleRate(kSpanHz);
     w.setDdcCenterFrequency(kCentreHz);
     w.setFrequencyRange(kCentreHz, kSpanHz);
+}
+
+// A sibling widget's position in its parent's QObject::children() list IS
+// its paint z-order for plain QWidget siblings: raise()/lower() are
+// implemented by moving the widget's entry within that same list. Higher
+// index = painted later = on top. -1 (no parent) can never collide with a
+// real index, so callers can tell "not found" from "at the back". Takes a
+// non-const QWidget*: QList<QObject*>::indexOf() cannot match a
+// const QWidget* argument (it would drop const on the pointee), and every
+// caller here already holds a non-const pointer anyway.
+int indexInParent(QWidget* w)
+{
+    QWidget* parent = w->parentWidget();
+    return parent ? parent->children().indexOf(w) : -1;
 }
 
 } // namespace
@@ -286,6 +315,143 @@ private slots:
         placePan(w);
 
         QVERIFY(w.sliceMarkerGeometry().isEmpty());
+    }
+
+    // ---- Flag z-order (third bench report, Sub-Epic J) ----
+
+    // A is created first, B second. Before the fix, this is exactly the
+    // reported bug shape: the higher-index flag (B) always ends up on top
+    // after a position pass, whether or not it is the one the operator
+    // selected. This case pins that baseline, then pins the fix on top of
+    // it in one place, so a reader sees both halves together.
+    void the_active_flag_stays_on_top_of_a_higher_index_neighbour()
+    {
+        SpectrumWidget w;
+        placePan(w);
+
+        VfoWidget* flagA = w.addVfoWidget(0);
+        VfoWidget* flagB = w.addVfoWidget(1);
+        flagA->setFrequency(kSliceAHz);
+        flagB->setFrequency(kSliceBHz);
+        w.updateVfoPositions();
+
+        QVERIFY2(indexInParent(flagB) > indexInParent(flagA),
+                 "baseline: the higher slice index (B) sits on top before "
+                 "any selection is made -- this is the reported bug shape");
+
+        // Operator selects A -- the lower slice index, the one the bug
+        // buries.
+        w.setFrontSliceIndex(0);
+
+        QVERIFY2(indexInParent(flagA) > indexInParent(flagB),
+                 "the active flag (A) must come to the front even though "
+                 "its neighbour has the higher slice index");
+    }
+
+    // updateVfoPositions() runs every render frame (see its own comment)
+    // and unconditionally raises every visible flag once per pass, in
+    // ascending slice-index order. A raise() that only fires once, at
+    // selection time, would be undone by the very next frame. The pin has
+    // to be reasserted every pass to hold, which is exactly what a naive
+    // "just call raise() when the operator clicks" fix would miss on the
+    // bench even with this same test passing once.
+    void the_pin_survives_the_next_position_pass()
+    {
+        SpectrumWidget w;
+        placePan(w);
+
+        VfoWidget* flagA = w.addVfoWidget(0);
+        VfoWidget* flagB = w.addVfoWidget(1);
+        flagA->setFrequency(kSliceAHz);
+        flagB->setFrequency(kSliceBHz);
+        w.updateVfoPositions();
+
+        w.setFrontSliceIndex(0);
+        QVERIFY(indexInParent(flagA) > indexInParent(flagB));
+
+        // Several more render frames, exactly as the live paint/render cycle
+        // would drive them, with no further selection in between.
+        w.updateVfoPositions();
+        w.updateVfoPositions();
+        w.updateVfoPositions();
+
+        QVERIFY2(indexInParent(flagA) > indexInParent(flagB),
+                 "the pin must survive updateVfoPositions(), which runs "
+                 "every frame and otherwise re-applies ascending-index order");
+    }
+
+    // The close/lock/record/play buttons are parented to the SpectrumWidget,
+    // not to the flag (see VfoWidget::destroyFloatingButtons), so raising
+    // the flag body alone can leave its own buttons stranded behind a flag
+    // that used to sit above it -- a flag on top with a dead button column
+    // showing through underneath. The active flag's buttons must front with
+    // it.
+    void the_active_flags_own_buttons_come_to_the_front_with_it()
+    {
+        SpectrumWidget w;
+        placePan(w);
+
+        VfoWidget* flagA = w.addVfoWidget(0);
+        VfoWidget* flagB = w.addVfoWidget(1);
+        flagA->setFrequency(kSliceAHz);
+        flagB->setFrequency(kSliceBHz);
+        // First position pass lazily builds each flag's floating buttons.
+        w.updateVfoPositions();
+
+        QPushButton* aClose = flagA->closeButtonForTest();
+        QVERIFY2(aClose, "buttons must exist after the first position pass");
+
+        w.setFrontSliceIndex(0);
+
+        QVERIFY2(indexInParent(aClose) > indexInParent(flagB),
+                 "flag A's own close button must front with flag A, not "
+                 "sit behind flag B");
+    }
+
+    // A single-slice pan has no neighbour to be buried under or to bury.
+    // Pinning the pan's only flag must not hide it, move it, or otherwise
+    // change its behaviour.
+    void a_lone_flag_is_unaffected_by_the_pin()
+    {
+        SpectrumWidget w;
+        placePan(w);
+
+        VfoWidget* flagA = w.addVfoWidget(0);
+        flagA->setFrequency(kSliceAHz);
+        w.updateVfoPositions();
+        const int xBefore = flagA->x();
+
+        w.setFrontSliceIndex(0);
+        w.updateVfoPositions();
+
+        QCOMPARE(flagA->x(), xBefore);
+        QVERIFY(!flagA->isHidden());
+    }
+
+    // A pin for a slice this pan does not host (a different pan's slice ID,
+    // or one whose flag has not been created here yet) must not touch this
+    // pan's own flags -- the standing "a pan acts on its own state" rule.
+    void a_pin_for_an_unhosted_slice_leaves_this_pans_order_alone()
+    {
+        SpectrumWidget w;
+        placePan(w);
+
+        VfoWidget* flagA = w.addVfoWidget(0);
+        VfoWidget* flagB = w.addVfoWidget(1);
+        flagA->setFrequency(kSliceAHz);
+        flagB->setFrequency(kSliceBHz);
+        w.updateVfoPositions();
+
+        // Baseline established the normal way: nobody has pinned a front
+        // slice yet, so B (the higher slice index) sits on top.
+        QVERIFY(indexInParent(flagB) > indexInParent(flagA));
+
+        w.setFrontSliceIndex(97);  // hosted by no pan in this test
+        w.updateVfoPositions();
+
+        QVERIFY2(indexInParent(flagB) > indexInParent(flagA),
+                 "a pin for a slice this pan does not host must not perturb "
+                 "this pan's own flag order");
     }
 };
 

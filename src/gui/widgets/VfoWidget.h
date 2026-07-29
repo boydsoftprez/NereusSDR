@@ -459,6 +459,30 @@ public:
     /// Idempotent; safe when the buttons were never built.
     void destroyFloatingButtons();
 
+    /// Bring this flag, and its close/lock/record/play buttons, to the front
+    /// of the shared parent's (SpectrumWidget's) stacking order.
+    ///
+    /// The buttons are parented to the SpectrumWidget rather than to this
+    /// flag -- see destroyFloatingButtons above -- so QWidget::raise() on the
+    /// flag alone only reorders the flag body. The buttons, as separate
+    /// siblings, would stay wherever they last were, which can be behind a
+    /// flag that used to sit above this one: a flag on top with its own
+    /// button column stranded underneath a neighbour. Raising the buttons
+    /// first and the flag body last matches the order
+    /// positionFloatingButtons() already uses, so a flag brought to the
+    /// front reads as one coherent unit.
+    ///
+    /// Safe to call before the buttons exist (a flag that has never had
+    /// updatePosition() called on it yet): each pointer is guarded.
+    void raiseAboveSiblings();
+
+    // --- Test seam for floating-button z-order (Bench 2026-07-28, Sub-Epic J) ---
+    // The four buttons are otherwise anonymous QPushButtons among the
+    // SpectrumWidget's children, so a z-order test has no way to name "this
+    // flag's close button" without this. Exposed read-only, same pattern as
+    // the SNR-row seams below.
+    QPushButton* closeButtonForTest() const { return m_closeBtn; }
+
     int sliceIndex() const { return m_sliceIndex; }
 
     // Phase 3F Sub-Epic C Task 9: test-only seam to fire the TX-badge click

@@ -46,6 +46,8 @@
 #include "core/AppSettings.h"
 #include "gui/PanadapterApplet.h"
 #include "gui/PanadapterStack.h"
+#include "gui/SpectrumWidget.h"
+#include "gui/widgets/VfoWidget.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -144,6 +146,62 @@ private slots:
 
         stack.setActiveSliceOnHostingPan(1);
         QCOMPARE(pan0->activeSliceIndex(), 1);
+    }
+
+    // Fourth bench report on this same wiring, Sub-Epic J: "with Slice A
+    // selected, Slice B's flag covered A's, clipping A's frequency readout."
+    // hostingPanFollowsTheSelectedSlice above proves setActiveSliceOnHostingPan
+    // retargets the right pan's activeSliceIndex; this proves the SAME call,
+    // through the SAME production path (PanadapterStack::
+    // setActiveSliceOnHostingPan -> PanadapterApplet::setActiveSliceIndex ->
+    // SpectrumWidget::setFrontSliceIndex), also reorders that slice's REAL
+    // flag on the pan's REAL, owned SpectrumWidget -- the exact object
+    // MainWindow's activeSliceChanged lambda drives, nothing mirrored or
+    // stood in for it.
+    //
+    // Two earlier fixes on this branch shipped with passing tests and did
+    // not work on the bench because the real behaviour lived in an
+    // untestable MainWindow lambda. This pins the chain one layer below that
+    // lambda; the lambda itself is one line
+    // (m_panStack->setActiveSliceOnHostingPan(...)), covered by
+    // mirrorMainWindowSyncWire below.
+    void selectingASliceRaisesItsRealFlagOnTheHostingPan()
+    {
+        PanadapterStack stack;
+        PanadapterApplet* pan0 = stack.panadapter(QStringLiteral("pan-0"));
+        QVERIFY(pan0);
+
+        pan0->addSlice(0);
+        pan0->addSlice(1);
+
+        SpectrumWidget* spectrum = pan0->spectrumWidget();
+        QVERIFY(spectrum);
+        VfoWidget* flagA = spectrum->addVfoWidget(0);
+        VfoWidget* flagB = spectrum->addVfoWidget(1);
+        QVERIFY(flagA);
+        QVERIFY(flagB);
+        flagA->setFrequency(14'150'000.0);
+        flagB->setFrequency(14'250'000.0);
+
+        QWidget* parent = flagA->parentWidget();
+        QVERIFY(parent);
+
+        // Select B through the real production call.
+        stack.setActiveSliceOnHostingPan(1);
+        spectrum->updateVfoPositions();  // the render-frame pass that follows
+        QVERIFY2(parent->children().indexOf(flagB) > parent->children().indexOf(flagA),
+                 "selecting B must bring its real flag to the front");
+
+        // The operator's reported repro, one step further: select A back.
+        // A one-shot raise that does not survive updateVfoPositions() (which
+        // ran once already above, and runs again here) would leave B on top
+        // -- B has the higher slice index, which is what the loop falls back
+        // to on every pass with no pin held.
+        stack.setActiveSliceOnHostingPan(0);
+        spectrum->updateVfoPositions();
+        QVERIFY2(parent->children().indexOf(flagA) > parent->children().indexOf(flagB),
+                 "selecting A afterward must bring ITS real flag back to the "
+                 "front, even though B has the higher slice index");
     }
 
     // The standing project rule is that a control drawn on a pan acts on that

@@ -7911,6 +7911,28 @@ VfoWidget* SpectrumWidget::vfoWidget(int sliceIndex) const
     return m_vfoWidgets.value(sliceIndex, nullptr);
 }
 
+// See the header for the bench defect this closes (Sub-Epic J,
+// 2026-07-28). Immediate effect here is only half the fix -- see
+// raiseFrontVfoWidget(), which updateVfoPositions() also calls every frame
+// so the pin survives past the next position pass.
+void SpectrumWidget::setFrontSliceIndex(int sliceIndex)
+{
+    m_frontSliceIndex = sliceIndex;
+    raiseFrontVfoWidget();
+}
+
+void SpectrumWidget::raiseFrontVfoWidget()
+{
+    VfoWidget* w = m_vfoWidgets.value(m_frontSliceIndex, nullptr);
+    if (!w) {
+        // No pin, or the pinned slice has no flag on THIS pan (a different
+        // pan hosts it, or this pan's flag has not been built yet) -- leave
+        // this pan's own order alone.
+        return;
+    }
+    w->raiseAboveSiblings();
+}
+
 void SpectrumWidget::updateVfoPositions()
 {
     if (width() <= 0 || height() <= 0) {
@@ -7971,6 +7993,15 @@ void SpectrumWidget::updateVfoPositions()
             vfo->raise();
         }
     }
+
+    // The loop above just raised every visible flag once, in m_vfoWidgets'
+    // ascending slice-index order -- so without this, whichever slice has
+    // the HIGHEST index would land on top after every single frame,
+    // regardless of which one is active. Bench-reported 2026-07-28
+    // (Sub-Epic J): "slice A selected, slice B's flag covered A's, clipping
+    // A's frequency readout." Re-asserting the pin here, after the loop, is
+    // what makes it survive this pass instead of only the one it was set on.
+    raiseFrontVfoWidget();
 }
 
 // ---- Phase 3Q-8: disconnect overlay ----------------------------------------

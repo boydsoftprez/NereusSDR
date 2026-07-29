@@ -114,6 +114,17 @@ void PanadapterApplet::setActiveSliceIndex(int sliceIndex)
 {
     if (m_activeSliceIndex == sliceIndex) { return; }
     m_activeSliceIndex = sliceIndex;
+    // Bench-reported 2026-07-28 (Sub-Epic J): the newly-active slice's flag
+    // must come to the front of THIS pan's stack -- see
+    // SpectrumWidget::setFrontSliceIndex for why a plain raise() would not
+    // hold. This is the single writer of m_activeSliceIndex from outside
+    // (the addSlice seed path below also routes through here), so hanging
+    // the z-order pin off it covers every caller, including
+    // PanadapterStack::setActiveSliceOnHostingPan, without each one having
+    // to remember to raise the flag itself.
+    if (m_spectrum) {
+        m_spectrum->setFrontSliceIndex(sliceIndex);
+    }
     emit activeSliceChanged(m_panId, sliceIndex);
 }
 
