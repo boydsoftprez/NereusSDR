@@ -763,8 +763,8 @@ public:
     // (console.cs:31889-31893 [v2.10.3.15]), and the VFO B handler assigns
     // tx_dds_freq_mhz itself in that case (console.cs:32866-32869).
     //
-    // Falls back to activeSlice() when no arbiter binding resolves, so a
-    // single-slice session behaves exactly as before.
+    // Returns nullptr when no arbiter binding resolves. TX-global callers
+    // must fail safely rather than substituting listening/UI state.
     SliceModel* txBoundSlice() const;
 
     // Phase 3F Sub-Epic D Task 13: NereusSDR-original FFT fan-out router.
@@ -1255,6 +1255,7 @@ public:
     // injecting a mock connection, mirroring what wireConnectionSignals() does
     // when a real radio connects.
     void wireSliceSignalsForTest() { wireSliceSignals(m_activeSlice); }
+    void installBandPlanMoxCheckForTest() { installBandPlanMoxCheck(); }
     // Issue #182 — invoke the mic_ptt_disabled wiring helper directly so
     // tst_radio_model_mic_ptt_wire can verify the signal/slot bind + prime
     // path without spinning up the full wireConnectionSignals pipeline.
@@ -2090,7 +2091,7 @@ signals:
     // ran with the slice's pre-restore default values.
     void sliceStateRestored(int index);
     // Issue #153 sub-bug 2 — diagnostic + test observation hook.
-    // Emitted by pushTxModeAndBandpass() when an active slice exists,
+    // Emitted by pushTxModeAndBandpass() when a TX-bound slice exists,
     // BEFORE the queued setter dispatch to TxWorkerThread.  Carries the
     // slice's current DSPMode + audio-space filter cutoffs.  Tests use
     // it as a proxy for "push helper triggered with X"; production code
@@ -2292,12 +2293,12 @@ private slots:
     void onPgxlConnected();
 
     // Phase 3P-II Phase 4 Task 96: auto-recall TGXL tune memory when the
-    // active slice crosses a band boundary.  Connected to
-    // SliceModel::bandChanged from addSlice().  Fires only when
+    // TX-bound slice crosses a band boundary. Connected to
+    // SliceModel::bandChanged from addSlice(). Fires only when
     // TGXL_AutoTuneMemoryRecall == "True" and a stored entry exists for
     // (activeAntenna, newBand).  Falls back to issuing "tune start" per
     // design bench-caveat (absolute relay-write API not yet confirmed).
-    void onSliceBandChanged(NereusSDR::Band band);
+    void onSliceBandChanged(SliceModel* source, NereusSDR::Band band);
 
 private:
     // Phase 3Q-1: drives the RadioModel-level connection state machine.
@@ -2434,19 +2435,12 @@ public:
     // sliceStateRestored(index) on completion (see comment on the signal).
     void loadSliceState(SliceModel* slice);
 
-    // Issue #153 sub-bug 2 — push the active slice's DSPMode + the
-    // user's configured TX bandpass (TransmitModel::filterLow/High) to
-    // TxChannel.  No-op if no active slice.
+    // Issue #153 sub-bug 2 — push the TX-bound slice's DSPMode + filter
+    // cutoffs to TxChannel. No-op if no TX binding resolves.
     //
-    // Filter source is TransmitModel, NOT SliceModel.  TransmitModel
-    // stores audio-space TX cutoffs (positive, low<=high invariant),
-    // which is what TxChannel::requestFilterChange + applyTxFilterForMode
-    // expect.  SliceModel filter values are RX-passband IQ-space
-    // (negative for LSB-family); routing them through
-    // applyTxFilterForMode would double-negate on LSB and clobber
-    // any user-configured TX bandwidth on every connect/MOX.  Mirrors
-    // the canonical wire at RadioModel.cpp:2550-2560 which sources
-    // audio cutoffs from TransmitModel::filterChanged.
+    // Mode and filter source are one coherent snapshot of the TX-bound
+    // SliceModel. This keeps split/listening focus from combining one
+    // slice's mode with another slice's passband.
     //
     // Read happens on RadioModel's main thread; the TxChannel setter
     // call is queued to TxWorkerThread via QMetaObject::invokeMethod
@@ -2469,6 +2463,7 @@ public:
     // (Thetis seeds at mode-change only; we additionally re-seed at
     // MOX-engage so prior TUN-state desync cannot starve SSB MOX).
     void pushTxModeAndBandpass();
+    void installBandPlanMoxCheck();
 
     // ── Phase 3F Sub-Epic B Task 16: multi-slice codec glue ─────────────────
     // Build the 5-element codec input array. Phase 3F Sub-Epic I Task 7b:
@@ -2917,6 +2912,9 @@ private:
     //   Default USB (matches SliceModel default). Used only when old_dsp_mode
     //   was CWL or CWU; restored unconditionally on TUN-off.
     DSPMode m_savedTxDspMode{DSPMode::USB};
+    // Stable slice identity paired with m_savedTxDspMode. Listening focus
+    // may move while the asynchronous TUN-off sequence is settling.
+    int m_savedTxDspSliceId{-1};
     //
     // m_savedPowerPct: power slider value (0-100) before the tune-power push.
     //   Cite: Thetis console.cs:30033 [v2.10.3.13] — PreviousPWR = ptbPWR.Value.
@@ -2989,6 +2987,10 @@ private:
     // Thread.Sleep(space_mox_delay); // default 0 // from PSDR MW0LGE  [console.cs:29603]
     //[2.10.3.6]MW0LGE att_fixes  [original inline comment from console.cs:29647-29659]
     MoxController* m_moxController{nullptr};
+
+    // Stable WDSP RX identity stopped at MOX entry. Release restores this
+    // exact channel even if listening focus changes before key-up.
+    int m_moxStoppedRxChannel{-1};
 
     // Phase 3F Sub-Epic C: TX-slice arbiter (single-TX invariant + RF-safe
     // handoff). QObject child of RadioModel (Qt parent ownership). Wired

@@ -1027,15 +1027,12 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
         return;
     }
 
-    // 3M-1b E.4 fold: silence the active TX slice's RX audio during MOX.
-    // Non-active slices (e.g. RX2 when TX is on VFO-A, or a second slice in
-    // a future multi-RX configuration) keep playing — matching Thetis IVAC
-    // mox state-machine in audio.cs:349-384 [v2.10.3.13].
+    // 3M-1b E.4 fold: silence the TX-bound slice's RX audio during MOX.
+    // Listening focus can move independently, so the gate follows the stable
+    // ID captured at key-down rather than SliceModel::isActiveSlice().
     //
-    // m_moxActive acquire load provides the ordering barrier before the
-    // non-atomic isActiveSlice() read on slice. A stale read of isActiveSlice
-    // is harmless: worst case one ~10 ms block leaks before the next barrier.
-    // Silenced: active TX slice's RX audio gated during MOX.
+    // The acquire loads pair with setMoxState's releases so the gate observes
+    // the captured ID before it observes MOX active.
     //
     // This queues silence rather than returning outright, and the slice
     // keeps its place in the mixer's readiness barrier. The barrier has no
@@ -1059,8 +1056,9 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // barrier for the duration of the transmission. So this really is just a
     // return, and the slice's ring is left exactly as the transmission found
     // it.
-    if (m_moxActive.load(std::memory_order_acquire) && slice->isActiveSlice()) {
-        return;  // silenced — active TX slice's RX audio gated during MOX
+    if (m_moxActive.load(std::memory_order_acquire)
+        && sliceId == m_moxWithdrawnSlice.load(std::memory_order_acquire)) {
+        return;  // silenced — TX-bound slice's RX audio gated during MOX
     }
 
     // Always queue, even when muted. MasterMixer treats mute as a ramp
@@ -1499,16 +1497,6 @@ void AudioEngine::setMasterMuted(bool muted)
 // Plan: 3M-1b E.4. Pre-code review §10.3 + §10.4.
 void AudioEngine::setMoxState(bool active)
 {
-    // Same acq_rel / acquire pairing as setMasterMuted above — the
-    // DSP-thread read in rxBlockReady uses acquire; a plain release
-    // would not synchronize the read-side observation order on weak
-    // memory models (ARM / Apple Silicon).
-    //
-    // Wired by RadioModel (Phase L) to MoxController::moxStateChanged.
-    // No change-signal emitted — MOX state is authoritative in MoxController;
-    // this is a cross-thread mirror only.
-    m_moxActive.store(active, std::memory_order_release);
-
     // Take the gated slice out of the mixer's readiness barrier for the
     // duration of the transmission, and put it back afterwards.
     //
@@ -1526,8 +1514,8 @@ void AudioEngine::setMoxState(bool active)
     // and up to kRingBlocks of stale silence queued ahead of the real audio on
     // unkey). Withdrawing membership leaves the ring completely untouched.
     // Remember exactly which slice was withdrawn and re-admit that same one,
-    // rather than re-reading activeSlice() on the way out. The active slice
-    // can change during a transmission (TX handoff, a pan closing), and
+    // rather than consulting mutable listening focus on the way out. The
+    // active slice can change during a transmission, and
     // withdrawing X then re-admitting Y would strand X out of the mix with
     // nothing to put it back: it would stay silent until something else
     // re-admitted it, which is what "does not restore until the flag is
@@ -1538,67 +1526,35 @@ void AudioEngine::setMoxState(bool active)
     // same breath. Poking one mixer directly is how the two would drift
     // apart, and a slice left enrolled in the anti-VOX barrier alone would
     // wedge that mix for the whole transmission.
-    // Release whatever is currently withdrawn FIRST, on both edges, and only
-    // then take a new withdrawal. Not just tidiness: moxStateChanged does not
-    // alternate, and the earlier `if (active) ... else ...` shape assumed it
-    // did.
-    //
-    // MoxController commits m_mox synchronously but emits moxStateChanged at
-    // the END of a timer walk, and stopAllTimers() (MoxController.cpp:552)
-    // cancels a pending emit when the next transition arrives before the walk
-    // finishes. Re-keying inside the 30 ms release window therefore delivers
-    // two `true` edges with no `false` between them. Clearing
-    // m_moxWithdrawnSlice on the second one and re-reading activeSlice() then
-    // stranded the first slice: withdrawn from both readiness barriers with
-    // nothing left to put it back, and the barriers have no timeout that
-    // would release it (MasterMixer.h, divergence 3). It stayed out for the
-    // life of the process, so the mix stopped being paced by it and its
-    // contribution went clumped -- the artefact the barrier exists to
-    // prevent.
-    //
-    // Upstream cannot reach this because it does not track a delta at all.
-    // UpdateAAudioMixerStates (console.cs:27631 [v2.10.3.15]) restates
-    // ABSOLUTE membership for every stream on every transition --
-    //   SetAAudioMixStates(ptr, id, streams, states)   cmaster.cs:255
-    // takes an addressed-stream mask AND a desired-state mask -- and
-    // chkMOX_CheckedChanged2 calls it on both edges (console.cs:29630 RX->TX,
-    // console.cs:29672 TX->RX [v2.10.3.15]). Releasing before taking is the
-    // one-slot equivalent: correct for any edge sequence, not only for a
-    // strictly alternating one.
-    if (m_moxWithdrawnSlice >= 0) {
-        setSliceStreaming(m_moxWithdrawnSlice, true);
-        m_moxWithdrawnSlice = -1;
+    if (active) {
+        // Duplicate true edges are possible when a release walk is cancelled
+        // by an immediate re-key. Keep the original key-down identity rather
+        // than releasing and re-sampling mutable UI focus.
+        if (m_moxWithdrawnSlice.load(std::memory_order_acquire) < 0
+            && m_radio != nullptr) {
+            if (SliceModel* const slice = m_radio->txBoundSlice()) {
+                const int sliceId = slice->sliceIndex();
+                setSliceStreaming(sliceId, false);
+                m_moxWithdrawnSlice.store(sliceId, std::memory_order_release);
+            }
+        }
+        m_moxActive.store(true, std::memory_order_release);
+        return;
     }
 
-    if (active && m_radio != nullptr) {
-        if (SliceModel* slice = m_radio->activeSlice()) {
-            m_moxWithdrawnSlice = slice->sliceIndex();
-            setSliceStreaming(m_moxWithdrawnSlice, false);
-        }
+    m_moxActive.store(false, std::memory_order_release);
+    const int withdrawn =
+        m_moxWithdrawnSlice.exchange(-1, std::memory_order_acq_rel);
+    if (withdrawn >= 0) {
+        setSliceStreaming(withdrawn, true);
     }
 }
 
 void AudioEngine::onActiveSliceChanged()
 {
-    // The withdrawal above samples activeSlice() at the edge; rxBlockReady's
-    // gate reads isActiveSlice() on every block. Moving the active slice
-    // mid-over separates the two: the newly active slice is gated and stops
-    // feeding, but it was never withdrawn, so it stays a barrier member with
-    // nothing queued and the drain waits on it (MasterMixer.cpp tryDrain).
-    // Meanwhile the slice that WAS withdrawn is feeding again but is not a
-    // member. Measured cost on a two-slice bench harness: the mix drops from
-    // one push per period to none for the rest of the transmission.
-    //
-    // Re-running the same release-then-take keeps the withdrawal pointed at
-    // whatever the gate is currently silencing. This is the half of
-    // UpdateAAudioMixerStates (console.cs:27631 [v2.10.3.15]) that a one-slot
-    // delta cannot get for free: upstream recomputes absolute membership for
-    // every stream from current conditions each time it is called, so its
-    // masks cannot drift away from what is actually being fed.
-    if (!m_moxActive.load(std::memory_order_acquire)) {
-        return;  // nothing withdrawn while MOX is off
-    }
-    setMoxState(true);
+    // Listening focus is independent of transmit authority. The bound slice
+    // captured at key-down remains gated until key-up, so an active-slice
+    // change requires no mixer membership update.
 }
 
 // Plan: 3M-1b E.2. Pre-code review §4.4.

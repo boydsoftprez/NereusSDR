@@ -47,8 +47,13 @@
 
 #include <QtTest/QtTest>
 
+#include "core/AppSettings.h"
 #include "core/P2RadioConnection.h"
+#include "core/TxSliceArbiter.h"
+#include "core/accessories/AlexController.h"
 #include "core/codec/AlexFilterMap.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
 
 using namespace NereusSDR;
 
@@ -90,6 +95,22 @@ struct AlexWords {
     quint8 txLpf{0};   // Alex1 LPF mask
 };
 
+class ConnectedP2RadioConnection final : public P2RadioConnection {
+public:
+    AntennaRouting lastRouting;
+
+    ConnectedP2RadioConnection()
+    {
+        setState(ConnectionState::Connected);
+    }
+
+    void setAntennaRouting(AntennaRouting routing) override
+    {
+        lastRouting = routing;
+        P2RadioConnection::setAntennaRouting(routing);
+    }
+};
+
 AlexWords composeAlexWords(P2RadioConnection& conn)
 {
     quint8 buf[1444] = {};
@@ -113,6 +134,62 @@ constexpr quint64 k80mHz =  3700000ULL;   // slice B, monitoring a net
 class TestAlexTxLpfSource : public QObject {
     Q_OBJECT
 private slots:
+    void init() { AppSettings::instance().clear(); }
+    void cleanup() { AppSettings::instance().clear(); }
+
+    void crossBandMoxUsesTheTxBoundSliceForTxRoutingAndLpf()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::Saturn);
+        model.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
+                                  /*defaultRateHz=*/192000);
+
+        const int a = model.addSlice();
+        SliceModel* const listening = model.sliceById(a);
+        listening->setFrequency(k80mHz);
+        model.setActiveSlice(0);
+
+        const int c = model.addSlice();
+        SliceModel* const transmitting = model.sliceById(c);
+        transmitting->setFrequency(k10mHz);
+
+        model.alexControllerMutable().setTxAnt(Band::Band80m, 1);
+        model.alexControllerMutable().setTxAnt(Band::Band10m, 3);
+
+        auto* conn = new ConnectedP2RadioConnection();
+        conn->setBoardForTest(HPSDRHW::Saturn);
+        conn->setReceiverFrequency(kStreamA, k80mHz);
+        model.injectConnectionForTest(conn);
+
+        QVERIFY(model.requestTxHandoffToSlice(c));
+        model.onMoxHardwareFlipped(/*isTx=*/true);
+
+        QCOMPARE(conn->lastRouting.txAnt, 3);
+        const AlexWords words = composeAlexWords(*conn);
+        QCOMPARE(words.txLpf, codec::alex::computeLpf(28.4));
+        QCOMPARE(words.rxLpf, codec::alex::computeLpf(28.4));
+
+        model.injectConnectionForTest(nullptr);
+        delete conn;
+    }
+
+    void differentBandEnumsSharingOnePhysicalPreselectorStayFiltered()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::Saturn);
+        model.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
+                                  /*defaultRateHz=*/192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0); // Band20m
+        const int c = model.addSlice();
+        model.sliceById(c)->setFrequency(21200000.0); // Band15m
+
+        QCOMPARE(codec::alex::computeRxPreselector(14.2, HPSDRHW::Saturn),
+                 codec::alex::computeRxPreselector(21.2, HPSDRHW::Saturn));
+        QCOMPARE(model.alexController().adcState(0).effective,
+                 AlexController::BpfEffective::Filtered);
+    }
 
     // ── The reported failure ────────────────────────────────────────────
     //

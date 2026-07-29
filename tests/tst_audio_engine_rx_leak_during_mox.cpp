@@ -123,6 +123,35 @@ private:
 
 private slots:
 
+    void moxGatesTheTxBoundSliceEvenWhenAnotherSliceIsActive()
+    {
+        Harness h = makeHarness();
+        const int a = h.addSlice();
+        const int c = h.addSlice();
+        QVERIFY(h.radio->requestTxHandoffToSlice(c));
+        QCOMPARE(h.radio->activeSlice()->sliceIndex(), a);
+        QCOMPARE(h.radio->txBoundSlice()->sliceIndex(), c);
+
+        h.engine->setMoxStateForTest(true);
+
+        h.engine->rxBlockReady(c, kTestSamples.data(), kTestFrames);
+        QCOMPARE(h.speakers->pushCount(), 0);
+
+        h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+        QVERIFY2(h.speakers->pushCount() > 0,
+                 "the non-TX listening slice should remain audible during MOX");
+
+        h.radio->setActiveSlice(1);
+        const int before = h.speakers->pushCount();
+        h.engine->rxBlockReady(c, kTestSamples.data(), kTestFrames);
+        QCOMPARE(h.speakers->pushCount(), before);
+
+        h.engine->setMoxStateForTest(false);
+        h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+        h.engine->rxBlockReady(c, kTestSamples.data(), kTestFrames);
+        QVERIFY(h.speakers->pushCount() > before);
+    }
+
     // ── 1. Default MOX state is false ─────────────────────────────────────
 
     void moxState_default_isFalse()

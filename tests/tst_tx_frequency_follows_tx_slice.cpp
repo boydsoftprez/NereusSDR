@@ -40,6 +40,7 @@
 #include <QSignalSpy>
 
 #include "core/AppSettings.h"
+#include "core/MoxController.h"
 #include "core/RadioConnection.h"
 #include "core/TxSliceArbiter.h"
 #include "models/RadioModel.h"
@@ -100,6 +101,8 @@ struct DetachConnection {
 
 constexpr double k10mHz = 28400000.0;   // slice A
 constexpr double k80mHz =  3700000.0;   // slice B
+constexpr double k20mHz = 14200000.0;
+constexpr double k40mHz =  7100000.0;
 
 } // namespace
 
@@ -235,6 +238,85 @@ private slots:
         for (const quint64 hz : mock->txFreqCalls) {
             QCOMPARE(hz, quint64(k80mHz) + 1200);
         }
+
+        delete mock;
+    }
+
+    // TX-global consumers must qualify the SliceModel that emitted their
+    // signal. The operator may keep listening to A while C owns TX; A's
+    // band/mode changes are then RX/UI state, not permission to retune TX,
+    // reconfigure its filter/VOX gate, or recall the TGXL.
+    void onlyTheTxBoundSlice_drivesTxGlobalSignals()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+        auto* mock = new TxFreqMockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(k10mHz);
+        model.slices().at(a)->setDspMode(DSPMode::USB);
+        model.addSlice(); // B is deliberately unrelated.
+        const int c = model.addSlice();
+        model.slices().at(c)->setFrequency(k80mHz);
+        model.slices().at(c)->setDspMode(DSPMode::USB);
+
+        model.setActiveSlice(a);
+        QVERIFY(model.txSliceArbiter()->requestHandoff(c));
+
+        // Make both candidate band transitions observable at TGXL. The
+        // connection's version banner marks the test object connected; its
+        // two initialization frames are discarded before assertions.
+        AppSettings::instance().setValue(
+            QStringLiteral("TGXL_AutoTuneMemoryRecall"),
+            QStringLiteral("True"));
+        model.tuneMemoryStore()->store(
+            TuneMemory{1, Band::Band20m, 1, 2, 3, 1});
+        model.tuneMemoryStore()->store(
+            TuneMemory{1, Band::Band40m, 4, 5, 6, 2});
+        QSignalSpy tgxlFrames(model.tgxlConnection(),
+                             &TgxlConnection::testFrameWrittenForTesting);
+        model.tgxlConnection()->injectLineForTesting(QStringLiteral("V1.0"));
+        tgxlFrames.clear();
+
+        QSignalSpy txStateSpy(&model, &RadioModel::txModeAndBandpassPushed);
+        QSignalSpy voxSpy(model.moxController(),
+                         &MoxController::voxRunRequested);
+        model.transmitModel().setVoxEnabled(true);
+        voxSpy.clear();
+        txStateSpy.clear();
+        mock->txFreqCalls.clear();
+
+        // A is active/listening, but it is not the transmitter.
+        model.slices().at(a)->setFrequency(k20mHz);
+        model.slices().at(a)->setDspMode(DSPMode::CWL);
+
+        QVERIFY2(mock->txFreqCalls.isEmpty(),
+                 "the listening slice moved the TX frequency");
+        QCOMPARE(txStateSpy.count(), 0);
+        QCOMPARE(voxSpy.count(), 0);
+        QCOMPARE(tgxlFrames.count(), 0);
+
+        // The same updates from C must propagate exactly once and carry C's
+        // final state.
+        model.slices().at(c)->setFrequency(k40mHz);
+        QCOMPARE(mock->txFreqCalls.size(), 1);
+        QCOMPARE(mock->txFreqCalls.constLast(), quint64(k40mHz));
+        QCOMPARE(tgxlFrames.count(), 1);
+        QVERIFY(tgxlFrames.constFirst().constFirst().toString()
+                    .endsWith(QStringLiteral("|autotune")));
+
+        model.slices().at(c)->setDspMode(DSPMode::CWL);
+        QCOMPARE(txStateSpy.count(), 1);
+        QCOMPARE(txStateSpy.constFirst().at(0).value<DSPMode>(),
+                 DSPMode::CWL);
+        QCOMPARE(txStateSpy.constFirst().at(1).toInt(),
+                 model.slices().at(c)->filterLow());
+        QCOMPARE(txStateSpy.constFirst().at(2).toInt(),
+                 model.slices().at(c)->filterHigh());
+        QCOMPARE(voxSpy.count(), 1);
+        QCOMPARE(voxSpy.constFirst().constFirst().toBool(), false);
 
         delete mock;
     }

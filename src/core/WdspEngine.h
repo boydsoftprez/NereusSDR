@@ -121,6 +121,7 @@ class TestStreamPoolBinding;
 // Phase 3F: the channel-id map test primes the engine so it can watch
 // which ids openRxChannelPool actually opens.
 class TestWdspChannelIdMap;
+class TestRadioModelMoxHardwareFlip;
 #endif
 
 namespace NereusSDR {
@@ -692,6 +693,9 @@ private:
     // Phase 3F: same friendship for the channel-id map test, which drives
     // RadioModel::openRxChannelPool and asserts on the ids it opened.
     friend class ::TestWdspChannelIdMap;
+    // Authoritative-TX regression: seed nonzero RX channels without the
+    // asynchronous wisdom lifecycle so MOX can prove which exact ID moves.
+    friend class ::TestRadioModelMoxHardwareFlip;
 #endif
 };
 

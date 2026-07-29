@@ -25,6 +25,8 @@
 
 #include "core/AppSettings.h"
 #include "core/RadioConnection.h"
+#include "core/RxChannel.h"
+#include "core/WdspEngine.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -125,6 +127,51 @@ private slots:
     void init()          { clearAppSettings(); }
     void cleanup()       { clearAppSettings(); }
 
+    void txBoundNonzeroRxChannelIsStoppedAndRestored()
+    {
+        RadioModel model;
+        model.setCapsForTest(/*hasAlex=*/true);
+        model.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
+                                  /*defaultRateHz=*/192000);
+        model.addSlice();
+        model.addSlice();
+        const int c = model.addSlice();
+        model.setActiveSlice(0);
+        QVERIFY(model.requestTxHandoffToSlice(c));
+
+        WdspEngine* const engine = model.wdspEngine();
+        engine->m_initialized = true;
+        RxChannel* const rx0 = engine->createRxChannel(0);
+        RxChannel* const rx2 = engine->createRxChannel(c);
+        QVERIFY(rx0 != nullptr);
+        QVERIFY(rx2 != nullptr);
+        rx0->setActive(true);
+        rx2->setActive(true);
+
+        QSignalSpy rx0States(rx0, &RxChannel::activeChanged);
+        QSignalSpy rx2States(rx2, &RxChannel::activeChanged);
+
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+
+        model.onMoxHardwareFlipped(/*isTx=*/true);
+        QCOMPARE(rx0States.count(), 0);
+        QCOMPARE(rx2States.count(), 1);
+        QCOMPARE(rx2States.takeFirst().at(0).toBool(), false);
+
+        model.setActiveSlice(1);
+        model.onMoxHardwareFlipped(/*isTx=*/false);
+        QCOMPARE(rx0States.count(), 0);
+        QCOMPARE(rx2States.count(), 1);
+        QCOMPARE(rx2States.takeFirst().at(0).toBool(), true);
+
+        model.injectConnectionForTest(nullptr);
+        delete mock;
+        engine->destroyRxChannel(c);
+        engine->destroyRxChannel(0);
+        engine->m_initialized = false;
+    }
+
     // ── 1. isTx=true: call order is Alex → setMox → setTrxRelay ─────────────
     // Verifies the three-step side-effect order from pre-code review §2.3.
     // Alex fires first (step 8), then the MOX wire bit (step 12 / §1.4),
@@ -132,6 +179,7 @@ private slots:
     void rxToTx_callOrderIsAlexMoxRelay() {
         RadioModel model;
         model.setCapsForTest(/*hasAlex=*/true);
+        model.addSlice();
 
         auto* mock = new MockConnection();
         model.injectConnectionForTest(mock);
@@ -175,6 +223,7 @@ private slots:
     void isTxTrue_setMoxReceivesTrue() {
         RadioModel model;
         model.setCapsForTest(/*hasAlex=*/true);
+        model.addSlice();
 
         auto* mock = new MockConnection();
         model.injectConnectionForTest(mock);
@@ -258,6 +307,7 @@ private slots:
     void hasAlexFalse_allThreeStepsFire() {
         RadioModel model;
         model.setCapsForTest(/*hasAlex=*/false);
+        model.addSlice();
 
         auto* mock = new MockConnection();
         model.injectConnectionForTest(mock);
@@ -290,6 +340,7 @@ private slots:
     void slotConnectableViaQObjectConnect() {
         RadioModel model;
         model.setCapsForTest(/*hasAlex=*/true);
+        model.addSlice();
 
         auto* mock = new MockConnection();
         model.injectConnectionForTest(mock);

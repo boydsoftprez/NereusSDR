@@ -490,15 +490,8 @@ public:
     void setMoxState(bool active);
     bool moxState() const { return m_moxActive.load(std::memory_order_acquire); }
 
-    /// Re-take the MOX barrier withdrawal against whichever slice is active
-    /// NOW. No-op unless MOX is on. Wired by RadioModel to
-    /// RadioModel::activeSliceChanged.
-    ///
-    /// rxBlockReady's gate reads SliceModel::isActiveSlice() live, so moving
-    /// the active slice mid-over re-points which slice is silenced. The
-    /// barrier withdrawal has to follow it: the newly gated slice stops
-    /// feeding, and if it is still a barrier member the drain waits on it for
-    /// the rest of the transmission and the whole mix goes with it.
+    /// Active/listening focus does not alter the stable TX-bound identity
+    /// captured at key-down. Retained as the existing signal target; no-op.
     void onActiveSliceChanged();
 
     /// TX monitor (MON) enable. When true, TXA siphon audio is mixed into
@@ -797,14 +790,14 @@ private:
     // Defaults false (MOX off at startup).
     //
     // Matches Thetis IVAC mox state-machine in audio.cs:349-384 [v2.10.3.13]:
-    // when MOX is on, active TX slice's RX audio is silenced; non-active
-    // slices keep playing.
+    // when MOX is on, the TX-bound slice's RX audio is silenced; other
+    // listening slices keep playing.
     std::atomic<bool> m_moxActive{false};
 
     // Which slice setMoxState() withdrew from the mixer's readiness barrier
     // on key-down, so key-up re-admits that exact slice. Main thread only.
     // -1 when nothing is withdrawn.
-    int m_moxWithdrawnSlice{-1};
+    std::atomic<int> m_moxWithdrawnSlice{-1};
 
     // Phase 3M-1c TX pump v3 — PC mic override gate.
     // Written by onMicSourceChanged() on the main thread (slot wired

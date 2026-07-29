@@ -757,7 +757,15 @@ RadioModel::RadioModel(QObject* parent)
     // The arbiter drops MOX before it flips the binding, so this always runs
     // with the transmitter unkeyed.
     connect(m_txSliceArbiter, &TxSliceArbiter::txBoundSliceChanged,
-            this, [this](int, int) { pushTxFrequencyFromTxSlice(); });
+            this, [this](int, int) {
+        pushTxFrequencyFromTxSlice();
+        pushTxModeAndBandpass();
+        if (m_moxController) {
+            if (SliceModel* const bound = txBoundSlice()) {
+                m_moxController->onModeChanged(bound->dspMode());
+            }
+        }
+    });
 
     // Phase 3F Sub-Epic D Task 13: FFT fan-out router. NereusSDR-original
     // class (AetherSDR has no equivalent because it's a thin Flex API
@@ -847,21 +855,14 @@ RadioModel::RadioModel(QObject* parent)
     // with m_currentMode=DSPMode::USB (matching SliceModel default) and
     // m_voxEnabled=false so no spurious emit occurs at startup.
     //
-    // Note: SliceModel wiring uses m_activeSlice (the single TX slice in
-    // 3M-1b). If m_activeSlice is null at construction time the connection
-    // is deferred; 3M-1b always has exactly one slice added during
-    // onConnected() before any user interaction can enable VOX.
+    // SliceModel wiring is installed from addSlice(), after a stable TX
+    // binding exists. Each source lambda qualifies itself against that
+    // binding before it may update the global VOX mode gate.
     connect(&m_transmitModel, &TransmitModel::voxEnabledChanged,
             m_moxController,  &MoxController::setVoxEnabled);
 
-    // Active-slice mode gate: wire slice(0) dspModeChanged → MoxController.
-    // The actual `connect` happens in addSlice() (when the slice exists);
-    // wiring it here at construction time silently no-ops because m_slices
-    // is empty at this point — the first slice gets added later via
-    // addSlice() in connectToRadio(). Codex caught this on PR #149.
-    // In 3M-1b there is exactly one slice; wiring via slice(0) is correct.
-    // 3F multi-pan will need to re-evaluate when the active TX slice can change.
-    // TODO [3F]: rewire to activeSlice() when multi-panadapter TX switching lands.
+    // The actual per-slice connects happen in addSlice(); construction-time
+    // wiring would silently no-op because m_slices is still empty here.
 
     // MoxController::voxRunRequested → TxChannel::setVoxRun is wired in
     // connectToRadio() once m_txChannel is live — same reason as txReady /
@@ -1931,8 +1932,9 @@ RadioModel::RadioModel(QObject* parent)
             m_paProfileManager->activeProfile();
         if (!activeProfile)           { return; }
 
-        const Band currentBand = m_activeSlice
-                                    ? bandFromFrequency(m_activeSlice->frequency())
+        const SliceModel* const txSlice = txBoundSlice();
+        const Band currentBand = txSlice
+                                    ? bandFromFrequency(txSlice->frequency())
                                     : m_lastBand;
 
         // Phase 3C deep-parity wrapper: computes audio_volume + applies
@@ -2053,18 +2055,9 @@ RadioModel::RadioModel(QObject* parent)
         }
     }
 
-    // The gate silences whichever slice is active AT THE TIME OF THE BLOCK,
-    // but setMoxState samples activeSlice() once, at the transition. Handing
-    // TX to another slice mid-over (or closing the pan that owned it) moves
-    // the gate without moving the barrier withdrawal, which leaves the newly
-    // silenced slice enrolled with nothing to deliver -- and the drain waits
-    // on every member with no timeout (MasterMixer.h, divergence 3), so the
-    // whole mix stops for the rest of the transmission.
-    //
-    // The argument is dropped deliberately: activeSliceChanged carries a LIST
-    // POSITION (see the emits in setActiveSlice and removeSlice), while the
-    // mixer is keyed by stable slice id. AudioEngine re-reads activeSlice()
-    // itself rather than converting one to the other.
+    // Active focus is listening/UI state. AudioEngine keys its MOX withdrawal
+    // on the stable TX-bound slice id, so this notification deliberately has
+    // no authority to move the gate while keyed.
     if (m_audioEngine) {
         connect(this, &RadioModel::activeSliceChanged,
                 m_audioEngine, &AudioEngine::onActiveSliceChanged);
@@ -4093,21 +4086,23 @@ int RadioModel::addSlice(const QString& initialPanId)
         if (slice == txBoundSlice()) { pushTxFrequencyFromTxSlice(); }
     });
 
-    // 3M-1b H.1: wire VOX mode-gate from THIS slice's dspModeChanged ->
-    // MoxController. The construction-time wire-up at line ~677 silently
-    // no-ops because m_slices is empty at that point; the first slice is
-    // added here. Codex P1 fix on PR #149.
+    // 3M-1b H.1: only the TX-bound slice owns the global VOX mode gate.
+    // Every slice is wired because the binding can move, but an RX/UI-only
+    // slice must not disable or enable VOX by changing its demod mode.
     if (m_moxController) {
-        connect(slice, &SliceModel::dspModeChanged,
-                m_moxController, &MoxController::onModeChanged);
+        connect(slice, &SliceModel::dspModeChanged, this,
+                [this, slice](DSPMode mode) {
+            if (slice == txBoundSlice()) {
+                m_moxController->onModeChanged(mode);
+            }
+        });
     }
 
-    // Phase 3P-II Phase 4 Task 96: auto-recall TGXL tune memory when this
-    // slice crosses a band boundary.  In Phase 3F multi-slice, this should
-    // be gated to the active slice only; for now all slices are valid
-    // triggers because NereusSDR is single-slice (Slice A).
-    connect(slice, &SliceModel::bandChanged,
-            this, &RadioModel::onSliceBandChanged);
+    // Phase 3P-II Phase 4 Task 96: the TGXL follows the transmitter, not
+    // whichever receiver the operator happens to tune. Preserve source
+    // identity so onSliceBandChanged can enforce that authority.
+    connect(slice, &SliceModel::bandChanged, this,
+            [this, slice](Band band) { onSliceBandChanged(slice, band); });
 
     // Phase 3F Sub-Epic F Task 11: when the operator flips this slice's
     // wideband-extension flag (e.g. zoom-out past DDC bandwidth, or
@@ -5775,40 +5770,7 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             //
             // Cite: pre-code review §0.3 + MoxController.h K.2 API contract.
             if (m_moxController) {
-                m_moxController->setMoxCheck([this]() -> safety::BandPlanGuard::MoxCheckResult {
-                    // Derive region from AppSettings (same key used by SetupDialog).
-                    // Default to Region2 (United States), matching Thetis behaviour
-                    // when no region has been configured.
-                    const int regionInt = AppSettings::instance()
-                        .value(QStringLiteral("BandPlanRegion"),
-                               QString::number(static_cast<int>(safety::Region::UnitedStates)))
-                        .toInt();
-                    const auto region = static_cast<safety::Region>(regionInt);
-
-                    const SliceModel* slice = !m_slices.isEmpty() ? m_slices.first() : nullptr;
-                    if (!slice) {
-                        return {true, QString()};  // no slice → allow (no band context)
-                    }
-
-                    const auto freqHz = static_cast<std::int64_t>(slice->frequency());
-                    const DSPMode mode = slice->dspMode();
-                    // Band derived from m_lastBand (RadioModel's VFO band tracker).
-                    // SliceModel has no band() accessor; m_lastBand is updated on
-                    // every frequency change and reflects the current VFO band.
-                    const Band rxBand  = m_lastBand;
-                    // TX band: follow RX band (simplex). 3M-2/3F will separate TX band
-                    // when split-VFO and cross-band TX are supported.
-                    const Band txBand  = rxBand;
-
-                    // preventDifferentBand and extended: deferred to 3M-2 / Setup TX page.
-                    // TODO [3M-2]: wire to AppSettings keys "PreventDifferentBandTx" + "ExtendedTx".
-                    const bool preventDifferentBand = false;
-                    const bool extended = false;
-
-                    return m_bandPlan.checkMoxAllowed(region, freqHz, mode,
-                                                      rxBand, txBand,
-                                                      preventDifferentBand, extended);
-                });
+                installBandPlanMoxCheck();
             }
 
             // ── 3M-1c L.2: TwoToneController TxChannel injection ───────────────
@@ -6889,12 +6851,12 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // QueuedConnection for TxChannel::requestFilterChange — ensuring the
             // debounce timer and WDSP call execute on the audio thread.
             //
-            // Step 1: main-thread lambda captures active slice DSP mode and
+            // Step 1: main-thread lambda captures TX-bound slice DSP mode and
             //         re-emits as txFilterRequest(low, high, mode).
             connect(&m_transmitModel, &TransmitModel::filterChanged,
                     this, [this](int audioLow, int audioHigh) {
-                DSPMode mode = m_activeSlice ? m_activeSlice->dspMode()
-                                             : DSPMode::USB;
+                const SliceModel* const txSlice = txBoundSlice();
+                DSPMode mode = txSlice ? txSlice->dspMode() : DSPMode::USB;
                 emit txFilterRequest(audioLow, audioHigh, mode);
             });
             // Step 2: txFilterRequest (main thread sender) → requestFilterChange
@@ -7127,14 +7089,15 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 //       a fresh setDspMode with engine available.
                 //
                 // Fix: now that m_wdspEngine + m_txWorker are alive AND
-                // the active slice already carries the RADE DSPMode,
+                // the TX-bound slice already carries the RADE DSPMode,
                 // synthesize the work setDspMode would have done. Create
                 // RadeChannel, configure sideband + start, and call
                 // wireRadeChannel which establishes all the connects.
-                if (m_activeSlice && m_wdspEngine) {
-                    const DSPMode mode = m_activeSlice->dspMode();
+                SliceModel* const txRadeSlice = txBoundSlice();
+                if (txRadeSlice && m_wdspEngine) {
+                    const DSPMode mode = txRadeSlice->dspMode();
                     if (mode == DSPMode::RADE_U || mode == DSPMode::RADE_L) {
-                        const int sliceId = m_activeSlice->sliceIndex();
+                        const int sliceId = txRadeSlice->sliceIndex();
                         RadeChannel* radeCh =
                             m_wdspEngine->radeChannel(sliceId);
                         if (radeCh == nullptr) {
@@ -7148,7 +7111,7 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                                 radeCh->setSideband(
                                     mode == DSPMode::RADE_U);
                                 wireRadeChannel(sliceId, radeCh,
-                                                m_activeSlice);
+                                                txRadeSlice);
                                 // start() reads Rade/ModelPath
                                 // AppSettings or falls back to "dummy"
                                 // sentinel (librade has weights baked
@@ -7199,8 +7162,9 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                                     return;
                                 }
                                 QString mode;
-                                if (m_activeSlice) {
-                                    const DSPMode m = m_activeSlice->dspMode();
+                                if (const SliceModel* const txSlice =
+                                        txBoundSlice()) {
+                                    const DSPMode m = txSlice->dspMode();
                                     if (m == DSPMode::RADE_U
                                         || m == DSPMode::RADE_L) {
                                         // freedv-gui FREEDV_MODE_RADE
@@ -7214,7 +7178,7 @@ void RadioModel::connectToRadio(const RadioInfo& info)
 
                 // ── Phase 3R Task K2: mode-aware path swap on MOX-on ──
                 //
-                // On every MOX-on transition, read the active slice's
+                // On every MOX-on transition, read the TX-bound slice's
                 // DSPMode and post a TxPath swap to the worker.  DSPMode
                 // == RADE -> TxPath::Rade (scaffolded; full integration
                 // K-bench).  Anything else -> TxPath::Wdsp (the existing
@@ -7231,9 +7195,11 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                                 if (!active) {
                                     return;   // released; pump will idle anyway
                                 }
-                                const DSPMode mode = m_activeSlice
-                                    ? m_activeSlice->dspMode()
-                                    : DSPMode::USB;
+                                const SliceModel* const txSlice =
+                                    txBoundSlice();
+                                const DSPMode mode =
+                                    txSlice ? txSlice->dspMode()
+                                            : DSPMode::USB;
                                 const bool isRade =
                                     (mode == DSPMode::RADE_U
                                      || mode == DSPMode::RADE_L);
@@ -7255,9 +7221,8 @@ void RadioModel::connectToRadio(const RadioInfo& info)
 
             // Issue #153 sub-bug 2 — initial TXA mode/bandpass seed.
             //
-            // m_txChannel is alive, m_activeSlice is non-null (loadSliceState
-            // ran earlier in connectToRadio at line ~1377 and restored the
-            // persisted dspMode + filterLow/filterHigh).  Push them now so
+            // m_txChannel is alive and the arbiter has a stable binding.
+            // Push that slice's persisted dspMode + filterLow/filterHigh so
             // SSB MOX no longer requires a prior TUN press to seed TXA
             // mode (default LSB) and bp0 cutoffs (default -5000..-100).
             //
@@ -7301,11 +7266,12 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // SetOutputPower + cmaster.CMSetTXOutputLevel
             // (audio.cs:262-271 + NetworkIO.cs:201-211 + cmaster.cs:
             // 1115-1119 [v2.10.3.13]).
-            if (m_paProfileManager && m_activeSlice) {
+            if (m_paProfileManager) {
                 const PaProfile* prof = m_paProfileManager->activeProfile();
-                if (prof) {
+                const SliceModel* const txSlice = txBoundSlice();
+                if (prof && txSlice) {
                     const Band currentBand =
-                        bandFromFrequency(m_activeSlice->frequency());
+                        bandFromFrequency(txSlice->frequency());
                     (void)m_transmitModel.setPowerUsingTargetDbm(
                         *prof, currentBand, /*bSetPower=*/true,
                         /*bFromTune=*/false, /*bTwoTone=*/false,
@@ -8350,25 +8316,39 @@ void RadioModel::connectMicPttDisabledSignal()
 // ---------------------------------------------------------------------------
 SliceModel* RadioModel::txBoundSlice() const
 {
-    // Asks the arbiter to resolve its own index rather than resolving it
-    // here. The index is a LIST POSITION -- requestHandoff writes the
-    // txSlice flag positionally -- so resolving it through sliceById()
-    // picked a different slice than the one carrying the flag as soon as a
-    // mid-list removal made ids and positions diverge: with A(0) B(1) C(2),
-    // removing B and handing TX to C leaves the flag on C at position 1
-    // while sliceById(1) resolves nothing at all, and the fallback below
-    // then handed the transmit frequency to whichever slice was active.
-    // Going through TxSliceArbiter::txBoundSlice() makes
-    // `slice == txBoundSlice()` and `slice->isTxSlice()` one predicate.
-    if (m_txSliceArbiter) {
-        if (auto* s = m_txSliceArbiter->txBoundSlice()) {
-            return s;
-        }
+    if (!m_txSliceArbiter) {
+        return nullptr;
     }
-    // No arbiter binding resolves (no slices yet, or no arbiter at all).
-    // Falling back to the active slice keeps single-slice behaviour
-    // byte-identical.
-    return m_activeSlice;
+    return sliceById(m_txSliceArbiter->txBoundSliceId());
+}
+
+void RadioModel::installBandPlanMoxCheck()
+{
+    if (!m_moxController) {
+        return;
+    }
+
+    m_moxController->setMoxCheck([this]() -> safety::BandPlanGuard::MoxCheckResult {
+        const int regionInt = AppSettings::instance()
+            .value(QStringLiteral("BandPlanRegion"),
+                   QString::number(static_cast<int>(safety::Region::UnitedStates)))
+            .toInt();
+        const auto region = static_cast<safety::Region>(regionInt);
+
+        const SliceModel* slice = txBoundSlice();
+        if (!slice) {
+            return {false, QStringLiteral("No TX-bound slice")};
+        }
+
+        const auto freqHz = static_cast<std::int64_t>(slice->frequency());
+        const DSPMode mode = slice->dspMode();
+        const Band txBand = bandFromFrequency(slice->frequency());
+
+        return m_bandPlan.checkMoxAllowed(region, freqHz, mode,
+                                          txBand, txBand,
+                                          /*preventDifferentBand=*/false,
+                                          /*extended=*/false);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -8442,28 +8422,9 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         if (m_freeDvReporter && m_freeDvReporter->isConnected()) {
             publishFreedvFrequencyDwelled(static_cast<quint64>(freq));
         }
-        // TX follows RX (simplex) — but only for the slice that actually
-        // holds the transmitter.
-        //
-        // This used to fire for whichever slice was ACTIVE, which is the
-        // same slice only in a single-slice session. With slice B TX-bound
-        // on 80 m and slice A merely active on 10 m, turning A's knob
-        // retuned the transmitter to 10 m and dragged the Alex TX low-pass
-        // along with it. Thetis guards the equivalent arm with
-        // `!chkVFOBTX.Checked` (console.cs:31889 [v2.10.3.15]) so the
-        // displayed VFO stands down when it is not the transmit VFO.
-        //
-        // pushTxFrequencyFromTxSlice re-reads the TX-bound slice rather than
-        // trusting `freq`, so a retune of a non-TX slice is a no-op here
-        // instead of a wrong-band transmit frequency.
-        //
-        // Gated on txBoundSlice(), not SliceModel::isTxSlice() -- see the
-        // matching connects in addSlice for why. The two agree wherever a
-        // binding resolves; where none does, only txBoundSlice() keeps the
-        // TX low-pass following the transmit frequency.
-        if (slice == txBoundSlice()) {
-            pushTxFrequencyFromTxSlice();
-        }
+        // The TX frequency fan-out lives in addSlice(), where it is wired
+        // once for every slice regardless of connection lifecycle. Keeping
+        // a second copy here used to publish each bound-slice retune twice.
         // Track band from VFO frequency so per-band saves target the correct
         // band even when the panadapter center hasn't crossed the boundary.
         //
@@ -8548,42 +8509,28 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         // with the running worker and SIGSEGV'd on band change.
         // commits 1ed5464/1b4ba06/fd5c807 swapped the rebuild path for
         // the in-place setters, so the live-apply is safe to restore.
-        if (m_txChannel) {
-            const qint64 txElapsed = m_txChannel->onModeChanged(mode);
-            // Same return-code convention as the RX path above.
-            if (txElapsed > 0) {
-                emit dspChangeMeasured(txElapsed);
+        if (slice == txBoundSlice()) {
+            if (m_txChannel) {
+                const qint64 txElapsed = m_txChannel->onModeChanged(mode);
+                // Same return-code convention as the RX path above.
+                if (txElapsed > 0) {
+                    emit dspChangeMeasured(txElapsed);
+                }
             }
-        }
-        // Issue #153 sub-bug 2 — TX-side mode + bandpass push (trigger #2
-        // of 3).  Mirrors Thetis console.cs:33937 [v2.10.3.13] mode-change
-        // handler calling SetTXFilters + (CurrentDSPMode setter) →
-        // SetTXAMode.  Without this, the user can change slice mode while
-        // not transmitting and the next MOX would still use the previous
-        // mode's TXA setup.
-        pushTxModeAndBandpass();
 
-        // 2026-05-12 bench fix (PR #238): snap TX BW to the RADE
-        // modem audio passband on entry into RADE_U / RADE_L.  RADE's
-        // baseband occupies 650-2350 Hz (1700 Hz wide centered at
-        // 1500 Hz); the SSB modulator must pass only that window or
-        // wider AF leaks onto the wire and degrades the modem.  On
-        // exit from RADE, restore the standing default 100-3900 Hz
-        // for voice SSB so the user doesn't get stuck on a narrow
-        // window after switching back.  This pre-emptively matches
-        // the per-mode TX filter Thetis applies via SetTXFilters
-        // (console.cs:33937 [v2.10.3.13]) for the RADE case
-        // NereusSDR adds; non-RADE modes keep whatever the user had.
-        if (mode == DSPMode::RADE_U || mode == DSPMode::RADE_L) {
-            m_transmitModel.setFilterLow(650);
-            m_transmitModel.setFilterHigh(2350);
-        } else {
-            // Leaving RADE: only restore the standing voice default
-            // if the current filter is the RADE-narrow window;
-            // otherwise leave the user's choice alone so a custom
-            // voice SSB BW (e.g. 200-2700 for ESSB) persists.
-            if (m_transmitModel.filterLow() == 650
-                && m_transmitModel.filterHigh() == 2350) {
+            // Issue #153 sub-bug 2 — TX-side mode + bandpass push (trigger
+            // #2 of 3). A listening slice still updates its own RX WDSP
+            // state above, but it has no authority over this global chain.
+            pushTxModeAndBandpass();
+
+            // 2026-05-12 bench fix (PR #238): snap TX BW to the RADE modem
+            // audio passband only when the transmitter's mode changes.
+            if (mode == DSPMode::RADE_U || mode == DSPMode::RADE_L) {
+                m_transmitModel.setFilterLow(650);
+                m_transmitModel.setFilterHigh(2350);
+            } else if (m_transmitModel.filterLow() == 650
+                       && m_transmitModel.filterHigh() == 2350) {
+                // Leaving RADE: preserve custom voice bandwidths.
                 m_transmitModel.setFilterLow(100);
                 m_transmitModel.setFilterHigh(3900);
             }
@@ -9193,23 +9140,8 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     connect(slice, &SliceModel::diguOffsetHzChanged, this, updateShiftFrequency);
     connect(slice, &SliceModel::dspModeChanged,      this, updateShiftFrequency);
 
-    // XIT change → push updated TX frequency (offset from current VFO freq).
-    // Parallel to the RIT updateShiftFrequency pattern above: when XIT state
-    // changes, recompute and push the new TX NCO frequency.  The VFO frequency
-    // itself does not change — only the TX NCO offset.
-    auto updateTxFrequency = [this, slice]() {
-        // Same TX-bound gate as the frequencyChanged handler above: XIT on a
-        // slice that is not transmitting has nothing to offset. Gated on
-        // txBoundSlice() rather than SliceModel::isTxSlice() for the reason
-        // spelled out at the matching connects in addSlice (they agree
-        // wherever a binding resolves; only txBoundSlice() has a fallback
-        // where none does).
-        if (slice == txBoundSlice()) {
-            pushTxFrequencyFromTxSlice();
-        }
-    };
-    connect(slice, &SliceModel::xitEnabledChanged, this, updateTxFrequency);
-    connect(slice, &SliceModel::xitHzChanged,      this, updateTxFrequency);
+    // XIT-to-TX fan-out is likewise wired once in addSlice(). This block
+    // retains only the RX shift-frequency consumers above.
 
     // RTTY mark + shift → bandpass filter
     //
@@ -9365,12 +9297,15 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
 
         scheduleSettingsSave();
     });
-    connect(slice, &SliceModel::txAntennaChanged, this, [this](const QString& ant) {
+    connect(slice, &SliceModel::txAntennaChanged, this,
+            [this, slice](const QString& ant) {
+        if (slice != txBoundSlice()) { return; }
         int antNum = 1;
         if (ant == QLatin1String("ANT2")) { antNum = 2; }
         else if (ant == QLatin1String("ANT3")) { antNum = 3; }
         // Note: setTxAnt respects blockTxAnt2/3 safety guards; reject is silent.
-        m_alexController.setTxAnt(m_lastBand, antNum);
+        m_alexController.setTxAnt(
+            bandFromFrequency(slice->frequency()), antNum);
         scheduleSettingsSave();
     });
 
@@ -9509,30 +9444,21 @@ void RadioModel::loadSliceState(SliceModel* slice)
     emit sliceStateRestored(slice->sliceIndex());
 }
 
-// Issue #153 sub-bug 2 — push the active slice's DSPMode + the user's
-// configured TX bandpass to TxChannel.  See header comment for wire
+// Issue #153 sub-bug 2 — push the TX-bound slice's DSPMode + bandpass to
+// TxChannel.  See header comment for wire
 // targets and Thetis source-of-truth cites.  Called by all three
 // triggers (createTxChannel post-create, SliceModel::dspModeChanged,
 // MoxController::txAboutToBegin).
 //
-// Filter source is m_transmitModel (NOT m_activeSlice).  TransmitModel
-// stores audio-space TX cutoffs (positive, low <= high enforced by
-// setFilterLow/High swap-on-commit at TransmitModel.cpp:2526-2549),
-// which is what TxChannel::requestFilterChange + applyTxFilterForMode
-// expect.  SliceModel::filterLow/High are RX-passband IQ-space values
-// (negative for LSB-family modes); routing those through
-// applyTxFilterForMode would double-negate on LSB and silently
-// overwrite any user-configured TX bandwidth on every connect/MOX.
-// Mirrors the canonical wire at RadioModel.cpp:2550-2560 which reads
-// audioLow/audioHigh straight from TransmitModel::filterChanged.
 void RadioModel::pushTxModeAndBandpass()
 {
-    if (!m_activeSlice) {
+    SliceModel* const slice = txBoundSlice();
+    if (!slice) {
         return;
     }
-    const DSPMode mode      = m_activeSlice->dspMode();
-    const int     audioLow  = m_transmitModel.filterLow();
-    const int     audioHigh = m_transmitModel.filterHigh();
+    const DSPMode mode      = slice->dspMode();
+    const int     audioLow  = slice->filterLow();
+    const int     audioHigh = slice->filterHigh();
 
     // Diagnostic / test-observation hook fires unconditionally (m_txChannel
     // can be null during odd lifecycle moments — addSlice before
@@ -9799,13 +9725,32 @@ void RadioModel::republishAlexAdcSlices()
 
     std::array<std::array<Band, kSliceSlots>, kAdcCount> bands;
     for (auto& perAdc : bands) { perAdc.fill(Band::Count); }
+    std::array<std::array<quint8, kSliceSlots>, kAdcCount> preselectors{};
     std::array<int, kAdcCount>    counts   {0, 0};
     std::array<double, kAdcCount> lowestHz {0.0, 0.0};
 
-    auto addToChain = [&bands, &counts, &lowestHz](int chain, Band band, double hz) {
+    const HPSDRHW alexBoard = boardCapabilities().board;
+    auto addToChain = [&bands, &preselectors, &counts, &lowestHz, alexBoard](
+                          int chain, Band band, double hz) {
         if (chain < 0 || chain >= kAdcCount) { return; }
-        if (counts[chain] >= kSliceSlots)    { return; }
+        const quint8 physicalFilter =
+            codec::alex::computeRxPreselector(hz / 1.0e6, alexBoard);
+
+        // Compatibility is a property of the relay selection, not the Band
+        // enum. Several amateur bands share one physical filter (for
+        // example 20/17/15 m on the Saturn BPF1 bank). Count those as one
+        // compatible range; bypass only when the chain would need two
+        // different relay selections at once.
+        for (int i = 0; i < counts[chain]; ++i) {
+            if (preselectors[chain][i] == physicalFilter) {
+                if (hz < lowestHz[chain]) { lowestHz[chain] = hz; }
+                return;
+            }
+        }
+
+        if (counts[chain] >= kSliceSlots) { return; }
         bands[chain][counts[chain]] = band;
+        preselectors[chain][counts[chain]] = physicalFilter;
         if (counts[chain] == 0 || hz < lowestHz[chain]) { lowestHz[chain] = hz; }
         ++counts[chain];
     };
@@ -11041,7 +10986,9 @@ void RadioModel::setTune(bool on)
         // ── SAVE current DSP mode ──────────────────────────────────────────────
         // Cite: console.cs:30042 [v2.10.3.13]:
         //   old_dsp_mode = radio.GetDSPTX(0).CurrentDSPMode;
-        m_savedTxDspMode = m_activeSlice ? m_activeSlice->dspMode() : DSPMode::USB;
+        SliceModel* const txSlice = txBoundSlice();
+        m_savedTxDspSliceId = txSlice ? txSlice->sliceIndex() : -1;
+        m_savedTxDspMode = txSlice ? txSlice->dspMode() : DSPMode::USB;
 
         // ── SAVE power slider value ────────────────────────────────────────────
         // Cite: console.cs:30033 [v2.10.3.13]: PreviousPWR = ptbPWR.Value;
@@ -11085,7 +11032,7 @@ void RadioModel::setTune(bool on)
         // Cite: console.cs:30043-30070 [v2.10.3.13]:
         //   switch (old_dsp_mode) { case CWL: ... TXDSPMode = LSB; break;
         //                            case CWU: ... TXDSPMode = USB; break; }
-        if (m_activeSlice) {
+        if (txSlice) {
             DSPMode swappedMode = m_savedTxDspMode;
             switch (m_savedTxDspMode) {
                 case DSPMode::CWL:
@@ -11098,7 +11045,7 @@ void RadioModel::setTune(bool on)
                     break;  // no swap for SSB/AM/FM/DIGU/DIGL/etc.
             }
             if (swappedMode != m_savedTxDspMode) {
-                m_activeSlice->setDspMode(swappedMode);
+                txSlice->setDspMode(swappedMode);
             }
         }
 
@@ -11128,8 +11075,8 @@ void RadioModel::setTune(bool on)
         //   wire = clamp(int(255 * tunePower/100 * swrProtect), 0, 255)
         // shipped K2GX's >300W on 200W radio.  This rewrite is the
         // K2GX safety fix proper.
-        const Band currentBand = m_activeSlice
-                                    ? bandFromFrequency(m_activeSlice->frequency())
+        const Band currentBand = txSlice
+                                    ? bandFromFrequency(txSlice->frequency())
                                     : m_lastBand;
 
         // tunePower retained as a local for the SwrProtectionController
@@ -11989,13 +11936,15 @@ void RadioModel::completeTuneOff()
     // Cite: console.cs:30112-30122 [v2.10.3.13]:
     //   switch (old_dsp_mode) { case CWL: case CWU:
     //       radio.GetDSPTX(0).CurrentDSPMode = old_dsp_mode; ... }
-    if (m_activeSlice) {
+    if (SliceModel* const savedTxSlice =
+            sliceById(m_savedTxDspSliceId)) {
         const bool wasSwapped = (m_savedTxDspMode == DSPMode::CWL ||
                                  m_savedTxDspMode == DSPMode::CWU);
         if (wasSwapped) {
-            m_activeSlice->setDspMode(m_savedTxDspMode);
+            savedTxSlice->setDspMode(m_savedTxDspMode);
         }
     }
+    m_savedTxDspSliceId = -1;
 
     // ── RESTORE POWER ──────────────────────────────────────────────────────
     // Cite: console.cs:30129-30132 [v2.10.3.13]:
@@ -12020,8 +11969,9 @@ void RadioModel::completeTuneOff()
     // since TUN is now off and the user's saved drive-slider value
     // is the canonical post-restore source.
     m_transmitModel.setPower(m_savedPowerPct);
-    const Band offBand = m_activeSlice
-                            ? bandFromFrequency(m_activeSlice->frequency())
+    const SliceModel* const txSlice = txBoundSlice();
+    const Band offBand = txSlice
+                            ? bandFromFrequency(txSlice->frequency())
                             : m_lastBand;
     if (m_paProfileManager) {
         const PaProfile* activeProfile = m_paProfileManager->activeProfile();
@@ -12075,8 +12025,12 @@ void RadioModel::onMoxHardwareFlipped(bool isTx)
     // is read inside applyAlexAntennaForBand; result is pushed to
     // m_connection->setAntennaRouting() internally.
     // Pre-code review §2.3 step 8 [v2.10.3.13].
-    const Band band = m_activeSlice
-                        ? bandFromFrequency(m_activeSlice->frequency())
+    SliceModel* const txSlice = txBoundSlice();
+    if (isTx && txSlice == nullptr) {
+        return;
+    }
+    const Band band = txSlice
+                        ? bandFromFrequency(txSlice->frequency())
                         : m_lastBand;
     applyAlexAntennaForBand(band, isTx);
 
@@ -12127,19 +12081,25 @@ void RadioModel::onMoxHardwareFlipped(bool isTx)
     //     restore is acceptable for TUN-only scope; if bench shows a click
     //     on TX→RX, wire a separate rxReady slot in a follow-up.
     if (m_wdspEngine) {
-        // Only RX channel 0 is active in 3M-1a (single-RX, no RX2).
-        // Thetis conditionally shuts down RX1 (id(0,0)) and sub-RX (id(0,1))
-        // based on chkVFOATX/chkVFOBTX/RX2Enabled/mute_* flags.
-        // For 3M-1a we unconditionally act on channel 0 (the only created channel).
-        if (auto* rxCh = m_wdspEngine->rxChannel(0)) {
-            if (isTx) {
-                // RX off + flush.  SetChannelState(id, 0, 1) — matches
-                // Thetis console.cs:29534 [v2.10.3.13].
-                rxCh->setActive(false);
-            } else {
-                // RX on, no flush.  SetChannelState(id, 1, 0) — matches
-                // Thetis console.cs:29629 [v2.10.3.13].
-                rxCh->setActive(true);
+        if (isTx) {
+            if (m_moxStoppedRxChannel < 0 && txSlice != nullptr) {
+                const int channelId = txSlice->sliceIndex();
+                if (auto* const rxCh = m_wdspEngine->rxChannel(channelId)) {
+                    // RX off + flush. SetChannelState(id, 0, 1), matching
+                    // Thetis console.cs:29534 [v2.10.3.13].
+                    rxCh->setActive(false);
+                    m_moxStoppedRxChannel = channelId;
+                }
+            }
+        } else {
+            const int channelId = m_moxStoppedRxChannel;
+            m_moxStoppedRxChannel = -1;
+            if (channelId >= 0) {
+                if (auto* const rxCh = m_wdspEngine->rxChannel(channelId)) {
+                    // RX on, no flush. SetChannelState(id, 1, 0), matching
+                    // Thetis console.cs:29629 [v2.10.3.13].
+                    rxCh->setActive(true);
+                }
             }
         }
     }
@@ -13085,13 +13045,11 @@ void RadioModel::sendTgxlAutotuneCmd()
 // hint (the table shows what was tuned last time).  The fall-back is noted in
 // the log so a future implementer can see the placeholder clearly.
 //
-// Connected from addSlice() to every SliceModel::bandChanged.  The active-slice
-// guard (m_activeSlice == caller) is not checked here because in single-slice
-// builds every band change is from the active slice.  If multi-slice lands
-// (Phase 3F) the connect site in addSlice() should be guarded to the active
-// slice only.
-void RadioModel::onSliceBandChanged(NereusSDR::Band band)
+// Connected from addSlice() to every SliceModel::bandChanged. Only the
+// stable TX binding may propagate a band transition to the global TGXL.
+void RadioModel::onSliceBandChanged(SliceModel* source, NereusSDR::Band band)
 {
+    if (source != txBoundSlice()) { return; }
     if (!m_tuneMemoryStore || !m_tgxlConnection) { return; }
 
     const bool autoRecall = AppSettings::instance()

@@ -137,6 +137,42 @@ private:
 
 private slots:
 
+    void txBoundSliceIsGatedAndRestoredAcrossActiveSliceChanges()
+    {
+        Harness h = makeHarness(/*sliceCount=*/2);
+        QVERIFY(h.radio->requestTxHandoffToSlice(1));
+        QCOMPARE(h.radio->activeSlice()->sliceIndex(), 0);
+        QCOMPARE(h.radio->txBoundSlice()->sliceIndex(), 1);
+        QVERIFY(h.audioFlows());
+
+        h.engine->setMoxStateForTest(true);
+        QCOMPARE(h.engine->masterMixForTest().producingSliceCount(), 1);
+
+        int before = h.speakers->pushCount();
+        h.engine->rxBlockReady(0, kBlock.data(), kTestFrames);
+        QVERIFY2(h.speakers->pushCount() > before,
+                 "listening slice A stopped flowing when TX-bound slice C keyed");
+
+        before = h.speakers->pushCount();
+        h.engine->rxBlockReady(1, kBlock.data(), kTestFrames);
+        QCOMPARE(h.speakers->pushCount(), before);
+
+        h.radio->setActiveSlice(1);
+        h.radio->setActiveSlice(0);
+        QCOMPARE(h.engine->masterMixForTest().producingSliceCount(), 1);
+
+        h.engine->setMoxStateForTest(false);
+        h.feedPeriod();
+        QCOMPARE(h.engine->masterMixForTest().producingSliceCount(), 2);
+        QCOMPARE(h.engine->antiVoxMixForTest().producingSliceCount(), 2);
+
+        // A duplicate release edge must not re-admit or otherwise churn a
+        // second slice; the captured TX-bound identity was restored once.
+        h.engine->setMoxStateForTest(false);
+        QCOMPARE(h.engine->masterMixForTest().producingSliceCount(), 2);
+        QCOMPARE(h.engine->antiVoxMixForTest().producingSliceCount(), 2);
+    }
+
     // ── Sanity: the wire exists at all ────────────────────────────────────
     void wire_moxStateChanged_reaches_audioEngine()
     {

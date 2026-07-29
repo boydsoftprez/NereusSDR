@@ -29,6 +29,7 @@
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
+#include "core/TxSliceArbiter.h"
 #include "core/WdspTypes.h"
 
 using namespace NereusSDR;
@@ -53,8 +54,7 @@ private slots:
         QVERIFY(slice != nullptr);
 
         slice->setDspMode(DSPMode::USB);
-        model.transmitModel().setFilterLow(150);
-        model.transmitModel().setFilterHigh(2850);
+        slice->setFilter(150, 2850);
 
         QSignalSpy spy(&model, &RadioModel::txModeAndBandpassPushed);
         model.pushTxModeAndBandpass();
@@ -82,13 +82,10 @@ private slots:
         SliceModel* slice = model.activeSlice();
         QVERIFY(slice != nullptr);
 
-        // User-configured TX BW stays the same regardless of slice mode.
-        model.transmitModel().setFilterLow(150);
-        model.transmitModel().setFilterHigh(2850);
-
         QSignalSpy spy(&model, &RadioModel::txModeAndBandpassPushed);
 
         slice->setDspMode(DSPMode::LSB);
+        slice->setFilter(150, 2850);
         model.pushTxModeAndBandpass();
         QCOMPARE(spy.count(), 1);
         QCOMPARE(spy.at(0).at(0).value<DSPMode>(), DSPMode::LSB);
@@ -96,11 +93,44 @@ private slots:
         QCOMPARE(spy.at(0).at(2).toInt(), 2850);  // audio-space, NOT -150
 
         slice->setDspMode(DSPMode::USB);
+        slice->setFilter(150, 2850);
         model.pushTxModeAndBandpass();
         QCOMPARE(spy.count(), 2);
         QCOMPARE(spy.at(1).at(0).value<DSPMode>(), DSPMode::USB);
         QCOMPARE(spy.at(1).at(1).toInt(), 150);
         QCOMPARE(spy.at(1).at(2).toInt(), 2850);
+    }
+
+    void pushUsesTheTxBoundSliceWhenActiveAndTxDiffer()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5, 192000);
+
+        const int aId = model.addSlice();
+        SliceModel* const a = model.sliceById(aId);
+        QVERIFY(a);
+        a->setDspMode(DSPMode::USB);
+        a->setFilter(300, 3000);
+
+        model.addSlice();
+        const int cId = model.addSlice();
+        SliceModel* const c = model.sliceById(cId);
+        QVERIFY(c);
+        c->setDspMode(DSPMode::DIGL);
+        c->setFilter(-2450, -250);
+
+        QVERIFY(model.setActiveSliceById(aId));
+        QVERIFY(model.txSliceArbiter()->requestHandoff(cId));
+        QCOMPARE(model.activeSlice(), a);
+        QCOMPARE(model.txBoundSlice(), c);
+
+        QSignalSpy spy(&model, &RadioModel::txModeAndBandpassPushed);
+        model.pushTxModeAndBandpass();
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).value<DSPMode>(), DSPMode::DIGL);
+        QCOMPARE(spy.at(0).at(1).toInt(), -2450);
+        QCOMPARE(spy.at(0).at(2).toInt(), -250);
     }
 
     // ── Contract: no emit without an active slice ────────────────────────────
@@ -118,6 +148,7 @@ private slots:
         model.pushTxModeAndBandpass();
         QCOMPARE(spy.count(), 0);
     }
+
 };
 
 QTEST_MAIN(TestRadioModelPushTxModeAndBandpass)
