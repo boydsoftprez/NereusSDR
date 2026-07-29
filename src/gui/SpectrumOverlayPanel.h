@@ -30,7 +30,7 @@
 //   2026-04-20 — Phase 3O Sub-Phase 9 Task 9.2c (issue #70 fold-in):
 //                 added setRadioModel() so the previously-disabled VAX Ch
 //                 combo on the left-edge overlay is now wired bidirectionally
-//                 to slice 0's vaxChannel() with echo prevention. IQ Ch
+//                 to the resolved pan slice's vaxChannel() with echo prevention. IQ Ch
 //                 stays feature-flagged off (design spec §6.7/§11.3 —
 //                 audio/SendIqToVax stored-but-not-active). J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
@@ -41,6 +41,7 @@
 
 #include <QWidget>
 #include <QVector>
+#include <functional>
 
 class QPushButton;
 class QComboBox;
@@ -53,6 +54,7 @@ namespace NereusSDR {
 
 struct BoardCapabilities;
 class RadioModel;
+class SliceModel;
 
 class SpectrumOverlayPanel : public QWidget {
     Q_OBJECT
@@ -70,11 +72,15 @@ public:
     QString panId() const { return m_panId; }
 
     // Bind this overlay panel to a RadioModel. Enables the VAX Ch combo
-    // and wires it bidirectionally to slice 0's vaxChannel(). Safe to
+    // and wires it bidirectionally to the resolved pan slice. Safe to
     // call multiple times — each rebind drops prior SliceModel connections.
     // The IQ Ch combo remains disabled (feature-flagged per design spec
     // §6.7/§11.3 — audio/SendIqToVax is stored-but-not-active).
     void setRadioModel(RadioModel* model);
+
+    using SliceResolver = std::function<SliceModel*()>;
+    void setSliceResolver(SliceResolver resolver);
+    void bindToPanSlice();
 
     // Raise panel and all flyouts above siblings.
     void raiseAll();
@@ -82,7 +88,7 @@ public:
 public slots:
     // Phase 3P-I-a T18 — repopulate antenna combos from caps and hide
     // both RX/TX rows on boards without Alex (HL2/Atlas). Also reseeds
-    // the combo's current value from slice 0 so the label matches the
+    // the combo's current value from the resolved slice so the label matches the
     // new port list (e.g. a persisted ANT3 preserves after reconnect).
     void setBoardCapabilities(const NereusSDR::BoardCapabilities& caps);
 
@@ -178,7 +184,7 @@ private:
     QComboBox*   m_rxAntCmb{nullptr};
     QComboBox*   m_txAntCmb{nullptr};
     // Stored so the widget→model connection ordering inside setRadioModel
-    // can replicate the bindToSliceZero pattern used for VAX.
+    // can replicate the per-pan rebind pattern used for VAX.
     QMetaObject::Connection m_rxAntConn;
     QMetaObject::Connection m_txAntConn;
     QSlider*     m_rfGainSlider{nullptr};
@@ -215,14 +221,11 @@ private:
     // prior subscription. m_updatingFromModel guards the echo path
     // (model → widget) from re-triggering the widget → model side.
     RadioModel*              m_radioModel{nullptr};
+    SliceResolver            m_sliceResolver;
     QMetaObject::Connection  m_vaxChannelConn;
     bool                     m_updatingFromModel{false};
 
-    // Seat (or re-seat) the Model→Widget subscription onto whichever
-    // SliceModel currently occupies index 0. Called from setRadioModel()
-    // at bind time AND from the sliceAdded/sliceRemoved listeners so a
-    // late-arriving or reshuffled slice 0 rebinds cleanly.
-    void bindToSliceZero();
+    SliceModel* resolvedSlice() const;
 
     // ── Waterfall zoom buttons (bottom-left of spectrum widget) ──────────
     QWidget*     m_zoomStrip{nullptr};   // container for the 4 zoom buttons

@@ -77,18 +77,11 @@ PanadapterApplet::PanadapterApplet(const QString& panId, QWidget* parent)
             [this](int chainIdx) { emit chainTagClicked(m_panId, chainIdx); });
 
     // Phase 3F Sub-Epic F Task 13: restore persisted extended-view
-    // toggle (default true). The SpectrumWidget's own auto-derive
-    // decides extendedMode dynamically when this is true; when this
-    // is false the auto-derive is overridden to off (see
-    // setExtendedViewEnabled). We avoid pushing the state to
-    // m_spectrum here because setFrequencyRange / setSampleRate run
-    // their own auto-derive on first wire; we only force the override
-    // when the operator explicitly toggles off via the right-click
-    // menu below.
+    // toggle (default true) and apply it to the embedded spectrum immediately.
     auto& s = AppSettings::instance();
     const QString stored = s.value(QStringLiteral("Pan_%1_ExtendedView").arg(m_panId),
                                    QStringLiteral("True")).toString();
-    m_extendedViewEnabled = (stored == QStringLiteral("True"));
+    setExtendedViewEnabled(stored == QStringLiteral("True"));
 }
 
 PanadapterApplet::~PanadapterApplet() = default;
@@ -277,17 +270,15 @@ QString PanadapterApplet::wideReason() const
 // the auto-derive and pick the right state for the current zoom.
 void PanadapterApplet::setExtendedViewEnabled(bool on)
 {
-    if (m_extendedViewEnabled == on) { return; }
+    const bool changed = (m_extendedViewEnabled != on);
     m_extendedViewEnabled = on;
-    auto& s = AppSettings::instance();
-    s.setValue(QStringLiteral("Pan_%1_ExtendedView").arg(m_panId),
-               on ? QStringLiteral("True") : QStringLiteral("False"));
-    if (m_spectrum && !on) {
-        // Force extended mode off (operator override). Turning the
-        // toggle back on doesn't immediately push true because the
-        // auto-derive should re-decide based on current zoom; the next
-        // setFrequencyRange call inside the widget will rebase it.
-        m_spectrum->setExtendedMode(false);
+    if (changed) {
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("Pan_%1_ExtendedView").arg(m_panId),
+                   on ? QStringLiteral("True") : QStringLiteral("False"));
+    }
+    if (m_spectrum) {
+        m_spectrum->setExtendedMode(on);
     }
 }
 

@@ -19,10 +19,13 @@ using namespace NereusSDR;
 class TestTxSliceArbiter : public QObject {
     Q_OBJECT
 private slots:
-    void default_tx_bound_slice_index_is_0()
+    void initTestCase() { AppSettings::instance().clear(); }
+    void cleanup()      { AppSettings::instance().clear(); }
+
+    void default_tx_bound_slice_id_is_unbound()
     {
         TxSliceArbiter arb;
-        QCOMPARE(arb.txBoundSliceIndex(), 0);
+        QCOMPARE(arb.txBoundSliceId(), -1);
     }
 
     void handoff_to_already_bound_slice_is_noop_returns_true()
@@ -72,7 +75,7 @@ private slots:
 
         QCOMPARE(slices[0]->isTxSlice(), false);
         QCOMPARE(slices[1]->isTxSlice(), true);
-        QCOMPARE(arb.txBoundSliceIndex(), 1);
+        QCOMPARE(arb.txBoundSliceId(), 1);
     }
 
     void handoff_drops_mox_first_then_flips()
@@ -103,7 +106,7 @@ private slots:
         QCOMPARE(slices[1]->isTxSlice(), true);  // handoff completed
     }
 
-    void tx_bound_index_persists_per_mac()
+    void tx_bound_id_persists_per_mac()
     {
         const QString mac = QStringLiteral("aa:bb:cc:dd:ee:ff");
         QVector<SliceModel*> slices;
@@ -125,14 +128,92 @@ private slots:
             arb2.setSliceList(&slices);
             arb2.setMacAddress(mac);
             arb2.load();
-            QCOMPARE(arb2.txBoundSliceIndex(), 2);
+            QCOMPARE(arb2.txBoundSliceId(), 2);
         }
+    }
+
+    void stable_id_handoff_selects_the_matching_slice_and_emits_its_id()
+    {
+        QVector<SliceModel*> slices;
+        buildSlicesWithIds(slices, {0, 4, 9});
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+
+        QSignalSpy spy(&arb, &TxSliceArbiter::txBoundSliceChanged);
+        QVERIFY(arb.requestHandoff(9));
+
+        QCOMPARE(arb.txBoundSlice(), slices[2]);
+        QCOMPARE(slices[2]->isTxSlice(), true);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.first().at(0).toInt(), 0);
+        QCOMPARE(spy.first().at(1).toInt(), 9);
+    }
+
+    void removing_an_unbound_slice_does_not_change_the_bound_stable_id()
+    {
+        QVector<SliceModel*> slices;
+        buildSlicesWithIds(slices, {0, 4, 9});
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        QVERIFY(arb.requestHandoff(9));
+
+        SliceModel* bound = slices[2];
+        slices.removeAt(1);
+        arb.syncToSliceList();
+
+        QCOMPARE(arb.txBoundSlice(), bound);
+        QCOMPARE(bound->sliceIndex(), 9);
+        QCOMPARE(bound->isTxSlice(), true);
+    }
+
+    void stable_id_key_restores_the_matching_slice()
+    {
+        const QString mac = QStringLiteral("aa:bb:cc:44:99:00");
+        const QString key = QStringLiteral("hardware/%1/TxBoundSliceId").arg(mac);
+        AppSettings::instance().setValue(key, 9);
+
+        QVector<SliceModel*> slices;
+        buildSlicesWithIds(slices, {0, 4, 9}, /*flagFirst*/ false);
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.setMacAddress(mac);
+        arb.load();
+
+        QCOMPARE(arb.txBoundSlice(), slices[2]);
+        QCOMPARE(slices[2]->isTxSlice(), true);
+    }
+
+    void legacy_position_is_migrated_once_to_a_stable_id()
+    {
+        const QString mac = QStringLiteral("aa:bb:cc:44:99:01");
+        const QString legacyKey =
+            QStringLiteral("hardware/%1/TxBoundSliceIndex").arg(mac);
+        const QString idKey =
+            QStringLiteral("hardware/%1/TxBoundSliceId").arg(mac);
+        AppSettings::instance().setValue(legacyKey, 2);
+
+        QVector<SliceModel*> slices;
+        buildSlicesWithIds(slices, {0, 4, 9}, /*flagFirst*/ false);
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.setMacAddress(mac);
+        arb.load();
+
+        QCOMPARE(arb.txBoundSlice(), slices[2]);
+        QCOMPARE(AppSettings::instance().value(idKey, -1).toInt(), 9);
+
+        AppSettings::instance().setValue(legacyKey, 0);
+        for (SliceModel* slice : slices) {
+            slice->setTxSlice(false);
+        }
+        arb.load();
+        QCOMPARE(arb.txBoundSlice(), slices[2]);
     }
 
     // ── The initial binding ────────────────────────────────────────────
     //
     // requestHandoff is the only writer of SliceModel::txSlice and it
-    // early-returns on a no-op, so with m_txBoundIndex defaulting to 0 a
+    // early-returns on a no-op, so without an explicit sync a
     // session that never hands TX to another slice never raised the flag on
     // anything. syncToSliceList is the arm that establishes the binding the
     // first time a slice exists, without requiring an operator handoff.
@@ -148,7 +229,7 @@ private slots:
 
         QCOMPARE(slices[0]->isTxSlice(), true);
         QCOMPARE(slices[1]->isTxSlice(), false);
-        QCOMPARE(arb.txBoundSliceIndex(), 0);
+        QCOMPARE(arb.txBoundSliceId(), 0);
         QCOMPARE(arb.txBoundSlice(), slices[0]);
         // oldIndex is -1: there was no previous binding to hand off from.
         QCOMPARE(spy.count(), 1);
@@ -173,7 +254,7 @@ private slots:
         arb.syncToSliceList();
 
         QCOMPARE(spy.count(), 0);
-        QCOMPARE(arb.txBoundSliceIndex(), 1);
+        QCOMPARE(arb.txBoundSliceId(), 1);
         QCOMPARE(slices[1]->isTxSlice(), true);
     }
 
@@ -221,17 +302,16 @@ private slots:
     }
 
     // The flag lives on the SliceModel, so it survives a list mutation that
-    // moves the object. m_txBoundIndex is a cache of its POSITION and has to
-    // be re-derived, or the arbiter's index and the flag name two different
-    // slices after any removal below the bound one.
-    void sync_readopts_the_flagged_slices_new_position()
+    // moves the object. The arbiter keeps the object's stable ID, independent
+    // of its new list position.
+    void sync_keeps_the_flagged_slices_stable_id()
     {
         QVector<SliceModel*> slices;
         buildSlices(slices, 3, /*flagFirst*/ false);
         TxSliceArbiter arb;
         arb.setSliceList(&slices);
         QVERIFY(arb.requestHandoff(2));
-        QCOMPARE(arb.txBoundSliceIndex(), 2);
+        QCOMPARE(arb.txBoundSliceId(), 2);
 
         SliceModel* bound = slices[2];
         slices.removeAt(0);  // everything above shifts down one
@@ -239,7 +319,7 @@ private slots:
         QSignalSpy spy(&arb, &TxSliceArbiter::txBoundSliceChanged);
         arb.syncToSliceList();
 
-        QCOMPARE(arb.txBoundSliceIndex(), 1);
+        QCOMPARE(arb.txBoundSliceId(), 2);
         QCOMPARE(arb.txBoundSlice(), bound);
         QCOMPARE(bound->isTxSlice(), true);
         // The transmitter did not move -- only its position in the list did.
@@ -264,17 +344,17 @@ private slots:
         for (SliceModel* s : slices) { if (s->isTxSlice()) { ++flagged; } }
         QCOMPARE(flagged, 1);
         QCOMPARE(slices[0]->isTxSlice(), true);  // the one the index named
-        QCOMPARE(arb.txBoundSliceIndex(), 0);
+        QCOMPARE(arb.txBoundSliceId(), 0);
     }
 
-    // Design §6 "Restore on launch": a persisted index naming a slice that
+    // Design §6 "Restore on launch": a persisted ID naming a slice that
     // does not exist this session falls back to Slice A. What it must not do
     // is leave the transmitter unbound.
-    void load_with_out_of_range_index_still_leaves_one_slice_bound()
+    void load_with_missing_id_still_leaves_one_slice_bound()
     {
         const QString mac = QStringLiteral("de:ad:be:ef:00:01");
         AppSettings::instance().setValue(
-            QStringLiteral("hardware/%1/TxBoundSliceIndex").arg(mac), 7);
+            QStringLiteral("hardware/%1/TxBoundSliceId").arg(mac), 7);
 
         QVector<SliceModel*> slices;
         buildSlices(slices, 2, /*flagFirst*/ false);
@@ -286,7 +366,7 @@ private slots:
 
         QCOMPARE(slices[0]->isTxSlice(), true);
         QCOMPARE(slices[1]->isTxSlice(), false);
-        QCOMPARE(arb.txBoundSliceIndex(), 0);
+        QCOMPARE(arb.txBoundSliceId(), 0);
     }
 
     // txBoundSlice resolves the same POSITION requestHandoff writes, so
@@ -315,7 +395,22 @@ private:
     {
         for (int i = 0; i < n; ++i) {
             auto* s = new SliceModel(this);
+            s->setSliceIndex(i);
             outSlices.append(s);
+        }
+        if (flagFirst && !outSlices.isEmpty()) {
+            outSlices[0]->setTxSlice(true);
+        }
+    }
+
+    void buildSlicesWithIds(QVector<SliceModel*>& outSlices,
+                            std::initializer_list<int> ids,
+                            bool flagFirst = true)
+    {
+        for (const int id : ids) {
+            auto* slice = new SliceModel(this);
+            slice->setSliceIndex(id);
+            outSlices.append(slice);
         }
         if (flagFirst && !outSlices.isEmpty()) {
             outSlices[0]->setTxSlice(true);

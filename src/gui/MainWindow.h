@@ -77,6 +77,7 @@
 #include <QTimer>
 #include <QHash>
 #include <QMap>
+#include <QVector>
 
 class QProgressDialog;
 class QThread;
@@ -92,6 +93,7 @@ class WdspEngine;
 class FFTEngine;
 class SpectrumWidget;
 class SliceModel;
+class VfoWidget;
 // Phase 3F Sub-Epic D: forward declarations for the multi-pan layout
 // manager. Member m_panStack is introduced (nullptr) in Task 10/11 so the
 // +PAN dropdown menu and per-chain status indicators can guard against
@@ -161,6 +163,23 @@ public:
     /// flag routing hub; mirrors AetherSDR MainWindow::spectrumForSlice
     /// (MainWindow.cpp:14856 [@6a142807]).
     SpectrumWidget* spectrumForSlice(SliceModel* s) const;
+
+    // Narrow composition seams used by deletion-gap regressions. Runtime
+    // call sites use these same helpers so stable-ID lookup cannot diverge
+    // between the test and the UI signal path.
+    static SliceModel* sliceForAddedIdForTest(RadioModel* model, int sliceId);
+    static void applyAntennaChangeForTest(RadioModel* model, int sliceId,
+                                          const QString& antennaName);
+    static void wireRadeFlagForTest(RadioModel* model, VfoWidget* flag,
+                                    int sliceId);
+    static void configureSpectrumForPanForTest(SpectrumWidget* spectrum,
+                                                const QString& panId);
+    static void wireWidebandExtensionForTest(SpectrumWidget* spectrum,
+                                             RadioModel* model,
+                                             PanadapterStack* stack,
+                                             const QString& panId);
+    static void fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
+                                       const QVector<float>& bins);
 
 public slots:
     // ── Phase 3M-0 Task 14 helper slots ──────────────────────────────────
@@ -760,8 +779,7 @@ private:
     // Phase 3Q Sub-PR-6 (F.1): RxDashboard — always-visible RX1 glance surface.
     // Replaces the Phase 3Q-7 m_statusConnInfo / m_statusLiveDot strip (those
     // fields now live in the segment tooltip / NetworkDiagnosticsDialog).
-    // Bound to RadioModel::slices().at(0) in buildStatusBar(); rebinds are not
-    // needed today (single-slice, RX2 is Phase 3F).
+    // Bound to stable slice ID 0 via RadioModel::sliceById() in buildUI.
     RxDashboard* m_rxDashboard{nullptr};
 
     // Phase 3M-4 Task 10: PSA bottom-banner indicator pair (FB + PS labels).

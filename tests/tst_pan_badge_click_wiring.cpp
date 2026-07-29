@@ -310,13 +310,10 @@ private slots:
                  model.sliceChainIndex(panB.activeSliceIndex()));
     }
 
-    // ── 3. TX handoff: id in, position out ───────────────────────────────
+    // ── 3. TX handoff: stable id end to end ──────────────────────────────
 
-    // The pan carries a slice ID; the arbiter indexes positionally. After a
-    // mid-list removal the two diverge, and feeding the id straight through
-    // either misses or picks the wrong transmitter. RadioModel::
-    // requestTxHandoffToSlice owns the conversion so the pan surface does
-    // not have to know the difference.
+    // The pan and arbiter both carry stable slice IDs. After a mid-list
+    // removal, the direct arbiter call must still select the intended slice.
     void tx_handoff_from_a_pan_resolves_the_slice_by_id_not_position()
     {
         RadioModel model;
@@ -349,12 +346,8 @@ private slots:
         QVERIFY(!model.sliceById(a->sliceIndex())->isTxSlice());
         QCOMPARE(model.txSliceArbiter()->txBoundSlice(), model.sliceById(idC));
 
-        // The unconverted call the naive wiring would have made: id 2 is out
-        // of range as a position in a two-slice list, so the handoff is
-        // rejected outright and the transmitter never moves.
-        QVERIFY2(!model.txSliceArbiter()->requestHandoff(idC),
-                 "id-as-position happened to be in range; the case no longer "
-                 "demonstrates why the conversion exists");
+        QVERIFY(model.txSliceArbiter()->requestHandoff(idC));
+        QCOMPARE(model.txSliceArbiter()->txBoundSlice(), model.sliceById(idC));
     }
 
     // The conversion must not quietly bind something when handed an id that

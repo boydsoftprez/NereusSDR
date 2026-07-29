@@ -127,6 +127,10 @@ public:
 
     /// Detach a pan into a top-level PanFloatingWindow.
     void floatPanadapter(const QString& panId);
+    PanFloatingWindow* floatingWindowForTest(const QString& panId) const
+    {
+        return m_floating.value(panId, nullptr);
+    }
 
     /// Phase 3F Sub-Epic D Task 6: persist splitter geometry across launches.
     /// Keyed under AppSettings "PanSplitter0Sizes" + "PanLayoutId" (and per-row
@@ -148,6 +152,7 @@ signals:
 
 private:
     void rebuildSplitters(const QString& layoutId, const QStringList& panIds);
+    void dockAllFloatingPans();
     void clearSplitters();
 
     QSplitter*                                 m_rootSplitter {nullptr};

@@ -130,7 +130,7 @@ private slots:
         model.setActiveSlice(a);
         model.wireSliceSignalsForTest();
         QVERIFY(model.txSliceArbiter()->requestHandoff(b));
-        QCOMPARE(model.txSliceArbiter()->txBoundSliceIndex(), b);
+        QCOMPARE(model.txSliceArbiter()->txBoundSliceId(), b);
 
         mock->txFreqCalls.clear();
         model.slices().at(a)->setFrequency(k10mHz + 50000.0);

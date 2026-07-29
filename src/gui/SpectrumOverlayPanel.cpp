@@ -29,7 +29,7 @@
 //   2026-04-20 — Phase 3O Sub-Phase 9 Task 9.2c (issue #70 fold-in):
 //                 added setRadioModel() so the previously-disabled VAX Ch
 //                 combo on the left-edge overlay is now wired bidirectionally
-//                 to slice 0's vaxChannel() with echo prevention. IQ Ch
+//                 to the resolved pan slice's vaxChannel() with echo prevention. IQ Ch
 //                 stays feature-flagged off (design spec §6.7/§11.3 —
 //                 audio/SendIqToVax stored-but-not-active). J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
@@ -61,6 +61,7 @@
 #include <QColor>
 #include <QSignalBlocker>
 #include <algorithm>
+#include <utility>
 
 namespace NereusSDR {
 
@@ -461,7 +462,7 @@ void SpectrumOverlayPanel::buildAntFlyout()
 
     // Phase 3P-I-a T18 — RX/TX antenna rows. Prior to this phase the
     // combos existed but had no currentTextChanged connect — they were
-    // zombie controls. Now wired through slice 0 (matches VAX pattern),
+    // zombie controls. Now wired through the pan's resolved slice,
     // and both rows are wrapped in a QWidget so setBoardCapabilities
     // can hide them as a unit on HL2/Atlas.
     {
@@ -482,7 +483,7 @@ void SpectrumOverlayPanel::buildAntFlyout()
         row->addWidget(m_rxAntCmb, 1);
         vbox->addWidget(m_rxAntRow);
 
-        // Widget → Model: user picks an antenna → slice 0 setRxAntenna.
+        // Widget → Model: user picks an antenna → resolved slice setRxAntenna.
         // T12's RadioModel connect then routes to AlexController and
         // T9's applyAlexAntennaForBand reaches the wire. Echo from the
         // model side is guarded by m_updatingFromModel (shared with VAX
@@ -493,7 +494,7 @@ void SpectrumOverlayPanel::buildAntFlyout()
             if (m_updatingFromModel || !m_radioModel || ant.isEmpty()) {
                 return;
             }
-            if (SliceModel* s = m_radioModel->sliceById(0)) {
+            if (SliceModel* s = resolvedSlice()) {
                 s->setRxAntenna(ant);
             }
         });
@@ -520,7 +521,7 @@ void SpectrumOverlayPanel::buildAntFlyout()
             if (m_updatingFromModel || !m_radioModel || ant.isEmpty()) {
                 return;
             }
-            if (SliceModel* s = m_radioModel->sliceById(0)) {
+            if (SliceModel* s = resolvedSlice()) {
                 s->setTxAntenna(ant);
             }
         });
@@ -907,14 +908,14 @@ void SpectrumOverlayPanel::buildVaxFlyout()
         m_vaxCmb = new QComboBox;
         m_vaxCmb->setObjectName(QStringLiteral("vaxCombo"));
         m_vaxCmb->addItems({"Off", "1", "2", "3", "4"});
-        // Disabled until setRadioModel() binds slice 0; retains the
+        // Disabled until setRadioModel() resolves a slice; retains the
         // pre-3O tooltip in that transient state.
         m_vaxCmb->setEnabled(false);
         m_vaxCmb->setToolTip("VAX channel (not yet bound to a radio model)");
         row->addWidget(m_vaxCmb, 1);
         vb->addLayout(row);
 
-        // Widget → Model: user picks a channel → slice 0 setVaxChannel.
+        // Widget → Model: user picks a channel → resolved slice setVaxChannel.
         // Combo index 0 = "Off" = vaxChannel 0; indices 1..4 = VAX 1..4
         // (1:1 mapping, matches the header ordering above).
         connect(m_vaxCmb, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -922,7 +923,7 @@ void SpectrumOverlayPanel::buildVaxFlyout()
             if (m_updatingFromModel || !m_radioModel) {
                 return;
             }
-            SliceModel* s = m_radioModel->sliceById(0);
+            SliceModel* s = resolvedSlice();
             if (s) {
                 s->setVaxChannel(idx);
             }
@@ -951,10 +952,10 @@ void SpectrumOverlayPanel::buildVaxFlyout()
     m_vaxFlyout->adjustSize();
 }
 
-// Phase 3O Sub-Phase 9 Task 9.2c — bind the VAX Ch combo to slice 0.
+// Bind VAX and antenna controls to the slice currently owned by this pan.
 //
 // Widget → Model: the QComboBox::currentIndexChanged lambda installed in
-// buildVaxFlyout() calls slice 0's setVaxChannel() (and gates on
+// buildVaxFlyout() calls the resolved slice's setVaxChannel() (and gates on
 // m_updatingFromModel to suppress the echo).
 // Model → Widget: this function stores the vaxChannelChanged connection in
 // m_vaxChannelConn so a rebind can cleanly disconnect before reconnecting
@@ -973,7 +974,18 @@ void SpectrumOverlayPanel::setRadioModel(RadioModel* model)
         QObject::disconnect(m_vaxChannelConn);
         m_vaxChannelConn = {};
     }
+    if (m_rxAntConn) {
+        QObject::disconnect(m_rxAntConn);
+        m_rxAntConn = {};
+    }
+    if (m_txAntConn) {
+        QObject::disconnect(m_txAntConn);
+        m_txAntConn = {};
+    }
 
+    if (m_radioModel) {
+        QObject::disconnect(m_radioModel, nullptr, this, nullptr);
+    }
     m_radioModel = model;
 
     if (!m_vaxCmb) {
@@ -984,27 +996,38 @@ void SpectrumOverlayPanel::setRadioModel(RadioModel* model)
         // Unbound — revert to the pre-3O disabled state.
         m_vaxCmb->setEnabled(false);
         m_vaxCmb->setToolTip("VAX channel (not yet bound to a radio model)");
+        if (m_rxAntCmb) { m_rxAntCmb->setEnabled(false); }
+        if (m_txAntCmb) { m_txAntCmb->setEnabled(false); }
         return;
     }
 
-    // Always listen for slice 0 add/remove so a later lifecycle event —
-    // slice 0 created after bind, or slice 0 destroyed and another slice
-    // promoted into index 0 — can re-seat the Model→Widget connection.
-    // The lambdas call bindToSliceZero(), which is the same bind logic
-    // used below for the initial seating.
-    const auto rebindOnSliceZero = [this](int index) {
-        if (index != 0) {
-            return;
-        }
-        bindToSliceZero();
+    // Any slice topology change can change this pan's resolved slice.
+    const auto rebind = [this](int) {
+        bindToPanSlice();
     };
-    connect(m_radioModel, &RadioModel::sliceAdded,   this, rebindOnSliceZero);
-    connect(m_radioModel, &RadioModel::sliceRemoved, this, rebindOnSliceZero);
+    connect(m_radioModel, &RadioModel::sliceAdded,   this, rebind);
+    connect(m_radioModel, &RadioModel::sliceRemoved, this, rebind);
 
-    bindToSliceZero();
+    bindToPanSlice();
 }
 
-void SpectrumOverlayPanel::bindToSliceZero()
+void SpectrumOverlayPanel::setSliceResolver(SliceResolver resolver)
+{
+    m_sliceResolver = std::move(resolver);
+    if (m_radioModel) {
+        bindToPanSlice();
+    }
+}
+
+SliceModel* SpectrumOverlayPanel::resolvedSlice() const
+{
+    if (!m_radioModel) {
+        return nullptr;
+    }
+    return m_sliceResolver ? m_sliceResolver() : m_radioModel->sliceById(0);
+}
+
+void SpectrumOverlayPanel::bindToPanSlice()
 {
     if (!m_vaxCmb || !m_radioModel) {
         return;
@@ -1023,7 +1046,7 @@ void SpectrumOverlayPanel::bindToSliceZero()
     if (m_rxAntConn) { QObject::disconnect(m_rxAntConn); m_rxAntConn = {}; }
     if (m_txAntConn) { QObject::disconnect(m_txAntConn); m_txAntConn = {}; }
 
-    SliceModel* s = m_radioModel->sliceById(0);
+    SliceModel* s = resolvedSlice();
     if (s) {
         // Seed the combo with the current model value before wiring up
         // the listener, using the flag pattern so no spurious setVaxChannel
@@ -1044,6 +1067,8 @@ void SpectrumOverlayPanel::bindToSliceZero()
 
         m_vaxCmb->setEnabled(true);
         m_vaxCmb->setToolTip("Route this slice's RX audio to a VAX channel");
+        if (m_rxAntCmb) { m_rxAntCmb->setEnabled(true); }
+        if (m_txAntCmb) { m_txAntCmb->setEnabled(true); }
 
         // Phase 3P-I-a T18 — seed + subscribe antenna combos.
         // SliceModel::rxAntennaChanged also fires from T13's reverse
@@ -1080,22 +1105,24 @@ void SpectrumOverlayPanel::bindToSliceZero()
             });
         }
     } else {
-        // No slice 0 — typically the pre-connectToRadio() state, or a
+        // No slice for this pan — typically the pre-connectToRadio() state, or a
         // transient window during slice teardown. The sliceAdded listener
-        // installed by setRadioModel() will call us again when slice 0
+        // installed by setRadioModel() will call us again when a slice
         // comes (back) online.
         m_updatingFromModel = true;
         m_vaxCmb->setCurrentIndex(0);
         m_updatingFromModel = false;
         m_vaxCmb->setEnabled(false);
-        m_vaxCmb->setToolTip("VAX channel (waiting for slice 0)");
+        m_vaxCmb->setToolTip("VAX channel (waiting for this pan's slice)");
+        if (m_rxAntCmb) { m_rxAntCmb->setEnabled(false); }
+        if (m_txAntCmb) { m_txAntCmb->setEnabled(false); }
     }
 }
 
 // Phase 3P-I-a T18 — repopulate RX/TX antenna combos from BoardCapabilities.
 // Called by MainWindow on connect and on currentRadioChanged. Empty port
 // list (HL2/Atlas) hides both rows entirely. After repopulating we reseed
-// the current value from slice 0 so persisted per-band selections survive
+// the current value from the resolved slice so persisted selections survive
 // a reconnect.
 void SpectrumOverlayPanel::setBoardCapabilities(const BoardCapabilities& caps)
 {
@@ -1118,7 +1145,7 @@ void SpectrumOverlayPanel::setBoardCapabilities(const BoardCapabilities& caps)
     // Suppress widget→model echo while we clear + refill the combos.
     // Clearing a combo emits currentTextChanged("") and addItems()
     // emits again; without the guard each setVisible-false path would
-    // stomp slice 0's antenna setting to empty.
+    // stomp the resolved slice's antenna setting to empty.
     m_updatingFromModel = true;
     m_rxAntCmb->clear();
     m_txAntCmb->clear();
@@ -1129,9 +1156,9 @@ void SpectrumOverlayPanel::setBoardCapabilities(const BoardCapabilities& caps)
     if (m_rxAntRow) { m_rxAntRow->setVisible(show); }
     if (m_txAntRow) { m_txAntRow->setVisible(show); }
 
-    // Reseed from slice 0 so the combo label matches the persisted state.
+    // Reseed from the resolved slice so the combo label matches persisted state.
     if (show && m_radioModel) {
-        if (SliceModel* s = m_radioModel->sliceById(0)) {
+        if (SliceModel* s = resolvedSlice()) {
             m_updatingFromModel = true;
             const int rxIdx = m_rxAntCmb->findText(s->rxAntenna());
             if (rxIdx >= 0) { m_rxAntCmb->setCurrentIndex(rxIdx); }

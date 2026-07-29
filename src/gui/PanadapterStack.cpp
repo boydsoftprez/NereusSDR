@@ -42,7 +42,10 @@ PanadapterStack::PanadapterStack(QWidget* parent) : QWidget(parent)
     addPanadapter(QStringLiteral("pan-0"));
 }
 
-PanadapterStack::~PanadapterStack() = default;
+PanadapterStack::~PanadapterStack()
+{
+    dockAllFloatingPans();
+}
 
 PanadapterApplet* PanadapterStack::addPanadapter(const QString& panId)
 {
@@ -92,6 +95,7 @@ void PanadapterStack::removeAll() { /* TODO Task 5 */ }
 
 void PanadapterStack::applyLayout(const QString& layoutId, const QStringList& panIds)
 {
+    dockAllFloatingPans();
     clearSplitters();
 
     // Retire orphan pans not referenced by the new layout. Without this,
@@ -283,6 +287,24 @@ void PanadapterStack::floatPanadapter(const QString& panId)
     }
 }
 void PanadapterStack::rebuildSplitters(const QString&, const QStringList&) {}
+
+void PanadapterStack::dockAllFloatingPans()
+{
+    while (!m_floating.isEmpty()) {
+        auto it = m_floating.begin();
+        PanFloatingWindow* floater = it.value();
+        m_floating.erase(it);
+        if (!floater) { continue; }
+
+        QObject::disconnect(floater, nullptr, this, nullptr);
+        if (PanadapterApplet* applet = floater->applet()) {
+            applet->hide();
+            applet->setParent(this);
+        }
+        floater->close();
+        delete floater;
+    }
+}
 
 void PanadapterStack::clearSplitters()
 {

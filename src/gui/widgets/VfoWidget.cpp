@@ -840,6 +840,13 @@ void VfoWidget::setRadeSynced(bool synced)
     if (!m_radeActive || !m_snrLabel) {
         return;
     }
+    if (!synced) {
+        // Unlock invalidates the decoder's last SNR snapshot. Painting that
+        // stale value would also call setRadeSnrLabel(), which treats every
+        // fresh SNR callback as proof of sync and would immediately undo this
+        // transition.
+        m_lastRadeSnrDb = std::numeric_limits<float>::quiet_NaN();
+    }
     // If we don't have an SNR snapshot yet, paint the "<prefix> ●/○ ---"
     // state.  When SNR is known, setRadeSnrLabel below has the richer
     // colorized render path.
@@ -2897,9 +2904,7 @@ void VfoWidget::contextMenuEvent(QContextMenuEvent* event)
     // no RadioModel / slice is wired (e.g. test contexts).
     bool builtPicker = false;
     if (m_radioModel) {
-        const auto& slices = m_radioModel->slices();
-        if (m_sliceIndex >= 0 && m_sliceIndex < slices.size()) {
-            SliceModel* slice = slices.at(m_sliceIndex);
+        if (SliceModel* slice = contextMenuSliceForTest()) {
             AlexController* alex = &m_radioModel->alexControllerMutable();
             const BoardCapabilities& caps = m_radioModel->boardCapabilities();
             auto* picker = new AntennaPickerMenu(slice, alex, caps, &menu);
@@ -3176,6 +3181,11 @@ void VfoWidget::setRxBypassActive(bool on)
 void VfoWidget::setRadioModel(RadioModel* model)
 {
     m_radioModel = model;
+}
+
+SliceModel* VfoWidget::contextMenuSliceForTest() const
+{
+    return m_radioModel ? m_radioModel->sliceById(m_sliceIndex) : nullptr;
 }
 
 // --- Task 3.4: Small filter display mode (Appearance > Meter Styles) ---

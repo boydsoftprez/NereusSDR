@@ -611,9 +611,7 @@ public:
     void removeSlice(int sliceId);
 
     /// NOTE: still a LIST POSITION, unlike sliceById / removeSlice above.
-    /// Positional because TxSliceArbiter and the persisted
-    /// TxBoundSliceIndex key are positional too; converting the active /
-    /// TX-bound axis to ids is Sub-Epic C territory.
+    /// This API remains positional for internal list navigation only.
     ///
     /// Prefer setActiveSliceById below for anything driven by a UI surface:
     /// every per-slice widget carries the stable id, not the position.
@@ -621,7 +619,6 @@ public:
 
     /// Make the slice with this ID the active one.
     ///
-    /// Same conversion, and the same reason, as requestTxHandoffToSlice: the
     /// UI surfaces that select a slice all carry the stable slice ID
     /// (VfoWidget::sliceActivationRequested emits what createSliceFlag
     /// stamped from SliceModel::sliceIndex(); RxApplet::updateSliceButtons

@@ -1044,6 +1044,10 @@ public slots:
     /// polish (T7-T10). Setter alone enables Sub-Epic H bench operators to
     /// confirm the wideband data path is flowing without UI rendering.
     void setWidebandBins(int adcIndex, const QVector<float>& dbmBins);
+    QVector<float> widebandBinsForTest(int adcIndex) const
+    {
+        return adcIndex == 0 ? m_widebandBinsAdc0 : m_widebandBinsAdc1;
+    }
 
     /// Phase 3F Sub-Epic F Tasks 7-10: enable extended-pan rendering.
     /// When on AND visible bandwidth exceeds DDC sample rate, paintEvent

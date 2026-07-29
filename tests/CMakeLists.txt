@@ -1532,7 +1532,7 @@ nereus_add_test(tst_tx_frequency_follows_tx_slice)
 nereus_add_test(tst_alex_controller_event_matrix)
 
 # ── Phase 3F Sub-Epic C Task 1: TxSliceArbiter skeleton ─────────────────────
-# Skeleton smoke test: default txBoundSliceIndex == 0. Full handoff coverage
+# Skeleton smoke test: default stable binding is unbound. Full handoff coverage
 # lands in Task 3. NereusSDR-original: no Thetis port.
 nereus_add_test(tst_tx_slice_arbiter)
 

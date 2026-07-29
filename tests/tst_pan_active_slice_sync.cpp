@@ -46,6 +46,7 @@
 #include "core/AppSettings.h"
 #include "gui/PanadapterApplet.h"
 #include "gui/PanadapterStack.h"
+#include "gui/MainWindow.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/widgets/VfoWidget.h"
 #include "models/RadioModel.h"
@@ -128,6 +129,86 @@ private slots:
         QVERIFY(model.activeSlice() != nullptr);
         QCOMPARE(model.activeSlice()->sliceIndex(), b);
         Q_UNUSED(a);
+    }
+
+    void antenna_selection_for_c_changes_c_after_b_is_removed()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+        SliceModel* a = model.sliceById(model.addSlice());
+        const int b = model.addSlice();
+        SliceModel* c = model.sliceById(model.addSlice());
+        QVERIFY(a);
+        QVERIFY(c);
+        model.removeSlice(b);
+        QCOMPARE(model.slices().indexOf(c), 1);
+
+        a->setRxAntenna(QStringLiteral("ANT1"));
+        c->setRxAntenna(QStringLiteral("ANT1"));
+        MainWindow::applyAntennaChangeForTest(&model, c->sliceIndex(),
+                                               QStringLiteral("ANT3"));
+
+        QCOMPARE(c->rxAntenna(), QStringLiteral("ANT3"));
+        QCOMPARE(a->rxAntenna(), QStringLiteral("ANT1"));
+    }
+
+    void slice_added_subscriber_resolves_c_by_stable_id_after_b_is_removed()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+        model.addSlice();
+        const int b = model.addSlice();
+        SliceModel* c = model.sliceById(model.addSlice());
+        QVERIFY(c);
+        model.removeSlice(b);
+        QCOMPARE(model.slices().indexOf(c), 1);
+
+        QCOMPARE(MainWindow::sliceForAddedIdForTest(&model, c->sliceIndex()), c);
+    }
+
+    void rade_updates_are_scoped_to_the_matching_flag_id()
+    {
+        RadioModel model;
+        VfoWidget flagA;
+        VfoWidget flagC;
+        flagA.setSliceIndex(0);
+        flagC.setSliceIndex(2);
+        flagA.setRadeActive(true);
+        flagA.setRadeSnrLabel(-1.0f);
+        flagC.setRadeActive(true);
+        flagC.setRadeSnrLabel(-7.0f);
+
+        MainWindow::wireRadeFlagForTest(&model, &flagA, 0);
+        MainWindow::wireRadeFlagForTest(&model, &flagC, 2);
+
+        emit model.radeSyncChanged(0, false);
+        QVERIFY(flagA.snrLabelForTest()->text().contains(QStringLiteral("RADE")));
+        QVERIFY(flagA.snrLabelForTest()->text().contains(QStringLiteral("#505050")));
+        QVERIFY(flagA.snrLabelForTest()->text().contains(QStringLiteral("---")));
+        QVERIFY(flagC.snrLabelForTest()->text().contains(QStringLiteral("-7")));
+
+        emit model.radeFreqOffsetChanged(2, 125.0f);
+        QVERIFY(flagC.snrLabelForTest()->text().contains(QStringLiteral("+125Hz")));
+        QVERIFY(!flagA.snrLabelForTest()->text().contains(QStringLiteral("+125Hz")));
+    }
+
+    void wideband_bins_are_fanned_to_every_pan()
+    {
+        PanadapterStack stack;
+        PanadapterApplet* pan0 = stack.panadapter(QStringLiteral("pan-0"));
+        PanadapterApplet* pan1 = stack.addPanadapter(QStringLiteral("pan-1"));
+        QVERIFY(pan0);
+        QVERIFY(pan1);
+
+        const QVector<float> adc0{-101.0f, -99.0f};
+        const QVector<float> adc1{-88.0f, -87.0f, -86.0f};
+        MainWindow::fanWidebandBinsForTest(&stack, 0, adc0);
+        MainWindow::fanWidebandBinsForTest(&stack, 1, adc1);
+
+        QCOMPARE(pan0->spectrumWidget()->widebandBinsForTest(0), adc0);
+        QCOMPARE(pan0->spectrumWidget()->widebandBinsForTest(1), adc1);
+        QCOMPARE(pan1->spectrumWidget()->widebandBinsForTest(0), adc0);
+        QCOMPARE(pan1->spectrumWidget()->widebandBinsForTest(1), adc1);
     }
 
     // ── PanadapterStack::setActiveSliceOnHostingPan ────────────────────────

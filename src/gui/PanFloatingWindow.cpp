@@ -44,6 +44,11 @@ PanFloatingWindow::PanFloatingWindow(PanadapterApplet* applet, QWidget* parent)
 
 PanFloatingWindow::~PanFloatingWindow() = default;
 
+PanadapterApplet* PanFloatingWindow::applet() const
+{
+    return m_applet.data();
+}
+
 QString PanFloatingWindow::panId() const
 {
     return m_applet ? m_applet->panId() : QString();

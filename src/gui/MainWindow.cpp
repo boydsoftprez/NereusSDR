@@ -889,6 +889,99 @@ SpectrumWidget* MainWindow::spectrumForSlice(SliceModel* s) const
     return activeSpectrumWidget();  // fallback to active pan
 }
 
+SliceModel* MainWindow::sliceForAddedIdForTest(RadioModel* model, int sliceId)
+{
+    return model ? model->sliceById(sliceId) : nullptr;
+}
+
+void MainWindow::applyAntennaChangeForTest(RadioModel* model, int sliceId,
+                                            const QString& antennaName)
+{
+    if (SliceModel* slice = sliceForAddedIdForTest(model, sliceId)) {
+        slice->setRxAntenna(antennaName);
+    }
+}
+
+void MainWindow::wireRadeFlagForTest(RadioModel* model, VfoWidget* flag,
+                                     int sliceId)
+{
+    if (!model || !flag) { return; }
+    const QPointer<VfoWidget> flagRef(flag);
+    connect(model, &RadioModel::radeSyncChanged, flag,
+            [flagRef, sliceId](int changedSliceId, bool synced) {
+        if (!flagRef || changedSliceId != sliceId) { return; }
+        if (!synced) {
+            flagRef->setRadeSynced(false);
+        }
+    });
+    connect(model, &RadioModel::radeFreqOffsetChanged, flag,
+            [flagRef, sliceId](int changedSliceId, float hz) {
+        if (flagRef && changedSliceId == sliceId) {
+            flagRef->setRadeFreqOffset(hz);
+        }
+    });
+}
+
+void MainWindow::configureSpectrumForPanForTest(SpectrumWidget* spectrum,
+                                                 const QString& panId)
+{
+    if (!spectrum) { return; }
+    bool ok = false;
+    const int parsed = panId.startsWith(QStringLiteral("pan-"))
+        ? panId.mid(4).toInt(&ok) : 0;
+    spectrum->setPanIndex(ok && parsed >= 0 ? parsed : 0);
+    spectrum->loadSettings();
+}
+
+void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
+                                              RadioModel* model,
+                                              PanadapterStack* stack,
+                                              const QString& panId)
+{
+    if (!spectrum || !model || !stack) { return; }
+    const QPointer<RadioModel> modelRef(model);
+    const QPointer<PanadapterStack> stackRef(stack);
+    const auto resolve = [modelRef, stackRef, panId]() -> SliceModel* {
+        if (!modelRef || !stackRef) { return nullptr; }
+        PanadapterApplet* applet = stackRef->panadapter(panId);
+        if (!applet) { return nullptr; }
+        if (SliceModel* active =
+                modelRef->sliceById(applet->activeSliceIndex())) {
+            return active;
+        }
+        for (SliceModel* slice : modelRef->slices()) {
+            if (slice
+                && applet->associatedSlices().contains(slice->sliceIndex())) {
+                return slice;
+            }
+        }
+        return nullptr;
+    };
+    connect(spectrum, &SpectrumWidget::widebandExtensionStateChanged,
+            spectrum, [resolve](bool on) {
+        if (SliceModel* slice = resolve()) {
+            slice->setWidebandExtensionRequested(on);
+        }
+    });
+    connect(spectrum, &SpectrumWidget::ddcRetuneRequested,
+            spectrum, [resolve](double freqHz) {
+        if (SliceModel* slice = resolve()) {
+            slice->setFrequency(freqHz);
+        }
+    });
+}
+
+void MainWindow::fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
+                                        const QVector<float>& bins)
+{
+    if (!stack) { return; }
+    for (PanadapterApplet* applet : stack->allApplets()) {
+        if (applet && applet->spectrumWidget()) {
+            applet->spectrumWidget()->setWidebandBins(adcIndex, bins);
+        }
+    }
+}
+
 // Phase 3F: create + fully wire a secondary slice's VfoWidget on the given
 // SpectrumWidget. Factored out of the sliceAdded handler so the same wiring
 // is reused on panKeyChanged migration. Slice A (index 0) keeps its own
@@ -971,15 +1064,16 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // so its right-click antenna submenu builds AntennaPickerMenu with live
     // caps + alex + slice (instead of the stub ANT1/ANT2 list).
     newFlag->setRadioModel(m_radioModel);
+    wireRadeFlagForTest(m_radioModel, newFlag, sliceIndex);
     if (TxSliceArbiter* arb = m_radioModel->txSliceArbiter()) {
-        newFlag->setTxSlice(arb->txBoundSliceIndex() == sliceIndex);
+        newFlag->setTxSlice(arb->txBoundSliceId() == sliceIndex);
     }
 
     // --- Intent signals (Sub-Epic C T9 + Sub-Epic E T4 mirror) ---
     connect(newFlag, &VfoWidget::txHandoffRequested, this,
             [this](int idx) {
         if (m_radioModel && m_radioModel->txSliceArbiter()) {
-            m_radioModel->txSliceArbiter()->requestHandoff(idx);
+            m_radioModel->requestTxHandoffToSlice(idx);
         }
     });
     // Phase 3F Sub-Epic I closeout, defect G2: route to the slice's DDC
@@ -1034,11 +1128,7 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // SliceModel::setRxAntenna. Sub-Epic E Task 5 consumer wire-up.
     connect(newFlag, &VfoWidget::antennaChangeRequested, this,
             [this](int idx, const QString& antName) {
-        if (!m_radioModel) { return; }
-        const auto sl = m_radioModel->slices();
-        if (idx >= 0 && idx < sl.size()) {
-            sl.at(idx)->setRxAntenna(antName);
-        }
+        applyAntennaChangeForTest(m_radioModel, idx, antName);
     });
 
     // --- VfoWidget -> SliceModel (user click propagates to model) ---
@@ -1582,6 +1672,8 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
 {
     if (!sw || !m_radioModel) { return; }
 
+    configureSpectrumForPanForTest(sw, panId);
+
     // Seed the new pan with the CURRENT connection state. Without this a pan
     // created after connect sits at the Disconnected default until the next
     // state change, and its disconnected guard swallows every mouse press.
@@ -1785,6 +1877,7 @@ void MainWindow::ensureOverlayPanels()
         // where click-to-tune always retuned flag A. Those copies are gone, so
         // this is the only wiring for them and nothing doubles.
         wireSpectrumSliceControls(sw, panId);
+        wireWidebandExtensionForTest(sw, m_radioModel, m_panStack, panId);
 
         if (panId != QStringLiteral("pan-0")) {
             // Still pan-0-excluded: its spot, connection and MaxBin hooks are
@@ -1798,12 +1891,19 @@ void MainWindow::ensureOverlayPanels()
 
         auto* panel = new SpectrumOverlayPanel(sw);
         panel->setPanId(panId);
+        panel->setSliceResolver([this, panId]() {
+            return sliceForPan(panId);
+        });
         panel->move(4, 4);
         panel->show();
         m_overlayPanels.insert(panId, panel);
 
         // Phase 3O Sub-Phase 9 Task 9.2c — bind the VAX Ch combo to the model.
         panel->setRadioModel(m_radioModel);
+        connect(applet, &PanadapterApplet::activeSliceChanged, panel,
+                [panel](const QString&, int) {
+            panel->bindToPanSlice();
+        });
 
         // Phase 3P-I-a T18 — board caps drive the antenna combos, and are
         // re-pushed on every radio swap.
@@ -2216,7 +2316,8 @@ void MainWindow::buildUI()
 
     SpectrumWidget* const initialSpectrum = activeSpectrumWidget();
     if (initialSpectrum) {
-        initialSpectrum->loadSettings();
+        configureSpectrumForPanForTest(initialSpectrum,
+                                       QStringLiteral("pan-0"));
     }
 
     // Task 13 wires per-pan rebinding when the active pan changes; for
@@ -2399,39 +2500,6 @@ void MainWindow::buildUI()
         // above repaints the overlay without it.
         connect(activeSpectrumWidget(), &SpectrumWidget::spotRemoveRequested,
                 spotModel, &SpotModel::removeSpot);
-    }
-
-    // Phase 3F Sub-Epic F Tasks 7-10: forward extended-mode toggle to
-    // the active slice so AlexController can auto-bypass BPF and the
-    // P2 wideband stream (CmdGeneral byte 23) flips on. The slice-side
-    // chain is in place from Sub-Epic F Task 11; this wire closes the
-    // loop from SpectrumWidget zoom state -> SliceModel property.
-    // Per-pan routing (when m_panStack exposes activeSliceFor(panId)) is
-    // a Sub-Epic G follow-up; today we land on slice 0 for the active
-    // pan.
-    if (auto* sw = activeSpectrumWidget()) {
-        connect(sw, &SpectrumWidget::widebandExtensionStateChanged, this,
-                [this](bool on) {
-            if (!m_radioModel) { return; }
-            const auto& slices = m_radioModel->slices();
-            if (slices.isEmpty()) { return; }
-            slices.first()->setWidebandExtensionRequested(on);
-        });
-
-        // Phase 3F Sub-Epic F Task 12: click-in-wing routes the clicked
-        // Hz into setFrequency on the active slice. That propagates
-        // through ReceiverManager + RadioConnection to a DDC NCO retune,
-        // which moves the listenable island so the operator's click
-        // lands inside it on the next frame. Click-in-island flows
-        // through the existing frequencyClicked → slice retune path
-        // (untouched).
-        connect(sw, &SpectrumWidget::ddcRetuneRequested, this,
-                [this](double freqHz) {
-            if (!m_radioModel) { return; }
-            const auto& slices = m_radioModel->slices();
-            if (slices.isEmpty()) { return; }
-            slices.first()->setFrequency(freqHz);
-        });
     }
 
     // Zoom slider bar below spectrum
@@ -2733,9 +2801,7 @@ void MainWindow::buildUI()
     connect(m_radioModel, &RadioModel::sliceAdded, this,
             [this](int sliceIndex) {
         if (!m_panStack) { return; }
-        const auto slices = m_radioModel->slices();
-        if (sliceIndex < 0 || sliceIndex >= slices.size()) { return; }
-        SliceModel* slice = slices.at(sliceIndex);
+        SliceModel* slice = sliceForAddedIdForTest(m_radioModel, sliceIndex);
         if (!slice) { return; }
 
         const QString panKey = slice->panKey();
@@ -2889,9 +2955,7 @@ void MainWindow::buildUI()
     // correct ADC's bins) lands in Sub-Epic F polish (T7-T10).
     connect(m_radioModel, &RadioModel::widebandSpectrumReady, this,
             [this](int adcIdx, const QVector<float>& dbmBins) {
-        if (auto* sw = activeSpectrumWidget()) {
-            sw->setWidebandBins(adcIdx, dbmBins);
-        }
+        fanWidebandBinsForTest(m_panStack, adcIdx, dbmBins);
     });
 
     // Create the FFTEngine pool on a worker thread (spectrum thread from
@@ -3427,10 +3491,7 @@ void MainWindow::buildUI()
         }
         connect(m_radioModel, &RadioModel::sliceAdded, this,
                 [this, subscribeSlice](int index) {
-            const auto slices = m_radioModel->slices();
-            if (index >= 0 && index < slices.size()) {
-                subscribeSlice(slices.at(index));
-            }
+            subscribeSlice(sliceForAddedIdForTest(m_radioModel, index));
         });
     }
 
@@ -3539,23 +3600,23 @@ void MainWindow::buildUI()
     // to reflect the arbiter's current bound slice.
     if (TxSliceArbiter* arb = m_radioModel->txSliceArbiter()) {
         connect(arb, &TxSliceArbiter::txBoundSliceChanged, this,
-                [this](int oldIdx, int newIdx) {
+                [this](int oldId, int newId) {
             for (auto it = m_vfoWidgetsBySlice.constBegin();
                  it != m_vfoWidgetsBySlice.constEnd(); ++it) {
                 VfoWidget* flag = it.value();
                 if (flag) {
-                    flag->setTxSlice(flag->sliceIndex() == newIdx);
+                    flag->setTxSlice(flag->sliceIndex() == newId);
                 }
             }
-            // oldIdx < 0 is the arbiter's initial bind (TxSliceArbiter::
+            // oldId < 0 is the arbiter's initial bind (TxSliceArbiter::
             // syncToSliceList), not an operator handoff: the transmitter
             // did not move, it acquired its first home when the first slice
             // appeared. Announcing "TX > Slice A" on every connect would be
             // noise about something that did not happen.
-            if (oldIdx < 0) { return; }
+            if (oldId < 0) { return; }
             if (QStatusBar* sb = statusBar()) {
                 sb->showMessage(QStringLiteral("TX > Slice %1")
-                                    .arg(QChar(QLatin1Char('A' + newIdx))),
+                                    .arg(QChar(QLatin1Char('A' + newId))),
                                 2000);
             }
         });
@@ -4389,10 +4450,8 @@ void MainWindow::populateDefaultMeter()
         }
         connect(m_radioModel, &RadioModel::sliceAdded, txApplet,
                 [this, subscribeToSlice](int index) {
-                    const auto slices = m_radioModel->slices();
-                    if (index >= 0 && index < slices.size()) {
-                        subscribeToSlice(slices[index]);
-                    }
+                    subscribeToSlice(
+                        sliceForAddedIdForTest(m_radioModel, index));
                 });
     }
 
@@ -7216,28 +7275,6 @@ void MainWindow::wireSliceToSpectrum()
     // Stage C2: wire FilterPresetStore so VFO flag filter buttons use user overrides.
     vfo->setFilterPresetStore(m_radioModel->filterPresetStore());
 
-    // Phase 3R K-bench: wire RadioModel's RADE signals to VfoWidget's
-    // AetherSDR-port label setters. Without this, the SNR label paints
-    // a value on the first sync and never reverts to "RADE ○ ---" when
-    // sync drops, leaving the user with a stale "-3 dB" readout when
-    // RADE has actually unlocked.
-    //   syncChanged(false) -> setRadeSynced(false) -> "RADE ○ ---"
-    //   syncChanged(true)  -> (next snrChanged fills in "RADE ● NdB")
-    //   freqOffsetChanged  -> appends "+Nhz" to existing label text
-    connect(m_radioModel, &RadioModel::radeSyncChanged, vfo,
-            [vfo](int /*sliceId*/, bool synced) {
-                if (!synced) {
-                    vfo->setRadeSynced(false);
-                }
-                // synced=true: snrChanged will paint "RADE ● NdB"
-                // shortly afterward, so no immediate label update
-                // needed here.
-            });
-    connect(m_radioModel, &RadioModel::radeFreqOffsetChanged, vfo,
-            [vfo](int /*sliceId*/, float hz) {
-                vfo->setRadeFreqOffset(hz);
-            });
-
     // 2026-05-11 bench: wire EOO-decoded RADE speaker callsign to the
     // VFO flag SNR row so "<call> ● <snr>dB" replaces "RADE ● <snr>dB"
     // whenever we have a decoded callsign for the current slice.  Sticky
@@ -9301,8 +9338,12 @@ void MainWindow::closeEvent(QCloseEvent* event)
     }
 
     // Save display settings before shutdown
-    if (activeSpectrumWidget()) {
-        activeSpectrumWidget()->saveSettings();
+    if (m_panStack) {
+        for (PanadapterApplet* applet : m_panStack->allApplets()) {
+            if (applet && applet->spectrumWidget()) {
+                applet->spectrumWidget()->saveSettings();
+            }
+        }
     }
 
     // Tear down connection (sends stop command, closes sockets, joins thread)

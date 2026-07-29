@@ -6,6 +6,7 @@
 // Phase 3F Sub-Epic D Task 8: PanFloatingWindow construct + dock signal.
 // =================================================================
 #include <QtTest/QtTest>
+#include <QPointer>
 #include <QSignalSpy>
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterApplet.h"
@@ -34,6 +35,21 @@ private slots:
         QSignalSpy spy(w, &PanFloatingWindow::dockRequested);
         w->requestDock();
         QCOMPARE(spy.count(), 1);
+        delete w;
+    }
+
+    void externally_destroyed_applet_is_guarded()
+    {
+        auto* applet = new PanadapterApplet(QStringLiteral("pan-floated"));
+        auto* w = new PanFloatingWindow(applet, nullptr);
+        QPointer<PanadapterApplet> guarded(applet);
+
+        delete applet;
+
+        QVERIFY(guarded.isNull());
+        QCOMPARE(w->applet(), nullptr);
+        QCOMPARE(w->panId(), QString());
+        w->requestDock();
         delete w;
     }
 };

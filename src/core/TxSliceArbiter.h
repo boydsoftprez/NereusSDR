@@ -27,19 +27,13 @@ class MoxController;
 /// instance; MoxController + AlexController + VfoWidget + persistence subscribe.
 class TxSliceArbiter : public QObject {
     Q_OBJECT
-    Q_PROPERTY(int txBoundSliceIndex READ txBoundSliceIndex NOTIFY txBoundSliceChanged)
+    Q_PROPERTY(int txBoundSliceId READ txBoundSliceId NOTIFY txBoundSliceChanged)
 
 public:
     explicit TxSliceArbiter(QObject* parent = nullptr);
 
-    /// LIST POSITION of the TX-bound slice, not a SliceModel::sliceIndex().
-    /// requestHandoff writes the flag positionally, so every reader that
-    /// resolves this back to a SliceModel must index positionally too --
-    /// resolving it as an id picks a different slice than the one carrying
-    /// the flag as soon as a mid-list removal makes ids and positions
-    /// diverge (removeSlice does not renumber survivors). Use
-    /// txBoundSlice() rather than resolving it yourself.
-    int txBoundSliceIndex() const { return m_txBoundIndex; }
+    /// Stable SliceModel::sliceIndex() identity of the TX-bound slice.
+    int txBoundSliceId() const { return m_txBoundSliceId; }
 
     /// The slice bound to the transmitter, or nullptr when no binding
     /// resolves (no slice list wired, empty list, index out of range).
@@ -61,12 +55,11 @@ public:
     /// save()/load(). When unset (empty), save()/load() are no-ops.
     void setMacAddress(const QString& mac) { m_mac = mac; }
 
-    /// Restore the persisted txBoundSliceIndex for the current MAC, performing
-    /// a real handoff if the restored value differs from the current bound
-    /// index. No-op if MAC unset or restored value is out of range.
+    /// Restore the persisted stable slice ID for the current MAC. The legacy
+    /// positional key is migrated once when no stable-ID key exists.
     void load();
 
-    /// Persist the current txBoundSliceIndex under hardware/<mac>/TxBoundSliceIndex.
+    /// Persist the current stable ID under hardware/<mac>/TxBoundSliceId.
     /// No-op if MAC unset.
     void save();
 
@@ -76,11 +69,10 @@ public:
     /// Idempotent, and cheap enough to call unconditionally.
     ///
     /// Three arms:
-    ///   - one slice flagged: adopt its POSITION into m_txBoundIndex. The
-    ///     transmitter has not moved, so nothing is emitted; only the cached
-    ///     position changed, which a removal below the bound slice shifts.
+    ///   - one slice flagged: adopt its stable ID. The transmitter has not
+    ///     moved, so nothing is emitted.
     ///   - none flagged: INITIAL BIND. Raises the flag on the persisted /
-    ///     current index when it is in range, else on slice A, and emits
+    ///     current stable ID when it resolves, else on slice A, and emits
     ///     txBoundSliceChanged(-1, target). This is the arm that makes a
     ///     session with no operator handoff have a transmitter at all.
     ///   - more than one flagged: defensive normalisation back to one.
@@ -93,20 +85,20 @@ public:
     void syncToSliceList();
 
 public slots:
-    /// Request TX handoff to the slice at newSliceIndex. RF-safe (drops MOX first).
+    /// Request TX handoff to the slice with the stable sliceId.
     /// Returns true if handoff succeeded or was a no-op (already TX-bound).
     /// Returns false and emits handoffBlocked if requested slice doesn't exist.
-    bool requestHandoff(int newSliceIndex);
+    bool requestHandoff(int sliceId);
 
 signals:
-    /// Emitted after handoff completes. oldIndex may be -1 on initial bind.
-    void txBoundSliceChanged(int oldIndex, int newIndex);
+    /// Emitted after handoff completes. oldId may be -1 on initial bind.
+    void txBoundSliceChanged(int oldId, int newId);
 
     /// Emitted when a handoff request is rejected (slice doesn't exist, etc.).
-    void handoffBlocked(int requestedIndex, QString reason);
+    void handoffBlocked(int requestedId, QString reason);
 
 private:
-    int                       m_txBoundIndex {0};
+    int                       m_txBoundSliceId {-1};
     MoxController*            m_mox {nullptr};
     QVector<SliceModel*>*     m_slices {nullptr};  // non-owning pointer to RadioModel's list
     QString                   m_mac;               // per-radio AppSettings scope key

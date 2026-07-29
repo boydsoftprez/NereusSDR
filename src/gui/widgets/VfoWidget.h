@@ -491,6 +491,10 @@ public:
     // and the seam is undocumented in user-facing API.
     void simulateTxBadgeClick() { onTxBadgeClicked(); }
 
+    // Narrow test seam for the context-menu stable-ID lookup. The returned
+    // pointer is the same one contextMenuEvent passes to AntennaPickerMenu.
+    NereusSDR::SliceModel* contextMenuSliceForTest() const;
+
 public slots:
     // Phase 3P-I-a T15 — hide Blue/Red ANT buttons when the connected
     // board has no Alex filter (HL2 / Atlas). Called by MainWindow on

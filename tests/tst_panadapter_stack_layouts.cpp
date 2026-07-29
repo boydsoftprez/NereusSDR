@@ -6,7 +6,10 @@
 // Phase 3F Sub-Epic D Task 3: PanadapterStack skeleton (default single layout).
 // =================================================================
 #include <QtTest/QtTest>
+#include <QPointer>
 #include "gui/PanadapterStack.h"
+#include "gui/PanFloatingWindow.h"
+#include "gui/PanadapterApplet.h"
 #include "core/AppSettings.h"
 
 using namespace NereusSDR;
@@ -169,6 +172,50 @@ private slots:
                 QCOMPARE(sizes[i], savedSizes[i]);
             }
         }
+    }
+
+    void layout_omitting_a_floating_pan_removes_it_once()
+    {
+        PanadapterStack stack;
+        stack.applyLayout(QStringLiteral("2v"),
+                          {QStringLiteral("pan-0"), QStringLiteral("pan-1")});
+        QPointer<PanadapterApplet> omitted(stack.panadapter(QStringLiteral("pan-1")));
+        stack.floatPanadapter(QStringLiteral("pan-1"));
+        QPointer<PanFloatingWindow> floater(
+            stack.floatingWindowForTest(QStringLiteral("pan-1")));
+        QVERIFY(omitted);
+        QVERIFY(floater);
+
+        stack.applyLayout(QStringLiteral("1"), {QStringLiteral("pan-0")});
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+        QVERIFY(omitted.isNull());
+        QVERIFY(floater.isNull());
+        QCOMPARE(stack.count(), 1);
+        QVERIFY(stack.panadapter(QStringLiteral("pan-0")) != nullptr);
+    }
+
+    void layout_retaining_a_floating_pan_docks_before_reparenting()
+    {
+        PanadapterStack stack;
+        stack.applyLayout(QStringLiteral("2v"),
+                          {QStringLiteral("pan-0"), QStringLiteral("pan-1")});
+        QPointer<PanadapterApplet> retained(stack.panadapter(QStringLiteral("pan-1")));
+        stack.floatPanadapter(QStringLiteral("pan-1"));
+        QPointer<PanFloatingWindow> floater(
+            stack.floatingWindowForTest(QStringLiteral("pan-1")));
+        QVERIFY(retained);
+        QVERIFY(floater);
+
+        stack.applyLayout(QStringLiteral("2h"),
+                          {QStringLiteral("pan-0"), QStringLiteral("pan-1")});
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+        QVERIFY(retained);
+        QVERIFY(floater.isNull());
+        QCOMPARE(stack.panadapter(QStringLiteral("pan-1")), retained.data());
+        QVERIFY(!retained->isWindow());
+        QCOMPARE(stack.count(), 2);
     }
 };
 

@@ -36,6 +36,7 @@
 // =================================================================
 #pragma once
 
+#include <QPointer>
 #include <QWidget>
 #include <QString>
 
@@ -53,7 +54,7 @@ public:
     PanFloatingWindow(PanadapterApplet* applet, QWidget* parent = nullptr);
     ~PanFloatingWindow() override;
 
-    PanadapterApplet* applet() const { return m_applet; }
+    PanadapterApplet* applet() const;
     QString panId() const;
 
     /// Public hook (test seam + Stack-side trigger) that re-emits
@@ -70,7 +71,7 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
-    PanadapterApplet* m_applet {nullptr};  // reparented under our layout
+    QPointer<PanadapterApplet> m_applet;  // reparented under our layout
 };
 
 } // namespace NereusSDR

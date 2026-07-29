@@ -11,7 +11,7 @@
 //
 // TxSliceArbiter::requestHandoff was the only writer of
 // SliceModel::txSlice, and it early-returns on a no-op handoff. Since
-// m_txBoundIndex defaults to 0, requestHandoff(0) took that arm, so a
+// requestHandoff(0) took the already-bound arm without establishing state, so a
 // session that never explicitly handed the transmitter to another slice
 // never raised the flag on any slice at all. isTxSlice() was false for
 // every slice, forever, which silently disabled every consumer that asks
@@ -73,7 +73,7 @@ private slots:
         QCOMPARE(model.slices().size(), 1);
         QCOMPARE(flaggedCount(model), 1);
         QVERIFY(model.slices().at(0)->isTxSlice());
-        QCOMPARE(model.txSliceArbiter()->txBoundSliceIndex(), 0);
+        QCOMPARE(model.txSliceArbiter()->txBoundSliceId(), 0);
         QCOMPARE(model.txBoundSlice(), model.slices().at(0));
         Q_UNUSED(a);
     }
@@ -148,7 +148,7 @@ private slots:
         model.addSlice();
         SliceModel* c = model.slices().at(2);
 
-        QVERIFY(model.txSliceArbiter()->requestHandoff(2));  // TX -> slice C
+        QVERIFY(model.txSliceArbiter()->requestHandoff(c->sliceIndex()));
         QCOMPARE(flaggedSlice(model), c);
 
         model.removeSlice(a);  // remove a slice BELOW the bound position
@@ -163,14 +163,34 @@ private slots:
         QCOMPARE(model.txBoundSlice(), c);
     }
 
+    void directArbiterHandoffUsesStableIdAfterADeletionGap()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+
+        SliceModel* a = model.sliceById(model.addSlice());
+        const int bId = model.addSlice();
+        SliceModel* c = model.sliceById(model.addSlice());
+        QVERIFY(a);
+        QVERIFY(c);
+        QCOMPARE(c->sliceIndex(), 2);
+
+        model.removeSlice(bId);
+        QCOMPARE(model.slices().indexOf(c), 1);
+
+        QVERIFY(model.txSliceArbiter()->requestHandoff(c->sliceIndex()));
+        QCOMPARE(model.txBoundSlice(), c);
+        QCOMPARE(flaggedSlice(model), c);
+    }
+
     // Design §6 "Restore on launch": if the persisted slice does not exist
     // this session, default to Slice A. What must never happen is the
     // restore leaving nothing bound.
-    void persistedIndexNamingAMissingSliceLeavesSliceABound()
+    void persistedIdNamingAMissingSliceLeavesSliceABound()
     {
         const QString mac = QStringLiteral("11:22:33:44:55:66");
         AppSettings::instance().setValue(
-            QStringLiteral("hardware/%1/TxBoundSliceIndex").arg(mac), 4);
+            QStringLiteral("hardware/%1/TxBoundSliceId").arg(mac), 4);
 
         RadioModel model;
         model.configureStreamPool(5, 5, 192000);
@@ -182,15 +202,15 @@ private slots:
 
         QCOMPARE(flaggedCount(model), 1);
         QCOMPARE(flaggedSlice(model), model.slices().at(0));
-        QCOMPARE(model.txSliceArbiter()->txBoundSliceIndex(), 0);
+        QCOMPARE(model.txSliceArbiter()->txBoundSliceId(), 0);
     }
 
     // A persisted index that DOES name a live slice is honoured.
-    void persistedIndexNamingALiveSliceIsRestored()
+    void persistedIdNamingALiveSliceIsRestored()
     {
         const QString mac = QStringLiteral("11:22:33:44:55:77");
         AppSettings::instance().setValue(
-            QStringLiteral("hardware/%1/TxBoundSliceIndex").arg(mac), 1);
+            QStringLiteral("hardware/%1/TxBoundSliceId").arg(mac), 1);
 
         RadioModel model;
         model.configureStreamPool(5, 5, 192000);

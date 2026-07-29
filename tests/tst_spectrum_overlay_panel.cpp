@@ -46,6 +46,14 @@ private:
         return h.host.findChild<QComboBox*>(QStringLiteral("vaxIqCombo"));
     }
 
+    QComboBox* rxAntennaCombo(PanelHarness& h) {
+        return h.host.findChild<QComboBox*>(QStringLiteral("m_rxAntCmb"));
+    }
+
+    QComboBox* txAntennaCombo(PanelHarness& h) {
+        return h.host.findChild<QComboBox*>(QStringLiteral("m_txAntCmb"));
+    }
+
 private slots:
 
     void init() {
@@ -212,6 +220,78 @@ private slots:
         QVERIFY(s);
         combo->setCurrentIndex(4);
         QCOMPARE(s->vaxChannel(), 4);
+    }
+
+    void controls_bind_to_the_resolved_pan_slice()
+    {
+        RadioModel radio;
+        SliceModel* first = radio.sliceById(radio.addSlice());
+        SliceModel* second = radio.sliceById(radio.addSlice());
+        QVERIFY(first);
+        QVERIFY(second);
+        first->setRxAntenna(QStringLiteral("ANT1"));
+        first->setTxAntenna(QStringLiteral("ANT1"));
+        first->setVaxChannel(1);
+        second->setRxAntenna(QStringLiteral("ANT2"));
+        second->setTxAntenna(QStringLiteral("ANT3"));
+        second->setVaxChannel(4);
+
+        PanelHarness h;
+        h.panel->setSliceResolver([second]() { return second; });
+        h.panel->setRadioModel(&radio);
+
+        QComboBox* rx = rxAntennaCombo(h);
+        QComboBox* tx = txAntennaCombo(h);
+        QComboBox* vax = vaxCombo(h);
+        QVERIFY(rx);
+        QVERIFY(tx);
+        QVERIFY(vax);
+        QCOMPARE(rx->currentText(), QStringLiteral("ANT2"));
+        QCOMPARE(tx->currentText(), QStringLiteral("ANT3"));
+        QCOMPARE(vax->currentIndex(), 4);
+
+        rx->setCurrentText(QStringLiteral("ANT3"));
+        tx->setCurrentText(QStringLiteral("ANT2"));
+        vax->setCurrentIndex(2);
+        QCOMPARE(second->rxAntenna(), QStringLiteral("ANT3"));
+        QCOMPARE(second->txAntenna(), QStringLiteral("ANT2"));
+        QCOMPARE(second->vaxChannel(), 2);
+        QCOMPARE(first->rxAntenna(), QStringLiteral("ANT1"));
+        QCOMPARE(first->txAntenna(), QStringLiteral("ANT1"));
+        QCOMPARE(first->vaxChannel(), 1);
+    }
+
+    void changing_the_pan_slice_rebinds_and_missing_slice_disables()
+    {
+        RadioModel radio;
+        SliceModel* first = radio.sliceById(radio.addSlice());
+        SliceModel* second = radio.sliceById(radio.addSlice());
+        QVERIFY(first);
+        QVERIFY(second);
+        first->setVaxChannel(1);
+        second->setVaxChannel(3);
+
+        QPointer<SliceModel> resolved = first;
+        PanelHarness h;
+        h.panel->setSliceResolver([&resolved]() { return resolved.data(); });
+        h.panel->setRadioModel(&radio);
+        QComboBox* vax = vaxCombo(h);
+        QVERIFY(vax);
+        QCOMPARE(vax->currentIndex(), 1);
+
+        resolved = second;
+        h.panel->bindToPanSlice();
+        QCOMPARE(vax->currentIndex(), 3);
+
+        radio.removeSlice(second->sliceIndex());
+        resolved = nullptr;
+        h.panel->bindToPanSlice();
+        QVERIFY(!vax->isEnabled());
+
+        resolved = first;
+        h.panel->bindToPanSlice();
+        QVERIFY(vax->isEnabled());
+        QCOMPARE(vax->currentIndex(), 1);
     }
 };
 

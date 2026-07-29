@@ -2074,7 +2074,7 @@ RadioModel::RadioModel(QObject* parent)
     // currentRadioChanged is emitted from onConnectionStateChanged once the
     // hardware profile is loaded and m_lastRadioInfo is populated (see
     // ConnectionState::Connected branch).  Push the MAC into the arbiter
-    // and call load() to restore the persisted TxBoundSliceIndex for this
+    // and call load() to restore the persisted TxBoundSliceId for this
     // radio.  load() is a no-op if MAC is empty (default-constructed
     // RadioInfo from setLastRadioInfoForTest path).
     //
@@ -3878,17 +3878,7 @@ SliceModel* RadioModel::sliceById(int sliceId) const
 bool RadioModel::requestTxHandoffToSlice(int sliceId)
 {
     if (m_txSliceArbiter == nullptr) { return false; }
-
-    SliceModel* target = sliceById(sliceId);
-    if (target == nullptr) { return false; }
-
-    // The conversion this function exists for. removeSlice does the same
-    // indexOf to find the position of an id, and txBoundSlice() resolves the
-    // arbiter's index positionally for the same reason.
-    const int position = m_slices.indexOf(target);
-    if (position < 0) { return false; }
-
-    return m_txSliceArbiter->requestHandoff(position);
+    return m_txSliceArbiter->requestHandoff(sliceId);
 }
 
 int RadioModel::addSlice(const QString& initialPanId)
@@ -3938,7 +3928,7 @@ int RadioModel::addSlice(const QString& initialPanId)
     //
     // TxSliceArbiter::requestHandoff is the only writer of
     // SliceModel::txSlice and it early-returns on a no-op handoff, so with
-    // m_txBoundIndex defaulting to 0 nothing ever raised the flag in a
+    // without an explicit initial bind nothing ever raised the flag in a
     // session where the operator did not explicitly move TX. Every consumer
     // that asks which slice transmits was reading a flag that was false on
     // every slice: the TX-bound branch of removeSlice below, the codec's
@@ -4217,25 +4207,16 @@ void RadioModel::removeSlice(int sliceId)
     // a torn slice list.  Fallback target is slice 0, unless slice 0 is the
     // victim itself, in which case fall back to slice 1.
     //
-    // TxSliceArbiter indexes m_slices positionally (TxSliceArbiter.cpp
-    // requestHandoff), so the fallback stays a POSITION here.
     SliceModel* victim = m_slices.at(position);
     if (victim->isTxSlice() && m_txSliceArbiter) {
         const int fallbackPosition = (position == 0) ? 1 : 0;
-        m_txSliceArbiter->requestHandoff(fallbackPosition);
+        SliceModel* fallback = m_slices.at(fallbackPosition);
+        m_txSliceArbiter->requestHandoff(fallback->sliceIndex());
     }
 
     SliceModel* slice = m_slices.takeAt(position);
 
-    // Removing a slice shifts every position above it down by one, and the
-    // arbiter's index is a POSITION. Re-derive it from the flag, which rode
-    // the SliceModel object through the mutation. Without this the arbiter
-    // and the flag name two different slices after any removal below the
-    // bound one -- and txBoundSlice(), which gates the transmit-frequency
-    // push, would follow the arbiter onto the wrong slice.
-    //
-    // After takeAt, so the victim is already out of the list and cannot be
-    // re-adopted as the binding.
+    // Reassert the invariant after the victim leaves the list.
     if (m_txSliceArbiter) {
         m_txSliceArbiter->syncToSliceList();
     }
@@ -8642,9 +8623,8 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         if (m_syncingAgc) { return; }
 
         // From Thetis v2.10.3.13 console.cs:49129-49130 — manual drag disables auto
-        SliceModel* s = m_activeSlice;
-        if (s && s->autoAgcEnabled()) {
-            s->setAutoAgcEnabled(false);
+        if (slice->autoAgcEnabled()) {
+            slice->setAutoAgcEnabled(false);
         }
 
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
@@ -8655,9 +8635,8 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
             // From Thetis console.cs:45978 — GetRXAAGCTop after SetRXAAGCThresh
             double top = rxCh->readBackAgcTop();
             int rfGain = static_cast<int>(std::round(top));
-            SliceModel* s = m_activeSlice;
-            if (s && s->rfGain() != rfGain) {
-                s->setRfGain(rfGain);
+            if (slice->rfGain() != rfGain) {
+                slice->setRfGain(rfGain);
             }
             m_syncingAgc = false;
         }
@@ -9318,9 +9297,8 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
             // Read back resulting threshold and sync AGC-T display.
             double thresh = rxCh->readBackAgcThresh();
             int threshInt = static_cast<int>(std::round(thresh));
-            SliceModel* s = m_activeSlice;
-            if (s && s->agcThreshold() != threshInt) {
-                s->setAgcThreshold(threshInt);
+            if (slice->agcThreshold() != threshInt) {
+                slice->setAgcThreshold(threshInt);
             }
             m_syncingAgc = false;
         }
@@ -10270,7 +10248,7 @@ void RadioModel::teardownConnection()
         m_transmitModel.persistToSettings(m_lastRadioInfo.macAddress);
     }
 
-    // Phase 3F Sub-Epic C Task 6: persist TxBoundSliceIndex per-MAC before
+    // Phase 3F Sub-Epic C Task 6: persist TxBoundSliceId per-MAC before
     // the connection tears down.  save() keys off the MAC the arbiter was
     // last fed (currentRadioChanged lambda in the ctor), so it stays
     // pinned across teardown for the no-op idempotent case.  Empty-MAC

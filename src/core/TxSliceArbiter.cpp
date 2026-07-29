@@ -26,10 +26,13 @@ void TxSliceArbiter::setSliceList(QVector<SliceModel*>* slices) { m_slices = sli
 
 SliceModel* TxSliceArbiter::txBoundSlice() const
 {
-    if (!m_slices || m_txBoundIndex < 0 || m_txBoundIndex >= m_slices->size()) {
-        return nullptr;
+    if (!m_slices) { return nullptr; }
+    for (SliceModel* slice : *m_slices) {
+        if (slice && slice->sliceIndex() == m_txBoundSliceId) {
+            return slice;
+        }
     }
-    return m_slices->at(m_txBoundIndex);
+    return nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -37,79 +40,81 @@ SliceModel* TxSliceArbiter::txBoundSlice() const
 //
 // The defect this closes: requestHandoff was the ONLY writer of
 // SliceModel::txSlice, and it early-returns when the requested index already
-// equals m_txBoundIndex. m_txBoundIndex defaults to 0, so requestHandoff(0)
+// equals m_txBoundSliceId. A default binding therefore has to be established
 // took that arm and never raised the flag. A single-slice session, and any
 // session where the operator never explicitly moved TX, therefore ran with
 // isTxSlice() false on every slice for the life of the process, silently
 // disabling every consumer that asks which slice transmits.
 //
 // The flag on the SliceModel is the authority for WHICH slice transmits;
-// m_txBoundIndex is a cache of that slice's position in the list. Deriving
-// the index from the flag (rather than the other way round) is what makes
+// m_txBoundSliceId is a cache of that slice's stable identity. Deriving the
+// ID from the flag (rather than the other way round) is what makes
 // this safe to call after a removal: the flagged OBJECT survives the list
 // mutation, only its position moves.
 // ---------------------------------------------------------------------------
 void TxSliceArbiter::syncToSliceList()
 {
     if (!m_slices || m_slices->isEmpty()) {
-        // No slices, so no binding to hold. m_txBoundIndex is left alone: it
+        // No slices, so no binding to hold. The restored ID is left alone: it
         // may be carrying a value load() restored, and the first slice to
         // arrive should honour it.
         return;
     }
 
-    int firstFlagged = -1;
+    SliceModel* firstFlagged = nullptr;
     int flaggedCount = 0;
-    for (int i = 0; i < m_slices->size(); ++i) {
-        SliceModel* s = m_slices->at(i);
+    for (SliceModel* s : *m_slices) {
         if (s && s->isTxSlice()) {
-            if (firstFlagged < 0) { firstFlagged = i; }
+            if (!firstFlagged) { firstFlagged = s; }
             ++flaggedCount;
         }
     }
 
     if (flaggedCount == 1) {
-        // The transmitter is where it was; only its position may have moved.
+        // The transmitter is where it was; silently adopt its stable ID.
         // Deliberately silent: txBoundSliceChanged means "the transmitter
         // moved to a different slice", and subscribers act on it (re-badge
         // every VFO flag, re-push the transmit frequency, toast the
         // operator). Announcing a re-index would tell them a handoff
         // happened that did not.
-        m_txBoundIndex = firstFlagged;
+        m_txBoundSliceId = firstFlagged->sliceIndex();
         return;
     }
 
     if (flaggedCount > 1) {
         // Defensive: nothing outside this class writes the flag today, so
         // this is a guard against a future second writer rather than a live
-        // path. Keep the slice the index already names if it is one of the
-        // flagged, otherwise the first flagged, and clear the rest.
-        const bool indexInRange = m_txBoundIndex >= 0
-                                  && m_txBoundIndex < m_slices->size();
-        const bool indexIsFlagged = indexInRange
-                                    && m_slices->at(m_txBoundIndex)
-                                    && m_slices->at(m_txBoundIndex)->isTxSlice();
-        const int keep = indexIsFlagged ? m_txBoundIndex : firstFlagged;
-        for (int i = 0; i < m_slices->size(); ++i) {
-            if (i != keep && m_slices->at(i)) {
-                m_slices->at(i)->setTxSlice(false);
+        // path. Keep the slice the stable ID already names if it is flagged,
+        // otherwise the first flagged slice, and clear the rest.
+        SliceModel* keep = txBoundSlice();
+        if (!keep || !keep->isTxSlice()) {
+            keep = firstFlagged;
+        }
+        for (SliceModel* slice : *m_slices) {
+            if (slice && slice != keep) {
+                slice->setTxSlice(false);
             }
         }
-        m_txBoundIndex = keep;
+        m_txBoundSliceId = keep->sliceIndex();
         return;
     }
 
     // ── Initial bind ────────────────────────────────────────────────────
     // Nothing is flagged and slices exist, so the transmitter has no home.
-    // Give it one. Honour the current index (which load() may have restored
+    // Give it one. Honour the current ID (which load() may have restored
     // from AppSettings) when it names a live slice; otherwise fall back to
     // slice A, per design §6 "Restore on launch": "If that slice doesn't
     // exist post-restore (e.g. operator deleted it last session), default to
     // Slice A."
-    const int target = (m_txBoundIndex >= 0 && m_txBoundIndex < m_slices->size())
-                           ? m_txBoundIndex
-                           : 0;
-    SliceModel* slice = m_slices->at(target);
+    SliceModel* slice = txBoundSlice();
+    if (!slice) {
+        for (SliceModel* candidate : *m_slices) {
+            if (candidate) {
+                slice = candidate;
+                break;
+            }
+        }
+    }
     if (!slice) { return; }
 
     // RF-safe, same guard requestHandoff uses. Unreachable on the true first
@@ -120,21 +125,31 @@ void TxSliceArbiter::syncToSliceList()
     }
 
     slice->setTxSlice(true);
-    m_txBoundIndex = target;
-    // oldIndex -1: there was no previous binding, so this is not a handoff.
+    m_txBoundSliceId = slice->sliceIndex();
+    // oldId -1: there was no previous binding, so this is not a handoff.
     // Subscribers that treat it as one (status-bar "TX > Slice X" toast)
     // check for the sentinel.
-    emit txBoundSliceChanged(-1, target);
+    emit txBoundSliceChanged(-1, m_txBoundSliceId);
 }
 
-bool TxSliceArbiter::requestHandoff(int newSliceIndex)
+bool TxSliceArbiter::requestHandoff(int sliceId)
 {
-    if (!m_slices || newSliceIndex < 0 || newSliceIndex >= m_slices->size()) {
-        emit handoffBlocked(newSliceIndex, QStringLiteral("Slice index out of range"));
+    SliceModel* target = nullptr;
+    if (m_slices) {
+        for (SliceModel* slice : *m_slices) {
+            if (slice && slice->sliceIndex() == sliceId) {
+                target = slice;
+                break;
+            }
+        }
+    }
+    if (!target) {
+        emit handoffBlocked(sliceId, QStringLiteral("Slice ID not found"));
         return false;
     }
 
-    if (newSliceIndex == m_txBoundIndex) {
+    if (target->isTxSlice()) {
+        m_txBoundSliceId = sliceId;
         return true;  // already TX-bound, no-op
     }
 
@@ -145,16 +160,28 @@ bool TxSliceArbiter::requestHandoff(int newSliceIndex)
         // becomes async, switch to a QEventLoop wait on moxChanged here.
     }
 
-    const int oldIndex = m_txBoundIndex;
-
-    // Flip txSlice flags on the affected slices.
-    if (oldIndex >= 0 && oldIndex < m_slices->size()) {
-        m_slices->at(oldIndex)->setTxSlice(false);
+    int oldId = m_txBoundSliceId;
+    if (!txBoundSlice()) {
+        for (SliceModel* slice : *m_slices) {
+            if (slice && slice->isTxSlice()) {
+                oldId = slice->sliceIndex();
+                break;
+            }
+        }
     }
-    m_slices->at(newSliceIndex)->setTxSlice(true);
 
-    m_txBoundIndex = newSliceIndex;
-    emit txBoundSliceChanged(oldIndex, newSliceIndex);
+    // The ID cache may have been restored before the live flags were
+    // normalised, so clear every other slice rather than trusting one
+    // positional predecessor.
+    for (SliceModel* slice : *m_slices) {
+        if (slice && slice != target) {
+            slice->setTxSlice(false);
+        }
+    }
+    target->setTxSlice(true);
+
+    m_txBoundSliceId = sliceId;
+    emit txBoundSliceChanged(oldId, sliceId);
     return true;
 }
 
@@ -162,28 +189,46 @@ void TxSliceArbiter::save()
 {
     if (m_mac.isEmpty()) { return; }
     auto& s = AppSettings::instance();
-    const QString key = QStringLiteral("hardware/%1/TxBoundSliceIndex").arg(m_mac);
-    s.setValue(key, m_txBoundIndex);
+    const QString key = QStringLiteral("hardware/%1/TxBoundSliceId").arg(m_mac);
+    s.setValue(key, m_txBoundSliceId);
 }
 
 void TxSliceArbiter::load()
 {
     if (m_mac.isEmpty()) { return; }
     auto& s = AppSettings::instance();
-    const QString key = QStringLiteral("hardware/%1/TxBoundSliceIndex").arg(m_mac);
-    const int restored = s.value(key, 0).toInt();
+    const QString idKey = QStringLiteral("hardware/%1/TxBoundSliceId").arg(m_mac);
+    const QString legacyKey =
+        QStringLiteral("hardware/%1/TxBoundSliceIndex").arg(m_mac);
 
-    // A restored index that names a slice this session does not have is
-    // DISCARDED, not remembered: design §6 "Restore on launch" says default
-    // to Slice A when the persisted slice no longer exists, and remembering
-    // it would leave txBoundSliceIndex() naming a slice nothing can resolve.
-    // The syncToSliceList() below is what actually lands on Slice A in that
-    // case (and what guarantees a binding exists at all, restore or not).
-    //
-    // requestHandoff's own "already TX-bound" arm handles restored ==
-    // m_txBoundIndex, so there is no second equality check here.
-    if (restored >= 0 && m_slices && restored < m_slices->size()) {
-        requestHandoff(restored);
+    int restoredId = -1;
+    if (s.contains(idKey)) {
+        restoredId = s.value(idKey, -1).toInt();
+    } else if (s.contains(legacyKey) && m_slices) {
+        const int legacyPosition = s.value(legacyKey, -1).toInt();
+        if (legacyPosition >= 0 && legacyPosition < m_slices->size()) {
+            if (SliceModel* legacySlice = m_slices->at(legacyPosition)) {
+                restoredId = legacySlice->sliceIndex();
+                s.setValue(idKey, restoredId);
+            }
+        }
+    }
+
+    if (restoredId >= 0) {
+        bool liveId = false;
+        if (m_slices) {
+            for (SliceModel* slice : *m_slices) {
+                if (slice && slice->sliceIndex() == restoredId) {
+                    liveId = true;
+                    break;
+                }
+            }
+        }
+        if (liveId) {
+            requestHandoff(restoredId);
+        } else {
+            m_txBoundSliceId = restoredId;
+        }
     }
     syncToSliceList();
 }
