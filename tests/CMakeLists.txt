@@ -5714,6 +5714,11 @@ nereus_add_test(tst_dsp_menu_active_slice)
 # and tracked whichever slice moved last. Bench-reported 2026-07-28.
 nereus_add_test(tst_pan_flag_positions)
 
+# Phase 3F: Qt does not constrain a plain Qt::Popup to the screen the way it
+# constrains QMenu, so the right-click waterfall panel opened below the bottom
+# edge on the lower pan of a 2v layout. Bench-reported 2026-07-28.
+nereus_add_test(tst_popup_placement)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

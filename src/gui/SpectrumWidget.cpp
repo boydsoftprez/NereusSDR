@@ -122,15 +122,18 @@
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/LogCategories.h"   // Phase 3M-4 bench-fix Round 2: lcSpectrum
 #include "dbm_strip_math.h"
+#include "popup_placement.h"
 #include "models/BandPlanManager.h"
 #include "spectrum/SpectrumDetector.h"
 
 #include <QApplication>
 #include <QClipboard>
 #include <QDesktopServices>
+#include <QGuiApplication>
 #include <QHoverEvent>
 #include <QLabel>
 #include <QPropertyAnimation>
+#include <QScreen>
 #include <QToolTip>
 #include <QUrl>
 
@@ -6006,7 +6009,30 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                                   static_cast<int>(m_wfColorScheme),
                                   m_fillAlpha, m_panFill, false,
                                   m_refLevel, m_dynamicRange, m_ctunEnabled);
-        m_overlayMenu->move(event->globalPosition().toPoint());
+
+        // Clamp onto the screen before showing.
+        //
+        // Qt constrains a QMenu to the screen on its own but does NOT do the
+        // same for a plain QWidget carrying Qt::Popup, which is what
+        // SpectrumOverlayMenu is: asked for a y near the bottom edge it is
+        // placed there verbatim and its body hangs off the screen. That never
+        // showed while there was one full-height pan whose top sat high on the
+        // display; on the LOWER pan of a 2v layout -- right-clicking its
+        // waterfall, which is exactly what an operator does when they want the
+        // waterfall controls -- the panel opened below the visible area.
+        // Bench-reported 2026-07-28: "I have now lost the ability to adjust the
+        // second RX waterfall via the right click menu."
+        //
+        // adjustSize() first: on the very first right-click the popup has never
+        // been laid out, so size() would still be the default and the clamp
+        // would be computed against the wrong height.
+        const QPoint desired = event->globalPosition().toPoint();
+        m_overlayMenu->adjustSize();
+        const QScreen* screen = QGuiApplication::screenAt(desired);
+        if (!screen) { screen = QGuiApplication::primaryScreen(); }
+        m_overlayMenu->move(PopupPlacement::clampToAvailable(
+            desired, m_overlayMenu->size(),
+            screen ? screen->availableGeometry() : QRect()));
         m_overlayMenu->show();
         return;
     }
