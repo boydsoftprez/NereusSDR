@@ -1081,11 +1081,11 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
             }
             host->setCenterFrequency(hz);
             host->setDdcCenterFrequency(hz);
-            if (m_radioModel->wdspEngine()) {
-                if (RxChannel* ch =
-                        m_radioModel->wdspEngine()->rxChannel(slice->sliceIndex())) {
-                    ch->setShiftFrequency(0.0);
-                }
+            // Phase 3F Sub-Epic J Task 11: resolved through RadioModel's
+            // accessor rather than wdspEngine()->rxChannel() directly --
+            // src/gui/ no longer reaches into WdspEngine for a channel.
+            if (RxChannel* ch = m_radioModel->rxChannelForSlice(slice->sliceIndex())) {
+                ch->setShiftFrequency(0.0);
             }
             if (wasCtun && m_radioModel->receiverManager()) {
                 m_radioModel->receiverManager()->setDdcFrequencyLocked(true);
@@ -1093,11 +1093,8 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
             m_handlingBandJump = false;
         } else {
             // CTUN, still on-screen: the DDC stays put and WDSP shifts.
-            if (m_radioModel->wdspEngine()) {
-                if (RxChannel* ch =
-                        m_radioModel->wdspEngine()->rxChannel(slice->sliceIndex())) {
-                    ch->setShiftFrequency(hz - center);
-                }
+            if (RxChannel* ch = m_radioModel->rxChannelForSlice(slice->sliceIndex())) {
+                ch->setShiftFrequency(hz - center);
             }
         }
         host->setVfoFrequency(hz);
@@ -3617,7 +3614,12 @@ void MainWindow::buildUI()
             this, [this](bool ok) {
         if (!ok) { return; }
         QTimer::singleShot(0, this, [this]() {
-            RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
+            // Phase 3F Sub-Epic J Task 11: RadioModel::rxChannelForSlice()
+            // replaces the direct wdspEngine()->rxChannel() reach. Still
+            // channel 0 here on purpose -- this is the boot-time seed, before
+            // any slice but A exists, and the activeSliceChanged handler
+            // below immediately supersedes it once other slices are added.
+            RxChannel* rxCh = m_radioModel->rxChannelForSlice(0);
             if (rxCh) {
                 m_meterPoller->setRxChannel(rxCh);
                 m_meterPoller->start();
@@ -3650,8 +3652,10 @@ void MainWindow::buildUI()
     // they are untouched here.
     connect(m_radioModel, &RadioModel::activeSliceChanged, this, [this](int) {
         SliceModel* slice = m_radioModel->activeSlice();
-        if (!slice || !m_radioModel->wdspEngine()) { return; }
-        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(slice->sliceIndex());
+        if (!slice) { return; }
+        // Phase 3F Sub-Epic J Task 11: RadioModel::rxChannelForSlice()
+        // replaces the direct wdspEngine()->rxChannel() reach.
+        RxChannel* rxCh = m_radioModel->rxChannelForSlice(slice->sliceIndex());
         if (rxCh) { m_meterPoller->setRxChannel(rxCh); }
     });
 
