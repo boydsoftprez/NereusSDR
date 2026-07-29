@@ -233,11 +233,34 @@ private slots:
     /// change: a slice added to an existing pan moves no pan count.
     void refreshMeterPollerSlices();
 
-    /// Wire one panadapter's mouse interaction (click-to-tune, filter-edge
-    /// drag, pan drag, CTUN toggle) to the slice that pan hosts. Every one of
+    /// Wire one panadapter's spot, connection and MaxBin hooks. Every one of
     /// these used to be connected once to pan-0's widget, leaving other pans
-    /// inert to everything except the flag.
+    /// inert. The four controls that TARGET A SLICE live in
+    /// wireSpectrumSliceControls below, because pan-0 needs those and does not
+    /// come through here.
     void wireSpectrumForPan(class SpectrumWidget* sw, const QString& panId);
+
+    /// Wire the four spectrum controls that act on a slice: click-to-tune,
+    /// filter-edge drag, pan drag, CTUN toggle.
+    ///
+    /// Split out of wireSpectrumForPan for the bench defect of 2026-07-28,
+    /// where click-to-tune retuned Slice A however many times the operator
+    /// selected another flag. ensureOverlayPanels deliberately skips
+    /// wireSpectrumForPan for pan-0 (its spot / connection / MaxBin hooks are
+    /// wired elsewhere and would double), so pan-0 was left running an older
+    /// copy of these four in wireSliceToSpectrum whose lambdas captured
+    /// RadioModel::activeSlice() by value at connect time. That pointer is
+    /// Slice A and never moved, so on the one pan almost every operator uses,
+    /// none of the four ever consulted the pan's active slice at all.
+    ///
+    /// Called for EVERY pan, pan-0 included, and the sole home for these four
+    /// signals: verify-no-captured-slice-spectrum-wiring.py fails the build if
+    /// any of them is connected to a sender other than this function's `sw`.
+    /// Each handler resolves its target through sliceForPan(panId) at signal
+    /// time rather than capturing it, which is what makes it follow the
+    /// operator's selection.
+    void wireSpectrumSliceControls(class SpectrumWidget* sw,
+                                   const QString& panId);
 
     /// Push the live connection state into every pan's spectrum widget.
     /// SpectrumWidget::mousePressEvent returns early when it believes the

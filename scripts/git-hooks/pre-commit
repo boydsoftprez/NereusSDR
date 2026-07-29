@@ -117,6 +117,17 @@ if ! python3 scripts/verify-no-gui-dsp-access.py; then
     exit 1
 fi
 
+echo "[pre-commit] verify-no-captured-slice-spectrum-wiring.py"
+if ! python3 scripts/verify-no-captured-slice-spectrum-wiring.py; then
+    echo
+    echo "[pre-commit] BLOCKED: a spectrum slice control is wired to"
+    echo "             activeSpectrumWidget(), which is pan-0 forever."
+    echo "             Wire it in MainWindow::wireSpectrumSliceControls, which"
+    echo "             resolves the slice per signal via sliceForPan(panId)."
+    echo "             See scripts/verify-no-captured-slice-spectrum-wiring.py."
+    exit 1
+fi
+
 echo "[pre-commit] verify-inline-tag-preservation.py (author-tag check)"
 # Auto-locate upstream clones. Search order:
 #   1. $NEREUS_THETIS_DIR  / $NEREUS_MI0BOT_DIR (explicit override)

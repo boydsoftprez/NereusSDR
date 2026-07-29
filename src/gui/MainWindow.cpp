@@ -1590,6 +1590,82 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
     // pan-0 only and every other pan showed a bare spectrum.
     sw->setBandPlanManager(&m_radioModel->bandPlanManagerMutable());
 
+    // Right-click a spot on THIS pan to remove it. Was pan-0 only, so spots
+    // could be dismissed from one pan and were inert on every other.
+    if (SpotModel* spots = m_radioModel->spotModel()) {
+        connect(sw, &SpectrumWidget::spotRemoveRequested,
+                spots, &SpotModel::removeSpot);
+    }
+
+    // Hovering a spot on any pan drives the Spot Hub highlight.
+    if (m_spotHubDialog) {
+        connect(sw, &SpectrumWidget::spotHoverIndexChanged,
+                m_spotHubDialog.data(),
+                &SpotHubDialog::setHoveredPanadapterSpot);
+    }
+
+    // Clicking a disconnected pan opens the connection panel, from any pan.
+    connect(sw, &SpectrumWidget::disconnectedClickRequest,
+            this, &MainWindow::showConnectionPanel);
+
+    // CTUN max-bin offset follows THIS pan's slice rather than the globally
+    // active one, so a max-bin readout on a background pan is not measured
+    // against a slice sitting on some other pan's stream.
+    connect(sw, &SpectrumWidget::ddcCenterFrequencyChanged, this,
+            [this, panId](double ddcCenter) {
+        if (!m_radioModel || !m_radioModel->wdspEngine()) { return; }
+        if (SliceModel* s = sliceForPan(panId)) {
+            m_radioModel->wdspEngine()->setMaxBinSliceOffsetHz(
+                /*disp=*/0, s->frequency() - ddcCenter);
+        }
+    });
+
+    // NOT wired here: bandwidthChangeRequested. Zoom itself already works on
+    // every pan (SpectrumWidget narrows its own visible bin range), but the
+    // auto-replan that keeps bins-per-pixel constant across zoom levels runs
+    // against primaryFftEngine() -- one engine, pan-0's. Routing it per pan
+    // needs the FFT engine looked up by the pan's stream, which is a bigger
+    // change than this function. Until then a deep zoom on another pan stays
+    // visually correct but does not gain FFT resolution.
+}
+
+// ---------------------------------------------------------------------------
+// wireSpectrumSliceControls: the four spectrum controls that act on a slice.
+//
+// Bench 2026-07-28: "when I click to tune it always tunes flag A, not the last
+// selected." Proven with per-hop instrumentation rather than by reading: a
+// synthetic frequencyClicked on pan-0 fired exactly one handler, the copy in
+// wireSliceToSpectrum, and sliceForPan was never called in the whole session.
+//
+// These four used to exist twice. wireSpectrumForPan held the per-pan version,
+// and ensureOverlayPanels skips that function for pan-0 (its spot, connection
+// and MaxBin hooks are wired elsewhere in this file and would double), so pan-0
+// ran an older copy in wireSliceToSpectrum whose lambdas closed over
+//
+//     SliceModel* slice = m_radioModel->activeSlice();
+//
+// by value. connect() binds the object, and the lambda binds the pointer, so
+// that copy was Slice A for the life of the session. On the single pan almost
+// every operator uses, click-to-tune, the filter-edge drag, the pan drag and
+// the CTUN toggle all drove Slice A and never consulted the pan at all. The
+// per-pan active slice this epic added was correct and simply unread.
+//
+// One home now, called for every pan including pan-0, so the two cannot drift
+// apart again. verify-no-captured-slice-spectrum-wiring.py fails the build if
+// any of the four is connected to a sender other than `sw`; it is listed in
+// the pre-commit hook and in CI's compliance job beside
+// verify-no-gui-dsp-access.py, which guards the same class of mistake one
+// layer down.
+//
+// Every handler resolves its slice through sliceForPan(panId) on each signal.
+// That is the whole fix: resolving late is what lets the answer change when
+// the operator selects a different flag.
+// ---------------------------------------------------------------------------
+void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
+                                           const QString& panId)
+{
+    if (!sw || !m_radioModel) { return; }
+
     // Click on the spectrum tunes this pan's slice.
     connect(sw, &SpectrumWidget::frequencyClicked, this,
             [this, panId](double hz) {
@@ -1651,44 +1727,6 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
                                                 sw->ddcCenterFrequency());
         }
     });
-
-    // Right-click a spot on THIS pan to remove it. Was pan-0 only, so spots
-    // could be dismissed from one pan and were inert on every other.
-    if (SpotModel* spots = m_radioModel->spotModel()) {
-        connect(sw, &SpectrumWidget::spotRemoveRequested,
-                spots, &SpotModel::removeSpot);
-    }
-
-    // Hovering a spot on any pan drives the Spot Hub highlight.
-    if (m_spotHubDialog) {
-        connect(sw, &SpectrumWidget::spotHoverIndexChanged,
-                m_spotHubDialog.data(),
-                &SpotHubDialog::setHoveredPanadapterSpot);
-    }
-
-    // Clicking a disconnected pan opens the connection panel, from any pan.
-    connect(sw, &SpectrumWidget::disconnectedClickRequest,
-            this, &MainWindow::showConnectionPanel);
-
-    // CTUN max-bin offset follows THIS pan's slice rather than the globally
-    // active one, so a max-bin readout on a background pan is not measured
-    // against a slice sitting on some other pan's stream.
-    connect(sw, &SpectrumWidget::ddcCenterFrequencyChanged, this,
-            [this, panId](double ddcCenter) {
-        if (!m_radioModel || !m_radioModel->wdspEngine()) { return; }
-        if (SliceModel* s = sliceForPan(panId)) {
-            m_radioModel->wdspEngine()->setMaxBinSliceOffsetHz(
-                /*disp=*/0, s->frequency() - ddcCenter);
-        }
-    });
-
-    // NOT wired here: bandwidthChangeRequested. Zoom itself already works on
-    // every pan (SpectrumWidget narrows its own visible bin range), but the
-    // auto-replan that keeps bins-per-pixel constant across zoom levels runs
-    // against primaryFftEngine() -- one engine, pan-0's. Routing it per pan
-    // needs the FFT engine looked up by the pan's stream, which is a bigger
-    // change than this function. Until then a deep zoom on another pan stays
-    // visually correct but does not gain FFT resolution.
 }
 
 // Keep the S-meter poller's channel list in step with the live slices.
@@ -1737,10 +1775,22 @@ void MainWindow::ensureOverlayPanels()
         // Same one-shot-per-pan guard as the strip below: this loop only runs
         // for pans that have no entry yet, so the interaction connects cannot
         // stack on a layout switch.
+        //
+        // The slice controls go to EVERY pan, pan-0 included. pan-0 used to be
+        // excluded from the whole of wireSpectrumForPan and left running an
+        // older copy of these four in wireSliceToSpectrum, whose lambdas held
+        // a captured Slice A pointer -- which is the 2026-07-28 bench defect
+        // where click-to-tune always retuned flag A. Those copies are gone, so
+        // this is the only wiring for them and nothing doubles.
+        wireSpectrumSliceControls(sw, panId);
+
         if (panId != QStringLiteral("pan-0")) {
-            // pan-0 keeps its existing wiring from wireSliceToSpectrum(), which
-            // also sets the initial CTUN lock state and positions the flag.
-            // Wiring it twice here would double every click.
+            // Still pan-0-excluded: its spot, connection and MaxBin hooks are
+            // wired one-shot elsewhere in this file (the activeSpectrumWidget()
+            // connects near the spot / ConnectionPanel / MaxBin sections), so
+            // running them again here would double every one. Unifying those
+            // the way the slice controls just were is a separate change with
+            // its own regression surface.
             wireSpectrumForPan(sw, panId);
         }
 
@@ -7360,76 +7410,17 @@ void MainWindow::wireSliceToSpectrum()
     // with the secondary-flag wiring in createSliceFlag().
 
 
-    // --- Spectrum click-to-tune → slice ---
-    connect(activeSpectrumWidget(), &SpectrumWidget::frequencyClicked,
-            this, [slice](double hz) {
-        slice->setFrequency(hz);
-    });
-
-    // --- Spectrum filter edge drag → slice ---
-    connect(activeSpectrumWidget(), &SpectrumWidget::filterEdgeDragged,
-            this, [slice](int low, int high) {
-        slice->setFilter(low, high);
-    });
-
-    // --- Pan center changed (pan drag) ---
-    // CTUN mode (SmartSDR): retune DDC to pan center, offset WDSP to keep
-    // demodulating at VFO frequency. This lets the spectrum show real data
-    // across the full pan range.
-    // Traditional mode: pan drag retunes the VFO (DDC follows VFO naturally).
-    connect(activeSpectrumWidget(), &SpectrumWidget::centerChanged,
-            this, [this, slice](double centerHz) {
-        if (m_handlingBandJump) {
-            return;
-        }
-        if (!activeSpectrumWidget()->ctunEnabled()) {
-            slice->setFrequency(centerHz);
-        } else {
-            // CTUN: retune DDC to pan center (bypasses lock) so spectrum shows correct data
-            int rxIdx = slice->streamIndex();
-            if (rxIdx >= 0) {
-                m_radioModel->receiverManager()->forceHardwareFrequency(
-                    rxIdx, static_cast<quint64>(centerHz));
-            }
-            activeSpectrumWidget()->setDdcCenterFrequency(centerHz);
-            // Offset the WDSP shift so audio stays on the VFO frequency -- for
-            // EVERY slice on this stream, not just the one that dragged. The
-            // window has one centre and N slices at their own offsets inside
-            // it, so this used to write rxChannel(0) and leave a co-hosted
-            // second receiver on a stale shift, demodulating the wrong signal
-            // while its flag still read the right number.
-            //
-            // From Thetis radio.cs:1417 [v2.10.3.15]: SetRXAShiftFreq receives
-            // +(freq - center). reshiftSlicesOnStream applies that per member,
-            // against each member's own frequency and own WDSP channel.
-            m_radioModel->reshiftSlicesOnStream(rxIdx, centerHz);
-        }
-    });
-
-    // --- CTUN mode toggled → lock/unlock DDC ---
+    // The four spectrum controls that act on a slice (click-to-tune, filter-
+    // edge drag, pan drag, CTUN toggle) used to be connected here, to
+    // activeSpectrumWidget(), with lambdas capturing the `slice` above by
+    // value. That pointer is Slice A and never moved, so on pan-0 all four
+    // drove Slice A for the life of the session however many times the
+    // operator selected another flag. Bench-caught 2026-07-28.
     //
-    // Turning CTUN off releases the DDC pin but does not itself retune the
-    // DDC, so at this instant every slice on the stream is still offset from a
-    // centre that has not moved. Zeroing the shift (which this did, and only
-    // for channel 0) therefore dropped the demodulator onto the DDC centre
-    // while the flags went on reading their own frequencies. Restore each
-    // member against where the DDC actually sits instead; the next VFO move
-    // goes through the allocator, which retunes the now-unpinned stream and
-    // settles the offsets back to zero by itself.
-    //
-    // The pan's own DDC centre is the live figure here rather than the
-    // allocator's, because the CTUN drag above commands the DDC through
-    // ReceiverManager::forceHardwareFrequency, which deliberately bypasses the
-    // allocator and writes the result straight into this widget.
-    SpectrumWidget* const ctunPan = activeSpectrumWidget();
-    connect(ctunPan, &SpectrumWidget::ctunEnabledChanged,
-            this, [this, slice, ctunPan](bool enabled) {
-        m_radioModel->receiverManager()->setDdcFrequencyLocked(enabled);
-        if (!enabled) {
-            m_radioModel->reshiftSlicesOnStream(slice->streamIndex(),
-                                                ctunPan->ddcCenterFrequency());
-        }
-    });
+    // They now live in wireSpectrumSliceControls, which ensureOverlayPanels
+    // runs for every pan including this one, and which resolves its target
+    // through sliceForPan(panId) on each signal instead of capturing it.
+    // verify-no-captured-slice-spectrum-wiring.py keeps them from coming back.
 
     // --- dBm range strip → PanadapterModel (per-band grid storage + AppSettings) ---
     connect(activeSpectrumWidget(), &SpectrumWidget::dbmRangeChangeRequested,

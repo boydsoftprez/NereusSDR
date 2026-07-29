@@ -97,6 +97,15 @@ jobs:
         # (how ANF on slice B ended up toggling slice A).
         run: python3 scripts/verify-no-gui-dsp-access.py
 
+      - name: No captured-slice spectrum wiring
+        # Same shape as the check above, one layer up. connect() binds the
+        # object, so a slice control wired through activeSpectrumWidget() is
+        # pan-0 forever, and the lambdas on the other end used to capture
+        # RadioModel::activeSlice() by value -- Slice A, permanently. That is
+        # the 2026-07-28 bench defect where click-to-tune always retuned
+        # flag A whatever the operator selected.
+        run: python3 scripts/verify-no-captured-slice-spectrum-wiring.py
+
       # ------------------------------------------------------------------
       # Inline author-tag preservation (added 2026-04-21 after DH1KLM drop)
       # ------------------------------------------------------------------
