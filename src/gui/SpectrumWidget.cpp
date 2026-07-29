@@ -6750,6 +6750,13 @@ void SpectrumWidget::initOverlayPipeline()
     m_ovDynSrb->create();
     m_overlayDynamic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);
     m_overlayDynamic.setDevicePixelRatio(dpr);
+    // QImage's buffer is uninitialized, and the dynamic quad is composited
+    // across the WHOLE widget while the rebuild below only clears and
+    // uploads the spectrum-height band.  The waterfall region therefore
+    // sampled whatever the allocator handed us and could show opaque
+    // garbage, most visibly right after init or a resize.  Codex review,
+    // PR #291.
+    m_overlayDynamic.fill(Qt::transparent);
     lockMemory(m_overlayDynamic.constBits(),
                m_overlayDynamic.sizeInBytes(),
                "SpectrumWidget::m_overlayDynamic (init)");
@@ -7297,6 +7304,10 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             }
             m_overlayDynamic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);
             m_overlayDynamic.setDevicePixelRatio(dpr);
+            // Same uninitialized-buffer hazard as the init path above: the
+            // rebuild below only touches the spectrum-height band, while the
+            // quad samples the full texture.  Codex review, PR #291.
+            m_overlayDynamic.fill(Qt::transparent);
             lockMemory(m_overlayDynamic.constBits(),
                        m_overlayDynamic.sizeInBytes(),
                        "SpectrumWidget::m_overlayDynamic (resize)");
@@ -7602,6 +7613,21 @@ void SpectrumWidget::releaseResources()
     delete m_ovVbo;           m_ovVbo = nullptr;
     delete m_ovGpuTex;        m_ovGpuTex = nullptr;
     delete m_ovSampler;       m_ovSampler = nullptr;
+    // Release the static overlay's lock too.  initOverlayPipeline() locks
+    // it and, on device/surface recreation, runs again and replaces the
+    // QImage with a freshly locked one -- so skipping it here leaked one
+    // MemoryLock registration per recreate, inflating the locked-byte
+    // count and potentially pinning allocator pages for buffers that no
+    // longer exist.  Codex review, PR #291.
+    //
+    // Deliberately NOT m_waterfall: that buffer is locked where it is
+    // reallocated on a size change, not in initOverlayPipeline(), so it
+    // survives this call still locked and still in use.  Unlocking it here
+    // would drop a live pin that nothing re-establishes.
+    if (!m_overlayStatic.isNull()) {
+        unlockMemory(m_overlayStatic.constBits(),
+                     m_overlayStatic.sizeInBytes());
+    }
     // 2026-05-26 KG4VCF dual-layer overlay split: tear down the
     // dynamic-overlay resources.  Pipeline + VBO + sampler are
     // shared with the static layer; only SRB + texture are
