@@ -959,6 +959,109 @@ private slots:
         QCOMPARE(a.adcCtrl1 & 0x30, 0x00);
     }
 
+    // ── D3: the same four cases on the SKU the feature was written for ────
+    //
+    // The routing above shipped 2026-07-26 in P2CodecOrionMkII only, and
+    // every test for it constructed P2CodecOrionMkII. P2CodecSaturn -- the
+    // ANAN-G2 / G2-1K codec, the exact radio the feature targets -- carried
+    // a full copy-paste override of applyDdcAssignment that never received
+    // the change, so selecting EXT1/EXT2 on a G2 did nothing to the ADC map
+    // and no test noticed. These four re-run the matrix against SATURN so a
+    // future divergence between the two codecs fails here.
+
+    void saturn_slices_on_main_antennas_all_stay_on_adc0()
+    {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        for (int i = 0; i < 2; ++i) {
+            slices[i].live = true;
+            slices[i].frequencyHz = 14225000 - i * 7000000;
+            slices[i].sampleRateHz = 192000;
+            slices[i].antennaIndex = 1;   // ANT1
+        }
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        // Stream 0 -> DDC2 (bits 5&4), stream 1 -> DDC3 (bits 7&6), both ADC0.
+        QCOMPARE(a.adcCtrl1 & 0x30, 0x00);
+        QCOMPARE(a.adcCtrl1 & 0xc0, 0x00);
+    }
+
+    void saturn_slice_on_ext1_moves_to_adc1()
+    {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].frequencyHz = 7150000;
+        slices[0].sampleRateHz = 192000;
+        slices[0].antennaIndex = 1;   // ANT1 -> ADC0
+        slices[1].live = true;
+        slices[1].frequencyHz = 14225000;
+        slices[1].sampleRateHz = 192000;
+        slices[1].antennaIndex = 4;   // EXT1 -> ADC1
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.adcCtrl1 & 0x30, 0x00);
+        QCOMPARE(a.adcCtrl1 & 0xc0, 1 << 6);
+    }
+
+    void saturn_ext2_also_selects_the_second_chain()
+    {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].sampleRateHz = 192000;
+        slices[0].antennaIndex = 5;   // EXT2
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.adcCtrl1 & 0x30, 1 << 4);
+    }
+
+    void saturn_byps_stays_on_adc0()
+    {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].sampleRateHz = 192000;
+        slices[0].antennaIndex = 6;   // BYPS
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.adcCtrl1 & 0x30, 0x00);
+    }
+
+    // Streams 2-4 live on DDC4-6, whose ADC selectors are in adcCtrl2 rather
+    // than adcCtrl1. Covered on Saturn because that is the only board with
+    // five user DDCs, so it is the only board where the adcCtrl2 half of the
+    // routing is reachable at all.
+    void saturn_ext_on_a_high_stream_writes_adc_ctrl2()
+    {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        for (int i = 0; i < 5; ++i) {
+            slices[i].live = true;
+            slices[i].sampleRateHz = 192000;
+            slices[i].antennaIndex = 1;   // ANT1 -> ADC0
+        }
+        slices[2].antennaIndex = 4;       // stream 2 -> DDC4, EXT1 -> ADC1
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        // DDC4 is adcCtrl2 bits 1&0 (console.cs:15117-15119 [v2.10.3.15]
+        // re-bases ddc4 onto the ddc0 slot of the second word).
+        QCOMPARE(a.adcCtrl2 & 0x03, 0x01);
+        // DDC5 (bits 3&2) and DDC6 (bits 5&4) stay on ADC0.
+        QCOMPARE(a.adcCtrl2 & 0x0c, 0x00);
+        QCOMPARE(a.adcCtrl2 & 0x30, 0x00);
+    }
+
     // ── D2: the diversity DDC0/DDC1 pair must straddle both ADCs ──────────
     //
     // Thetis's fresh-install rx_adc_ctrl1 is 4 (console.cs:15099

@@ -1080,6 +1080,11 @@ DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
     // (HPSDRModel.ANAN_G2 / ANAN_G2_1K) — the logic is byte-for-byte
     // identical; only the dispatch shim differs.
     //
+    // P2CodecSaturn INHERITS this. It used to carry a hand-copied duplicate,
+    // which is how the antenna-driven routing below reached every 2-ADC board
+    // except the ANAN-G2 it was written for; the copy is gone and
+    // tst_p2_codec_saturn.cpp asserts the two codecs stay identical.
+    //
     // Slice-to-DDC mapping for G2-class (2-ADC, 7 DDCs):
     //   Slice A (index 0) -> DDC2    [Thetis: DDCEnable = DDC2 at line 8244]
     //   Slice B (index 1) -> DDC3    [Thetis: DDCEnable += DDC3 at line 8301]
@@ -1164,10 +1169,11 @@ DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
         // code should not make.
         //
         // No adcCount gate is needed: this codec serves only the 2-ADC
-        // boards (Saturn / OrionMkII / AnvelinaPro3 / RedPitaya).
-        // P2CodecHermes overrides applyDdcAssignment for the 1-ADC
-        // Hermes class, HermesC10 / G2E included, so those stay pinned to
-        // ADC0 by construction rather than by a runtime check here.
+        // boards (Saturn / OrionMkII / AnvelinaPro3 / RedPitaya), Saturn by
+        // inheritance since the D3 fix. P2CodecHermes overrides
+        // applyDdcAssignment for the 1-ADC Hermes class, HermesC10 / G2E
+        // included, so those stay pinned to ADC0 by construction rather than
+        // by a runtime check here.
         //
         // The field is CLEARED and then written, not OR-ed: the antenna is
         // authoritative for a DDC we assign, so a stale ADC1 bit left in the

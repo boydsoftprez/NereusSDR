@@ -137,14 +137,30 @@ namespace NereusSDR {
 // HPSDRModel.ANAN_G2 and HPSDRModel.ANAN_G2_1K into the same G2-class
 // switch case as the OrionMkII family, so no Saturn-specific PS DDC
 // override is needed.
+//
+// Phase 3F Sub-Epic B Task 4 gave this class its own applyDdcAssignment,
+// hand-copied from P2CodecOrionMkII. That was a mistake, and it cost us: when
+// antenna-driven ADC routing landed in the parent on 2026-07-26 the copy
+// never received it, so on the ANAN-G2 -- the exact radio the feature was
+// written for -- selecting EXT1 or EXT2 did nothing to the DDC-to-ADC map.
+// Every test for the new routing constructed P2CodecOrionMkII, so all four
+// passed while the feature was absent on Saturn.
+//
+// The override is gone. applyDdcAssignment is INHERITED, for the same reason
+// applyPureSignalDdcConfig already was (see the note above): Thetis groups
+// HPSDRModel.ANAN_G2 and ANAN_G2_1K into the SAME UpdateDDCs switch case as
+// the OrionMkII family (console.cs:8220-8303 [v2.10.3.15]), so a
+// Saturn-specific DDC assignment does not exist upstream to port. The two
+// bodies were byte-equivalent apart from the missing routing block and the
+// position of the adcCtrl seed.
+//
+// buildAlex1 stays overridden because that one IS Saturn-specific upstream
+// (G8NJJ setBPF1ForOrionIISaturn, console.cs:6944-7040) -- which is the test
+// for whether a future override belongs here: point at the Thetis branch that
+// makes Saturn different, or inherit. tst_p2_codec_saturn.cpp's
+// ddcAssignment_inherits_orionmkii_behavior sweeps the state matrix and fails
+// on any silent divergence.
 class P2CodecSaturn : public P2CodecOrionMkII {
-public:
-    // Phase 3F Sub-Epic B Task 4: real implementation per Thetis
-    // console.cs:8220-8303 [v2.10.3.15] UpdateDDCs() G2-class branch.
-    DdcAssignment applyDdcAssignment(
-        const CodecContext& ctx,
-        const std::array<SliceConfig, 5>& slices) const override;
-
 protected:
     // Override the Alex1 (RX) byte builder to optionally substitute
     // Saturn BPF1 bits for the standard Alex HPF bits.
