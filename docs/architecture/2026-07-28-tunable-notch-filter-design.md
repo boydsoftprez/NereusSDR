@@ -117,7 +117,8 @@ through `NOTCHDB* ptraddr` (`nbp.h:66`).
 
 Notch centres and widths are stored in **absolute RF Hz**. The mapping into
 the channel's baseband passband happens in `calc_nbp_lightweight`
-(`nbp.c:185-213`):
+(`nbp.c:184-215`; the `if (a->hadnotch || a->havnotch)` guard around the
+recalculation is elided from the quote below):
 
 ```c
 offset = b->tunefreq + b->shift;
@@ -144,16 +145,19 @@ Three consequences drive the whole design:
 3. **Notches are inert until explicitly enabled, per channel.** The DB is
    created with `master_run = 0` and nbp0 with its notch-run flag 0
    (`RXA.c:85-93`), and both `calc_nbp_lightweight` (`nbp.c:190`) and
-   `calc_nbp_impulse` (`nbp.c:222`) bypass the DB entirely when `fnfrun`
+   `calc_nbp_impulse` (`nbp.c:223`) bypass the DB entirely when `fnfrun`
    is 0. `RXANBPSetNotchesRun` is the only writer (`nbp.c:499`). Any
    channel that misses that call is silently notch-free. See §6.3.
 
 **A notch edit rebuilds two filters, not one.** `UpdateNBPFilters`
 (`nbp.c:345-359`) designs nbp0 *and* calls `recalc_bpsnba_filter`
-(`snb.c:814-828`). `bpsnba` is the bandpass-for-SNB path, active for
+(`snb.c:814-828`). `bpsnba` is the bandpass-for-SNB path. Its filter is **recalculated** for
 LSB/CWL/DIGL/USB/CWU/DIGU whenever the master notch run is on, even with
-SNB itself off (`RXA.c:934-968`, `RXAbpsnbaCheck` / `RXAbpsnbaSet`). This
-is why §6.2 uses incremental edits rather than a full resync per change.
+SNB itself off (`RXAbpsnbaCheck`, `RXA.c:934-986`; `RXAbpsnbaSet`,
+`RXA.c:988-1020`); it is not in the signal path unless SNB runs, but the
+recalculation cost is paid regardless. That cost chain is
+`nbp.c:355` -> `snb.c:819`, and it is why §6.2 uses incremental edits
+rather than a full resync per change.
 
 ### 2.2 Thetis behaviour map
 
@@ -174,7 +178,7 @@ is why §6.2 uses incremental edits rather than a full resync per change.
 | CW-pitch correction on add (NOT ported, §1.2) | `console.cs:40228, 18187-18194 [v2.10.3.15]` |
 | Drag state | `console.cs:33284-33297 [v2.10.3.15]` |
 | Marker colours | `display.cs:383-411 [v2.10.3.15]` |
-| Visual notch (trace dent) | `display.cs:4733-4790 [v2.10.3.15]` |
+| Visual notch (trace dent) | `display.cs:4733-4817 [v2.10.3.15]` |
 | Visual-notch toggle | `display.cs:1070-1075 [v2.10.3.15]` |
 | Undented-copy discipline | `display.cs:5046, 5095, 6505, 6530, 6741 [v2.10.3.15]` |
 | Persistence format | `console.cs:3034-3035, 4763-4764 [v2.10.3.15]` |
@@ -189,7 +193,7 @@ is why §6.2 uses incremental edits rather than a full resync per change.
 | Marker rendering | `SpectrumWidget::drawTnfMarkers [@c6481cbf]` |
 | Hit test / drag state | `SpectrumWidget.h:789-793, 1647-1653 [@c6481cbf]` |
 | Hover popup | `SpectrumWidget.h:805, 1653 [@c6481cbf]` |
-| Context menus | `SpectrumWidget.cpp:8560-8590 [@c6481cbf]` |
+| Context menus | `SpectrumWidget.cpp:8492-8588 [@c6481cbf]` |
 | `+TNF` button | `SpectrumOverlayMenu.cpp:293, 324 [@c6481cbf]` |
 | Status-bar indicator | `MainWindow_Shortcuts.cpp:543-548, 612-614 [@c6481cbf]` |
 | Assignable shortcut | `MainWindow_Shortcuts.cpp:1093-1099 [@c6481cbf]` |
@@ -215,7 +219,7 @@ is why §6.2 uses incremental edits rather than a full resync per change.
 **This is a live defect in the current codebase, not new work.**
 
 `wdsp_api.h:337` declares `RXANBPSetFreqs` and `:357` declares
-`RXANBPSetShiftFrequency`; both are called (`RxChannel.cpp:425`,
+`RXANBPSetShiftFrequency`; both are called (`RxChannel.cpp:436`,
 `RxChannel.cpp:1483`). `RXANBPSetTuneFrequency` is declared nowhere and
 called nowhere: `grep -rn "RXANBPSetTuneFrequency" src/ tests/` returns
 nothing. Every channel's `notchdb.tunefreq` therefore sits at its
@@ -256,7 +260,7 @@ set at `SliceStreamAllocator.cpp:70` and `:137`, pushed at
 `RadioModel.cpp:3676`. Driving `tunefreq` from the slice frequency would
 therefore compute `2*sliceFreq - streamCentre`.
 
-Thetis proves the intent directly. `console.cs:31921` gives the multi-RX
+Thetis proves the intent directly. `console.cs:31922` gives the multi-RX
 subrx its own shift (`radio.GetDSPRX(0, 1).RXOsc = rx2_osc;`) while
 `console.cs:31940-31941` push the **identical** tunefreq to both
 `id(0,0)` and `id(0,1)`. Two slices on one DDC, one shared tunefreq,
@@ -353,6 +357,20 @@ This is latent today only because with `nn == 0` the offset cancels
 exactly (`nbp.c:110-111`, then `:202-203`) and `master_run` defaults to
 0. TNF is what un-hides it.
 
+### 4.4a Third sibling: the connect-time seed pushes the slice frequency
+
+The same wrong-quantity mistake §4.1 corrects also exists at the
+connect-time seed, where the value handed downstream is
+`slice->frequency()` rather than the hosting stream's centre. For a slice
+that joined an existing stream at a non-zero offset, those differ.
+
+**Fix, in this task:** the seed pushes the hosting stream's centre, or is
+dropped entirely, since `bindSliceToStream` (§4.2) already pushes the
+correct value on every bind. Verify by comparing the value handed to
+`ReceiverManager` against `streamCentreHz` for a slice in the
+`JoinedExisting` outcome, and add a bench row for it (§11.2 row 14 covers
+the operator-visible half).
+
 ### 4.4 Sibling live defect: RIT clobbers the stream shift
 
 `RadioModel.cpp:8966-8988` installs an `updateShiftFrequency` lambda
@@ -374,9 +392,11 @@ Assert the sum after a RIT toggle.
 (`RxChannel.cpp:1468-1477`), and expose `notchTuneFrequencyHz()`.
 
 Note the usual "pass the same value so the C++ early-return fires" hatch
-(`tst_rx_channel_rebuild.cpp:8-11`) does **not** work here: WDSP
-dereferences the NULL NOTCHDB at `nbp.c:478` *before* its own equality
-check at `:479`. Test binaries do compile with live WDSP
+(`tst_rx_channel_rebuild.cpp:8-11`) does **not** work here: the equality
+check at `nbp.c:479` is itself the first NOTCHDB dereference
+(`a->tunefreq`), so it cannot protect an unopened channel. Worse, `rxa`
+is sized `MAX_CHANNELS = 32` (`comm.h:110`), so `kTestChannel = 99` is an
+out-of-bounds read rather than merely an unopened slot. Test binaries do compile with live WDSP
 (`CMakeLists.txt:1124` sets `HAVE_WDSP` PUBLIC), which is why the
 existing RxChannel tests use `kTestChannel = 99` on a never-opened
 channel.
@@ -432,7 +452,7 @@ index.** Every mutation keeps the two in lockstep:
 Thetis has a known wart here: because its notch identity *is* the index,
 every mutation loses the operator's selection, and it recovers by searching
 for a notch whose fields match (`GetFirstNotchThatMatches`,
-`console.cs:40036, 40110, 40149, 40188`). One of those recovery calls was
+`console.cs:40037, 40110, 40146, 40185`). One of those recovery calls was
 itself a bug, fixed in `[2.9.0.7]` by MW0LGE
 (`console.cs:40109 [v2.10.3.15]`). Stable ids remove that entire
 class of problem without altering any WDSP-facing behaviour.
@@ -446,7 +466,11 @@ const Notch*        notchById(int id) const;
 int                 indexOfId(int id) const;
 bool                globalEnabled() const;
 
-// Thetis-ported spatial helpers (radio.cs:4250-4300 [v2.10.3.15])
+// Thetis-ported spatial helpers [v2.10.3.15]:
+//   GetFirstNotchThatMatches  radio.cs:4246-4258
+//   NotchNearFreq             radio.cs:4261-4272
+//   NotchesInBW               radio.cs:4276-4293
+//   NotchThatSurroundsFreq    radio.cs:4297-4325
 bool          notchNearFreq(double hz, int deltaHz) const;
 QList<Notch>  notchesInBandwidth(double centreHz, int lowHz, int highHz) const;
 const Notch*  notchSurrounding(double centreHz, int lowHz, int highHz,
@@ -506,6 +530,10 @@ the source of truth.
 | Reject edit while Settings page is mid-edit | `NotchAdminBusy` | `console.cs:40009, 40079, 40123, 40200 [v2.10.3.15]` |
 | Wheel resize must keep both edges inside 0..max | n/a | `console.cs:33317-33318 [v2.10.3.15]` |
 
+**Not a guard, and deliberately skipped:** `console.cs:40228`
+(`GetDSPcwPitchShiftToZero`), the first statement of `AddNotch` after the
+admin-busy check. See §1.2 for why porting it would be wrong here.
+
 Constants get named `constexpr` with the Thetis origin recorded, e.g.
 
 ```cpp
@@ -522,7 +550,7 @@ falls through to `Band::GEN`); `AlexController::xvtrActive()` is a bare
 bool. A transverter table does exist (`src/gui/setup/hardware/XvtrTab.cpp`,
 RF Start / RF End / LO Offset, persisted at `HardwarePage.cpp:150`), but
 it has no frequency-to-row lookup, no per-RX selected index, no consumer
-of `loOffset`, and a broken round-trip (emits `"rfStart"` at `:239`,
+of `loOffset`, and a broken round-trip (emits `"rfStart"` at `:232`,
 restores `"rfStartHz"` at `:290`).
 
 Behavioural impact is nil today: XVTR band clicks are rejected
@@ -599,6 +627,7 @@ void deleteNotch(int index);
 void setNotchesRun(bool run);
 void setNotchAutoIncrease(bool on);
 double minNotchWidthHz() const;
+double notchTuneFrequencyHz() const;   // carry, set outside HAVE_WDSP (§4.5)
 ```
 
 `syncNotches` deletes every existing notch and re-adds the list in order.
@@ -619,7 +648,7 @@ and `:50019`) and does strictly more per move than we would
 `console.cs:40105-40106`). The impulse cache is not at risk either:
 `DspOptionsCacheImpulse` defaults False (`WdspEngine.cpp:236-237`), so
 `_use_cache` is 0 and nothing is inserted or evicted
-(`impulse_cache.c:159-167`). `setImpulse_fircore` is a memcpy plus
+(`impulse_cache.c:163-172`). `setImpulse_fircore` is a memcpy plus
 `calc_fircore` (`firmin.c:456-460`) and never replans FFTW.
 
 **Return values and the notch cap.** `RXANBPAddNotch` is an INSERT
@@ -641,7 +670,7 @@ the 10 Hz dedupe, but stated so the overflow path is defined.
 `RadioModel` connects `NotchModel`'s signals and pushes to every live
 `RxChannel` obtained by iterating `slices()`. Thetis fans to three fixed
 ids (`WDSP.id(0,0)`, `WDSP.id(0,1)`, `WDSP.id(2,0)`, e.g.
-`console.cs:40269-40271 [v2.10.3.15]`); we iterate because slice count is
+`console.cs:40271-40273 [v2.10.3.15]`); we iterate because slice count is
 dynamic post-3F.
 
 **`activateSliceChannel` alone is not sufficient, and the gap is not
@@ -667,8 +696,9 @@ rxa[channel].nbp0.p = create_nbp (
 ```
 
 and both `calc_nbp_lightweight` (`nbp.c:190`) and `calc_nbp_impulse`
-(`nbp.c:222`) bypass the notch DB entirely when `fnfrun` is 0, falling
-through to a plain `fir_bandpass`. `RXANBPSetNotchesRun` is the only
+(`nbp.c:223`) bypass the notch DB entirely when `fnfrun` is 0.
+`calc_nbp_impulse` then falls through to a plain `fir_bandpass`
+(`nbp.c:240`). `RXANBPSetNotchesRun` is the only
 writer (`nbp.c:499`). Without it, Slice A is notch-*inert*, not merely
 empty, even for notches added live in that session. Reconnect reopens the
 hole: `teardownConnection` calls `m_wdspEngine->shutdown()`
@@ -707,7 +737,7 @@ event-driven: `console.cs:40004` fires `TNFChangedHandlers` on change,
 `TCIServer.cs:7690-7698` routes it to every listener, and `NfChanged`
 sends **both** indices (`TCIServer.cs:1315-1320`). Thetis's
 `handleRxNfEnable` set branch sends nothing itself
-(`TCIServer.cs:3392-3398`).
+(`TCIServer.cs:3394-3398`).
 
 We do the inverse: `TciProtocol.cpp:2170-2175` queues a single index
 unconditionally, and there is no wiring at all for a UI-originated flip,
@@ -744,7 +774,7 @@ despite the per-rx command shape.
 | Drag within 4 px of an edge, or Shift + drag | Resize notch | `console.cs:49037-49067 [v2.10.3.15]` |
 | Wheel over notch (Shift = 1 Hz step) | Resize notch | `console.cs:33299-33321 [v2.10.3.15]` |
 | Hover over notch | Popup with frequency + width | AetherSDR `m_tnfHoverPopup [@c6481cbf]` |
-| Right-click on notch | Width presets, Active/Bypass, Remove | AetherSDR `SpectrumWidget.cpp:8560-8580 [@c6481cbf]` |
+| Right-click on notch | Width presets, Active/Bypass, Remove | AetherSDR `SpectrumWidget.cpp:8517-8572 [@c6481cbf]` |
 | Right-click on empty pan | "Add notch at X MHz" | AetherSDR `SpectrumWidget.cpp:8585 [@c6481cbf]` |
 | `+TNF` button | Add at VFO + sideband shift | `console.cs:40313-40331 [v2.10.3.15]` |
 | Click status-bar TNF light | Toggle all notches | AetherSDR `MainWindow_Shortcuts.cpp:612-614 [@c6481cbf]` |
@@ -758,7 +788,7 @@ trackpad. **That premise was false.** `console.cs:48974` opens
 `switch (e.Button)`; `:49614` is `case MouseButtons.Right:`; `:49629` is
 the `if (Common.CtrlKeyDown)` branch containing `AddNotch(dFreq, rx)` at
 `:49644`. The stale comment at `:49633` mentioning "middle mouse" is what
-misled the earlier reading. `grep -n "AddNotch("` returns only `:40222`
+misled the earlier reading. `grep -nE "\bAddNotch\("` returns only `:40222`
 (definition), `:40331` (`TNFAdd`) and `:49644`. The single
 `MouseButtons.Middle` hit (`:49725`) only toggles active (`:49735`) or
 removes on Shift (`:49731`).
@@ -804,7 +834,7 @@ interaction choice, not a missing capability.
 ### 7.3 Which hit test governs
 
 Two are cited in this document and they behave differently. **Thetis's
-`notchSurrounding` (`radio.cs:4297-4322`) governs**: first-found in list
+`notchSurrounding` (`radio.cs:4297-4325`) governs**: first-found in list
 order, with the pad applied only when `n.FWidth < nPadWidth * 2`. That is
 what §5.3 ports and what `tst_notch_hit_test` exercises.
 
@@ -909,11 +939,32 @@ dentWidth = max(notch.widthHz, minNotchWidthHz()) + 20.0
 
 cited to `display.cs:8679-8680` ("use the min width of filter from WDSP"
 / "fudge factor to align better with spectrum notch"). `kNotchDentFudgeHz
-= 20.0` carries that cite per the constants rule. This is not marginal:
-`nbp.c:91` gives a min width of `2200/(nc/256)*(rate/48000)`, which is
-275 Hz at nc=2048 and 48 kHz, wider than this document's own 200 Hz
-default. `minNotchWidthHz()` therefore feeds the dent path, not only the
-§9 readout.
+= 20.0` carries that cite per the constants rule.
+
+The min-width term is branch-dependent and must be read from the right
+arm. `min_notch_width` switches on `a->wintype` (`nbp.c:85-96`); nbp0 is
+created with `wintype = 0` (`RXA.c:103`) and neither Thetis
+(`radio.cs:1721`) nor NereusSDR moves it, so the governing formula is the
+wintype-0 arm at `nbp.c:88`:
+
+```
+min_width = 1600.0 / (nc / 256) * (rate / 48000)
+```
+
+On this tree `nc` is 4096 (`RadioModel.cpp:3053`) at a 48 kHz dsp_rate,
+giving **100 Hz**. So the 200 Hz default sits comfortably above the
+minimum and dents at 220 Hz, while the Shift-narrow 100 Hz notch sits
+exactly *at* it and dents at 120 Hz.
+
+The clamp still matters for two reasons: `nc` is operator-changeable
+through the DSP Options page (`RXASetNC` -> `RXANBPSetNC`, `RXA.c:1043`),
+and dropping it to 1024 raises the minimum to 400 Hz, above the default
+notch; and the sample rate scales the term directly, so 384 kHz on an
+HL2 multiplies it by eight. `minNotchWidthHz()` therefore feeds the dent
+path, not only the §9 readout.
+
+Note also that WDSP creates nbp0 with `autoincr = 1` already
+(`RXA.c:105`), so §9's auto-increase control starts from ON, not OFF.
 
 **Do NOT port `handleNotches`'s RIT/CTUN offset term** (`display.cs:8650`).
 It compensates for Thetis's VFO-label-anchored pixel maths (`:8646`,
@@ -934,7 +985,7 @@ consumer, and an earlier revision of this document got this wrong in both
 directions.
 
 Thetis **deliberately dents** peak hold, the blob/IMD detector and the max
-readout on the spectrum plane: `display.cs:5256` computes
+readout on the spectrum plane: `display.cs:5255` computes
 `max = data[i] + fOffset` from the dented array and feeds `local_max_y`
 (`:5269`), the blob detector (`:5280`) and spectral peak hold (`:5337`).
 Only the noise-floor accumulator reads `max_copy` (`:5259`). The
@@ -1036,7 +1087,7 @@ Thetis-parity page:
 While this page has an edit in progress it holds `NotchModel::adminBusy`,
 which makes every panadapter-side mutation a no-op. This is Thetis's
 `SetupForm.NotchAdminBusy` guard, checked at the top of every mutator
-(`console.cs:40009, 40079, 40123, 40164, 40200, 40224 [v2.10.3.15]`).
+(`console.cs:40009, 40079, 40125, 40161, 40200, 40224, 40315 [v2.10.3.15]`).
 Without it a drag on the panadapter can reorder the list underneath the
 table's index mapping.
 
@@ -1149,7 +1200,7 @@ will reject a dropped tag.
 
 **Underscored variants never satisfy a bare-`MW0LGE` requirement.**
 `port_contains_tag` matches `\bMW0LGE\b`
-(`verify-inline-tag-preservation.py:303`) and `_` is a word character, so
+(`verify-inline-tag-preservation.py:304`) and `_` is a word character, so
 `MW0LGE_21e` yields no boundary. The drag-state cite
 (`console.cs:33284-33297`) therefore needs the bare tag from `:33283`
 *in addition to* `//MW0LGE_21e`. Verified by running the script's own
@@ -1169,7 +1220,7 @@ the attribution, which is the exact outcome this gate exists to prevent.
 
 **Wide cites pull in more tags than they look like they do.** The
 extraction window spans `min(line_nums)-5 .. max(line_nums)+5`
-(`verify-inline-tag-preservation.py:274-275`), so the §2.2 persistence
+(`verify-inline-tag-preservation.py:273-274`), so the §2.2 persistence
 cite `console.cs:3034-3035, 4763-4764` spans roughly 1740 lines and
 generates 18 further `MW0LGE` requirements (`console.cs:3358` through
 `:4713`). Same trap on `display.cs:5046, 5095, 6505, 6530, 6741` and
@@ -1189,7 +1240,7 @@ TDD per task. New test executables:
 
 | Test | Covers |
 | --- | --- |
-| `tst_notch_tune_frequency` | §4. Asserts the §4.1 invariant `tunefreq + shift == slice demodulated RF` via `RadioModel::streamCentreHzForTest` (`RadioModel.h:2483`), the seam `tst_stream_pool_binding.cpp:580-583` already uses for the sibling shift push. Includes the §4.3 pan-out-and-back-to-zero sequence and the §4.4 RIT toggle. Lands first. |
+| `tst_notch_tune_frequency` | §4. Asserts **both halves** of the §4.1 invariant, not just the sum: (a) `tunefreq == streamCentreHz(streamIndex)` and (b) `tunefreq + shift == slice demodulated RF`. Covers the sole-owner case (shift 0) and the `JoinedExisting` case (shift non-zero), since a sum-only assertion passes under the double-count bug in the sole-owner case. Seams: `RadioModel::streamCentreHzForTest` (`RadioModel.h:2483`), used the same way as `tst_stream_pool_binding.cpp:580-583` does for the sibling shift push, plus `RxChannel::notchTuneFrequencyHz()` (§4.5) for the carried value. Includes the §4.3 pan-out-and-back-to-zero sequence, the §4.4 RIT toggle, and the §4.4a connect-time seed. Lands first. |
 | `tst_notch_model_guards` | §5.4. 10 Hz dedupe (exact-boundary: `<` not `<=`, `radio.cs:4267`), 200/100 Hz defaults, whole-Hz rounding, min/max clamp, admin-busy rejection, wheel-resize edge clamp, and the §1.2 CW case (a notch added at F in CWU and CWL stores at exactly F). |
 | `tst_notch_model_index_invariant` | §5.2. List position tracks the WDSP index across add / edit / delete, including deleting from the middle, plus the §6.2 `RXANBPAddNotch` -1 and count-mismatch recovery paths. |
 | `tst_notch_sideband_shift` | §D6. Table-driven over `notchSidebandShift` (`console.cs:40281-40307`). USB 200/2800 gives +1500; LSB -2800/-200 gives -1500; AM -3000/+3000 hits the `middle == 0` fallback at `:40294-40295` giving 1500. A dropped sign puts every LSB `+TNF` notch at VFO+1500, outside the passband: silent on LSB, correct on USB, so it is invisible without this test. |
@@ -1208,13 +1259,13 @@ invariant (see §8.3); they are a general regression check only.
 
 `RXANBPAddNotch` (`nbp.c:367`) and `RXANBPGetMinNotchWidth` (`nbp.c:598`)
 dereference `rxa[channel]` slots populated only by `create_rxa`
-(`RXA.c:86`). Test binaries compile with live WDSP
+(`RXA.c:32`, notch DB slot at `:86`). Test binaries compile with live WDSP
 (`CMakeLists.txt:1124` sets `HAVE_WDSP` PUBLIC, `tests/CMakeLists.txt:165`
 links it), so calling a wrapper on an unopened channel segfaults rather
 than no-opping. The in-tree convention exists for exactly this reason:
 `kTestChannel = 99;  // Never opened via OpenChannel`
-(`tst_rxchannel_snb.cpp:65`, `tst_rxchannel_emnr.cpp:65`,
-`tst_rxchannel_squelch.cpp:65`).
+(`tst_rxchannel_snb.cpp:113`, `tst_rxchannel_emnr.cpp:113`,
+`tst_rxchannel_squelch.cpp:113`).
 
 Consequently the WDSP-facing wrappers are verified either caller-side
 (assert the value the model hands to `RxChannel`) or against a really
