@@ -728,39 +728,6 @@ void TciServer::wireSliceForBroadcast(SliceModel* slice, int sliceId)
                         .arg(on ? QStringLiteral("true") : QStringLiteral("false")));
             });
 
-    // ── AF gain (rx_volume: line) ───────────────────────────────────────────
-    // Source: Thetis console.RXGainChangedHandlers at TCIServer.cs:6780
-    // [v2.10.3.15] routed to OnRxAfGainChanged (TCIServer.cs:7722-7733), which
-    // fans out to the per-listener RxAfGainChanged (TCIServer.cs:1118-1124):
-    //     int chan = is_subrx ? 1 : 0;
-    //     double db = audioGainToDb(gain / 100f);
-    //     sendRxVolume(rx - 1, chan, db);
-    // One frame for whichever (rx, is_subrx) gain actually moved.  Note this
-    // is a DIFFERENT event from OnVolumeChanged (TCIServer.cs:7806-7817),
-    // which calls sendVolume ONLY and never emits rx_volume -- see the AF
-    // volume block in hookGlobalBroadcasts.
-    //
-    // Phase 3F chip task_c1e6fbad: before this connect existed, the master
-    // AF slider re-broadcast all four rx_volume slots on every move, which
-    // collapsed Sub-Epic J Task 10's per-slice init-burst values back to one
-    // shared number the moment the operator touched the master volume.
-    //
-    // Receiver -> slice mapping is Task 10's convention (see the rx_volume
-    // writeup in TciProtocol.cpp buildInitialRadioStateLines): TCI receiver N
-    // -> slice id N, both channels reporting the same gain because NereusSDR
-    // has no sub-receiver model.  That mirrors the collapse Thetis itself
-    // applies to RX2, where sendRxVolume(1, 1, rx2vol) reuses the main-channel
-    // value (TCIServer.cs:2557 [v2.10.3.15]).
-    connect(slice, &SliceModel::afGainChanged, this,
-            [this, sliceId](int gain) {
-                const double db = tciAudioGainToDb(gain / 100.0);
-                const QString dbStr = QString::number(db, 'f', 2);
-                m_protocol->enqueueLocalBroadcast(
-                    QStringLiteral("rx_volume:%1,0,%2;").arg(sliceId).arg(dbStr));
-                m_protocol->enqueueLocalBroadcast(
-                    QStringLiteral("rx_volume:%1,1,%2;").arg(sliceId).arg(dbStr));
-            });
-
     // ── RIT enable / offset ─────────────────────────────────────────────────
     // Source: Thetis RITChangedHandlers + RITValueChangedHandlers at
     // TCIServer.cs:6753 + 6755 [v2.10.3.15] routed to OnRITChanged /
@@ -1031,22 +998,33 @@ void TciServer::hookGlobalBroadcasts()
                         .arg(QString::number(db, 'f', 1)));
             });
 
-    // ── AF volume (volume: line) ───────────────────────────────────────────
+    // ── AF volume (volume: + rx_volume: lines) ─────────────────────────────
     // Source: Thetis VolumeChangedHandlers at TCIServer.cs:6746 [v2.10.3.15]
-    // routed to OnVolumeChanged (TCIServer.cs:7806-7817 [v2.10.3.15]), whose
-    // whole body is one fan-out to socketListener.VolumeChanged(newVolume) ->
-    // sendVolume.  It never emits rx_volume.  AudioEngine is the live volume
-    // holder for NereusSDR's master AF slider.
+    // routed to OnVolumeChanged -> sendVolume.  AudioEngine is the live
+    // volume holder.
     //
-    // Phase 3F chip task_c1e6fbad: this block used to append four rx_volume
-    // frames here, spraying the single radio-global master volume across
-    // every receiver slot.  That had no upstream counterpart and it collapsed
-    // Sub-Epic J Task 10's per-slice init-burst values (buildInitialRadioStateLines
-    // in TciProtocol.cpp) back to one shared number as soon as the operator
-    // touched the master AF slider after connect.  rx_volume is now driven by
-    // the per-rx gain event it belongs to -- SliceModel::afGainChanged in
-    // wireSliceForBroadcast above, mirroring Thetis's separate
-    // RXGainChangedHandlers -> OnRxAfGainChanged -> RxAfGainChanged chain.
+    // KNOWN GAP (found during Phase 3F Sub-Epic J Task 10's rx_volume
+    // investigation; out of that task's stated scope, so not changed here --
+    // flagged for a follow-up instead): the rx_volume broadcast below does
+    // NOT mirror real Thetis behavior, despite the citation this block used
+    // to carry.  Thetis's OnVolumeChanged (TCIServer.cs:7806-7817
+    // [v2.10.3.15]) calls ONLY sendVolume; it never touches rx_volume.
+    // Thetis's real rx_volume live source is a SEPARATE per-rx event --
+    // console.RXGainChangedHandlers routed to OnRxAfGainChanged
+    // (TCIServer.cs:6780 + 7722-7733 [v2.10.3.15]) -- which fires one
+    // rx_volume frame for whichever (rx, is_subrx) gain actually changed;
+    // see the per-listener RxAfGainChanged at TCIServer.cs:1118-1124
+    // [v2.10.3.15].  NereusSDR's per-slice analog already exists
+    // (SliceModel::afGainChanged, wired to WDSP in RadioModel.cpp) and the
+    // per-slice broadcast lifecycle right below in this file
+    // (wireSliceForBroadcast) already has 18 sibling connects of exactly
+    // this shape (apfEnabledChanged / binauralEnabledChanged / etc.) --
+    // afGainChanged is simply not one of them yet.  Until that lands, the
+    // handler below re-broadcasts all four rx_volume slots from the single
+    // radio-global afLinear on every MASTER volume change, which collapses
+    // Task 10's per-slice init-burst fix (buildInitialRadioStateLines in
+    // TciProtocol.cpp) back to one shared value the moment the operator
+    // touches the master AF slider after connect.
     if (auto* audio = m_model->audioEngine()) {
         connect(audio, &AudioEngine::volumeChanged, this,
                 [this](float volume) {
@@ -1057,6 +1035,20 @@ void TciServer::hookGlobalBroadcasts()
                     m_protocol->enqueueLocalBroadcast(
                         QStringLiteral("volume:%1;")
                             .arg(QString::number(volDb, 'f', 1)));
+                    // rx_volume: lines use LOG curve (audioGainToDb).  See the
+                    // KNOWN GAP comment above this connect() -- this collapsed
+                    // four-slot re-broadcast does not match real Thetis wiring
+                    // and is scheduled for a follow-up, not this task.
+                    const double gainDb = tciAudioGainToDb(linear / 100.0);
+                    const QString gainStr = QString::number(gainDb, 'f', 2);
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("rx_volume:0,0,%1;").arg(gainStr));
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("rx_volume:0,1,%1;").arg(gainStr));
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("rx_volume:1,0,%1;").arg(gainStr));
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("rx_volume:1,1,%1;").arg(gainStr));
                 });
     }
 
