@@ -154,13 +154,19 @@ private slots:
 
         const auto a = codec.applyDdcAssignment(ctx, slices);
 
-        // PS-on MOX: DDC0+1+2+3 enabled, DDC1 synced, ps_rate on PS pair
+        // PS-on MOX: DDC0+2+3 ENABLED, DDC1 SYNCED, ps_rate on the PS pair.
         // From Thetis console.cs:8265-8274 [v2.10.3.15]:
         //   DDCEnable = DDC0 + DDC2;  (plus the existing DDC3 from rx2)
         //   SyncEnable = DDC1;
         //   Rate[0] = Rate[1] = ps_rate (192000)
         // [2.10.3.13]MW0LGE p1 !  [original inline comment from console.cs:8260, within +-5 of cite]
-        QCOMPARE(a.ddcEnable & 0x0f, 0x0f);
+        //
+        // Was 0x0f, which put DDC1 in the enable mask as well as the sync
+        // mask. The citation two lines up always said DDC0 + DDC2; the summary
+        // line above it said "DDC0+1+2+3 enabled" and the assertion followed
+        // the summary rather than the upstream. Corrected with the fix in
+        // P2CodecOrionMkII (Codex review, PR #293).
+        QCOMPARE(a.ddcEnable & 0x0f, 0x0d);
         QCOMPARE(a.rate[0], 192000);
         QCOMPARE(a.rate[1], 192000);
         QCOMPARE(a.rate[2], 192000);
@@ -188,12 +194,15 @@ private slots:
 
         const auto a = codec.applyDdcAssignment(ctx, slices);
 
-        // Diversity: DDC0+1 enabled+synced at slice rate, DDC2 freed
+        // Diversity: DDC0 ENABLED, DDC1 SYNCED, both at slice rate, DDC2 freed.
         // From Thetis console.cs:8232-8240 [v2.10.3.15]:
         // [2.10.3.13]MW0LGE p1 !
         //   DDCEnable = DDC0; SyncEnable = DDC1;
         //   Rate[0] = Rate[1] = rx1_rate; (DDC2 disabled)
-        QCOMPARE(a.ddcEnable & 0x07, 0x03);
+        //
+        // Was 0x03. "enabled+synced" in the old summary line hid that these
+        // are two different masks and DDC1 belongs only in the second.
+        QCOMPARE(a.ddcEnable & 0x07, 0x01);
         QCOMPARE(a.rate[0], 192000);
         QCOMPARE(a.rate[1], 192000);
         QCOMPARE(a.rate[2], 0);
@@ -217,11 +226,16 @@ private slots:
 
         const auto a = codec.applyDdcAssignment(ctx, slices);
 
-        // PS overrides: DDC0+1+2 enabled, DDC0+1 at ps_rate, DDC2 at slice rate.
-        // Slice A stays on DDC2 (not migrated to DDC0+1 sync) because PS wins.
-        // From Thetis console.cs:8276-8285 [v2.10.3.15] (diversity + PS): same
-        //   cntrl1 formula as pure-PS; DDC2 remains for rx1 at rx1_rate.
-        QCOMPARE(a.ddcEnable & 0x07, 0x07);
+        // PS overrides: DDC0+2 ENABLED, DDC1 SYNCED, DDC0+1 at ps_rate and
+        // DDC2 at slice rate. Slice A stays on DDC2 (not migrated to the
+        // DDC0/DDC1 sync pair) because PS wins.
+        // From Thetis console.cs:8276-8285 [v2.10.3.15] (diversity + PS):
+        //   DDCEnable = DDC0 + DDC2; SyncEnable = DDC1; same cntrl1 formula as
+        //   pure-PS; DDC2 remains for rx1 at rx1_rate.
+        //
+        // Was 0x07, same conflation as the two cases above.
+        QCOMPARE(a.ddcEnable & 0x07, 0x05);
+        QCOMPARE(a.syncEnable & 0x02, 0x02);
         QCOMPARE(a.rate[0], 192000);
         QCOMPARE(a.rate[1], 192000);
         QCOMPARE(a.rate[2], 192000);
@@ -756,7 +770,7 @@ private slots:
         QCOMPARE(a.p1RxCount, 4);
     }
 
-    void hermes_class_p2_ps_mox_keeps_stream_zero_on_ddc0()
+    void hermes_class_p2_ps_mox_takes_ddc0_from_the_user_stream()
     {
         // From Thetis console.cs:8449-8456 [v2.10.3.15]:
         //   else // transmitting and PS is ON
@@ -765,9 +779,21 @@ private slots:
         //       Rate[0] = ps_rate; Rate[1] = ps_rate;
         //       cntrl1 = 4; cntrl2 = 0;
         //   }
-        // Unlike the 2-ADC branch, DDCEnable = DDC0 is unconditional across
-        // every Hermes-class state, so stream 0 does NOT migrate when PS
-        // engages — only DDC1's role changes.
+        // DDCEnable = DDC0 is unconditional across every Hermes-class state,
+        // but that is a statement about the WIRE MASK, not about who owns the
+        // DDC. During MOX with PureSignal, DDC0 carries the PS feedback leg
+        // and the user's RX1 is gone entirely.
+        //
+        // Thetis GetDDC settles it. tot = nME + (nDE << 1) + (nPSE << 2)
+        // (console.cs:8560 [v2.10.3.15]), so tot == 5 is MOX on, diversity
+        // off, PureSignal on. The Hermes-class case 5 body is EMPTY
+        // (console.cs:8635-8636), leaving rx1 and rx2 at the -1 they were
+        // initialised to at console.cs:8551.
+        //
+        // This test previously asserted streamDdc[0] == 0 and was named
+        // ..._keeps_stream_zero_on_ddc0, reasoning from "DDC0 is always
+        // enabled" to "the user stream stays on it". The enable mask does not
+        // answer that question. (Codex review, PR #293.)
         P2CodecHermes codec;
         CodecContext ctx{};
         ctx.mox = true;
@@ -778,7 +804,9 @@ private slots:
 
         const DdcAssignment a = codec.applyDdcAssignment(ctx, streams);
 
-        QCOMPARE(a.streamDdc[0], 0);
+        // DDC0 is enabled, and it belongs to PureSignal, not to stream 0.
+        QCOMPARE(a.streamDdc[0], -1);
+        QCOMPARE(a.psFwdDdc, 0);
         QCOMPARE(a.ddcEnable, 1);        // DDC0 only
         QCOMPARE(a.syncEnable, 2);       // DDC1 syncs to DDC0
         // ps_rate = 192000 (cmaster.cs:425 [v2.10.3.15])
@@ -854,7 +882,10 @@ private slots:
         const DdcAssignment a = codec.applyDdcAssignment(ctx, streams);
 
         QCOMPARE(a.p1DdcConfig, 5);
-        QCOMPARE(a.streamDdc[0], 0);
+        // As above: PureSignal owns DDC0 while transmitting, so no user
+        // stream is mapped onto it.
+        QCOMPARE(a.streamDdc[0], -1);
+        QCOMPARE(a.psFwdDdc, 0);
         QCOMPARE(a.ddcEnable, 1);
         QCOMPARE(a.syncEnable, 2);
         QCOMPARE(a.adcCtrl1, 4);
@@ -1089,8 +1120,10 @@ private slots:
 
         const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
 
-        // The pair itself, unchanged from the pre-existing diversity test.
-        QCOMPARE(a.ddcEnable & 0x07, 0x03);
+        // The pair itself. DDC0 enabled, DDC1 synchronized: two masks, and
+        // DDC1 appears only in the second (console.cs:8235-8236 [v2.10.3.15]).
+        // Was 0x03, the same conflation corrected in the diversity test above.
+        QCOMPARE(a.ddcEnable & 0x07, 0x01);
         QCOMPARE(a.syncEnable & 0x02, 0x02);
         // DDC0 (bits 1&0) on ADC0.
         QCOMPARE(a.adcCtrl1 & 0x03, 0x00);

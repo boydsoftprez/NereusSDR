@@ -416,13 +416,20 @@ private slots:
         }
 
         // Effective PS adds the DDC0/DDC1 pair without rewriting any user
-        // DDC. DDC1 is synchronized to DDC0.
+        // DDC. DDC1 is synchronized to DDC0, so it appears in the SYNC mask
+        // and not in the enable mask: 0x7d is DDC0 plus the five user DDCs
+        // DDC2..DDC6, with bit 1 clear.
+        //
+        // This assertion read 0x7f, which contradicted the sentence directly
+        // above it and the cmdRxSyncMask assertion directly below it. Same
+        // defect as three assertions in tst_codec_5_slice_assignment; see the
+        // fix in P2CodecOrionMkII (Codex review, PR #293).
         assignmentSpy.clear();
         model.setDdcContextForTest(/*mox*/ true, /*puresignalRun*/ true,
                                    /*diversity*/ false);
         model.refreshDdcAssignmentForRadioState();
         QCOMPARE(assignmentSpy.count(), 1);
-        QCOMPARE(cmdRxEnableMask(conn), quint8{0x7f});
+        QCOMPARE(cmdRxEnableMask(conn), quint8{0x7d});
         QCOMPARE(cmdRxSyncMask(conn), quint8{0x02});
         QCOMPARE(cmdRxRateKhz(conn, 0), 192);
         QCOMPARE(cmdRxRateKhz(conn, 1), 192);
@@ -431,13 +438,15 @@ private slots:
         }
 
         // Diversity migrates stream 0 to the DDC0/DDC1 pair. Streams 1..4
-        // remain on DDC3..6 with their distinct rates.
+        // remain on DDC3..6 with their distinct rates. DDC1 is the
+        // synchronized leg, so the enable mask is DDC0 plus DDC3..DDC6 with
+        // bit 1 clear: 0x79, not 0x7b. Same correction as the PS case above.
         assignmentSpy.clear();
         model.setDdcContextForTest(/*mox*/ false, /*puresignalRun*/ false,
                                    /*diversity*/ true);
         model.refreshDdcAssignmentForRadioState();
         QCOMPARE(assignmentSpy.count(), 1);
-        QCOMPARE(cmdRxEnableMask(conn), quint8{0x7b});
+        QCOMPARE(cmdRxEnableMask(conn), quint8{0x79});
         QCOMPARE(cmdRxSyncMask(conn), quint8{0x02});
         QCOMPARE(cmdRxRateKhz(conn, 0), userRateHz[0] / 1000);
         QCOMPARE(cmdRxRateKhz(conn, 1), userRateHz[0] / 1000);
