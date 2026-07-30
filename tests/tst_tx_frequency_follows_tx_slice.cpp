@@ -298,8 +298,10 @@ private slots:
         QCOMPARE(voxSpy.count(), 0);
         QCOMPARE(tgxlFrames.count(), 0);
 
-        // The same updates from C must propagate exactly once and carry C's
-        // final state.
+        // The same updates from C must propagate exactly once.  Mode follows
+        // the TX-bound slice, while the positive TX audio passband remains
+        // authoritative in TransmitModel (SliceModel bounds are signed
+        // RX/IQ-space values).
         model.slices().at(c)->setFrequency(k40mHz);
         QCOMPARE(mock->txFreqCalls.size(), 1);
         QCOMPARE(mock->txFreqCalls.constLast(), quint64(k40mHz));
@@ -312,9 +314,9 @@ private slots:
         QCOMPARE(txStateSpy.constFirst().at(0).value<DSPMode>(),
                  DSPMode::CWL);
         QCOMPARE(txStateSpy.constFirst().at(1).toInt(),
-                 model.slices().at(c)->filterLow());
+                 model.transmitModel().filterLow());
         QCOMPARE(txStateSpy.constFirst().at(2).toInt(),
-                 model.slices().at(c)->filterHigh());
+                 model.transmitModel().filterHigh());
         QCOMPARE(voxSpy.count(), 1);
         QCOMPARE(voxSpy.constFirst().constFirst().toBool(), false);
 

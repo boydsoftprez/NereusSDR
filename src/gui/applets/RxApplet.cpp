@@ -1771,22 +1771,21 @@ void RxApplet::populateAntennaButtons(Band band)
     const int rxNum = alex.rxAnt(band);
     const QString rxLabel = QStringLiteral("ANT") + QString::number(rxNum);
 
-    // TX antenna: same mapping. setTxAnt() honours blockTxAnt2/3 safety guards.
-    const int txNum = alex.txAnt(band);
-    const QString txLabel = QStringLiteral("ANT") + QString::number(txNum);
+    // TX antenna is bound-slice intent, not an AlexController read-back.
+    // RadioModel reconciles that intent into Alex on a bound-slice edit,
+    // TX handoff, and pre-MOX. Reading stale per-band Alex state here would
+    // overwrite the newly bound slice during applet construction.
+    const QString txLabel = m_slice->txAntenna();
 
     // Update button text directly — bypasses the connectSlice() signal chain
     // so the change is immediate regardless of whether the slice is "connected".
     m_rxAntBtn->setText(rxLabel);
     m_txAntBtn->setText(txLabel);
 
-    // Also push into SliceModel so the model stays in sync with the UI.
-    // Use setters only when the value actually differs to avoid spurious signals.
+    // RX remains a per-band Alex read-back. TX already came from SliceModel
+    // above, so the UI must not write controller state back into its authority.
     if (m_slice->rxAntenna() != rxLabel) {
         m_slice->setRxAntenna(rxLabel);
-    }
-    if (m_slice->txAntenna() != txLabel) {
-        m_slice->setTxAntenna(txLabel);
     }
 }
 
