@@ -153,6 +153,13 @@ public:
     // the AlwaysStreamIQ override path).
     int activeIqSubscriberCount(int receiver) const;
 
+    // Phase 3F chip task_c1e6fbad: test-only handle on the owned TciProtocol
+    // so broadcast-path tests can drain m_pendingNotifications directly,
+    // without standing up a QWebSocket client.  Same convention as the
+    // injectAudioFrameForTest / injectRawIqForTest seams above: read-only,
+    // no production caller.
+    TciProtocol* protocolForTest() const { return m_protocol.get(); }
+
 signals:
     // Emitted after the server begins listening.  port is the actual bound port
     // (useful when start() was called with port=0).

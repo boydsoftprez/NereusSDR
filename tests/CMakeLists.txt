@@ -4606,6 +4606,12 @@ if(Qt6WebSockets_FOUND)
     # Phase 3J-1 Task 3.2: silent-error invariant
     nereus_add_test(tst_tci_silent_error_invariant)
     target_link_libraries(tst_tci_silent_error_invariant PRIVATE Qt6::WebSockets)
+
+    # Phase 3F chip task_c1e6fbad: rx_volume is driven by the per-rx gain
+    # event (Thetis RxAfGainChanged, TCIServer.cs:1118-1124 [v2.10.3.15]),
+    # not by the master AF slider.
+    nereus_add_test(tst_tci_rx_volume_broadcast)
+    target_link_libraries(tst_tci_rx_volume_broadcast PRIVATE Qt6::WebSockets)
 endif()
 
 # ── Phase 3J-1 Task 16.3 (sub-commit a): TciBinaryFrame encode ───────────────
