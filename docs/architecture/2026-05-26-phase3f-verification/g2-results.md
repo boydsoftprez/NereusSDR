@@ -415,6 +415,58 @@ ones.
 
 ---
 
+## Session 7 (2026-07-30): chip closeout and five Codex review rounds
+
+No new bench evidence. This session closed the three chips spawned off the
+multi-pan work, then worked five rounds of automated review on PR #293. What
+changed is listed here so the bench rows below have something to point at.
+
+| Change | Commit | Bench row |
+|---|---|---|
+| NB1 / SNB tuning sliders wrote `rxChannel(0)` regardless of which slice was selected | chip, see PR | 18 |
+| TCI `rx_volume` never broadcast per slice; APF / BIN were stub arrays in `RadioModel` rather than reaching the slice | chips, see PR | 24 |
+| Synchronized DDC1 was set in the P2 enable mask on top of `SyncEnable`, on both the PS and the diversity path | `71151176` | 21, 22 |
+| Hermes-class PS branch left `streamDdc[0] = 0`, so the PS feedback DDC and the user stream both claimed DDC0 | `904e675f` | n/a on G2 (Saturn path) |
+| `psPaused` was never set in production; only tests drove it | see PR | 21 |
+| Wideband request was last-writer-wins across slices sharing a chain, and was not recomputed when a slice was removed | `a3da778e` | 20 |
+| Shrinking the pan layout orphaned slices on deleted pans; only one of the three layout entry points had the fix | `d14bbbd4`, `a3da778e` | 19 |
+| Expanding after a shrink created new slices instead of reusing the co-hosted ones, hitting `maxSlices` and stranding a surplus | `39f994be` | 19 |
+| ANAN-100D and ANAN-200D declared Protocol 1 while advertising `widebandAdcs = 2`, letting extended view bypass the preselector for a stream that never arrives | `39f994be` | n/a on G2 (P2 board) |
+
+Suite at `39f994be`: 572/572, build exit 0, built through the `all_tests`
+target. Green here means the change compiles and does not regress what is
+covered. The rows below are the part the suite cannot reach.
+
+### Bench checklist, session 7
+
+Rows 1-17 above still apply and should be run first; these extend them. Row 17
+is a known fail with a written diagnosis, so it is expected to fail and is not
+a stopping point.
+
+| # | Action | Expect |
+|---|---|---|
+| 18 | **Per-slice noise blanker.** Two slices on the same band, co-hosted. Select Slice B, move the NB threshold and slope sliders. | The sliders act on the chain B is actually on. Note that co-hosted slices genuinely share one blanker (`_rcvr.panb` is per receiver, master matrix row 51), so A's audio changing here is expected. What must NOT happen is B's slider moving a chain B is not on, which is what it did before. |
+| 19 | **Layout shrink then expand.** `+PAN` -> `2x2`, add slices until four pans each hold one. Then `+PAN` -> `1`. Then back to `2x2`. | Shrinking: no slice is orphaned on a deleted pan, and the survivors keep audio. Expanding: the four slices you already had **spread back out**, one per pan. You should NOT see a cap-reject toast, and you should NOT end up with three empty pans and a surplus slice. Both directions were broken separately. |
+| 20 | **Wideband across two slices on one chain.** Two slices sharing a chain. Zoom one out into wideband, then zoom the OTHER back in. Then remove the slice that is still asking for wideband. | Wideband stays on while ANY slice on that chain still wants it, and drops when the last one stops asking or is removed. Previously the second slice's zoom-in turned it off underneath the first, and removing a slice left it stuck on. |
+| 21 | **PureSignal with more than one slice.** Slice A plus at least one more, then run PS calibration. | PS acquires as it does single-slice. The other slices' streams pause during PS and **resume on their own** afterwards, without a manual retune. Check the bottom bar reports the DDC count you expect and not one extra. |
+| 22 | **Diversity with more than one slice.** Ctrl+Shift+D, enable diversity on Slice A, with Slice B live on another band. | Diversity behaves as it does single-slice, and Slice B keeps its own stream. The sync DDC must not show up as a user stream. |
+| 23 | **Two-pan simultaneous listen.** Two slices on two bands, both unmuted, both with real signal. | Both audible at once, independently. This is the headline of the whole epic and it has never been confirmed by ear. |
+| 24 | **TCI, if you have a client handy.** Connect a TCI client, change `rx_volume` on Slice B, and toggle APF and BIN on Slice B. | The client sees a per-slice volume broadcast, and APF / BIN reach that slice rather than being swallowed. Skip if no client is at hand; this is the lowest-consequence row. |
+| 25 | **RX audio after TX or TUNE.** Key TUNE briefly, unkey. | RX audio returns on every slice. There is an open chip for a report that it does not; this row is to confirm whether that reproduces on current HEAD. |
+
+### What the bench cannot settle
+
+- Row 17's antenna defect is diagnosed and NOT fixed on this branch, by
+  decision. It gets its own branch. See
+  `docs/architecture/2026-07-30-per-slice-antenna-adc-routing.md`.
+- The Protocol 1 wideband correction only affects ANAN-100D and ANAN-200D,
+  neither of which is on this bench. It is covered by an invariant test over
+  `BoardCapsTable::all()` instead.
+- The Hermes-class PureSignal DDC0 fix lands on the G2E, not the G2. The G2
+  runs the Saturn codec, which inherits OrionMkII.
+
+---
+
 ## Next
 
 Data-plane completion is tracked as Sub-Epic I. See
