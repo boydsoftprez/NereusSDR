@@ -32,7 +32,12 @@
 // the lightweight TestMockRadioModel.
 
 #include <QtTest>
+#include <QSignalSpy>
+#include <QWebSocket>
+#include <algorithm>
+#include <utility>
 #include "core/TciProtocol.h"
+#include "core/TciServer.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "TestMockRadioModel.h"
@@ -49,6 +54,7 @@ private slots:
     void trailing_semicolon_stripped();
     void rx_volume_reports_per_slice_gain_via_dispatch();
     void rx_volume_falls_back_to_active_slice_when_unresolved();
+    void existing_and_new_slice_wiring_use_same_stable_receiver_id();
 };
 
 void TestTciDispatchSeam::unknown_command_silent_error_invariant()
@@ -178,6 +184,74 @@ void TestTciDispatchSeam::rx_volume_falls_back_to_active_slice_when_unresolved()
     QVERIFY2(burst.contains(QStringLiteral("rx_volume:1,0,-3.74;")),
              "receiver 1 resolves its own slice directly (same value here, "
              "for a different reason: direct resolution, not fallback)");
+}
+
+void TestTciDispatchSeam::
+    existing_and_new_slice_wiring_use_same_stable_receiver_id()
+{
+    const auto captureVfoFrames =
+        [this](TciServer& server, SliceModel* slice, QStringList* captured) {
+            QVERIFY(server.start(0));
+            QWebSocket client;
+            QStringList frames;
+            connect(&client, &QWebSocket::textMessageReceived,
+                    this, [&frames](const QString& frame) {
+                        frames.append(frame);
+                    });
+            QSignalSpy connectedSpy(&client, &QWebSocket::connected);
+            client.open(
+                QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(server.port())));
+            QVERIFY(connectedSpy.wait(2000));
+            QTRY_VERIFY(frames.contains(QStringLiteral("ready;")));
+
+            frames.clear();
+            slice->setFrequency(18123456.0);
+            QTRY_VERIFY(std::any_of(
+                frames.cbegin(), frames.cend(), [](const QString& frame) {
+                    return frame.startsWith(QStringLiteral("vfo:"));
+                }));
+            for (const QString& frame : std::as_const(frames)) {
+                if (frame.startsWith(QStringLiteral("vfo:"))
+                    || frame.startsWith(QStringLiteral("dds:"))) {
+                    captured->append(frame);
+                }
+            }
+            client.close();
+            server.stop();
+        };
+
+    // Existing-slice path: A/B/C exist first, B is removed, then TCI hooks
+    // A(position 0/id 0) and C(position 1/id 2).
+    RadioModel existingRadio;
+    existingRadio.configureStreamPool(5, 5, 192000);
+    existingRadio.addSlice(QStringLiteral("pan-0"));
+    const int existingB = existingRadio.addSlice(QStringLiteral("pan-0"));
+    const int existingC = existingRadio.addSlice(QStringLiteral("pan-0"));
+    existingRadio.removeSlice(existingB);
+    SliceModel* const existingSliceC = existingRadio.sliceById(existingC);
+    QVERIFY(existingSliceC != nullptr);
+    TciServer existingServer(&existingRadio);
+    QStringList existingFrames;
+    captureVfoFrames(existingServer, existingSliceC, &existingFrames);
+
+    // New-slice path: TCI is already attached when C(id 2) is added, so the
+    // RadioModel::sliceAdded stable id drives wiring.
+    RadioModel addedRadio;
+    addedRadio.configureStreamPool(5, 5, 192000);
+    addedRadio.addSlice(QStringLiteral("pan-0"));
+    addedRadio.addSlice(QStringLiteral("pan-0"));
+    TciServer addedServer(&addedRadio);
+    const int addedC = addedRadio.addSlice(QStringLiteral("pan-0"));
+    QCOMPARE(addedC, 2);
+    SliceModel* const addedSliceC = addedRadio.sliceById(addedC);
+    QVERIFY(addedSliceC != nullptr);
+    QStringList addedFrames;
+    captureVfoFrames(addedServer, addedSliceC, &addedFrames);
+
+    QCOMPARE(existingFrames, addedFrames);
+    QVERIFY(existingFrames.contains(QStringLiteral("vfo:2,0,18123456;")));
+    QVERIFY(existingFrames.contains(QStringLiteral("vfo:2,1,18123456;")));
+    QVERIFY(existingFrames.contains(QStringLiteral("dds:2,18123456;")));
 }
 
 QTEST_MAIN(TestTciDispatchSeam)

@@ -15,6 +15,7 @@
 #include <QList>
 #include <QTimer>
 #include <QHash>
+#include <QSet>
 #include <memory>
 
 class QNetworkAccessManager;
@@ -144,6 +145,7 @@ private:
     void   issueGet(const QString& path);
     void   issuePut(const QString& path, const QByteArray& body);
     void   issuePost(const QString& path);
+    void   trackReply(QNetworkReply* reply);
     void   markPollSuccess(int rttMs);
     void   markPollFailure();
     void   parseInfo(const QByteArray& body);
@@ -155,6 +157,9 @@ private:
     void   parseOperationalInterface(const QByteArray& body);
     void   parseData(const QByteArray& body);
 
+    // Declared before m_nam so it outlives replies destroyed by the network
+    // manager during member teardown; their destroyed handlers remove from it.
+    QSet<QNetworkReply*> m_inFlight;
     std::unique_ptr<QNetworkAccessManager> m_nam;
     QTimer  m_pollTimer;
     QTimer  m_reconnectTimer;
@@ -162,7 +167,9 @@ private:
     QString m_host;
     quint16 m_port               = 8080;
     bool    m_connected          = false;
+    bool    m_operatorDisconnected = true;
     bool    m_autoReconnect      = true;   // default matches prior behaviour
+    quint64 m_generation         = 0;
     int     m_pollIntervalMs     = 1000;
     // Half of the first real reconnect delay (500 ms).  scheduleReconnect()
     // doubles before scheduling, so the first actual retry fires after 1 s,

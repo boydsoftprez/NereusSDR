@@ -16,8 +16,13 @@
 //   - tst_tci_init_burst_typo_divergence.cpp (design doc §7 row 1 typo fix)
 
 #include <QtTest>
+#include <QSignalSpy>
+#include <QWebSocket>
 #include "core/TciProtocol.h"
+#include "core/TciServer.h"
 #include "core/AppSettings.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
 #include "TestMockRadioModel.h"
 
 using namespace NereusSDR;
@@ -79,6 +84,7 @@ private slots:
     // thetis frame emitted after a VFO tune does not flip RX2 from
     // true (init) to false (live) between the two frames.
     void live_vfo_broadcast_reads_rx2_enabled_live();
+    void existing_slice_after_deletion_gap_uses_stable_receiver_id();
 };
 
 void TestTciInitBurstLiveState::pinAppSettingsToCaptureConditions()
@@ -691,5 +697,53 @@ void TestTciInitBurstLiveState::live_vfo_broadcast_reads_rx2_enabled_live()
     }
 }
 
-QTEST_GUILESS_MAIN(TestTciInitBurstLiveState)
+void TestTciInitBurstLiveState::
+    existing_slice_after_deletion_gap_uses_stable_receiver_id()
+{
+    pinAppSettingsToCaptureConditions();
+    RadioModel radio;
+    radio.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5, 192000);
+    const int a = radio.addSlice(QStringLiteral("pan-0"));
+    const int b = radio.addSlice(QStringLiteral("pan-0"));
+    const int c = radio.addSlice(QStringLiteral("pan-0"));
+    QCOMPARE(a, 0);
+    QCOMPARE(b, 1);
+    QCOMPARE(c, 2);
+    SliceModel* const sliceC = radio.sliceById(c);
+    QVERIFY(sliceC != nullptr);
+
+    radio.removeSlice(b);
+    QCOMPARE(radio.slices().size(), 2);
+    QCOMPARE(radio.slices().at(1), sliceC);
+    QCOMPARE(sliceC->sliceIndex(), 2);
+
+    // Attach TCI only after the deletion gap exists, so C takes the
+    // hookSliceBroadcasts() existing-slice path rather than sliceAdded().
+    TciServer server(&radio);
+    QVERIFY(server.start(0));
+    QWebSocket client;
+    QStringList frames;
+    connect(&client, &QWebSocket::textMessageReceived,
+            this, [&frames](const QString& frame) { frames.append(frame); });
+    QSignalSpy connectedSpy(&client, &QWebSocket::connected);
+    client.open(QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(server.port())));
+    QVERIFY(connectedSpy.wait(2000));
+    QTRY_VERIFY(frames.contains(QStringLiteral("ready;")));
+
+    // Once the initial state burst establishes the client, C's first
+    // one-shot announcement and its subsequent coalesced VFO update must both
+    // carry C's stable id (2), never its current list position (1).
+    frames.clear();
+    sliceC->setDspMode(DSPMode::CWU);
+    sliceC->setFrequency(18123456.0);
+    QTRY_VERIFY(frames.contains(QStringLiteral("modulation:2,CWU;")));
+    QTRY_VERIFY(frames.contains(QStringLiteral("vfo:2,0,18123456;")));
+    QVERIFY(!frames.contains(QStringLiteral("modulation:1,CWU;")));
+    QVERIFY(!frames.contains(QStringLiteral("vfo:1,0,18123456;")));
+
+    client.close();
+    server.stop();
+}
+
+QTEST_MAIN(TestTciInitBurstLiveState)
 #include "tst_tci_init_burst_live_state.moc"

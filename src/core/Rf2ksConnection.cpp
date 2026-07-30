@@ -199,28 +199,37 @@ void Rf2ksConnection::parseData(const QByteArray& body)
 
 void Rf2ksConnection::connectToAmp(const QString& host, quint16 port)
 {
+    m_pollTimer.stop();
+    m_reconnectTimer.stop();
+    ++m_generation;
+    m_operatorDisconnected = false;
     m_host = host;
     m_port = port;
     m_consecutiveFailures = 0;
+    m_reconnectAttempts = 0;
     m_reconnectBackoffMs = 500;  // doubled to 1000 ms on first scheduleReconnect()
 
     connect(&m_pollTimer, &QTimer::timeout, this, &Rf2ksConnection::pollOnce,
             Qt::UniqueConnection);
-    // 2026-05-25 KG4VCF bench fix: pollOnce now staggers one path per
-    // tick (was: 6 parallel GETs per tick).  Run the timer at one-sixth
-    // of m_pollIntervalMs so each path is still sampled at the same
-    // overall rate, but the reply burst on the main thread is spread
-    // out instead of producing a visible ~1 Hz hitch in the waterfall.
-    m_pollTimer.start(qMax(1, m_pollIntervalMs / 6));
 
-    // Probe /info immediately to establish connection.
+    // Probe /info immediately. Periodic polling begins only after this
+    // generation proves itself with a successful probe response.
     issueGet(QStringLiteral("/info"));
 }
 
 void Rf2ksConnection::disconnect()
 {
+    m_operatorDisconnected = true;
+    ++m_generation;
     m_pollTimer.stop();
     m_reconnectTimer.stop();
+    const auto replies = m_inFlight;
+    for (QNetworkReply* reply : replies) {
+        if (reply) {
+            reply->abort();
+        }
+    }
+    m_inFlight.clear();
     if (m_connected) {
         m_connected = false;
         emit disconnected();
@@ -239,6 +248,10 @@ void Rf2ksConnection::setPollIntervalMs(int ms)
 
 void Rf2ksConnection::pollOnce()
 {
+    if (m_operatorDisconnected || !m_connected) {
+        return;
+    }
+
     // 2026-05-25 KG4VCF bench fix: stagger the 6 hot-path GETs across
     // the poll interval instead of firing them all at once.
     //
@@ -300,6 +313,19 @@ void Rf2ksConnection::issueGet(const QString& path)
     auto* reply = m_nam->get(req);
     reply->setProperty("rfkitPath", path);
     reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
+    trackReply(reply);
+}
+
+void Rf2ksConnection::trackReply(QNetworkReply* reply)
+{
+    if (!reply) {
+        return;
+    }
+    reply->setProperty("rfkitGeneration", QVariant::fromValue(m_generation));
+    m_inFlight.insert(reply);
+    connect(reply, &QObject::destroyed, this, [this, reply] {
+        m_inFlight.remove(reply);
+    });
     connect(reply, &QNetworkReply::finished,
             this, &Rf2ksConnection::onReplyFinished);
 }
@@ -310,6 +336,13 @@ void Rf2ksConnection::onReplyFinished()
     if (!reply) {
         return;
     }
+    m_inFlight.remove(reply);
+    const quint64 replyGeneration =
+        reply->property("rfkitGeneration").toULongLong();
+    if (replyGeneration != m_generation || m_operatorDisconnected) {
+        reply->deleteLater();
+        return;
+    }
     const QString path    = reply->property("rfkitPath").toString();
     const qint64 started  = reply->property("startedMs").toLongLong();
     const bool isWrite    = reply->property("rfkitIsWrite").toBool();
@@ -317,6 +350,9 @@ void Rf2ksConnection::onReplyFinished()
 
     if (reply->error() != QNetworkReply::NoError) {
         markPollFailure();
+        if (!m_connected && path == QStringLiteral("/info")) {
+            scheduleReconnect();
+        }
         reply->deleteLater();
         return;
     }
@@ -335,10 +371,15 @@ void Rf2ksConnection::onReplyFinished()
     }
     markPollSuccess(rttMs);
 
-    if (!m_connected) {
+    if (!m_connected && path == QStringLiteral("/info")) {
         m_connected = true;
         m_connectedSinceMs = QDateTime::currentMSecsSinceEpoch();
         emit connected();
+    }
+    if (m_connected && !m_pollTimer.isActive()) {
+        // pollOnce emits one of six hot paths per tick, preserving the
+        // configured per-path cycle while avoiding a six-reply burst.
+        m_pollTimer.start(qMax(1, m_pollIntervalMs / 6));
     }
 }
 
@@ -374,7 +415,7 @@ void Rf2ksConnection::scheduleReconnect()
     // Review blocker [P2] on PR #291: the operator's "Auto-reconnect" choice
     // was persisted by RfKitPage and never consulted here, so the connection
     // retried unconditionally regardless of the checkbox.
-    if (!m_autoReconnect) {
+    if (!m_autoReconnect || m_reconnectTimer.isActive()) {
         return;
     }
     m_reconnectAttempts++;
@@ -387,13 +428,15 @@ void Rf2ksConnection::scheduleReconnect()
 
 void Rf2ksConnection::onReconnectTimeout()
 {
-    // Re-issue /info as the connection probe; success path will set
-    // m_connected back to true via onReplyFinished.
-    issueGet(QStringLiteral("/info"));
-    if (!m_pollTimer.isActive() && !m_host.isEmpty()) {
-        // See connectToAmp(): timer fires per-path, one-sixth of cycle.
-        m_pollTimer.start(qMax(1, m_pollIntervalMs / 6));
+    // A direct invocation is also used by the focused tests; mirror a real
+    // single-shot timeout by clearing the owned timer before issuing a probe.
+    m_reconnectTimer.stop();
+    if (m_operatorDisconnected || !m_autoReconnect || m_host.isEmpty()) {
+        return;
     }
+    // Reconnect is a probe-only state. A successful current-generation /info
+    // reply starts periodic polling in onReplyFinished().
+    issueGet(QStringLiteral("/info"));
 }
 
 void Rf2ksConnection::testForceBackoffSequence()
@@ -463,8 +506,7 @@ void Rf2ksConnection::issuePut(const QString& path, const QByteArray& body)
     // See onReplyFinished(): write acks carry no state body and must not be
     // fed to handleResponse().
     reply->setProperty("rfkitIsWrite", true);
-    connect(reply, &QNetworkReply::finished,
-            this, &Rf2ksConnection::onReplyFinished);
+    trackReply(reply);
 }
 
 void Rf2ksConnection::issuePost(const QString& path)
@@ -486,8 +528,7 @@ void Rf2ksConnection::issuePost(const QString& path)
     // See onReplyFinished(): write acks carry no state body and must not be
     // fed to handleResponse().
     reply->setProperty("rfkitIsWrite", true);
-    connect(reply, &QNetworkReply::finished,
-            this, &Rf2ksConnection::onReplyFinished);
+    trackReply(reply);
 }
 
 } // namespace NereusSDR
