@@ -648,6 +648,11 @@ nereus_add_test(tst_p2_codec_orionmkii)
 # ── Phase 3P-B Task 5: P2CodecSaturn — Saturn BPF1 band-edge override ──
 nereus_add_test(tst_p2_codec_saturn)
 
+# Codex review, PR #293: PureSignal reclaims DDC0 on a 1-ADC Hermes-class
+# board while transmitting, so no user stream may still be mapped onto it
+# (Thetis console.cs:8449-8456 [v2.10.3.15]).
+nereus_add_test(tst_p2_codec_hermes)
+
 # ── Phase 3M-4 Task 5: per-board PsDdcConfig codec dispatch ──
 # Verifies every codec subclass (P1CodecStandard / P1CodecHl2 /
 # P1CodecAnvelinaPro3 / P1CodecRedPitaya / P2CodecOrionMkII /

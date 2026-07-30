@@ -244,7 +244,14 @@ DdcAssignment P2CodecHermes::applyDdcAssignment(
     // console.cs:8610-8642 [v2.10.3.15] plus a wire-byte capture of a working
     // Thetis-on-G2E session (CmdRx byte 7 = 0x01, the DDC0 enable bit).
     //MW0LGE_22b missed out  [original inline tag from console.cs:8620 — rx1 = 0 on tot==1]
-    if (slices[0].live) { a.streamDdc[0] = 0; }
+    //
+    // Set per branch below rather than once here. Two of the three branches do
+    // put stream 0 on DDC0, but the PureSignal branch reclaims DDC0 as the
+    // feedback leg and leaves no user receiver at all, so a mapping made
+    // before the branch runs survives into a state where it is false.
+    // publishDdcAssignment would then route stream 0 to DDC0, report it
+    // available instead of suspended, and push PA-feedback samples through the
+    // ordinary RX DSP path. (Codex review, PR #293.)
 
     if (ctx.puresignalRun && ctx.mox) {
         // From Thetis console.cs:8449-8456 [v2.10.3.15]:
@@ -290,6 +297,9 @@ DdcAssignment P2CodecHermes::applyDdcAssignment(
         a.adcCtrl2    = 0;
         a.p1Diversity = 1;
         a.nDdc = 2;
+        // Stream 0 really is on DDC0 here: the pair's primary carries it, and
+        // DDC1 is the synchronized leg rather than a second user stream.
+        if (slices[0].live) { a.streamDdc[0] = 0; }
     } else {
         // From Thetis console.cs:8393-8407 [v2.10.3.15] (no-mox, no-diversity)
         // and console.cs:8421-8435 (mox, no-diversity, no-PS) — identical
@@ -305,6 +315,7 @@ DdcAssignment P2CodecHermes::applyDdcAssignment(
         a.adcCtrl1    = 0;
         a.adcCtrl2    = 0;
         a.nDdc        = 1;
+        if (slices[0].live) { a.streamDdc[0] = 0; }
 
         if (slices[1].live) {
             // From Thetis console.cs:8399-8400 [v2.10.3.15]:
