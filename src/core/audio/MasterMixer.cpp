@@ -120,6 +120,10 @@ void MasterMixer::setSliceStreaming(int sliceId, bool streaming) {
         // it. From Thetis aamix.c:522 [v2.10.3.15], where clearing the
         // stream's a->active bit rebuilds Aready in the same call.
         st.producing.store(false, std::memory_order_release);
+        // Invalidate queued audio without touching rd/wr/avail here. Those
+        // indices are audio-thread-owned; accumulate acknowledges the new
+        // generation and resets them before accepting a fresh block.
+        st.streamGeneration.fetch_add(1, std::memory_order_acq_rel);
     }
 }
 
@@ -177,6 +181,32 @@ void MasterMixer::accumulate(int sliceId, const float* samples, int frames,
     if (samples == nullptr || frames <= 0) { return; }
 
     SliceState& st = it->second;
+    const bool opportunistic =
+        st.opportunistic.load(std::memory_order_acquire);
+    if (!opportunistic
+        && !st.streaming.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    const std::uint32_t generation =
+        st.streamGeneration.load(std::memory_order_acquire);
+    // Withdrawal stores streaming=false before advancing the generation.
+    // Re-check after observing the generation so an accumulate racing between
+    // those control-thread stores cannot accept a block that arrived while
+    // withdrawn and expose it on a later re-admission.
+    if (!opportunistic
+        && !st.streaming.load(std::memory_order_acquire)) {
+        return;
+    }
+    if (st.ringGeneration != generation) {
+        // Audio-thread acknowledgment of the lifecycle invalidation. The
+        // control thread changes only atomics; ring ownership stays here.
+        st.rd = 0;
+        st.wr = 0;
+        st.avail = 0;
+        st.ringGeneration = generation;
+    }
+
     // Audio-thread write to the same atomic the UI-side setSliceMuted()
     // writes; the store is lock-free either way.
     st.muted.store(muted, std::memory_order_release);
@@ -188,7 +218,7 @@ void MasterMixer::accumulate(int sliceId, const float* samples, int frames,
     // so they cannot hold up a drain. A slice the lifecycle has withdrawn
     // stays out until it is re-admitted, so a late straggler arriving
     // after withdrawal cannot silently rejoin the wait set.
-    if (!st.opportunistic.load(std::memory_order_acquire)
+    if (!opportunistic
         && st.streaming.load(std::memory_order_acquire)) {
         st.producing.store(true, std::memory_order_release);
     }
@@ -235,6 +265,16 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
 
     for (auto& kv : m_slices) {
         SliceState& st = kv.second;
+        const bool opportunistic =
+            st.opportunistic.load(std::memory_order_acquire);
+        if (!opportunistic
+            && !st.streaming.load(std::memory_order_acquire)) {
+            continue;
+        }
+        if (st.ringGeneration
+            != st.streamGeneration.load(std::memory_order_acquire)) {
+            continue;
+        }
         maxAvail = std::max(maxAvail, st.avail);
         if (!st.producing.load(std::memory_order_acquire)) { continue; }
         anyMember = true;
@@ -271,6 +311,16 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
 
     for (auto& kv : m_slices) {
         SliceState& st = kv.second;
+        const bool opportunistic =
+            st.opportunistic.load(std::memory_order_acquire);
+        if (!opportunistic
+            && !st.streaming.load(std::memory_order_acquire)) {
+            continue;
+        }
+        if (st.ringGeneration
+            != st.streamGeneration.load(std::memory_order_acquire)) {
+            continue;
+        }
         const int take = std::min(n, st.avail);
         if (take <= 0) { continue; }
 

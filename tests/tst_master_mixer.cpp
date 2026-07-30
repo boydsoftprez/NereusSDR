@@ -215,6 +215,45 @@ private slots:
         QCOMPARE(out[0], 0.3f);
     }
 
+    void withdrawal_invalidates_queued_audio_before_readmission() {
+        MasterMixer mix;
+        mix.setRampFrames(1);
+        mix.setSlewUpFrames(0);
+        mix.setSliceGain(1, 1.0f, 0.0f);
+        mix.setSliceGain(2, 1.0f, 0.0f);
+
+        const std::array<float, 2> old = {0.4f, 0.4f};
+        const std::array<float, 2> solo = {0.3f, 0.3f};
+        const std::array<float, 2> fresh = {0.2f, 0.2f};
+        std::array<float, 2> out{};
+
+        // Slice 2 gets one block ahead. Draining the synchronized first
+        // pair leaves one old 0.4 block queued only on slice 2.
+        mix.accumulate(2, old.data(), 1);
+        mix.accumulate(2, old.data(), 1);
+        mix.accumulate(1, old.data(), 1);
+        QCOMPARE(mix.tryDrain(out.data(), 1), 1);
+        QCOMPARE(out[0], 0.8f);
+
+        // Withdrawal removes slice 2 from the barrier and invalidates its
+        // queued generation. Slice 1 must drain alone: the stale 0.4 must
+        // not turn this into 0.7.
+        mix.setSliceStreaming(2, false);
+        mix.accumulate(1, solo.data(), 1);
+        QCOMPARE(mix.tryDrain(out.data(), 1), 1);
+        QCOMPARE(out[0], 0.3f);
+        QCOMPARE(out[1], 0.3f);
+
+        // Re-admission does not make the old generation valid again. Slice
+        // 2 contributes only after its fresh 0.2 block arrives.
+        mix.setSliceStreaming(2, true);
+        mix.accumulate(2, fresh.data(), 1);
+        mix.accumulate(1, fresh.data(), 1);
+        QCOMPARE(mix.tryDrain(out.data(), 1), 1);
+        QCOMPARE(out[0], 0.4f);
+        QCOMPARE(out[1], 0.4f);
+    }
+
     // The TX monitor feeds only during MOX. If it enrolled as a barrier
     // member it would stall the drain for kStallTolerance periods every
     // time TX stopped, so it is marked opportunistic and mixed in only

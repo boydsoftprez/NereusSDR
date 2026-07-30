@@ -3518,14 +3518,6 @@ void RadioModel::applyStreamDspGeometry()
 
 void RadioModel::requestDdcAssignment()
 {
-    // Phase 3F Sub-Epic I Task 10: setStreamSampleRate re-runs every slice on
-    // the stream through bindSliceToStream, and each of those ends by asking
-    // for a recompute. Coalesce them into the single request the rate change
-    // issues at the end, so a rate change costs one codec run and one wire
-    // push rather than one per slice.
-    if (m_suppressDdcAssignment) {
-        return;
-    }
     emit ddcAssignmentRequested();
     invokeCodecDdcAssignment();
 
@@ -3583,108 +3575,229 @@ void RadioModel::requestSliceSampleRate(int sliceId, int rateHz)
         // The slice picks up its stream's rate when it binds.
         return;
     }
-    setStreamSampleRate(stream, rateHz);
+    if (!setStreamSampleRate(stream, rateHz)) {
+        emit sliceRetuneRejected(
+            sliceId,
+            QStringLiteral(
+                "Sample-rate change to %1 kHz was rejected; all slices "
+                "stayed on their existing DDC windows.")
+                .arg(rateHz / 1000));
+    }
 }
 
-void RadioModel::setStreamSampleRate(int streamIndex, int rateHz)
+std::optional<RadioModel::StreamRateChangePlan>
+RadioModel::planStreamSampleRateChange(int streamIndex, int rateHz) const
 {
-    if (rateHz <= 0) {
-        return;
+    if (rateHz <= 0
+        || streamIndex < 0
+        || streamIndex >= m_streamAllocator.streamCount()
+        || !m_streamAllocator.isStreamActive(streamIndex)) {
+        return std::nullopt;
     }
 
     const bool isP1 = sampleRateIsRadioWide();
+    StreamRateChangePlan plan{m_streamAllocator, {}};
 
-    // Phase 3F Sub-Epic I closeout, defect G3: on P1 the rate has to reach the
-    // wire before any of the client-side geometry moves.
-    //
-    // P1 carries one rate for the whole radio, encoded as a 2-bit code in C&C
-    // bank 0 byte C1 (P1RadioConnection::composeCcBank0Full). Nothing below
-    // touches that: the allocator, the WDSP channel rates, the drain chunk
-    // sizes and the FFT bin math would all move to the new rate while the
-    // radio kept streaming the old one. The VFO flag's "Sample rate >" submenu
-    // reaches here through requestSliceSampleRate, so on an HL2 that menu
-    // silently desynchronised the client from the radio.
-    //
-    // A radio-wide rate change IS setSampleRateLive: stop the stream, set the
-    // rate, restart, quiesce the DSP across the gap, then restore. Delegating
-    // avoids a second copy of that 12-step sequence going out of step with the
-    // one the Setup rate combo uses.
-    //
-    // If it refuses (returns < 0 -- no connection, or WDSP torn down
-    // mid-change) then nothing reached the wire, and applying the client half
-    // regardless would manufacture the very desync this closes. Leaving both
-    // halves at the old rate is the consistent outcome.
     if (isP1) {
-        if (setSampleRateLive(rateHz) < 0) {
-            return;
+        for (int st = 0; st < plan.allocator.streamCount(); ++st) {
+            if (plan.allocator.isStreamActive(st)) {
+                plan.allocator.activateStream(
+                    st, plan.allocator.streamCentreHz(st), rateHz);
+            }
+        }
+    } else {
+        plan.allocator.activateStream(
+            streamIndex, plan.allocator.streamCentreHz(streamIndex), rateHz);
+    }
+
+    struct SimulatedSlice {
+        int sliceId{-1};
+        double frequencyHz{0.0};
+        int stream{-1};
+    };
+    QVector<SimulatedSlice> simulated;
+    simulated.reserve(m_slices.size());
+    for (SliceModel* slice : m_slices) {
+        if (slice && slice->streamIndex() >= 0) {
+            simulated.append({
+                slice->sliceIndex(), slice->frequency(), slice->streamIndex()});
+        }
+    }
+    plan.slices.reserve(simulated.size());
+
+    const bool ddcPinned =
+        m_receiverManager && m_receiverManager->ddcFrequencyLocked();
+    using Outcome = SliceStreamAllocator::Outcome;
+
+    for (int i = 0; i < simulated.size(); ++i) {
+        SimulatedSlice& candidate = simulated[i];
+        int occupantCount = 0;
+        for (const SimulatedSlice& other : std::as_const(simulated)) {
+            if (other.stream == candidate.stream) {
+                ++occupantCount;
+            }
+        }
+
+        const int previousStream = candidate.stream;
+        const SliceStreamAllocator::Placement placement =
+            plan.allocator.retuneSlice(
+                previousStream, occupantCount == 1, ddcPinned,
+                candidate.frequencyHz);
+        if (placement.outcome == Outcome::Rejected) {
+            return std::nullopt;
+        }
+
+        if (placement.outcome == Outcome::NewStream
+            || placement.outcome == Outcome::RetunedStream) {
+            const bool streamAlreadyLive =
+                plan.allocator.isStreamActive(placement.streamIndex);
+            const int existingRateHz =
+                plan.allocator.streamSampleRateHz(placement.streamIndex);
+            const int rateForStream =
+                isP1
+                    ? rateHz
+                    : ((streamAlreadyLive && existingRateHz > 0)
+                           ? existingRateHz
+                           : (m_connectionSampleRateHz > 0
+                                  ? m_connectionSampleRateHz
+                                  : m_streamDefaultRateHz));
+            plan.allocator.activateStream(
+                placement.streamIndex, placement.newStreamCentreHz,
+                rateForStream);
+        }
+
+        candidate.stream = placement.streamIndex;
+        if (previousStream != placement.streamIndex) {
+            bool previousStillOccupied = false;
+            for (const SimulatedSlice& other : std::as_const(simulated)) {
+                if (other.stream == previousStream) {
+                    previousStillOccupied = true;
+                    break;
+                }
+            }
+            if (!previousStillOccupied) {
+                plan.allocator.deactivateStream(previousStream);
+            }
+        }
+
+        plan.slices.append({
+            candidate.sliceId, previousStream, placement, 0});
+    }
+
+    for (PlannedSlicePlacement& planned : plan.slices) {
+        planned.resolvedRateHz =
+            plan.allocator.streamSampleRateHz(planned.placement.streamIndex);
+        if (planned.resolvedRateHz <= 0) {
+            return std::nullopt;
+        }
+    }
+
+    return plan;
+}
+
+void RadioModel::commitStreamSampleRateChange(
+    const StreamRateChangePlan& plan)
+{
+    const SliceStreamAllocator previousAllocator = m_streamAllocator;
+    QSet<int> bindingsToPublish;
+
+    m_streamAllocator = plan.allocator;
+
+    for (int st = 0; st < m_streamAllocator.streamCount(); ++st) {
+        if (!m_streamAllocator.isStreamActive(st)) {
+            continue;
+        }
+        if (m_receiverManager) {
+            m_receiverManager->setReceiverFrequency(
+                st,
+                static_cast<quint64>(
+                    m_streamAllocator.streamCentreHz(st)));
+            m_receiverManager->setReceiverSampleRate(
+                st, m_streamAllocator.streamSampleRateHz(st));
+        }
+    }
+
+    for (const PlannedSlicePlacement& planned : plan.slices) {
+        SliceModel* slice = sliceById(planned.sliceId);
+        if (!slice) {
+            continue;
+        }
+        bindingsToPublish.insert(planned.previousStream);
+        bindingsToPublish.insert(planned.placement.streamIndex);
+
+        slice->setStreamIndex(planned.placement.streamIndex);
+        slice->setShiftOffsetHz(planned.placement.shiftOffsetHz);
+        slice->setSampleRateHz(planned.resolvedRateHz);
+
+        if (m_wdspEngine) {
+            if (RxChannel* channel =
+                    m_wdspEngine->rxChannel(planned.sliceId)) {
+                channel->setShiftFrequency(
+                    planned.placement.shiftOffsetHz);
+            }
+        }
+    }
+
+    bindingsToPublish.remove(-1);
+    for (int st : std::as_const(bindingsToPublish)) {
+        republishStreamBindings(st);
+    }
+
+    if (m_receiverManager) {
+        for (int st = 0; st < m_streamAllocator.streamCount(); ++st) {
+            if (slicesOnStream(st).isEmpty()) {
+                m_receiverManager->deactivateReceiver(st);
+            } else {
+                m_receiverManager->activateReceiver(st);
+            }
+        }
+    }
+
+    applyStreamDspGeometry();
+
+    for (int st = 0; st < m_streamAllocator.streamCount(); ++st) {
+        if (!m_streamAllocator.isStreamActive(st)) {
+            continue;
+        }
+        if (!previousAllocator.isStreamActive(st)
+            || previousAllocator.streamCentreHz(st)
+                != m_streamAllocator.streamCentreHz(st)
+            || previousAllocator.streamSampleRateHz(st)
+                != m_streamAllocator.streamSampleRateHz(st)) {
+            emit streamCentreChanged(
+                st, m_streamAllocator.streamCentreHz(st),
+                m_streamAllocator.streamSampleRateHz(st));
+        }
+    }
+
+    requestDdcAssignment();
+}
+
+bool RadioModel::setStreamSampleRate(int streamIndex, int rateHz)
+{
+    const std::optional<StreamRateChangePlan> plan =
+        planStreamSampleRateChange(streamIndex, rateHz);
+    if (!plan.has_value()) {
+        return false;
+    }
+
+    const bool isP1 = sampleRateIsRadioWide();
+    if (isP1) {
+        // Protocol 1 carries one radio-wide wire rate. The complete allocator
+        // transition is known valid before this can stop the stream or touch
+        // WDSP. A refused wire update leaves every client-side object intact.
+        if (setSampleRateLive(rateHz, false) < 0) {
+            return false;
         }
     } else if (m_externalDiversityRouteActive) {
-        // P2 may resize one stream independently. Quiesce the paired route
-        // before applyStreamDspGeometry mutates any target channel; the full
-        // assignment request at the end recreates it with resolved geometry.
+        // A Protocol 2 rate is per stream. Stop the live paired route only
+        // after preflight succeeds; requestDdcAssignment at commit's tail
+        // recreates it from the committed geometry.
         stopExternalDiversityRoute();
     }
 
-    auto applyTo = [this, rateHz](int st) {
-        if (!m_streamAllocator.isStreamActive(st)) {
-            return;
-        }
-        const double centreHz = m_streamAllocator.streamCentreHz(st);
-        m_streamAllocator.activateStream(st, centreHz, rateHz);
-        if (m_receiverManager) {
-            m_receiverManager->setReceiverSampleRate(st, rateHz);
-        }
-        // Phase 3F Sub-Epic I closeout, defect G2: SliceModel::sampleRateHz
-        // mirrors the RESOLVED rate of the hosting stream, so every slice on
-        // this stream follows it. Without this the flag that asked would show
-        // one rate and its co-hosts another, for a width they physically
-        // share. Migrants are re-mirrored by bindSliceToStream below.
-        for (SliceModel* s : m_slices) {
-            if (s && s->streamIndex() == st) {
-                s->setSampleRateHz(rateHz);
-            }
-        }
-        // The FFT engine's bin math and the panadapter's window both key off
-        // the stream's rate, so they have to follow it (Task 8 wires this).
-        emit streamCentreChanged(st, centreHz, rateHz);
-    };
-
-    if (isP1) {
-        for (int st = 0; st < m_streamAllocator.streamCount(); ++st) {
-            applyTo(st);
-        }
-    } else {
-        applyTo(streamIndex);
-    }
-
-    // Re-run every bound slice through the allocator. Widening may now admit
-    // slices that had to claim their own DDC; narrowing may have pushed a
-    // slice out of the window it was sharing, and it must migrate rather than
-    // stay aliased on a window that no longer contains it.
-    //
-    // This calls bindSliceToStream directly rather than moving any frequency,
-    // so no frequencyChanged fires and there is no recursion back into here.
-    // The suppression flag only coalesces the redundant codec requests.
-    m_suppressDdcAssignment = true;
-    for (SliceModel* s : m_slices) {
-        if (s && s->streamIndex() >= 0) {
-            bindSliceToStream(s, s->frequency());
-        }
-    }
-    m_suppressDdcAssignment = false;
-
-    // Phase 3F Sub-Epic I closeout, defect H1: the rate IS the drain geometry
-    // on both sides of the chunk, so the DSP has to follow it. One
-    // reconciliation for the whole change, after the migrations above have
-    // settled -- an evicted slice must be re-rated for the stream it landed
-    // on, not the one it left.
-    applyStreamDspGeometry();
-
-    // One recompute for the whole rate change. This is what actually pushes
-    // the new rate to the wire on P2: the codec writes rate[] into the
-    // assignment and P2RadioConnection::applyDdcAssignment converts it to
-    // m_rx[i].samplingRate in kHz and re-sends CmdRx.
-    requestDdcAssignment();
+    commitStreamSampleRateChange(*plan);
+    return true;
 }
 
 bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
@@ -3824,13 +3937,9 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
     // 192 kHz one leaves the slice's WDSP channel configured for a 1024-sample
     // input while its new stream drains 256, and fexchange2 would read the
     // missing 768 off the end of the accumulator (iobuffs.c:532-536
-    // [WDSP v1.29]). Suppressed during setStreamSampleRate's rebind loop for
-    // the same reason requestDdcAssignment is: that loop coalesces to one
-    // reconciliation at the end rather than one per slice. No-op whenever
-    // everything already agrees, which is every retune on a single-rate radio.
-    if (!m_suppressDdcAssignment) {
-        applyStreamDspGeometry();
-    }
+    // [WDSP v1.29]). No-op whenever everything already agrees, which is every
+    // retune on a single-rate radio.
+    applyStreamDspGeometry();
 
     // The slice now has a stream, which means RxDspWorker is about to start
     // fanning that stream's chunks at its WDSP channel. Switch the channel on
@@ -12208,7 +12317,8 @@ QString RadioModel::connectionSampleRateText() const
 // P1RadioConnection (itself ported from networkproto1.c SendStopToMetis /
 // SendStartToMetis [v2.10.3.13]).
 // ---------------------------------------------------------------------------
-qint64 RadioModel::setSampleRateLive(int newRateHz)
+qint64 RadioModel::setSampleRateLive(int newRateHz,
+                                     bool reconcileDiversity)
 {
     QElapsedTimer t;
     t.start();
@@ -12390,7 +12500,7 @@ qint64 RadioModel::setSampleRateLive(int newRateHz)
     m_connectionSampleRateHz = newRateHz;
     emit wireSampleRateChanged(static_cast<double>(newRateHz));
 
-    if (restartExternalDiversity) {
+    if (restartExternalDiversity && reconcileDiversity) {
         reconcileExternalDiversityRoute(computeDdcAssignment());
     }
 

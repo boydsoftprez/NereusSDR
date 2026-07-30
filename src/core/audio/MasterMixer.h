@@ -154,6 +154,7 @@ warren@wpratt.com
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -293,7 +294,13 @@ private:
         std::atomic<float> pan{0.0f};
         std::atomic<bool>  muted{false};
 
+        // Lifecycle generation. The control thread increments the atomic
+        // when it withdraws a slice; the audio thread acknowledges that
+        // intent by resetting the ring before accepting a new block.
+        std::atomic<std::uint32_t> streamGeneration{0};
+
         // Audio thread only, past this point.
+        std::uint32_t ringGeneration{0};
         std::vector<float> ring;      // interleaved stereo, capacity frames*2
         int capFrames{0};
         int rd{0};

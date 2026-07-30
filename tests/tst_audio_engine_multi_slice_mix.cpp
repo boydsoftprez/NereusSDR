@@ -246,6 +246,13 @@ private slots:
 
         h.radio->releaseStreamBindings();
 
+        // A production reconnect re-admits a rebound slice through
+        // RadioModel::activateSliceChannel before its first new-generation
+        // block arrives. Model that lifecycle edge explicitly; a block
+        // delivered while the slice is still withdrawn is intentionally
+        // rejected by MasterMixer.
+        h.engine->setSliceStreaming(a, true);
+
         // Slice A alone resumes. Slice B, which never comes back, must not
         // still be holding the barrier.
         h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);

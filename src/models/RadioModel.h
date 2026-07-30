@@ -123,6 +123,7 @@
 #include <algorithm>  // std::clamp (used by computeWireDriveForTest)
 #include <array>      // std::array (HL2 temp averaging ring)
 #include <memory>  // std::unique_ptr
+#include <optional>
 
 namespace NereusSDR {
 
@@ -562,7 +563,7 @@ public:
     /// every active stream. Protocol 2 carries a per-DDC rate in
     /// DdcAssignment::rate[], which the codecs populate per stream, so there
     /// it applies only to the stream named.
-    void setStreamSampleRate(int streamIndex, int rateHz);
+    bool setStreamSampleRate(int streamIndex, int rateHz);
 
     /// Phase 3F Sub-Epic I closeout, defect G2: the operator picked a sample
     /// rate on one slice's VFO flag.
@@ -1124,7 +1125,8 @@ public:
     //     dropped.  Callers should ensure MOX is off before calling.
     //   - dspChangeMeasured(qint64) signal (Task 1.8) is emitted on completion.
     //     The elapsed time is also returned synchronously.
-    qint64 setSampleRateLive(int newRateHz);
+    qint64 setSampleRateLive(int newRateHz,
+                             bool reconcileDiversity = true);
 
     // Task 1.7 — Active-RX-count live-apply coordinator.
     //
@@ -2627,8 +2629,31 @@ public:
     double streamCentreHzForTest(int streamIndex) const {
         return m_streamAllocator.streamCentreHz(streamIndex);
     }
+    int streamSampleRateHzForTest(int streamIndex) const {
+        return m_streamAllocator.streamSampleRateHz(streamIndex);
+    }
+    bool streamActiveForTest(int streamIndex) const {
+        return m_streamAllocator.isStreamActive(streamIndex);
+    }
 
 private:
+    struct PlannedSlicePlacement {
+        int sliceId{-1};
+        int previousStream{-1};
+        SliceStreamAllocator::Placement placement;
+        int resolvedRateHz{0};
+    };
+
+    struct StreamRateChangePlan {
+        SliceStreamAllocator allocator;
+        QVector<PlannedSlicePlacement> slices;
+    };
+
+    std::optional<StreamRateChangePlan>
+    planStreamSampleRateChange(int streamIndex, int rateHz) const;
+
+    void commitStreamSampleRateChange(const StreamRateChangePlan& plan);
+
     // Sub-components (owned, main thread)
     RadioDiscovery*  m_discovery{nullptr};
     ReceiverManager* m_receiverManager{nullptr};
@@ -2742,12 +2767,6 @@ private:
     // sized by configureStreamPool at connect, empty (and therefore
     // bind-refusing) while disconnected.
     NereusSDR::SliceStreamAllocator m_streamAllocator;
-
-    // Phase 3F Sub-Epic I Task 10: coalesces the codec recompute while
-    // setStreamSampleRate re-runs every slice on a stream through the
-    // allocator. Without it a rate change on a stream hosting N slices would
-    // run the codec N times and push N CmdRx frames. Main thread only.
-    bool m_suppressDdcAssignment{false};
 
     // Rate handed to configureStreamPool, used when a stream is claimed
     // before m_connectionSampleRateHz has been set (Slice A binds during
