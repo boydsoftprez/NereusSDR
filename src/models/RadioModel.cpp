@@ -4301,48 +4301,10 @@ int RadioModel::addSlice(const QString& initialPanId)
     // wideband packets.  Off-flip restores both.
     connect(slice, &SliceModel::widebandExtensionRequestedChanged, this,
             [this, slice](bool) {
-        const int chainIdx = slice->chainIndex();
-        // Codex review, PR #293: the chain's state, not this slice's edge.
-        // The incoming boolean is deliberately ignored; SliceModel has already
-        // committed it, so recomputing across all live slices on the chain
-        // reads the new value along with everyone else's. Forwarding the edge
-        // directly let one slice zooming back in switch off a chain another
-        // slice was still using. See RadioModel.h on widebandActiveForChain,
-        // which also applies the widebandAdcs capability gate.
-        const bool on = widebandActiveForChain(chainIdx);
-        m_alexController.setWidebandActive(chainIdx, on);
-        //
-        // ── Phase 3F Sub-Epic I closeout: marshal to the connection thread ──
-        //
-        // Third instance of the pattern fixed for applyDdcAssignment in
-        // invokeCodecDdcAssignment, and already done correctly by the
-        // setAlexRxBpf push in republishAlexAdcSlices.
-        //
-        // setWidebandEnabled writes m_wbEnableMask and, when connected,
-        // calls sendCmdGeneral(), which writes the QUdpSocket. RadioModel
-        // runs on the GUI thread and the connection was moved onto
-        // m_connThread (see connectToRadio), so calling it directly tore the
-        // mask against the connection thread's own frame composition -- byte
-        // 23 of CmdGeneral is that mask (Thetis ChannelMaster/network.c:879
-        // [v2.10.3.15]) -- and drove QUdpSocket::writeDatagram from a thread
-        // that owns neither the socket nor its notifier.
-        //
-        // Same marshalling shape as the neighbouring pushes: the functor
-        // overload of QMetaObject::invokeMethod with default
-        // Qt::AutoConnection, which is a plain call when the target already
-        // lives on this thread (tests, and the pre-thread window at
-        // construction) and a queued QMetaCallEvent when it does not.
-        //
-        // No qRegisterMetaType is needed. The functor overload packages the
-        // whole lambda into the event, so chainIdx and on travel as ordinary
-        // by-value captures; the metatype system is only involved for the
-        // Q_ARG / string-name overload or for a queued signal-slot
-        // connection carrying them as parameters.
-        if (auto* p2 = qobject_cast<NereusSDR::P2RadioConnection*>(m_connection)) {
-            QMetaObject::invokeMethod(p2, [p2, chainIdx, on]() {
-                p2->setWidebandEnabled(chainIdx, on);
-            });
-        }
+        // The incoming boolean is deliberately ignored. SliceModel has already
+        // committed it, so the recompute inside pushWidebandStateForChain
+        // reads the new value along with every other slice's.
+        pushWidebandStateForChain(slice->chainIndex());
     });
 
     if (!m_activeSlice) {
@@ -4411,12 +4373,24 @@ void RadioModel::removeSlice(int sliceId)
         m_txSliceArbiter->requestHandoff(fallback->sliceIndex());
     }
 
+    // Captured before the removal: afterwards the slice is out of m_slices,
+    // and widebandActiveForChain has nothing left to tell it which chain to
+    // recompute. (Codex review round 3, PR #293.)
+    const int departedChain = m_slices.at(position)->chainIndex();
+
     SliceModel* slice = m_slices.takeAt(position);
 
     // Reassert the invariant after the victim leaves the list.
     if (m_txSliceArbiter) {
         m_txSliceArbiter->syncToSliceList();
     }
+
+    // Removing a slice changes its chain's wideband answer without any request
+    // property moving, and the handler only runs on those edges. So taking
+    // away the sole requester left the preselector bypassed and the radio
+    // still streaming wideband until some unrelated slice happened to toggle.
+    // Recomputed here against whichever slices survive.
+    pushWidebandStateForChain(departedChain);
 
     // Phase 3F Sub-Epic I: free the stream if this was its last slice, so
     // the DDC drops out of the ddcEnable bitmask and the radio stops
@@ -13767,6 +13741,51 @@ int RadioModel::rehomeSlicesToPans(const QStringList& livePanIds)
         ++moved;
     }
     return moved;
+}
+
+// Codex review rounds 2 and 3, PR #293. See RadioModel.h.
+void RadioModel::pushWidebandStateForChain(int chainIdx)
+{
+    if (chainIdx < 0) {
+        return;
+    }
+    // The chain's state, not any one slice's edge. Recomputed across every
+    // live slice on the chain, so it is correct whether a request just moved,
+    // a slice was just removed, or anything else changed the answer.
+    const bool on = widebandActiveForChain(chainIdx);
+    m_alexController.setWidebandActive(chainIdx, on);
+    //
+    // ── Phase 3F Sub-Epic I closeout: marshal to the connection thread ──
+    //
+    // Third instance of the pattern fixed for applyDdcAssignment in
+    // invokeCodecDdcAssignment, and already done correctly by the
+    // setAlexRxBpf push in republishAlexAdcSlices.
+    //
+    // setWidebandEnabled writes m_wbEnableMask and, when connected,
+    // calls sendCmdGeneral(), which writes the QUdpSocket. RadioModel
+    // runs on the GUI thread and the connection was moved onto
+    // m_connThread (see connectToRadio), so calling it directly tore the
+    // mask against the connection thread's own frame composition -- byte
+    // 23 of CmdGeneral is that mask (Thetis ChannelMaster/network.c:879
+    // [v2.10.3.15]) -- and drove QUdpSocket::writeDatagram from a thread
+    // that owns neither the socket nor its notifier.
+    //
+    // Same marshalling shape as the neighbouring pushes: the functor
+    // overload of QMetaObject::invokeMethod with default
+    // Qt::AutoConnection, which is a plain call when the target already
+    // lives on this thread (tests, and the pre-thread window at
+    // construction) and a queued QMetaCallEvent when it does not.
+    //
+    // No qRegisterMetaType is needed. The functor overload packages the
+    // whole lambda into the event, so chainIdx and on travel as ordinary
+    // by-value captures; the metatype system is only involved for the
+    // Q_ARG / string-name overload or for a queued signal-slot
+    // connection carrying them as parameters.
+    if (auto* p2 = qobject_cast<NereusSDR::P2RadioConnection*>(m_connection)) {
+        QMetaObject::invokeMethod(p2, [p2, chainIdx, on]() {
+            p2->setWidebandEnabled(chainIdx, on);
+        });
+    }
 }
 
 // Codex review, PR #293. See RadioModel.h for why this is a chain property

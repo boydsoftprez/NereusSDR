@@ -2402,15 +2402,12 @@ void MainWindow::buildUI()
         auto& s = AppSettings::instance();
         const QString restoredLayout = s.value(QStringLiteral("PanLayoutId"),
                                                 QStringLiteral("1")).toString();
-        const int needed = (restoredLayout == QStringLiteral("1")) ? 1
-                         : (restoredLayout == QStringLiteral("12h")) ? 3
-                         : (restoredLayout == QStringLiteral("2x2")) ? 4
-                         : 2;
-        QStringList ids;
-        for (int i = 0; i < needed; ++i) {
-            ids << QStringLiteral("pan-%1").arg(i);
-        }
-        m_panStack->applyLayout(restoredLayout, ids);
+        // Shares the template table with applyPanLayout, but deliberately not
+        // the rest of it: this runs at startup, before a radio is connected
+        // and before any slice exists, so there is nothing to rehome and the
+        // slice add-loop would manufacture a slice pre-connect.
+        // (Codex review round 3, PR #293.)
+        m_panStack->applyLayout(restoredLayout, panIdsForLayout(restoredLayout));
         m_panStack->restoreSplitterState();
     }
 
@@ -5101,55 +5098,7 @@ void MainWindow::buildMenuBar()
             if (!m_panStack) { return; }
             PanLayoutDialog dialog(this);
             if (dialog.exec() == QDialog::Accepted) {
-                const QString layoutId = dialog.selectedLayout();
-                // Pan-count per template: 1=1, 2v/2h=2, 12h=3, 2x2=4.
-                const int needed = (layoutId == QStringLiteral("1"))   ? 1
-                                 : (layoutId == QStringLiteral("12h")) ? 3
-                                 : (layoutId == QStringLiteral("2x2")) ? 4
-                                                                       : 2;
-                QStringList ids;
-                for (int i = 0; i < needed; ++i) {
-                    ids << QStringLiteral("pan-%1").arg(i);
-                }
-                qCInfo(lcContainer) << "Pan Layout (View menu): applying"
-                                      << layoutId << "with ids" << ids;
-                m_panStack->applyLayout(layoutId, ids);
-                // Phase 3F bench fix 2026-06-03: auto-add slices for new pans
-                // so each pan gets its own VfoWidget + RX applet entry. Cap
-                // at maxSlices (HL2 = 1; G2 = 5 etc.).
-                if (m_radioModel) {
-                    const int existing = m_radioModel->slices().size();
-                    const int maxS = m_radioModel->maxSlices();
-                    const int target = qMin(needed, maxS);
-                    qCInfo(lcContainer) << "Auto-add slices for layout:"
-                                          << "existing=" << existing
-                                          << "target=" << target
-                                          << "maxS=" << maxS;
-                    for (int i = existing; i < target; ++i) {
-                        const QString panId = QStringLiteral("pan-%1").arg(i);
-                        m_radioModel->addSliceOnPan(panId);
-                    }
-
-                    // Codex review, PR #293: the loop above only ever adds, so
-                    // with existing > target its body never ran and shrinking
-                    // the layout left slices pointing at panes applyLayout had
-                    // just deleted. They lost their VFO widget, did not come
-                    // back when the layout was re-expanded because nothing
-                    // emitted panKeyChanged, and held their DDC, stream and
-                    // audio throughout.
-                    //
-                    // The reconciliation lives on RadioModel so that it can be
-                    // tested; this lambda cannot be (see
-                    // tst_slice_rehome_on_layout_shrink, and §6 of the Phase 3F
-                    // session-state doc on MainWindow not being constructible
-                    // in the harness).
-                    const int rehomed = m_radioModel->rehomeSlicesToPans(ids);
-                    if (rehomed > 0) {
-                        qCInfo(lcContainer) << "Layout shrink: rehomed"
-                                            << rehomed << "slice(s) onto"
-                                            << ids.value(0);
-                    }
-                }
+                applyPanLayout(dialog.selectedLayout());
             }
         });
     }
@@ -8524,6 +8473,56 @@ void MainWindow::openFreeDVReporter()
 // cleanly even before Task 12 wires the stack. Add-slice's first
 // triggerable row uses "pan-0" as a fallback active pan id pre-Task-12,
 // matching the convention PanadapterStack uses for its bootstrap pan.
+// Codex review round 3, PR #293. The template-to-pan-count table had three
+// copies; this is the only one now.
+QStringList MainWindow::panIdsForLayout(const QString& layoutId)
+{
+    // Pan-count per template: 1=1, 2v/2h=2, 12h=3, 2x2=4.
+    const int needed = (layoutId == QStringLiteral("1"))   ? 1
+                     : (layoutId == QStringLiteral("12h")) ? 3
+                     : (layoutId == QStringLiteral("2x2")) ? 4
+                                                           : 2;
+    QStringList ids;
+    for (int i = 0; i < needed; ++i) {
+        ids << QStringLiteral("pan-%1").arg(i);
+    }
+    return ids;
+}
+
+// Codex review round 3, PR #293. See MainWindow.h for why this exists.
+void MainWindow::applyPanLayout(const QString& layoutId)
+{
+    if (!m_panStack) { return; }
+
+    const QStringList ids = panIdsForLayout(layoutId);
+    const int needed = ids.size();
+
+    qCInfo(lcContainer) << "Pan layout: applying" << layoutId << "with ids" << ids;
+    m_panStack->applyLayout(layoutId, ids);
+
+    if (!m_radioModel) { return; }
+
+    // Grow: a new pan gets its own slice, so it has a VfoWidget and an RX
+    // applet entry. Capped at maxSlices (HL2 = 1, G2 = 5).
+    // Phase 3F bench fix 2026-06-03.
+    const int existing = m_radioModel->slices().size();
+    const int maxS     = m_radioModel->maxSlices();
+    const int target   = qMin(needed, maxS);
+    for (int i = existing; i < target; ++i) {
+        m_radioModel->addSliceOnPan(QStringLiteral("pan-%1").arg(i));
+    }
+
+    // Shrink: the loop above only ever adds, so slices left on panes that
+    // applyLayout just deleted would keep a dangling panKey, lose their VFO
+    // widget, and hold a DDC, a stream and audio the operator can no longer
+    // reach.
+    const int rehomed = m_radioModel->rehomeSlicesToPans(ids);
+    if (rehomed > 0) {
+        qCInfo(lcContainer) << "Layout shrink: rehomed" << rehomed
+                            << "slice(s) onto" << ids.value(0);
+    }
+}
+
 void MainWindow::showPanMenu()
 {
     QMenu menu(this);
@@ -8569,33 +8568,7 @@ void MainWindow::showPanMenu()
             act->setChecked(true);
         }
         connect(act, &QAction::triggered, this, [this, layoutId]() {
-            if (!m_panStack) { return; }
-            // Pan-count per template: 1=1, 2v/2h=2, 12h=3, 2x2=4.
-            const int needed = (layoutId == QStringLiteral("1"))   ? 1
-                             : (layoutId == QStringLiteral("12h")) ? 3
-                             : (layoutId == QStringLiteral("2x2")) ? 4
-                                                                   : 2;
-            QStringList ids;
-            for (int i = 0; i < needed; ++i) {
-                ids << QStringLiteral("pan-%1").arg(i);
-            }
-            qCInfo(lcContainer) << "Pan Layout (+PAN dropdown): applying"
-                                 << layoutId << "with ids" << ids;
-            m_panStack->applyLayout(layoutId, ids);
-            // Phase 3F bench fix 2026-06-03: auto-add slices for new pans.
-            if (m_radioModel) {
-                const int existing = m_radioModel->slices().size();
-                const int maxS = m_radioModel->maxSlices();
-                const int target = qMin(needed, maxS);
-                qCInfo(lcContainer) << "Auto-add slices for layout:"
-                                     << "existing=" << existing
-                                     << "target=" << target
-                                     << "maxS=" << maxS;
-                for (int i = existing; i < target; ++i) {
-                    const QString panId = QStringLiteral("pan-%1").arg(i);
-                    m_radioModel->addSliceOnPan(panId);
-                }
-            }
+            applyPanLayout(layoutId);
         });
     }
 

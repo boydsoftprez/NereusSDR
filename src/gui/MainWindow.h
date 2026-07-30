@@ -322,6 +322,25 @@ private slots:
     /// template / float active pan), driven by RadioModel::slices() /
     /// maxSlices() and (when wired by Task 12) m_panStack.
     void showPanMenu();
+
+    /// Apply a pan layout template and reconcile the slices against it.
+    ///
+    /// Codex review round 3, PR #293. There were three places that applied a
+    /// layout: session restore, the View menu, and the +PAN dropdown. Each
+    /// had its own copy of the pan-count table, the id list and an add-only
+    /// slice loop. Round 2's fix for slices orphaned by a shrinking layout
+    /// went into the View-menu copy only, so the defect stayed live through
+    /// +PAN, which is the one operators actually use.
+    ///
+    /// One function now owns the whole sequence, so a later fix cannot land
+    /// in one path and miss two. The part that carries real logic,
+    /// RadioModel::rehomeSlicesToPans, is tested there; MainWindow is not
+    /// constructible in the harness, so what is left here is plumbing.
+    void applyPanLayout(const QString& layoutId);
+
+    /// The pan-id list a layout template implies. Sole owner of the
+    /// template-to-pan-count table, which previously had three copies.
+    static QStringList panIdsForLayout(const QString& layoutId);
     // Phase 3M-4 bench-fix: gate m_psaIndicator visibility on
     // caps.hasPureSignal && PureSignal::isAutoCalEnabled.  Called from
     // PureSignal::autoCalEnabledChanged + RadioModel::pureSignalCoordinator-

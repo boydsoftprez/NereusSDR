@@ -370,6 +370,18 @@ public:
         return widebandActiveForChain(chainIdx);
     }
 
+    /// Recompute widebandActiveForChain(chainIdx) and push the answer to the
+    /// Alex preselector and, on Protocol 2, to the radio's wideband enable
+    /// mask.
+    ///
+    /// Codex review round 3, PR #293. The first fix recomputed on the request
+    /// property's own edges, which is not the only way the answer changes:
+    /// removing the slice that was the sole requester alters it without any
+    /// property moving, so the chain stayed bypassed and the radio kept
+    /// streaming wideband until some unrelated slice happened to toggle. Both
+    /// callers go through here so there is one push and not two copies of it.
+    void pushWidebandStateForChain(int chainIdx);
+
     /// Operator-facing sentence naming WHY the given chain is bypassed.
     /// One string per cause, per design doc §16.4.4. Public so the Filter
     /// Policy dialog can show the same wording the badge tooltip carries.

@@ -135,6 +135,63 @@ private slots:
             "wideband view the radio cannot deliver");
     }
 
+    // Codex review round 3, P2. The handler runs on request-property edges
+    // only, so removing the slice that was the sole requester left the chain
+    // bypassed and the radio still streaming wideband, until some other slice
+    // happened to toggle the property. removeSlice has to recompute too.
+    void removing_the_last_requester_clears_the_chain()
+    {
+        P2RadioConnection conn;
+        RadioModel model;
+        model.injectConnectionForTest(&conn);
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+
+        const int a = model.addSlice();
+        const int b = model.addSlice();
+        SliceModel* sliceB = model.sliceById(b);
+        QVERIFY(sliceB);
+        Q_UNUSED(a);
+
+        // Only B asks for it.
+        sliceB->setWidebandExtensionRequested(true);
+        QCOMPARE(cmdGeneralWbMask(conn) & 0x01, 0x01);
+
+        model.removeSlice(b);
+
+        QVERIFY2((cmdGeneralWbMask(conn) & 0x01) == 0x00,
+            "the only slice requesting wideband is gone, so the radio must "
+            "stop streaming it rather than wait for another slice to toggle");
+        QVERIFY2(!model.widebandActiveForChainForTest(0),
+            "and the preselector must come back in");
+    }
+
+    // The other half: a survivor still asking must keep the chain up when a
+    // different slice is removed.
+    void removing_a_slice_holds_a_chain_a_survivor_still_needs()
+    {
+        P2RadioConnection conn;
+        RadioModel model;
+        model.injectConnectionForTest(&conn);
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+
+        const int a = model.addSlice();
+        const int b = model.addSlice();
+        SliceModel* sliceA = model.sliceById(a);
+        SliceModel* sliceB = model.sliceById(b);
+        QVERIFY(sliceA && sliceB);
+
+        sliceA->setWidebandExtensionRequested(true);
+        sliceB->setWidebandExtensionRequested(true);
+
+        model.removeSlice(b);
+
+        QVERIFY2((cmdGeneralWbMask(conn) & 0x01) == 0x01,
+            "slice A is still zoomed out, so removing B must not drop the "
+            "chain");
+    }
+
     // The capable case, so the gate above is not simply switching the feature
     // off for everyone.
     void a_wideband_capable_board_still_engages()
