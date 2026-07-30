@@ -783,6 +783,11 @@ nereus_add_test(tst_rxchannel_nb2_polish)
 # tst_slice_nb_persistence: SliceModel NbMode + NbTuning round-trip through
 #   per-band AppSettings keys (Band40m/Band20m isolation, cross-band case).
 nereus_add_test(tst_nb_family)
+
+# Phase 3F chip task_c1e6fbad: NB/SNB detail tuning is a radio-wide setting
+# upstream writes to every receiver (setup.cs:8603-8608 / 16260-16279 /
+# 17007-17019 / 17647-17661 [v2.10.3.15]); NereusSDR wrote channel 0 only.
+nereus_add_test(tst_nb_tuning_fanout)
 nereus_add_test(tst_slice_nb_persistence)
 
 # ── Phase 3G-10 Stage 2: RIT/XIT client offset (S2.8) ───────────────────────

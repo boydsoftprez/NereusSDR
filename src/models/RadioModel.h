@@ -911,6 +911,47 @@ public:
     // channel.
     RxChannel* rxChannelForSlice(int sliceIndex) const;
 
+    // ── NB1 / NB2 / SNB detail tuning fan-out ───────────────────────────────
+    //
+    // Phase 3F chip task_c1e6fbad. Upstream treats every knob on the NB/SNB
+    // Setup page as a RADIO-WIDE setting written to each receiver, not as a
+    // property of a selected one. Each handler writes the same value twice or
+    // three times, once per DSP receiver:
+    //
+    //   udDSPNB_ValueChanged            setup.cs:8603-8608   [v2.10.3.15]
+    //   udDSPNBTransition_ValueChanged  setup.cs:16260-16265 [v2.10.3.15]
+    //   udDSPNBLead_ValueChanged        setup.cs:16267-16272 [v2.10.3.15]
+    //   udDSPNBLag_ValueChanged         setup.cs:16274-16279 [v2.10.3.15]
+    //       -> GetDSPRX(0, 0).X = v; GetDSPRX(1, 0).X = v;
+    //   comboDSPNOBmode_...             setup.cs:17007-17019 [v2.10.3.15]
+    //       -> GetDSPRX(0, 0).NBMode = nbmode; GetDSPRX(1, 0).NBMode = nbmode;
+    //   udDSPSNBThresh1_ValueChanged    setup.cs:17647-17653 [v2.10.3.15]
+    //   udDSPSNBThresh2_ValueChanged    setup.cs:17655-17661 [v2.10.3.15]
+    //       -> WDSP.id(0,0), WDSP.id(0,1), WDSP.id(2,0)
+    //
+    // NereusSDR wrote channel 0 only, so on a two-slice radio the second
+    // receiver kept whatever NB tuning it was created with and the Setup page
+    // silently did half its job. Note this is NOT a candidate for per-slice
+    // SliceModel properties: NB lives on the DDC stream (ANB panb / NOB pnob
+    // in struct _rcvr, cmaster.h:74-82), so co-hosted slices cannot hold
+    // independent blankers even if the UI offered them.
+    //
+    // nbTuningTargetChannels() is the fan-out set: one WDSP RX channel id per
+    // live slice (Sub-Epic I invariant, WDSP RX channel id == slice index).
+    // Each setter skips ids whose channel is not up yet, so a page edit made
+    // before connect still reaches whichever channels do exist rather than
+    // being gated wholesale on channel 0's readiness.
+    QVector<int> nbTuningTargetChannels() const;
+
+    void setNbThresholdAllRx(double threshold);
+    void setNbTauMsAllRx(double ms);
+    void setNbLeadMsAllRx(double advMs);
+    void setNbLagMsAllRx(double hangMs);
+    void setNb2ModeAllRx(int mode);
+    void setSnbK1AllRx(double k1);
+    void setSnbK2AllRx(double k2);
+    void setSnbOutputBandwidthAllRx(int bwHz);
+
     // Phase 3P-II: PGXL / TGXL / Tuner accessors.
     // PgxlConnection and TgxlConnection are QObject children of RadioModel
     // (constructed once in the ctor with parent=this). TunerModel is likewise

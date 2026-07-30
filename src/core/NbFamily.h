@@ -240,6 +240,14 @@ public:
     void setNbLeadMs(double advMs);    // "lead" ≡ advtime
     void setNbLagMs(double hangMs);    // "lag"  ≡ hangtime
 
+    // NB2 fill mode and the three SNB knobs, used by the NB/SNB Setup page.
+    // Upstream writes each of these to every receiver rather than to a
+    // selected one; RadioModel owns that fan-out (nbTuningTargetChannels).
+    void setNb2Mode(int mode);
+    void setSnbK1(double k1);
+    void setSnbK2(double k2);
+    void setSnbOutputBandwidthHz(int bwHz);
+
     // Live sample-rate + buffer-size propagation. Mirrors the missing chunk
     // of Thetis cmaster.c:464-470 SetXcmInrate [v2.10.3.13] case 0 receiver:
     //   SetRCVRANBBuffsize / SetRCVRANBSamplerate / SetRCVRNOBBuffsize /

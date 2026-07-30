@@ -3297,6 +3297,99 @@ RxChannel* RadioModel::rxChannelForSlice(int sliceIndex) const
     return m_wdspEngine ? m_wdspEngine->rxChannel(sliceIndex) : nullptr;
 }
 
+// ── NB1 / NB2 / SNB detail tuning fan-out ───────────────────────────────────
+//
+// See the header for the upstream cite chain. Upstream enumerates its
+// receivers literally (GetDSPRX(0,0) then GetDSPRX(1,0)); NereusSDR has a
+// variable slice count, so the equivalent is every live slice's own channel.
+// sliceIndex(), never the list position: addSlice hands out the lowest free
+// id and removeSlice does not renumber survivors, so position and id diverge
+// as soon as a slice is closed and the write would land on a channel the
+// operator is not listening to.
+QVector<int> RadioModel::nbTuningTargetChannels() const
+{
+    QVector<int> out;
+    out.reserve(m_slices.size());
+    for (const SliceModel* s : m_slices) {
+        if (s) {
+            out.append(s->sliceIndex());
+        }
+    }
+    return out;
+}
+
+void RadioModel::setNbThresholdAllRx(double threshold)
+{
+    for (int id : nbTuningTargetChannels()) {
+        if (RxChannel* ch = rxChannelForSlice(id)) {
+            if (auto* nb = ch->nb()) { nb->setNbThreshold(threshold); }
+        }
+    }
+}
+
+void RadioModel::setNbTauMsAllRx(double ms)
+{
+    for (int id : nbTuningTargetChannels()) {
+        if (RxChannel* ch = rxChannelForSlice(id)) {
+            if (auto* nb = ch->nb()) { nb->setNbTauMs(ms); }
+        }
+    }
+}
+
+void RadioModel::setNbLeadMsAllRx(double advMs)
+{
+    for (int id : nbTuningTargetChannels()) {
+        if (RxChannel* ch = rxChannelForSlice(id)) {
+            if (auto* nb = ch->nb()) { nb->setNbLeadMs(advMs); }
+        }
+    }
+}
+
+void RadioModel::setNbLagMsAllRx(double hangMs)
+{
+    for (int id : nbTuningTargetChannels()) {
+        if (RxChannel* ch = rxChannelForSlice(id)) {
+            if (auto* nb = ch->nb()) { nb->setNbLagMs(hangMs); }
+        }
+    }
+}
+
+void RadioModel::setNb2ModeAllRx(int mode)
+{
+    for (int id : nbTuningTargetChannels()) {
+        if (RxChannel* ch = rxChannelForSlice(id)) {
+            if (auto* nb = ch->nb()) { nb->setNb2Mode(mode); }
+        }
+    }
+}
+
+void RadioModel::setSnbK1AllRx(double k1)
+{
+    for (int id : nbTuningTargetChannels()) {
+        if (RxChannel* ch = rxChannelForSlice(id)) {
+            if (auto* nb = ch->nb()) { nb->setSnbK1(k1); }
+        }
+    }
+}
+
+void RadioModel::setSnbK2AllRx(double k2)
+{
+    for (int id : nbTuningTargetChannels()) {
+        if (RxChannel* ch = rxChannelForSlice(id)) {
+            if (auto* nb = ch->nb()) { nb->setSnbK2(k2); }
+        }
+    }
+}
+
+void RadioModel::setSnbOutputBandwidthAllRx(int bwHz)
+{
+    for (int id : nbTuningTargetChannels()) {
+        if (RxChannel* ch = rxChannelForSlice(id)) {
+            if (auto* nb = ch->nb()) { nb->setSnbOutputBandwidthHz(bwHz); }
+        }
+    }
+}
+
 // ── Phase 3F Sub-Epic J Task 5 ──────────────────────────────────────────────
 //
 // One window, one centre, N slices at their own offsets inside it. The CTUN
