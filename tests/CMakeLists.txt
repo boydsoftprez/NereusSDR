@@ -5680,6 +5680,19 @@ nereus_add_test(tst_wideband_chain_state)
 # panes were deleted, not orphan them holding a DDC.
 nereus_add_test(tst_slice_rehome_on_layout_shrink)
 
+# Codex review round 7, PR #293: a restored per-band sample rate has to reach
+# the DDC. SliceModel::restoreFromSettings called setSampleRateHz, a plain
+# property setter, so the VFO menu reported the saved rate while the receiver,
+# codec and wire stayed on the previous band's.
+nereus_add_test(tst_restored_sample_rate_reaches_the_ddc)
+
+# Codex review round 6, PR #293: Phase 3F gave TCI more slices than TCI ever
+# agreed to talk about. tx_frequency must come from the slice TxSliceArbiter
+# bound TX to rather than from receiver 0, and tagged frames must stop at the
+# advertised trx_count. Both at once, because the fixes interact: tx_frequency
+# carries no receiver index and vfo:N does.
+nereus_add_test(tst_tci_multislice_surface)
+
 # Codex review round 7, PR #293: the untagged rawIqData tap is stream zero only.
 # Its sole subscriber (TciServer) labels every frame it receives as receiver 0,
 # so once Sub-Epic I gave ReceiverManager more than one stream, a TCI client on

@@ -3564,6 +3564,33 @@ QVector<int> RadioModel::allowedStreamSampleRates() const
     return out;
 }
 
+// Codex review round 7, PR #293. See RadioModel.h.
+void RadioModel::applyRestoredSampleRate(SliceModel* slice)
+{
+    if (slice == nullptr) {
+        return;
+    }
+    const int restored = slice->sampleRateHz();
+    if (restored <= 0) {
+        return;
+    }
+
+    const int stream = slice->streamIndex();
+    if (stream < 0) {
+        // Not bound to a DDC. The slice adopts its stream's rate when it
+        // binds, so there is nothing to widen yet and nothing to warn about.
+        return;
+    }
+    if (m_streamAllocator.streamSampleRateHz(stream) == restored) {
+        // Already there. Skipping keeps a band change that did not actually
+        // change the rate from running the whole rebind transaction, and
+        // from emitting a rejection toast for a rate the radio is on.
+        return;
+    }
+
+    requestSliceSampleRate(slice->sliceIndex(), restored);
+}
+
 void RadioModel::requestSliceSampleRate(int sliceId, int rateHz)
 {
     // Phase 3F Sub-Epic I closeout, defect G2. Resolve by ID, not by list
@@ -5134,6 +5161,10 @@ void RadioModel::onBandButtonClicked(Band band)
     if (slice->hasSettingsFor(band)) {
         // Second+ visit: restore last-used state for the clicked band.
         slice->restoreFromSettings(band);
+        // And put the restored rate on the DDC, not just on the menu.
+        // Codex review round 7, PR #293: restoreFromSettings sets the
+        // display property; this is the half that reaches the radio.
+        applyRestoredSampleRate(slice);
         return;
     }
 
@@ -9639,6 +9670,11 @@ void RadioModel::loadSliceState(SliceModel* slice)
     m_lastBand = currentBand;
 
     slice->restoreFromSettings(currentBand);
+
+    // And put the restored rate on the DDC, not just on the menu. Codex
+    // review round 7, PR #293. Same call as the band-change path: this is
+    // the launch-time restore, and it was equally display-only.
+    applyRestoredSampleRate(slice);
 
     // Push restored frequency to the panadapter so the spectrum display
     // lands on the same band as the slice. Without this the panadapter

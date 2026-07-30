@@ -630,6 +630,24 @@ public:
     /// test without a MainWindow.
     void requestSliceSampleRate(int sliceId, int rateHz);
 
+    /// Push a slice's just-restored per-band sample rate onto its DDC.
+    ///
+    /// Codex review round 7, PR #293. SliceModel::restoreFromSettings reads
+    /// the persisted per-band SampleRate and calls setSampleRateHz, which is
+    /// a plain property setter: it moves the number the VFO menu displays
+    /// and nothing else. The rate the receiver, codec and wire actually run
+    /// at only changes through requestSliceSampleRate. So returning to a
+    /// band you had left at 384 kHz showed 384 kHz while the DDC stayed on
+    /// whatever the previous band was using, and the saved preference was in
+    /// effect never restored.
+    ///
+    /// Called after restoreFromSettings rather than inside it: the restore
+    /// sets the frequency first, which completes the allocator rebind, and
+    /// the rate transaction has to run against the stream the slice ended up
+    /// on. SliceModel also holds no RadioModel handle by design, and the
+    /// rate is a stream-wide transaction rather than a slice property.
+    void applyRestoredSampleRate(SliceModel* slice);
+
     /// True when one sample rate covers the whole radio rather than one DDC.
     ///
     /// Protocol 1 encodes the rate as srBits in C&C bank 0

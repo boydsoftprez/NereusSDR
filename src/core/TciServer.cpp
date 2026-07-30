@@ -27,6 +27,7 @@
 #include "models/SliceModel.h"  // Phase 3J-1 closeout: SliceModel signal wireup for local broadcast.
 #include "models/TransmitModel.h"  // Phase 3J-1 closeout (review P2): MON / TUN broadcast wireup.
 #include "MoxController.h"         // Phase 3J-1 closeout (review P2): MOX broadcast wireup.
+#include "TxSliceArbiter.h"        // Codex review round 6: tx_frequency follows the TX-bound slice.
 #include "AudioEngine.h"           // Phase 3J-1 closeout (review P1 #1): volume change broadcast.
 #include "TciVolume.h"             // tciLinearToDbVolume / tciAudioGainToDb for volume frames.
 #include "WdspEngine.h"
@@ -600,6 +601,44 @@ void TciServer::hookSliceBroadcasts()
             wireSliceForBroadcast(slice, index);
         }
     });
+
+    // Codex review round 6, PR #293: a TX handoff changes tx_frequency
+    // without anybody tuning anything.
+    //
+    // tx_frequency is now sourced from whichever slice drives the
+    // transmitter, so moving TX from A to B changes it even though neither
+    // slice's frequency moved. Without this, a client would keep the old
+    // value until the new TX slice happened to be retuned, which on a parked
+    // slice could be never.
+    //
+    // Uses the untagged tx_frequency path deliberately: the transmitter can
+    // be handed to Slice C or beyond, which are internal and have no trx:N on
+    // the wire, so re-publishing the full VFO triplet here would announce a
+    // receiver the client was never told about. tx_frequency carries no
+    // receiver index and is correct for any slice.
+    if (TxSliceArbiter* arb = m_model->txSliceArbiter()) {
+        connect(arb, &TxSliceArbiter::txBoundSliceChanged, this,
+                [this](int /*oldId*/, int newId) {
+            SliceModel* slice = m_model ? m_model->sliceById(newId) : nullptr;
+            if (!slice || !m_protocol) { return; }
+            m_protocol->enqueueLocalBroadcastTxFrequency(
+                static_cast<qint64>(slice->frequency()));
+        });
+    }
+}
+
+// Codex review round 6, PR #293. See TciProtocol::enqueueLocalBroadcastVfo.
+bool TciServer::sliceDrivesTx(int sliceId) const
+{
+    if (!m_model) { return false; }
+    const TxSliceArbiter* arb = m_model->txSliceArbiter();
+    if (!arb) {
+        // No arbiter means single-slice, where slice 0 is the transmitter by
+        // construction. Preserves the pre-3F behaviour rather than silently
+        // dropping tx_frequency for every client on a one-slice radio.
+        return sliceId == 0;
+    }
+    return arb->txBoundSliceId() == sliceId;
 }
 
 void TciServer::wireSliceForBroadcast(SliceModel* slice, int sliceId)
@@ -607,6 +646,23 @@ void TciServer::wireSliceForBroadcast(SliceModel* slice, int sliceId)
     if (!slice || !m_protocol) {
         return;
     }
+
+    // Only the receivers this server actually advertises get TAGGED frames.
+    // Codex review round 6, PR #293.
+    //
+    // The init burst negotiates trx_count:2, and Phase 3J-1 design doc §1.2
+    // records that as a locked decision with Slice C/D/E internal. This
+    // function wired every slice it found regardless, so a five-slice radio
+    // pushed unsolicited vfo, modulation, rx_filter_band and gain frames
+    // tagged receiver 2, 3 and 4 at clients that had sized their state from
+    // the 2 we told them. Well-formed frames outside the negotiated surface
+    // are worse than no frames: a strict client may reject the session, and a
+    // lenient one silently keeps state it will never be asked about.
+    //
+    // Clamped rather than raising the count, because the count is the locked
+    // half of the decision and raising it means widening the per-receiver
+    // init burst to match. That is the "advanced-user opt-in to trx_count:4"
+    // the design doc puts out of scope, not a review fix.
     // Idempotency: skip if already wired.
     for (const auto& wp : m_broadcastWiredSlices) {
         if (wp.data() == slice) {
@@ -614,6 +670,9 @@ void TciServer::wireSliceForBroadcast(SliceModel* slice, int sliceId)
         }
     }
     m_broadcastWiredSlices.append(QPointer<SliceModel>(slice));
+
+    const bool exposed =
+        (sliceId >= 0 && sliceId < TciProtocol::kExposedReceiverCount);
 
     // Helper: a string-format frame template used by most one-shot handlers.
     // Each connect() captures the sliceId by value so per-slice routing is
@@ -625,10 +684,32 @@ void TciServer::wireSliceForBroadcast(SliceModel* slice, int sliceId)
     // Source: Thetis Console.CentreFrequencyHandlers / TXFrequncyChangedHandlers
     // subscription at TCIServer.cs:6731 + 6757 [v2.10.3.15], routed to
     // OnCentreFrequencyChanged + OnTXFrequencyChanged.
+    //
+    // An unexposed slice still reaches the untagged tx_frequency pair when it
+    // holds the transmitter. Those two frames carry no receiver index, so they
+    // are the one thing about Slice C the wire may legitimately hear, and
+    // dropping them would mean a client following tx_frequency froze the
+    // moment the operator handed TX to an internal slice and tuned it.
     connect(slice, &SliceModel::frequencyChanged, this,
-            [this, sliceId](double freq) {
-                m_protocol->enqueueLocalBroadcastVfo(sliceId, static_cast<qint64>(freq));
+            [this, sliceId, exposed](double freq) {
+                const auto hz = static_cast<qint64>(freq);
+                if (exposed) {
+                    m_protocol->enqueueLocalBroadcastVfo(
+                        sliceId, hz, sliceDrivesTx(sliceId));
+                } else if (sliceDrivesTx(sliceId)) {
+                    m_protocol->enqueueLocalBroadcastTxFrequency(hz);
+                }
             });
+
+    // Everything below this point is tagged with a receiver index, so it
+    // stops at the advertised count.
+    if (!exposed) {
+        qCDebug(lcTci) << "TciServer: slice" << sliceId
+                       << "is beyond trx_count"
+                       << TciProtocol::kExposedReceiverCount
+                       << "- tagged frames suppressed (internal slice)";
+        return;
+    }
 
     // ── DSP mode (modulation: line) ─────────────────────────────────────────
     // Source: Thetis ModeChangedHandlers (implicit via Console.RX1DSPMode/

@@ -276,6 +276,13 @@ private slots:
     void hookSliceBroadcasts();
     void wireSliceForBroadcast(SliceModel* slice, int rxIndex);
 
+    /// Does this slice currently drive the transmitter?
+    ///
+    /// Codex review round 6, PR #293. tx_frequency must come from the slice
+    /// TxSliceArbiter has bound TX to, not from slice 0. Before 3F they were
+    /// always the same slice and the distinction did not exist.
+    bool sliceDrivesTx(int sliceId) const;
+
     // hookGlobalBroadcasts wires the radio-global signals that aren't tied to
     // a specific slice: MOX, TUN, AF volume, MON enable/volume, IQ sample
     // rate, connection state (Power on/off).  Mirrors the radio-global

@@ -87,11 +87,18 @@ private slots:
         conn->moveToThread(&worker);   // worker deliberately not started yet
 
         RadioModel model;
-        // Codex review, PR #293: wideband now honours
+        // Codex review rounds 5 and 6, PR #293: wideband honours
         // BoardCapabilities::widebandAdcs, which a boardless model reports as
-        // 0. This test is about the push path, not the capability, so declare
-        // the wideband-capable board it always implicitly assumed.
+        // 0, AND the protocol of the radio actually connected, which an
+        // undeclared RadioInfo reports as Protocol1. This test is about the
+        // marshalling route, not either gate, so declare the wideband-capable
+        // P2 radio it always implicitly assumed.
         model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        {
+            RadioInfo info;
+            info.protocol = ProtocolVersion::Protocol2;
+            model.setLastRadioInfoForTest(info);
+        }
         model.injectConnectionForTest(conn);
 
         const int a = model.addSlice();
@@ -153,11 +160,18 @@ private slots:
         conn->setBoardForTest(HPSDRHW::Saturn);
 
         RadioModel model;
-        // Codex review, PR #293: wideband now honours
+        // Codex review rounds 5 and 6, PR #293: wideband honours
         // BoardCapabilities::widebandAdcs, which a boardless model reports as
-        // 0. This test is about the push path, not the capability, so declare
-        // the wideband-capable board it always implicitly assumed.
+        // 0, AND the protocol of the radio actually connected, which an
+        // undeclared RadioInfo reports as Protocol1. This test is about the
+        // marshalling route, not either gate, so declare the wideband-capable
+        // P2 radio it always implicitly assumed.
         model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        {
+            RadioInfo info;
+            info.protocol = ProtocolVersion::Protocol2;
+            model.setLastRadioInfoForTest(info);
+        }
         model.injectConnectionForTest(conn);
 
         const int a = model.addSlice();

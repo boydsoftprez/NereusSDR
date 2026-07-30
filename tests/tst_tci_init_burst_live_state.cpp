@@ -641,7 +641,7 @@ void TestTciInitBurstLiveState::live_vfo_broadcast_reads_rx2_enabled_live()
         TciProtocol p(&mock);
 
         // Trigger the live broadcast path (rotary tune simulated).
-        p.enqueueLocalBroadcastVfo(/*rxIndex=*/0, /*hz=*/14250000LL);
+        p.enqueueLocalBroadcastVfo(/*rxIndex=*/0, /*hz=*/14250000LL, /*isTxBound=*/true);
 
         // Drain the coalescer into the pending-notifications queue so
         // we can inspect emitted frames.
@@ -675,7 +675,7 @@ void TestTciInitBurstLiveState::live_vfo_broadcast_reads_rx2_enabled_live()
         TestMockRadioModel mock;
         mock.setRx2Enabled(false);
         TciProtocol p(&mock);
-        p.enqueueLocalBroadcastVfo(/*rxIndex=*/0, /*hz=*/7100000LL);
+        p.enqueueLocalBroadcastVfo(/*rxIndex=*/0, /*hz=*/7100000LL, /*isTxBound=*/true);
         p.drainCoalescedNotifications();
 
         QStringList frames;
@@ -709,15 +709,33 @@ void TestTciInitBurstLiveState::
     QCOMPARE(a, 0);
     QCOMPARE(b, 1);
     QCOMPARE(c, 2);
+    SliceModel* const sliceB = radio.sliceById(b);
     SliceModel* const sliceC = radio.sliceById(c);
+    QVERIFY(sliceB != nullptr);
     QVERIFY(sliceC != nullptr);
 
-    radio.removeSlice(b);
+    // Delete the FIRST slice, not the middle one. Codex review round 6,
+    // PR #293 changed which gap this case can use.
+    //
+    // The property under test is unchanged: a surviving slice broadcasts its
+    // stable id, never its current list position. Removing A leaves B at
+    // list position 0 while B's id stays 1, which demonstrates exactly that
+    // and does it inside the two receivers this server advertises.
+    //
+    // It used to remove B and assert on C, at id 2. That id is outside
+    // trx_count:2, so the server was asserting it would send a client frames
+    // for a receiver the client had not allocated and could never address
+    // back: RadioModel resolves inbound `vfo:N` straight through
+    // sliceById(N) (the mapping decision documented in TciProtocol.cpp), so
+    // a client that was told about two receivers has no way to reply about a
+    // third. Outbound was the only place that id leaked, and it now stops at
+    // the advertised count.
+    radio.removeSlice(a);
     QCOMPARE(radio.slices().size(), 2);
-    QCOMPARE(radio.slices().at(1), sliceC);
-    QCOMPARE(sliceC->sliceIndex(), 2);
+    QCOMPARE(radio.slices().at(0), sliceB);
+    QCOMPARE(sliceB->sliceIndex(), 1);
 
-    // Attach TCI only after the deletion gap exists, so C takes the
+    // Attach TCI only after the deletion gap exists, so B takes the
     // hookSliceBroadcasts() existing-slice path rather than sliceAdded().
     TciServer server(&radio);
     QVERIFY(server.start(0));
@@ -730,16 +748,34 @@ void TestTciInitBurstLiveState::
     QVERIFY(connectedSpy.wait(2000));
     QTRY_VERIFY(frames.contains(QStringLiteral("ready;")));
 
-    // Once the initial state burst establishes the client, C's first
+    // Once the initial state burst establishes the client, B's first
     // one-shot announcement and its subsequent coalesced VFO update must both
-    // carry C's stable id (2), never its current list position (1).
+    // carry B's stable id (1), never its current list position (0).
     frames.clear();
-    sliceC->setDspMode(DSPMode::CWU);
-    sliceC->setFrequency(18123456.0);
-    QTRY_VERIFY(frames.contains(QStringLiteral("modulation:2,CWU;")));
-    QTRY_VERIFY(frames.contains(QStringLiteral("vfo:2,0,18123456;")));
-    QVERIFY(!frames.contains(QStringLiteral("modulation:1,CWU;")));
-    QVERIFY(!frames.contains(QStringLiteral("vfo:1,0,18123456;")));
+    sliceB->setDspMode(DSPMode::CWU);
+    sliceB->setFrequency(18123456.0);
+    QTRY_VERIFY(frames.contains(QStringLiteral("modulation:1,CWU;")));
+    QTRY_VERIFY(frames.contains(QStringLiteral("vfo:1,0,18123456;")));
+    QVERIFY2(!frames.contains(QStringLiteral("modulation:0,CWU;")),
+             "the surviving slice must not adopt the departed slice's id");
+    QVERIFY2(!frames.contains(QStringLiteral("vfo:0,0,18123456;")),
+             "nor its list position");
+
+    // And the slice past the advertised count stays off the wire entirely,
+    // however live it is locally. Design doc §1.2: Slice C/D exist
+    // internally and are not exposed via TCI.
+    frames.clear();
+    sliceC->setDspMode(DSPMode::CWL);
+    sliceC->setFrequency(21050000.0);
+    QTest::qWait(250);
+    for (const QString& f : std::as_const(frames)) {
+        QVERIFY2(!f.startsWith(QStringLiteral("modulation:2,")),
+                 qPrintable(QStringLiteral("slice id 2 is past trx_count:2 "
+                     "and must not be broadcast: %1").arg(f)));
+        QVERIFY2(!f.startsWith(QStringLiteral("vfo:2,")),
+                 qPrintable(QStringLiteral("slice id 2 is past trx_count:2 "
+                     "and must not be broadcast: %1").arg(f)));
+    }
 
     client.close();
     server.stop();

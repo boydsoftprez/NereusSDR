@@ -110,8 +110,45 @@ public:
     //                           changes per second).  Emits the vfo:* +
     //                           dds:* + tx_frequency:* triplet that
     //                           sendInitialRadioState bundles.
+    //
+    // isTxBound says whether THIS receiver is the one currently driving the
+    // transmitter, and only it emits the tx_frequency pair. Codex review
+    // round 6, PR #293: the old test was `rxIndex == 0`, with a comment
+    // saying the caller would decide once 3F multi-pan landed the real TXFreq
+    // logic. It has landed, TxSliceArbiter can bind TX to any slice, and
+    // until now tuning Slice A still advertised A as the transmit frequency
+    // while the transmitter sat on B, and tuning B advertised nothing.
+    // TciProtocol has no RadioModel handle by design, so the caller answers
+    // it, exactly as that comment anticipated.
     void enqueueLocalBroadcast(const QString& frame);
-    void enqueueLocalBroadcastVfo(int rxIndex, qint64 hz);
+    void enqueueLocalBroadcastVfo(int rxIndex, qint64 hz, bool isTxBound);
+
+    /// Emit the untagged tx_frequency pair on its own.
+    ///
+    /// Neither frame carries a receiver index, so this is legal for any
+    /// slice holding the transmitter, including one past the advertised
+    /// trx_count. enqueueLocalBroadcastVfo calls it when isTxBound; the TX
+    /// handoff path calls it directly, because a handoff changes the
+    /// transmit frequency without anyone having tuned anything.
+    void enqueueLocalBroadcastTxFrequency(qint64 hz);
+
+    /// How many receivers this server exposes on the wire.
+    ///
+    /// This is the number sent as `trx_count:N;` in the init burst, and it
+    /// is the contract a client allocates its state from. Locked at 2 for
+    /// strict Thetis client compatibility (Thetis TCIServer.cs:2530
+    /// [v2.10.3.13]); Phase 3J-1 design doc §1.2 records it as a locked
+    /// decision, with Slice C/D/E internal and a future opt-in to 4 out of
+    /// scope.
+    ///
+    /// Named rather than repeated, because it was a bare literal in the init
+    /// burst that nothing else could read: the local-broadcast path then
+    /// wired every slice it found, including C/D/E as receivers 2 to 4,
+    /// emitting unsolicited frames outside the count it had just negotiated
+    /// (Codex review round 6, PR #293). Raising this alone is NOT enough to
+    /// expose more receivers; the init burst carries per-receiver state that
+    /// would have to be widened with it.
+    static constexpr int kExposedReceiverCount = 2;
 
     // Build the post-connect init burst. Stub returns empty list in Phase 3;
     // Phase 4 Task 4.1 replaces with the 8-line wrapper from

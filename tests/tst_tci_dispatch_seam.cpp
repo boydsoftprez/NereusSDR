@@ -220,38 +220,59 @@ void TestTciDispatchSeam::
             server.stop();
         };
 
-    // Existing-slice path: A/B/C exist first, B is removed, then TCI hooks
-    // A(position 0/id 0) and C(position 1/id 2).
+    // Both paths use slice id 1, not 2. Codex review round 6, PR #293.
+    //
+    // The property is that the existing-slice sweep in hookSliceBroadcasts
+    // and the sliceAdded lambda agree on which receiver id a slice
+    // broadcasts under, and that the id is the slice's own rather than its
+    // current list position. Neither part of that needs id 2, and id 2 is
+    // now outside the advertised trx_count:2, so the frames it used to
+    // assert on are exactly the ones that should no longer exist.
+    //
+    // Slice B at id 1 still separates id from position: removing A leaves B
+    // sitting at list position 0 while its id stays 1, which is the
+    // confusion the case was written to catch.
+
+    // Existing-slice path: A and B exist first, A is removed, then TCI hooks
+    // B(position 0 / id 1) through the existing-slice sweep.
     RadioModel existingRadio;
     existingRadio.configureStreamPool(5, 5, 192000);
-    existingRadio.addSlice(QStringLiteral("pan-0"));
+    const int existingA = existingRadio.addSlice(QStringLiteral("pan-0"));
     const int existingB = existingRadio.addSlice(QStringLiteral("pan-0"));
-    const int existingC = existingRadio.addSlice(QStringLiteral("pan-0"));
-    existingRadio.removeSlice(existingB);
-    SliceModel* const existingSliceC = existingRadio.sliceById(existingC);
-    QVERIFY(existingSliceC != nullptr);
+    QCOMPARE(existingB, 1);
+    existingRadio.removeSlice(existingA);
+    SliceModel* const existingSliceB = existingRadio.sliceById(existingB);
+    QVERIFY(existingSliceB != nullptr);
+    QCOMPARE(existingRadio.slices().at(0), existingSliceB);   // position 0
+    QCOMPARE(existingSliceB->sliceIndex(), 1);                // id 1
     TciServer existingServer(&existingRadio);
     QStringList existingFrames;
-    captureVfoFrames(existingServer, existingSliceC, &existingFrames);
+    captureVfoFrames(existingServer, existingSliceB, &existingFrames);
 
-    // New-slice path: TCI is already attached when C(id 2) is added, so the
-    // RadioModel::sliceAdded stable id drives wiring.
+    // New-slice path: TCI is already attached when B(id 1) is added, so the
+    // RadioModel::sliceAdded stable id drives wiring. A is removed after, so
+    // B ends up at the same position with the same id as above.
     RadioModel addedRadio;
     addedRadio.configureStreamPool(5, 5, 192000);
-    addedRadio.addSlice(QStringLiteral("pan-0"));
-    addedRadio.addSlice(QStringLiteral("pan-0"));
+    const int addedA = addedRadio.addSlice(QStringLiteral("pan-0"));
     TciServer addedServer(&addedRadio);
-    const int addedC = addedRadio.addSlice(QStringLiteral("pan-0"));
-    QCOMPARE(addedC, 2);
-    SliceModel* const addedSliceC = addedRadio.sliceById(addedC);
-    QVERIFY(addedSliceC != nullptr);
+    const int addedB = addedRadio.addSlice(QStringLiteral("pan-0"));
+    QCOMPARE(addedB, 1);
+    addedRadio.removeSlice(addedA);
+    SliceModel* const addedSliceB = addedRadio.sliceById(addedB);
+    QVERIFY(addedSliceB != nullptr);
+    QCOMPARE(addedRadio.slices().at(0), addedSliceB);
+    QCOMPARE(addedSliceB->sliceIndex(), 1);
     QStringList addedFrames;
-    captureVfoFrames(addedServer, addedSliceC, &addedFrames);
+    captureVfoFrames(addedServer, addedSliceB, &addedFrames);
 
     QCOMPARE(existingFrames, addedFrames);
-    QVERIFY(existingFrames.contains(QStringLiteral("vfo:2,0,18123456;")));
-    QVERIFY(existingFrames.contains(QStringLiteral("vfo:2,1,18123456;")));
-    QVERIFY(existingFrames.contains(QStringLiteral("dds:2,18123456;")));
+    QVERIFY(existingFrames.contains(QStringLiteral("vfo:1,0,18123456;")));
+    QVERIFY(existingFrames.contains(QStringLiteral("vfo:1,1,18123456;")));
+    QVERIFY(existingFrames.contains(QStringLiteral("dds:1,18123456;")));
+    QVERIFY2(!existingFrames.contains(QStringLiteral("vfo:0,0,18123456;")),
+             "the surviving slice must broadcast its own id, not the list "
+             "position vacated by the slice that was removed");
 }
 
 QTEST_MAIN(TestTciDispatchSeam)
