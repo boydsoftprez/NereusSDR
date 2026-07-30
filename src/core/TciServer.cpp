@@ -860,10 +860,10 @@ void TciServer::wireSliceForBroadcast(SliceModel* slice, int sliceId)
     // from the DSP menu or a VFO flag moved the radio but told no connected
     // client, until reconnect.
     connect(slice, &SliceModel::anfEnabledChanged, this,
-            [this, rxIndex](bool on) {
+            [this, sliceId](bool on) {
                 m_protocol->enqueueLocalBroadcast(
                     QStringLiteral("rx_anf_enable:%1,%2;")
-                        .arg(rxIndex)
+                        .arg(sliceId)
                         .arg(on ? QStringLiteral("true") : QStringLiteral("false")));
             });
 
@@ -890,14 +890,14 @@ void TciServer::wireSliceForBroadcast(SliceModel* slice, int sliceId)
     // rx_volume uses the LOG curve (audioGainToDb), not the LINEAR curve the
     // master volume: line uses.
     connect(slice, &SliceModel::afGainChanged, this,
-            [this, rxIndex](int gain) {
+            [this, sliceId](int gain) {
                 const int linear = qBound(0, gain, 100);
                 const double gainDb = tciAudioGainToDb(linear / 100.0);
                 const QString gainStr = QString::number(gainDb, 'f', 2);
                 m_protocol->enqueueLocalBroadcast(
-                    QStringLiteral("rx_volume:%1,0,%2;").arg(rxIndex).arg(gainStr));
+                    QStringLiteral("rx_volume:%1,0,%2;").arg(sliceId).arg(gainStr));
                 m_protocol->enqueueLocalBroadcast(
-                    QStringLiteral("rx_volume:%1,1,%2;").arg(rxIndex).arg(gainStr));
+                    QStringLiteral("rx_volume:%1,1,%2;").arg(sliceId).arg(gainStr));
             });
 
     // ── APF (Audio Peak Filter) -- rx_apf_enable ───────────────────────────
