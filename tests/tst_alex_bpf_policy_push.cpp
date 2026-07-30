@@ -190,6 +190,11 @@ private slots:
     void wideband_toggle_reaches_the_wire_without_a_retune()
     {
         RadioModel model;
+        // Codex review, PR #293: wideband now honours
+        // BoardCapabilities::widebandAdcs, which a boardless model reports as
+        // 0. This test is about the push path, not the capability, so declare
+        // the wideband-capable board it always implicitly assumed.
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
         model.configureStreamPool(5, 5, 192000);
         auto* mock = new BpfMockConnection();
         model.injectConnectionForTest(mock);
@@ -218,6 +223,11 @@ private slots:
     void wideband_release_restores_the_filtered_bits()
     {
         RadioModel model;
+        // Codex review, PR #293: wideband now honours
+        // BoardCapabilities::widebandAdcs, which a boardless model reports as
+        // 0. This test is about the push path, not the capability, so declare
+        // the wideband-capable board it always implicitly assumed.
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
         model.configureStreamPool(5, 5, 192000);
         auto* mock = new BpfMockConnection();
         model.injectConnectionForTest(mock);

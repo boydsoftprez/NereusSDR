@@ -87,6 +87,11 @@ private slots:
         conn->moveToThread(&worker);   // worker deliberately not started yet
 
         RadioModel model;
+        // Codex review, PR #293: wideband now honours
+        // BoardCapabilities::widebandAdcs, which a boardless model reports as
+        // 0. This test is about the push path, not the capability, so declare
+        // the wideband-capable board it always implicitly assumed.
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
         model.injectConnectionForTest(conn);
 
         const int a = model.addSlice();
@@ -148,6 +153,11 @@ private slots:
         conn->setBoardForTest(HPSDRHW::Saturn);
 
         RadioModel model;
+        // Codex review, PR #293: wideband now honours
+        // BoardCapabilities::widebandAdcs, which a boardless model reports as
+        // 0. This test is about the push path, not the capability, so declare
+        // the wideband-capable board it always implicitly assumed.
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
         model.injectConnectionForTest(conn);
 
         const int a = model.addSlice();
