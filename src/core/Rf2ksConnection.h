@@ -100,6 +100,7 @@ public:
     // assert that disconnect() actually cancels a scheduled reconnect.
     void testScheduleReconnect() { scheduleReconnect(); }
     bool testReconnectPending() const { return m_reconnectTimer.isActive(); }
+    int testInFlightReplyCount() const { return m_inFlight.size(); }
 
 public slots:
     void connectToAmp(const QString& host, quint16 port = 8080);

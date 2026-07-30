@@ -14,8 +14,9 @@
 // (TXA.c:33-35 [v2.10.3.13]).  Works by accident on LSB; silent on
 // USB / AM / FM / DSB / DIGU / DIGL until TUN is hit once.
 //
-// Fix: RadioModel::pushTxModeAndBandpass() reads the active slice's
-// DSPMode + audio-space filter cutoffs and dispatches them to TxChannel.
+// Fix: RadioModel::pushTxModeAndBandpass() reads the TX-bound slice's
+// DSPMode plus TransmitModel's audio-space filter cutoffs and dispatches
+// them to TxChannel.
 // Wired on three triggers (verified at integration layer / bench):
 //   - createTxChannel success (initial seed)
 //   - SliceModel::dspModeChanged (re-seed after user changes mode)
@@ -23,13 +24,14 @@
 //
 // This test pins the helper-level contract: when called with an active
 // slice, it emits txModeAndBandpassPushed(mode, audioLow, audioHigh)
-// carrying the slice's current state.
+// carrying the two authoritative model states.
 
 #include <QtTest/QtTest>
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
 #include "core/TxSliceArbiter.h"
+#include "core/TxChannel.h"
 #include "core/WdspTypes.h"
 
 using namespace NereusSDR;
@@ -54,7 +56,9 @@ private slots:
         QVERIFY(slice != nullptr);
 
         slice->setDspMode(DSPMode::USB);
-        slice->setFilter(150, 2850);
+        slice->setFilter(450, 2550);
+        model.transmitModel().setFilterLow(150);
+        model.transmitModel().setFilterHigh(2850);
 
         QSignalSpy spy(&model, &RadioModel::txModeAndBandpassPushed);
         model.pushTxModeAndBandpass();
@@ -85,7 +89,9 @@ private slots:
         QSignalSpy spy(&model, &RadioModel::txModeAndBandpassPushed);
 
         slice->setDspMode(DSPMode::LSB);
-        slice->setFilter(150, 2850);
+        slice->setFilter(-3100, -300);
+        model.transmitModel().setFilterLow(150);
+        model.transmitModel().setFilterHigh(2850);
         model.pushTxModeAndBandpass();
         QCOMPARE(spy.count(), 1);
         QCOMPARE(spy.at(0).at(0).value<DSPMode>(), DSPMode::LSB);
@@ -93,7 +99,7 @@ private slots:
         QCOMPARE(spy.at(0).at(2).toInt(), 2850);  // audio-space, NOT -150
 
         slice->setDspMode(DSPMode::USB);
-        slice->setFilter(150, 2850);
+        slice->setFilter(400, 2400);
         model.pushTxModeAndBandpass();
         QCOMPARE(spy.count(), 2);
         QCOMPARE(spy.at(1).at(0).value<DSPMode>(), DSPMode::USB);
@@ -118,6 +124,8 @@ private slots:
         QVERIFY(c);
         c->setDspMode(DSPMode::DIGL);
         c->setFilter(-2450, -250);
+        model.transmitModel().setFilterLow(650);
+        model.transmitModel().setFilterHigh(2350);
 
         QVERIFY(model.setActiveSliceById(aId));
         QVERIFY(model.txSliceArbiter()->requestHandoff(cId));
@@ -129,8 +137,44 @@ private slots:
 
         QCOMPARE(spy.count(), 1);
         QCOMPARE(spy.at(0).at(0).value<DSPMode>(), DSPMode::DIGL);
-        QCOMPARE(spy.at(0).at(1).toInt(), -2450);
-        QCOMPARE(spy.at(0).at(2).toInt(), -250);
+        QCOMPARE(spy.at(0).at(1).toInt(), 650);
+        QCOMPARE(spy.at(0).at(2).toInt(), 2350);
+    }
+
+    void pushAppliesLsbFamilyTransmitFilter_data()
+    {
+        QTest::addColumn<DSPMode>("mode");
+        QTest::newRow("LSB") << DSPMode::LSB;
+        QTest::newRow("DIGL") << DSPMode::DIGL;
+        QTest::newRow("CWL") << DSPMode::CWL;
+        QTest::newRow("RADE_L") << DSPMode::RADE_L;
+    }
+
+    void pushAppliesLsbFamilyTransmitFilter()
+    {
+        QFETCH(DSPMode, mode);
+
+        RadioModel model;
+        model.addSlice();
+        SliceModel* const slice = model.activeSlice();
+        QVERIFY(slice);
+        slice->setDspMode(mode);
+        // Deliberately different signed RX/IQ passband. It must never become
+        // the TX filter source.
+        slice->setFilter(-3100, -300);
+        model.transmitModel().setFilterLow(650);
+        model.transmitModel().setFilterHigh(2350);
+
+        TxChannel tx(1);
+        model.injectTxChannelForTest(&tx);
+        QSignalSpy applied(&tx, &TxChannel::txFilterApplied);
+
+        model.pushTxModeAndBandpass();
+
+        QCOMPARE(applied.count(), 1);
+        QCOMPARE(applied.at(0).at(0).toInt(), -2350);
+        QCOMPARE(applied.at(0).at(1).toInt(), -650);
+        model.injectTxChannelForTest(nullptr);
     }
 
     // ── Contract: no emit without an active slice ────────────────────────────

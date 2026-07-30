@@ -760,6 +760,7 @@ RadioModel::RadioModel(QObject* parent)
             this, [this](int, int) {
         pushTxFrequencyFromTxSlice();
         pushTxModeAndBandpass();
+        applyTxAntennaFromBoundSlice();
         if (m_moxController) {
             if (SliceModel* const bound = txBoundSlice()) {
                 m_moxController->onModeChanged(bound->dspMode());
@@ -9357,7 +9358,8 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     // to the wire via applyAlexAntennaForBand. This makes per-band
     // persistence uniform across all UI surfaces
     // (see docs/architecture/antenna-routing-design.md §5.1).
-    connect(slice, &SliceModel::rxAntennaChanged, this, [this](const QString& ant) {
+    connect(slice, &SliceModel::rxAntennaChanged, this,
+            [this, slice](const QString& ant) {
         // ANT1/2/3 → setRxAnt (direct hardware port). Non-ANT/non-bypass
         // labels (EXT1, EXT2, XVTR, RX1, RX2, BYPS…) → setRxOnlyAnt with
         // the 1-based position in SkuUiProfile::rxOnlyLabels, mirroring the
@@ -9378,15 +9380,17 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
             int antNum = 1;
             if (ant == QLatin1String("ANT2")) { antNum = 2; }
             else if (ant == QLatin1String("ANT3")) { antNum = 3; }
-            m_alexController.setRxAnt(m_lastBand, antNum);
-            m_alexController.setRxOnlyAnt(m_lastBand, 0);  // issue #257 — release bypass mux
+            const Band band = bandFromFrequency(slice->frequency());
+            m_alexController.setRxAnt(band, antNum);
+            m_alexController.setRxOnlyAnt(band, 0);  // issue #257 — release bypass mux
         } else if (ant != QStringLiteral("RX out on TX")) {
             // RX-only label: find 1-based position in SkuUiProfile::rxOnlyLabels.
             const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
             const auto& lbls = sku.rxOnlyLabels;
             for (int i = 0; i < static_cast<int>(lbls.size()); ++i) {
                 if (lbls[static_cast<size_t>(i)] == ant) {
-                    m_alexController.setRxOnlyAnt(m_lastBand, i + 1);
+                    m_alexController.setRxOnlyAnt(
+                        bandFromFrequency(slice->frequency()), i + 1);
                     break;
                 }
             }
@@ -9412,14 +9416,10 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         scheduleSettingsSave();
     });
     connect(slice, &SliceModel::txAntennaChanged, this,
-            [this, slice](const QString& ant) {
-        if (slice != txBoundSlice()) { return; }
-        int antNum = 1;
-        if (ant == QLatin1String("ANT2")) { antNum = 2; }
-        else if (ant == QLatin1String("ANT3")) { antNum = 3; }
-        // Note: setTxAnt respects blockTxAnt2/3 safety guards; reject is silent.
-        m_alexController.setTxAnt(
-            bandFromFrequency(slice->frequency()), antNum);
+            [this, slice](const QString&) {
+        if (slice == txBoundSlice()) {
+            applyTxAntennaFromBoundSlice();
+        }
         scheduleSettingsSave();
     });
 
@@ -9552,8 +9552,11 @@ void RadioModel::loadSliceState(SliceModel* slice)
     emit sliceStateRestored(slice->sliceIndex());
 }
 
-// Issue #153 sub-bug 2 — push the TX-bound slice's DSPMode + bandpass to
-// TxChannel.  See header comment for wire
+// Issue #153 sub-bug 2 — push the TX-bound slice's DSPMode and the
+// TransmitModel's positive audio-space bandpass to TxChannel.  SliceModel
+// filter bounds are RX/IQ-space and are signed for LSB-family modes; using
+// them here would make TxChannel::applyTxFilterForMode negate them twice.
+// See header comment for wire
 // targets and Thetis source-of-truth cites.  Called by all three
 // triggers (createTxChannel post-create, SliceModel::dspModeChanged,
 // MoxController::txAboutToBegin).
@@ -9565,8 +9568,8 @@ void RadioModel::pushTxModeAndBandpass()
         return;
     }
     const DSPMode mode      = slice->dspMode();
-    const int     audioLow  = slice->filterLow();
-    const int     audioHigh = slice->filterHigh();
+    const int     audioLow  = m_transmitModel.filterLow();
+    const int     audioHigh = m_transmitModel.filterHigh();
 
     // Diagnostic / test-observation hook fires unconditionally (m_txChannel
     // can be null during odd lifecycle moments — addSlice before
@@ -9589,6 +9592,26 @@ void RadioModel::pushTxModeAndBandpass()
         tx->setTxMode(mode);
         tx->requestFilterChange(audioLow, audioHigh, mode);
     });
+}
+
+void RadioModel::applyTxAntennaFromBoundSlice()
+{
+    const SliceModel* const slice = txBoundSlice();
+    if (!slice) {
+        return;
+    }
+
+    const QString ant = slice->txAntenna();
+    int antNum = 1;
+    if (ant == QLatin1String("ANT2")) {
+        antNum = 2;
+    } else if (ant == QLatin1String("ANT3")) {
+        antNum = 3;
+    }
+
+    // AlexController remains the single safety gate for blocked ANT2/ANT3.
+    m_alexController.setTxAnt(
+        bandFromFrequency(slice->frequency()), antNum);
 }
 
 // Apply AlexController state to the wire. Called from three triggers:
@@ -12146,6 +12169,11 @@ void RadioModel::onMoxHardwareFlipped(bool isTx)
     const Band band = txSlice
                         ? bandFromFrequency(txSlice->frequency())
                         : m_lastBand;
+    if (isTx) {
+        // Defensive authority reconciliation: a listening slice may have
+        // changed its stored TX antenna before becoming TX-bound.
+        applyTxAntennaFromBoundSlice();
+    }
     applyAlexAntennaForBand(band, isTx);
 
     // Steps 2 + 3 — wire bits.  Guard against null connection (no radio

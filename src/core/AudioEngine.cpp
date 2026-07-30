@@ -319,6 +319,12 @@ void AudioEngine::preregisterSlices(int count)
 
 void AudioEngine::setSliceStreaming(int sliceId, bool streaming)
 {
+    if (!streaming) {
+        // Close first so no new audio callback can enter behind the
+        // invalidation and escape the acknowledgment wait below.
+        m_mixAdmissionClosed.store(true, std::memory_order_release);
+    }
+
     m_masterMix.setSliceStreaming(sliceId, streaming);
 
     // Membership mirrors the speakers mixer, and every membership change in
@@ -335,6 +341,24 @@ void AudioEngine::setSliceStreaming(int sliceId, bool streaming)
     // driven by adjacent SetAAudioMixStates / SetAntiVOXSourceStates calls
     // on every transition (console.cs:27650-27651 [v2.10.3.15]).
     m_antiVoxMix.setSliceStreaming(sliceId, streaming);
+
+#ifdef NEREUS_BUILD_TESTS
+    if (!streaming && m_withdrawalPublishedHookForTest) {
+        m_withdrawalPublishedHookForTest();
+    }
+#endif
+
+    if (!streaming) {
+        unsigned inFlight =
+            m_mixRegionsInFlight.load(std::memory_order_acquire);
+        while (inFlight != 0) {
+            m_mixRegionsInFlight.wait(inFlight,
+                                      std::memory_order_acquire);
+            inFlight =
+                m_mixRegionsInFlight.load(std::memory_order_acquire);
+        }
+        m_mixAdmissionClosed.store(false, std::memory_order_release);
+    }
 }
 
 void AudioEngine::start()
@@ -1013,6 +1037,25 @@ void AudioEngine::setVaxTxBusForTest(std::unique_ptr<IAudioBus> bus)
 
 void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
 {
+    if (m_mixAdmissionClosed.load(std::memory_order_acquire)) {
+        return;
+    }
+    m_mixRegionsInFlight.fetch_add(1, std::memory_order_acq_rel);
+    struct MixRegionGuard {
+        std::atomic<unsigned>& count;
+        ~MixRegionGuard()
+        {
+            if (count.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                count.notify_all();
+            }
+        }
+    } mixRegion{m_mixRegionsInFlight};
+    // Pairs with the control thread's close-before-invalidate sequence. If
+    // close raced the first check, acknowledge without touching either mix.
+    if (m_mixAdmissionClosed.load(std::memory_order_acquire)) {
+        return;
+    }
+
     if (!m_radio || samples == nullptr || frames <= 0) {
         return;
     }

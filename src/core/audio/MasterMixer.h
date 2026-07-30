@@ -155,6 +155,7 @@ warren@wpratt.com
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -188,7 +189,7 @@ public:
     // [v2.10.3.15]), which clears the stream's bit in a->active, drops it
     // from the Aready wait set and shuts its accept[] gate.
     //
-    // Withdrawing does not discard what the slice already queued, and
+    // Withdrawing invalidates what the slice already queued, and
     // re-admitting does not re-enrol it on its own: it rejoins on its
     // next delivered block, fading back in over the ramp.
     void setSliceStreaming(int sliceId, bool streaming);
@@ -246,6 +247,15 @@ public:
 
     // Test seam: how many barrier members are currently enrolled.
     int producingSliceCount() const;
+
+#ifdef NEREUS_BUILD_TESTS
+    // Deterministic race seam: runs after the readiness barrier admits a
+    // drain and before any ring cursor is advanced.
+    void setDrainAdmissionHookForTest(std::function<void()> hook)
+    {
+        m_drainAdmissionHookForTest = std::move(hook);
+    }
+#endif
 
 private:
     // 5 ms at 48 kHz. Long enough to be inaudible on a join or a mute,
@@ -327,6 +337,15 @@ private:
         // in instead of stepping in.
         float curL{0.0f};
         float curR{0.0f};
+
+        // Audio-thread-only transactional drain state. tryDrain computes
+        // against these snapshots and commits them only after the control
+        // thread's membership epoch is still stable.
+        int stagedRd{0};
+        int stagedAvail{0};
+        float stagedCurL{0.0f};
+        float stagedCurR{0.0f};
+        bool drainStaged{false};
     };
 
     // Grow (or first-allocate) a slice's ring to hold kRingBlocks blocks.
@@ -356,6 +375,15 @@ private:
     // advances, reset to 0 by setSliceStreaming() on the control thread,
     // which is Thetis's open_mixer raising the upslew flag.
     std::atomic<int> m_slewPos{kSlewUpFrames};
+
+    // Advanced after every streaming-state publication. A drain admitted
+    // under one epoch must not commit ring cursors or return audio under
+    // another.
+    std::atomic<std::uint64_t> m_membershipEpoch{0};
+
+#ifdef NEREUS_BUILD_TESTS
+    std::function<void()> m_drainAdmissionHookForTest;
+#endif
 };
 
 } // namespace NereusSDR

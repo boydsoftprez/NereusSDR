@@ -969,6 +969,11 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
             slice->setFrequency(freqHz);
         }
     });
+    // Settings restore and rate seeding may have derived the actual state
+    // before this bridge existed, so seed the resolved slice immediately.
+    if (SliceModel* slice = resolve()) {
+        slice->setWidebandExtensionRequested(spectrum->extendedMode());
+    }
 }
 
 void MainWindow::fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,

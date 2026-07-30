@@ -1049,14 +1049,15 @@ public slots:
         return adcIndex == 0 ? m_widebandBinsAdc0 : m_widebandBinsAdc1;
     }
 
-    /// Phase 3F Sub-Epic F Tasks 7-10: enable extended-pan rendering.
-    /// When on AND visible bandwidth exceeds DDC sample rate, paintEvent
+    /// Phase 3F Sub-Epic F Tasks 7-10: allow extended-pan rendering.
+    /// The actual state is on only when allowed AND the visible bandwidth
+    /// exceeds a known positive DDC sample rate. paintEvent
     /// will render wideband bins as a background fill behind the
     /// listenable DDC island. Full visual polish (dashed boundary lines,
     /// palette-aware bin draw) lands in a post-bench iteration; for now
-    /// extendedMode is a state-only flag that drives the auto-derive +
-    /// signal pair below.
-    void setExtendedMode(bool on);
+    /// extendedMode is the derived actual state that drives the signal.
+    void setExtendedViewAllowed(bool allowed);
+    bool extendedViewAllowed() const { return m_extendedViewAllowed; }
     bool extendedMode() const { return m_extendedMode; }
 
 public:
@@ -1273,7 +1274,9 @@ private:
     // until F polish (T7-T10) wires the paint path.
     QVector<float> m_widebandBinsAdc0;
     QVector<float> m_widebandBinsAdc1;
+    bool           m_extendedViewAllowed{true};
     bool           m_extendedMode{false};
+    void recomputeExtendedMode();
 
     // ---- Phase 3Q-8: disconnect overlay state ----
     // The CPU paintEvent path can paint a QPainter overlay, but the GPU

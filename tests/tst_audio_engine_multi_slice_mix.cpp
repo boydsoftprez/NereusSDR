@@ -28,6 +28,7 @@
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QSemaphore>
 
 #include "core/AudioEngine.h"
 #include "core/IAudioBus.h"
@@ -37,7 +38,9 @@
 #include "fakes/FakeAudioBus.h"
 
 #include <array>
+#include <atomic>
 #include <memory>
+#include <thread>
 
 using namespace NereusSDR;
 
@@ -257,6 +260,60 @@ private slots:
         // still be holding the barrier.
         h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
         QVERIFY(h.speakers->pushCount() > before);
+    }
+
+    void withdrawalWaitsForAdmittedMixAndPreventsOldPush()
+    {
+        Harness h = makeHarness();
+        const int a = h.radio->addSlice();
+
+        QSemaphore admitted;
+        QSemaphore resume;
+        QSemaphore withdrawalPublished;
+        QSemaphore withdrawalReturned;
+
+        h.engine->masterMixForTest().setDrainAdmissionHookForTest([&] {
+            admitted.release();
+            resume.acquire();
+        });
+        h.engine->setWithdrawalPublishedHookForTest([&] {
+            withdrawalPublished.release();
+        });
+
+        std::thread audio([&] {
+            h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+        });
+        const bool admissionObserved = admitted.tryAcquire(1, 1000);
+        if (!admissionObserved) {
+            resume.release();
+            audio.join();
+            QVERIFY2(admissionObserved,
+                     "audio callback never reached the drain seam");
+            return;
+        }
+
+        std::thread control([&] {
+            h.engine->setSliceStreaming(a, false);
+            withdrawalReturned.release();
+        });
+        const bool publicationObserved =
+            withdrawalPublished.tryAcquire(1, 1000);
+
+        // Once invalidation is published, withdrawal cannot return until the
+        // admitted region has observed it and abandoned the old block.
+        const bool returnedEarly = withdrawalReturned.tryAcquire(1, 50);
+        resume.release();
+        const bool returnedAfterResume =
+            returnedEarly || withdrawalReturned.tryAcquire(1, 1000);
+
+        audio.join();
+        control.join();
+        QVERIFY2(publicationObserved,
+                 "control path never published mixer invalidation");
+        QVERIFY2(!returnedEarly,
+                 "withdrawal returned while old output was still admitted");
+        QVERIFY(returnedAfterResume);
+        QCOMPARE(h.speakers->pushCount(), 0);
     }
 
     // ── Every id in [0, maxSlices) is registered up front, so no slice ever

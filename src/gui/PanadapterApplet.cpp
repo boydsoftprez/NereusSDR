@@ -264,10 +264,8 @@ QString PanadapterApplet::wideReason() const
 // Phase 3F Sub-Epic F Task 13: operator-toggleable Extended view.
 // Default is true so the SpectrumWidget zoom auto-derive (Task 7-10)
 // gets to decide extendedMode based on bandwidth vs DDC sample rate.
-// When false, we force m_spectrum->setExtendedMode(false) so the
-// wideband stream stays off regardless of zoom; future toggles back
-// to true let the next setFrequencyRange / setSampleRate call re-run
-// the auto-derive and pick the right state for the current zoom.
+// This toggle is permission, not the actual state: at normal zoom the
+// wideband stream stays off even when permission is enabled.
 void PanadapterApplet::setExtendedViewEnabled(bool on)
 {
     const bool changed = (m_extendedViewEnabled != on);
@@ -278,7 +276,7 @@ void PanadapterApplet::setExtendedViewEnabled(bool on)
                    on ? QStringLiteral("True") : QStringLiteral("False"));
     }
     if (m_spectrum) {
-        m_spectrum->setExtendedMode(on);
+        m_spectrum->setExtendedViewAllowed(on);
     }
 }
 

@@ -2350,6 +2350,10 @@ private:
     //
     // Source: Thetis HPSDR/Alex.cs:310-413 [@501e3f5].
     void applyAlexAntennaForBand(NereusSDR::Band band, bool isTx = false);
+    // Reconciles the TX-bound slice's stored antenna intent into the
+    // per-band Alex state. Called at every authority boundary (slice edit,
+    // TX handoff, and immediately before MOX routing).
+    void applyTxAntennaFromBoundSlice();
 
     void wireConnectionSignals(int wdspInSize);
     /// Wire one slice's property changes to its OWN WDSP channel and to the
@@ -2442,12 +2446,12 @@ public:
     // sliceStateRestored(index) on completion (see comment on the signal).
     void loadSliceState(SliceModel* slice);
 
-    // Issue #153 sub-bug 2 — push the TX-bound slice's DSPMode + filter
-    // cutoffs to TxChannel. No-op if no TX binding resolves.
+    // Issue #153 sub-bug 2 — push the TX-bound slice's DSPMode plus the
+    // TransmitModel's positive audio-space filter cutoffs to TxChannel.
+    // No-op if no TX binding resolves.
     //
-    // Mode and filter source are one coherent snapshot of the TX-bound
-    // SliceModel. This keeps split/listening focus from combining one
-    // slice's mode with another slice's passband.
+    // SliceModel filter bounds are RX/IQ-space and signed for LSB-family
+    // modes, so they are deliberately not a TX bandpass source.
     //
     // Read happens on RadioModel's main thread; the TxChannel setter
     // call is queued to TxWorkerThread via QMetaObject::invokeMethod

@@ -125,6 +125,9 @@ void MasterMixer::setSliceStreaming(int sliceId, bool streaming) {
         // generation and resets them before accepting a fresh block.
         st.streamGeneration.fetch_add(1, std::memory_order_acq_rel);
     }
+    // Publish this boundary last. An acquire load that observes the new
+    // epoch also observes streaming/producing/generation above.
+    m_membershipEpoch.fetch_add(1, std::memory_order_release);
 }
 
 void MasterMixer::setSliceOpportunistic(int sliceId, bool opportunistic) {
@@ -252,6 +255,8 @@ void MasterMixer::accumulate(int sliceId, const float* samples, int frames,
 
 int MasterMixer::tryDrain(float* out, int maxFrames) {
     if (out == nullptr || maxFrames <= 0) { return 0; }
+    const std::uint64_t admittedEpoch =
+        m_membershipEpoch.load(std::memory_order_acquire);
 
     // ── Barrier ──────────────────────────────────────────────────────
     // From Thetis aamix.c:43 [v2.10.3.15]:
@@ -265,6 +270,7 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
 
     for (auto& kv : m_slices) {
         SliceState& st = kv.second;
+        st.drainStaged = false;
         const bool opportunistic =
             st.opportunistic.load(std::memory_order_acquire);
         if (!opportunistic
@@ -304,6 +310,17 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
     if (n <= 0) { return 0; }
     n = std::min(n, maxFrames);
 
+#ifdef NEREUS_BUILD_TESTS
+    if (m_drainAdmissionHookForTest) {
+        m_drainAdmissionHookForTest();
+    }
+#endif
+
+    if (m_membershipEpoch.load(std::memory_order_acquire)
+        != admittedEpoch) {
+        return 0;
+    }
+
     // ── Sum ──────────────────────────────────────────────────────────
     std::fill(out, out + static_cast<size_t>(n) * 2, 0.0f);
 
@@ -335,15 +352,26 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
         const float tgtL = g * (pan <= 0.0f ? 1.0f : 1.0f - pan);
         const float tgtR = g * (pan >= 0.0f ? 1.0f : 1.0f + pan);
 
+        int stagedRd = st.rd;
+        float stagedCurL = st.curL;
+        float stagedCurR = st.curR;
         for (int i = 0; i < take; ++i) {
-            st.curL += std::clamp(tgtL - st.curL, -step, step);
-            st.curR += std::clamp(tgtR - st.curR, -step, step);
-            const size_t r = static_cast<size_t>(st.rd) * 2;
-            out[static_cast<size_t>(i) * 2 + 0] += st.ring[r + 0] * st.curL;
-            out[static_cast<size_t>(i) * 2 + 1] += st.ring[r + 1] * st.curR;
-            st.rd = (st.rd + 1) % st.capFrames;
+            stagedCurL +=
+                std::clamp(tgtL - stagedCurL, -step, step);
+            stagedCurR +=
+                std::clamp(tgtR - stagedCurR, -step, step);
+            const size_t r = static_cast<size_t>(stagedRd) * 2;
+            out[static_cast<size_t>(i) * 2 + 0] +=
+                st.ring[r + 0] * stagedCurL;
+            out[static_cast<size_t>(i) * 2 + 1] +=
+                st.ring[r + 1] * stagedCurR;
+            stagedRd = (stagedRd + 1) % st.capFrames;
         }
-        st.avail -= take;
+        st.stagedRd = stagedRd;
+        st.stagedAvail = st.avail - take;
+        st.stagedCurL = stagedCurL;
+        st.stagedCurR = stagedCurR;
+        st.drainStaged = true;
     }
 
     // ── Master up-slew ───────────────────────────────────────────────
@@ -371,6 +399,41 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
             out[static_cast<size_t>(i) * 2 + 0] *= g;
             out[static_cast<size_t>(i) * 2 + 1] *= g;
         }
+    }
+
+    // Control-side withdrawal may race any part of barrier admission or
+    // summing. Old-generation output is disposable scratch until both the
+    // global membership epoch and each participating slice generation are
+    // still stable. Only then advance the audio-owned cursors and gains.
+    if (m_membershipEpoch.load(std::memory_order_acquire)
+        != admittedEpoch) {
+        return 0;
+    }
+    for (auto& kv : m_slices) {
+        SliceState& st = kv.second;
+        if (!st.drainStaged) {
+            continue;
+        }
+        if (st.ringGeneration
+            != st.streamGeneration.load(std::memory_order_acquire)) {
+            return 0;
+        }
+        if (!st.opportunistic.load(std::memory_order_acquire)
+            && !st.streaming.load(std::memory_order_acquire)) {
+            return 0;
+        }
+    }
+    for (auto& kv : m_slices) {
+        SliceState& st = kv.second;
+        if (!st.drainStaged) {
+            continue;
+        }
+        st.rd = st.stagedRd;
+        st.avail = st.stagedAvail;
+        st.curL = st.stagedCurL;
+        st.curR = st.stagedCurR;
+    }
+    if (slewLen > 0) {
         m_slewPos.store(pos, std::memory_order_release);
     }
 

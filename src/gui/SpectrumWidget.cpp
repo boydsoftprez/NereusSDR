@@ -954,6 +954,7 @@ void SpectrumWidget::loadSettings()
     m_nfOffsetGridFollow = qBound(-60, m_nfOffsetGridFollow, 60);
     m_maintainNFAdjustDelta = s.value(QStringLiteral("DisplayMaintainNFAdjustDelta"),
                                       QStringLiteral("False")).toString() == QStringLiteral("True");
+    recomputeExtendedMode();
 }
 
 void SpectrumWidget::saveSettings()
@@ -1182,9 +1183,7 @@ void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
     // so the wideband ADC stream can fill the wings via the Task 11
     // chain. The "off" direction also fires here when the operator
     // zooms back inside the listenable island.
-    if (m_sampleRateHz > 0.0) {
-        setExtendedMode(m_bandwidthHz > m_sampleRateHz);
-    }
+    recomputeExtendedMode();
 }
 
 void SpectrumWidget::setCenterFrequency(double centerHz)
@@ -1217,9 +1216,7 @@ void SpectrumWidget::setSampleRate(double hz)
         // Phase 3F Sub-Epic F Tasks 7-10: sample-rate change rebases the
         // extended-mode derivation (operator may have e.g. switched a
         // radio from 192 kHz to 384 kHz, shrinking the wing).
-        if (m_sampleRateHz > 0.0) {
-            setExtendedMode(m_bandwidthHz > m_sampleRateHz);
-        }
+        recomputeExtendedMode();
     }
 }
 
@@ -4361,19 +4358,34 @@ void SpectrumWidget::setWidebandBins(int adcIndex, const QVector<float>& dbmBins
     // wideband frame on hardware that isn't yet rendering the bins.
 }
 
-// Phase 3F Sub-Epic F Tasks 7-10: extended-mode setter + signal.
-// Flips m_extendedMode and notifies consumers so they can flip
-// SliceModel::widebandExtensionRequested, which triggers the Task 11
+// Phase 3F Sub-Epic F Tasks 7-10: extended-view policy + derived state.
+// The operator toggle controls permission; zoom and DDC rate decide whether
+// wideband wings are actually needed. State changes notify consumers so they
+// can flip SliceModel::widebandExtensionRequested, which triggers the Task 11
 // chain (Alex BPF bypass + P2 CmdGeneral byte 23 wideband-enable +
 // radio starts streaming wideband packets). The actual paint hook
 // for rendering the stored wideband bins as a background fill is
 // deferred to a post-bench polish iteration; for now the flag drives
 // the data-flow side only.
-void SpectrumWidget::setExtendedMode(bool on)
+void SpectrumWidget::setExtendedViewAllowed(bool allowed)
 {
-    if (m_extendedMode == on) { return; }
-    m_extendedMode = on;
-    emit widebandExtensionStateChanged(on);
+    if (m_extendedViewAllowed == allowed) {
+        recomputeExtendedMode();
+        return;
+    }
+    m_extendedViewAllowed = allowed;
+    recomputeExtendedMode();
+}
+
+void SpectrumWidget::recomputeExtendedMode()
+{
+    const bool actual =
+        m_extendedViewAllowed
+        && m_sampleRateHz > 0.0
+        && m_bandwidthHz > m_sampleRateHz;
+    if (m_extendedMode == actual) { return; }
+    m_extendedMode = actual;
+    emit widebandExtensionStateChanged(actual);
     // Schedule a repaint so the future paint impl picks up the state
     // change. Today this is a no-op in the visual pipeline beyond the
     // stored bool — cheap.

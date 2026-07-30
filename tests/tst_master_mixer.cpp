@@ -11,8 +11,11 @@
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QSemaphore>
 #include "core/audio/MasterMixer.h"
 #include <array>
+#include <atomic>
+#include <thread>
 #include <vector>
 #include <cmath>
 
@@ -252,6 +255,39 @@ private slots:
         QCOMPARE(mix.tryDrain(out.data(), 1), 1);
         QCOMPARE(out[0], 0.4f);
         QCOMPARE(out[1], 0.4f);
+    }
+
+    void withdrawalDuringAdmittedDrainInvalidatesTheResult() {
+        MasterMixer mix;
+        mix.setRampFrames(1);
+        mix.setSlewUpFrames(0);
+        mix.setSliceGain(1, 1.0f, 0.0f);
+        const std::array<float, 2> old = {0.7f, 0.7f};
+        std::array<float, 2> out{};
+        mix.accumulate(1, old.data(), 1);
+
+        QSemaphore admitted;
+        QSemaphore resume;
+        mix.setDrainAdmissionHookForTest([&] {
+            admitted.release();
+            resume.acquire();
+        });
+
+        std::atomic<int> drained{-1};
+        std::thread audio([&] {
+            drained.store(mix.tryDrain(out.data(), 1),
+                          std::memory_order_release);
+        });
+
+        const bool admissionObserved = admitted.tryAcquire(1, 1000);
+        if (admissionObserved) {
+            mix.setSliceStreaming(1, false);
+        }
+        resume.release();
+        audio.join();
+
+        QVERIFY2(admissionObserved, "drain never reached the admission seam");
+        QCOMPARE(drained.load(std::memory_order_acquire), 0);
     }
 
     // The TX monitor feeds only during MOX. If it enrolled as a barrier

@@ -165,6 +165,8 @@ private slots:
     void disconnectCancelsPendingReconnect();
     void autoReconnectOffSuppressesRetry();
     void disconnectInvalidatesDelayedReplyAcrossGenerations();
+    void directRetargetDisconnectsBeforeTheNewProbe();
+    void directRetargetAbortsThePriorGenerationReply();
     void initialInfoFailureBacksOffAndReconnectProbesOnly();
     void manualDisconnectSuppressesInitialRetry();
     void initialFailureDoesNotRetryWhenDisabled();
@@ -279,6 +281,63 @@ void Rf2ksConnectionReconnectTest::disconnectInvalidatesDelayedReplyAcrossGenera
     QCOMPARE(conn.pollsSucceeded(), successesAfterCurrentGeneration);
     QCOMPARE(conn.deviceName(), QStringLiteral("current-generation"));
     QVERIFY(!conn.testReconnectPending());
+}
+
+void Rf2ksConnectionReconnectTest::directRetargetDisconnectsBeforeTheNewProbe()
+{
+    ControlledInfoServer firstServer(QByteArrayLiteral("connected-a"),
+                                     /*autoRespond=*/true);
+    ProbeScriptServer deadSecondServer({503});
+    Rf2ksConnection conn;
+    conn.setPollIntervalMs(5000);
+    QSignalSpy connectedSpy(&conn, &Rf2ksConnection::connected);
+    QSignalSpy disconnectedSpy(&conn, &Rf2ksConnection::disconnected);
+
+    conn.connectToAmp(QStringLiteral("127.0.0.1"), firstServer.port());
+    QTRY_COMPARE(connectedSpy.count(), 1);
+    QVERIFY(conn.isConnected());
+    QVERIFY(conn.connectedSinceMs() > 0);
+
+    conn.connectToAmp(QStringLiteral("127.0.0.1"),
+                      deadSecondServer.port());
+
+    QVERIFY(!conn.isConnected());
+    QCOMPARE(conn.connectedSinceMs(), 0);
+    QCOMPARE(disconnectedSpy.count(), 1);
+    QTRY_COMPARE(deadSecondServer.infoRequestCount(), 1);
+    QTRY_VERIFY(conn.testReconnectPending());
+    conn.disconnect();
+}
+
+void Rf2ksConnectionReconnectTest::directRetargetAbortsThePriorGenerationReply()
+{
+    ControlledInfoServer firstServer(QByteArrayLiteral("old-a"));
+    ControlledInfoServer secondServer(QByteArrayLiteral("current-b"));
+    Rf2ksConnection conn;
+    QSignalSpy connectedSpy(&conn, &Rf2ksConnection::connected);
+    QSignalSpy infoSpy(&conn, &Rf2ksConnection::infoUpdated);
+
+    conn.connectToAmp(QStringLiteral("127.0.0.1"), firstServer.port());
+    QTRY_COMPARE(firstServer.infoRequests(), 1);
+    QCOMPARE(conn.testInFlightReplyCount(), 1);
+
+    conn.connectToAmp(QStringLiteral("127.0.0.1"), secondServer.port());
+    QTRY_COMPARE(secondServer.infoRequests(), 1);
+    // The current /info probe is the only owned reply. Generation A was
+    // aborted and removed at the direct retarget boundary.
+    QCOMPARE(conn.testInFlightReplyCount(), 1);
+
+    secondServer.releasePendingInfo();
+    QTRY_COMPARE(connectedSpy.count(), 1);
+    QTRY_COMPARE(infoSpy.count(), 1);
+    QCOMPARE(conn.deviceName(), QStringLiteral("current-b"));
+
+    firstServer.releasePendingInfo();
+    QVERIFY2(!infoSpy.wait(300),
+             "a delayed generation-A reply mutated generation B");
+    QCOMPARE(connectedSpy.count(), 1);
+    QCOMPARE(infoSpy.count(), 1);
+    QCOMPARE(conn.deviceName(), QStringLiteral("current-b"));
 }
 
 void Rf2ksConnectionReconnectTest::initialInfoFailureBacksOffAndReconnectProbesOnly()

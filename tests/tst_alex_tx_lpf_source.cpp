@@ -144,6 +144,11 @@ private slots:
         model.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
                                   /*defaultRateHz=*/192000);
 
+        auto* conn = new ConnectedP2RadioConnection();
+        conn->setBoardForTest(HPSDRHW::Saturn);
+        conn->setReceiverFrequency(kStreamA, k80mHz);
+        model.injectConnectionForTest(conn);
+
         const int a = model.addSlice();
         SliceModel* const listening = model.sliceById(a);
         listening->setFrequency(k80mHz);
@@ -154,17 +159,19 @@ private slots:
         transmitting->setFrequency(k10mHz);
 
         model.alexControllerMutable().setTxAnt(Band::Band80m, 1);
-        model.alexControllerMutable().setTxAnt(Band::Band10m, 3);
+        model.alexControllerMutable().setTxAnt(Band::Band10m, 1);
 
-        auto* conn = new ConnectedP2RadioConnection();
-        conn->setBoardForTest(HPSDRHW::Saturn);
-        conn->setReceiverFrequency(kStreamA, k80mHz);
-        model.injectConnectionForTest(conn);
+        // Editing a listening slice records intent only. The physical Alex
+        // state must change when that slice becomes TX-bound, even before
+        // any second antenna click.
+        transmitting->setTxAntenna(QStringLiteral("ANT3"));
+        QCOMPARE(model.alexController().txAnt(Band::Band10m), 1);
 
         QVERIFY(model.requestTxHandoffToSlice(c));
         model.onMoxHardwareFlipped(/*isTx=*/true);
 
         QCOMPARE(conn->lastRouting.txAnt, 3);
+        QCOMPARE(conn->lastRouting.trxAnt, 3);
         const AlexWords words = composeAlexWords(*conn);
         QCOMPARE(words.txLpf, codec::alex::computeLpf(28.4));
         QCOMPARE(words.rxLpf, codec::alex::computeLpf(28.4));

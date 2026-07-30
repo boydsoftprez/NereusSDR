@@ -199,9 +199,31 @@ void Rf2ksConnection::parseData(const QByteArray& body)
 
 void Rf2ksConnection::connectToAmp(const QString& host, quint16 port)
 {
+    // Every explicit target selection is a complete connection-generation
+    // boundary, including A -> B without an intervening disconnect().
     m_pollTimer.stop();
     m_reconnectTimer.stop();
     ++m_generation;
+
+    // Abort and detach every old-target request before issuing B's /info.
+    // Generation checking in onReplyFinished remains the second line of
+    // defence if an abort races a queued finished delivery.
+    const auto priorReplies = m_inFlight;
+    m_inFlight.clear();
+    for (QNetworkReply* reply : priorReplies) {
+        if (reply) {
+            reply->abort();
+        }
+    }
+
+    if (m_connected) {
+        m_connected = false;
+        m_connectedSinceMs = 0;
+        emit disconnected();
+    } else {
+        m_connectedSinceMs = 0;
+    }
+
     m_operatorDisconnected = false;
     m_host = host;
     m_port = port;
@@ -232,7 +254,10 @@ void Rf2ksConnection::disconnect()
     m_inFlight.clear();
     if (m_connected) {
         m_connected = false;
+        m_connectedSinceMs = 0;
         emit disconnected();
+    } else {
+        m_connectedSinceMs = 0;
     }
 }
 

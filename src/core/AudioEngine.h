@@ -126,6 +126,7 @@ namespace NereusSDR { class PipeWireThreadLoop; }
 
 #include <array>
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 
@@ -328,6 +329,13 @@ public:
     // reference sums, what it refuses to sum, and how often it releases a
     // block. Phase 3F Sub-Epic J Task 9.
     MasterMixer& antiVoxMixForTest() { return m_antiVoxMix; }
+
+    // Signals that withdrawal has invalidated both mixers, immediately
+    // before setSliceStreaming(false) waits for admitted mix regions.
+    void setWithdrawalPublishedHookForTest(std::function<void()> hook)
+    {
+        m_withdrawalPublishedHookForTest = std::move(hook);
+    }
 
     /// Test seam — directly set MOX state without going through MoxController.
     /// Bypasses the signal/slot connection that RadioModel wires in Phase L so
@@ -766,6 +774,17 @@ private:
     // [v2.10.3.15]), and monitor audio suppressing the operator's own VOX
     // would be feedback by definition.
     MasterMixer m_antiVoxMix;
+
+    // Control-to-audio withdrawal handshake. The audio thread never waits:
+    // it either enters a region or drops a block while admission is closed.
+    // The control thread invalidates both mixers, then waits for already
+    // admitted regions to finish before withdrawal returns.
+    std::atomic<bool> m_mixAdmissionClosed{false};
+    std::atomic<unsigned> m_mixRegionsInFlight{0};
+
+#ifdef NEREUS_BUILD_TESTS
+    std::function<void()> m_withdrawalPublishedHookForTest;
+#endif
 
     // Speakers format last negotiated. frames passed to rxBlockReady may
     // vary per block; the bus handles that internally via its ring. Kept

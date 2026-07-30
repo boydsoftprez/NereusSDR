@@ -72,6 +72,33 @@ private slots:
         QVERIFY(!applet.spectrumWidget()->extendedMode());
     }
 
+    void forced_off_stays_off_after_wide_zoom()
+    {
+        PanadapterApplet applet(QStringLiteral("pan-0"));
+        SpectrumWidget* const spectrum = applet.spectrumWidget();
+        spectrum->setSampleRate(192000.0);
+        spectrum->setFrequencyRange(14.2e6, 5000000.0);
+        QVERIFY(spectrum->extendedMode());
+
+        applet.setExtendedViewEnabled(false);
+        QVERIFY(!spectrum->extendedMode());
+
+        spectrum->setFrequencyRange(14.2e6, 4000000.0);
+        QVERIFY(!spectrum->extendedMode());
+    }
+
+    void allowed_at_normal_zoom_stays_in_normal_mode()
+    {
+        PanadapterApplet applet(QStringLiteral("pan-0"));
+        SpectrumWidget* const spectrum = applet.spectrumWidget();
+        applet.setExtendedViewEnabled(false);
+        spectrum->setSampleRate(192000.0);
+        spectrum->setFrequencyRange(14.2e6, 96000.0);
+
+        applet.setExtendedViewEnabled(true);
+        QVERIFY(!spectrum->extendedMode());
+    }
+
     void spectrum_settings_round_trip_in_separate_pan_namespaces()
     {
         auto& settings = AppSettings::instance();
@@ -123,11 +150,39 @@ private slots:
 
         MainWindow::wireWidebandExtensionForTest(
             pan1->spectrumWidget(), &model, &stack, pan1->panId());
-        pan1->spectrumWidget()->setExtendedMode(false);
-        pan1->spectrumWidget()->setExtendedMode(true);
+        pan1->spectrumWidget()->setSampleRate(192000.0);
+        pan1->spectrumWidget()->setFrequencyRange(14.2e6, 5000000.0);
 
         QVERIFY(second->widebandExtensionRequested());
         QVERIFY(!first->widebandExtensionRequested());
+    }
+
+    void restored_wide_zoom_seeds_slice_when_bridge_is_installed()
+    {
+        AppSettings::instance().setValue(
+            QStringLiteral("DisplayBandwidth"),
+            QStringLiteral("5000000"));
+
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+        SliceModel* const slice =
+            model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        QVERIFY(slice);
+
+        PanadapterStack stack;
+        PanadapterApplet* const pan = stack.panadapter(QStringLiteral("pan-0"));
+        QVERIFY(pan);
+        pan->addSlice(slice->sliceIndex());
+        MainWindow::configureSpectrumForPanForTest(
+            pan->spectrumWidget(), pan->panId());
+        pan->spectrumWidget()->setSampleRate(192000.0);
+        QVERIFY(pan->spectrumWidget()->extendedMode());
+        QVERIFY(!slice->widebandExtensionRequested());
+
+        MainWindow::wireWidebandExtensionForTest(
+            pan->spectrumWidget(), &model, &stack, pan->panId());
+
+        QVERIFY(slice->widebandExtensionRequested());
     }
 };
 

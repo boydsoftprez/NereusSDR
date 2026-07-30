@@ -326,34 +326,6 @@ void RxApplet::buildUi()
                 const QString text = sel->data().isValid() ? sel->data().toString()
                                                            : sel->text();
                 m_slice->setRxAntenna(text);
-                // Phase 3P-F Task 4: persist per-band assignment in AlexController.
-                if (m_model && m_pan) {
-                    // ANT1/2/3 → setRxAnt. RX-only labels → setRxOnlyAnt (position in sku).
-                    // "RX out on TX" is the bypass toggle — not routed via setRxAnt.
-                    //
-                    // Issue #257: picking ANT1/2/3 also clears any pending
-                    // rx-only mux (rxOnlyAnt → 0) so the RX bypass relay
-                    // releases and the main TX/RX input is restored. Mirrors
-                    // Thetis ProcessAlexAntCheckBox (setup.cs:13643-13705
-                    // [v2.10.3.13 @501e3f51]) where unchecking every RX-only
-                    // checkbox sends `setRxOnlyAnt(band, 0)`.
-                    if (text.startsWith(QStringLiteral("ANT"))) {
-                        int antNum = 1;
-                        if (text == QStringLiteral("ANT2")) { antNum = 2; }
-                        else if (text == QStringLiteral("ANT3")) { antNum = 3; }
-                        m_model->alexControllerMutable().setRxAnt(m_pan->band(), antNum);
-                        m_model->alexControllerMutable().setRxOnlyAnt(m_pan->band(), 0);  // issue #257
-                    } else if (m_popupSku && text != QStringLiteral("RX out on TX")) {
-                        // RX-only label: find its position in sku.rxOnlyLabels (1-indexed)
-                        const auto& lbls = m_popupSku->rxOnlyLabels;
-                        for (int i = 0; i < static_cast<int>(lbls.size()); ++i) {
-                            if (lbls[static_cast<size_t>(i)] == text) {
-                                m_model->alexControllerMutable().setRxOnlyAnt(m_pan->band(), i + 1);
-                                break;
-                            }
-                        }
-                    }
-                }
             }
         });
         row->addWidget(m_rxAntBtn);
@@ -400,14 +372,6 @@ void RxApplet::buildUi()
                 const QString text = sel->data().isValid() ? sel->data().toString()
                                                            : sel->text();
                 m_slice->setTxAntenna(text);
-                // Phase 3P-F Task 4: persist per-band TX assignment in AlexController.
-                // setTxAnt() respects blockTxAnt2/3 safety guards from Task 1.
-                if (m_model && m_pan) {
-                    int antNum = 1;
-                    if (text == QStringLiteral("ANT2")) { antNum = 2; }
-                    else if (text == QStringLiteral("ANT3")) { antNum = 3; }
-                    m_model->alexControllerMutable().setTxAnt(m_pan->band(), antNum);
-                }
             }
         });
         row->addWidget(m_txAntBtn);
