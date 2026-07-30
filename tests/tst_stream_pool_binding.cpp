@@ -656,6 +656,7 @@ private slots:
         const int b = model.addSlice();
         model.slices().at(b)->setFrequency(7150000.0);
 
+        const int streamA = model.slices().at(a)->streamIndex();
         const int streamB = model.slices().at(b)->streamIndex();
         QVERIFY(streamB > 0);
 
@@ -672,15 +673,27 @@ private slots:
                                    /*diversity*/ false);
         model.refreshDdcAssignmentForRadioState();
 
-        // The drop itself: stream B has no DDC any more. Faithful to Thetis.
-        QCOMPARE(model.suspendedStreams(), QVector<int>{streamB});
+        // The drop itself. Faithful to Thetis, and it takes the WHOLE radio:
+        // GetDDC's Hermes-class case 5 ("on off on", meaning mox with
+        // PureSignal) has an empty body (console.cs:8635-8636 [v2.10.3.15]),
+        // so rx1 and rx2 both come back -1. RX1 is dropped too, not just the
+        // extra receivers.
+        //
+        // This expectation used to read {streamB} alone. That was wrong, and
+        // it was wrong in a way that would have blocked the correct fix:
+        // P2CodecHermes set streamDdc[0] before branching, so stream 0 kept a
+        // stale DDC0 mapping through the PureSignal branch and never looked
+        // suspended. The assertion pinned the bug. (Codex review, PR #293.)
+        QCOMPARE(model.suspendedStreams(), (QVector<int>{streamA, streamB}));
 
         // The model must say so rather than leaving the operator to notice
         // the audio stopped. Slice B, not stream 1: the operator sees letters.
         QCOMPARE(spy.count(), 1);
-        QCOMPARE(spy.at(0).at(0).value<QVector<int>>(), QVector<int>{streamB});
+        QCOMPARE(spy.at(0).at(0).value<QVector<int>>(),
+                 (QVector<int>{streamA, streamB}));
         const QString reason = spy.at(0).at(1).toString();
         QVERIFY(!reason.isEmpty());
+        QVERIFY(reason.contains(QLatin1String("A")));
         QVERIFY(reason.contains(QLatin1String("B")));
         QVERIFY(reason.contains(QLatin1String("PureSignal")));
 
@@ -689,6 +702,16 @@ private slots:
         QCOMPARE(model.slices().at(b)->ddcIndex(), -1);
         QCOMPARE(model.slices().at(b)->streamIndex(), streamB);
         QCOMPARE(model.slices().at(b)->chainIndex(), 0);
+
+        // Codex review, PR #293: SliceModel::psPaused is what greys the pan
+        // and raises the PS HOLD pill (PanadapterApplet.cpp reads it), but no
+        // production code ever wrote it, so the overlay went on presenting a
+        // slice the radio had stopped streaming as live. Only the slice that
+        // actually lost its DDC is paused.
+        QVERIFY2(model.slices().at(a)->psPaused(),
+                 "slice A lost its DDC to PureSignal and must report psPaused");
+        QVERIFY2(model.slices().at(b)->psPaused(),
+                 "slice B lost its DDC to PureSignal and must report psPaused");
     }
 
     void unkeying_restores_the_suspended_streams()
@@ -705,11 +728,14 @@ private slots:
         model.slices().at(a)->setFrequency(14200000.0);
         const int b = model.addSlice();
         model.slices().at(b)->setFrequency(7150000.0);
+        const int streamA = model.slices().at(a)->streamIndex();
         const int streamB = model.slices().at(b)->streamIndex();
 
         model.setDdcContextForTest(true, true, false);
         model.refreshDdcAssignmentForRadioState();
-        QCOMPARE(model.suspendedStreams(), QVector<int>{streamB});
+        // Both, not just B: Hermes-class PureSignal drops RX1 as well. See the
+        // note on the same expectation in the suspend test above.
+        QCOMPARE(model.suspendedStreams(), (QVector<int>{streamA, streamB}));
 
         QSignalSpy spy(&model, &RadioModel::streamsSuspended);
 
@@ -718,11 +744,19 @@ private slots:
         model.refreshDdcAssignmentForRadioState();
 
         QVERIFY(model.suspendedStreams().isEmpty());
+        QVERIFY(model.slices().at(a)->ddcIndex() >= 0);
         QVERIFY(model.slices().at(b)->ddcIndex() >= 0);
         // One transition out, carrying an empty list so the UI can clear the
         // warning instead of leaving it up for its full timeout.
         QCOMPARE(spy.count(), 1);
         QVERIFY(spy.at(0).at(0).value<QVector<int>>().isEmpty());
+
+        // Codex review, PR #293: and the pause has to lift, or the pan stays
+        // greyed for the rest of the session once PureSignal has keyed once.
+        QVERIFY2(!model.slices().at(a)->psPaused(),
+                 "slice A got its DDC back and must no longer report psPaused");
+        QVERIFY2(!model.slices().at(b)->psPaused(),
+                 "slice B got its DDC back and must no longer report psPaused");
     }
 
     // The ORION class keeps its extra receivers through PureSignal
@@ -750,6 +784,15 @@ private slots:
         QVERIFY(model.suspendedStreams().isEmpty());
         QVERIFY(model.slices().at(a)->ddcIndex() >= 0);
         QVERIFY(model.slices().at(b)->ddcIndex() >= 0);
+
+        // Codex review, PR #293: psPaused has to discriminate, or it is just
+        // "is PureSignal transmitting" wearing a per-slice name. The ORION
+        // class keeps every receiver through PS, so no slice is paused even
+        // though MOX and PureSignal are both on.
+        QVERIFY2(!model.slices().at(a)->psPaused(),
+                 "ORION keeps its receivers through PS; slice A is not paused");
+        QVERIFY2(!model.slices().at(b)->psPaused(),
+                 "ORION keeps its receivers through PS; slice B is not paused");
     }
 
     // ── Phase 3F Sub-Epic I closeout, defect F4 ─────────────────────────

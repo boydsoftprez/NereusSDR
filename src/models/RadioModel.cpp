@@ -13890,6 +13890,28 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
         const bool validStream = st >= 0 && st < 5;
         s->setDdcIndex(validStream ? assignment.streamDdc[st] : -1);
         s->setChainIndex(validStream ? chainForStream(st) : -1);
+
+        // Codex review, PR #293: psPaused is what greys the pan and raises the
+        // PS HOLD pill (PanadapterApplet reads slice->psPaused() to drive
+        // SpectrumStatusOverlay), and nothing in production ever wrote it. The
+        // only callers were tests, so the property round-tripped perfectly
+        // while the overlay went on presenting a slice the radio had stopped
+        // streaming as live.
+        //
+        // Driven from the assignment rather than from the PureSignal
+        // coordinator, which is what its declaration originally proposed. The
+        // codec is the component that decides whether this slice still has a
+        // DDC, so reading its answer cannot drift from it; a parallel signal
+        // out of the PS coordinator would be a second opinion free to disagree,
+        // and disagreeing copies of one fact are most of what this branch has
+        // spent its time fixing.
+        //
+        // The condition is exactly the suspended-stream test below: a stream
+        // that still hosts slices and came back with no DDC. That set is not
+        // PureSignal-specific, so a diversity reclaim greys the pan too. The
+        // radio really has stopped streaming it in both cases, so greying is
+        // right; only the pill's wording is narrower than the state it shows.
+        s->setPsPaused(validStream && assignment.streamDdc[st] < 0);
     }
 
     // ── Phase 3F Sub-Epic I closeout, defect F3 ─────────────────────────
