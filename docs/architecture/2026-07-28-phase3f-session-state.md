@@ -1,33 +1,32 @@
-# Phase 3F session state and handoff, 2026-07-28 into 2026-07-29
+# Phase 3F session state and handoff, 2026-07-28 into 2026-07-30
 
-Working record for the next session. Written at the end of a long day on
+Working record for the next session on
 `feature/phase3f-sub-epic-a-foundation` (PR #293).
 
 ---
 
-## 0. READ THIS FIRST: another session is live in this worktree
+## 0. Worktree status
 
-At the time of writing, a chip session is **actively committing into this
-same branch and worktree**. When this file was written:
+**2026-07-30 update.** The concurrent session described here finished at
+`282779b0` on 2026-07-29 22:26 and pushed. The worktree was clean and idle
+when the 2026-07-30 session picked it up, with nothing in flight and no
+uncommitted edits. The warning below is kept because the hazard recurs
+whenever chips commit into this branch directly.
 
-- HEAD was `b62cfba9`, four commits past the `40cc9190` that was last
-  verified green at 568/568.
-- Four files were **uncommitted and mid-edit**:
-  `src/models/RadioModel.{h,cpp}`,
-  `tests/tst_band_plan_guard_mox_rejection.cpp`,
-  `tests/tst_radio_model_push_tx_mode_and_bandpass.cpp`.
-- Those four commits are a "PR 293 stabilization pass" (scope doc, plan
-  doc, a compliance provenance fix, and a slice/pan ownership fix).
-
-**Do not assume this branch is green, and do not assume it is idle.** Before
-doing anything, run `git status` and `git log`, and check whether work is in
-flight. Committing or rebasing over another session's uncommitted edits will
-destroy them.
+Before doing anything, run `git status` and `git log`, and check whether work
+is in flight. Committing or rebasing over another session's uncommitted edits
+will destroy them.
 
 The task ledger for the Sub-Epic J run is at
 `.superpowers/sdd/2026-07-28-phase3f-sub-epic-j-control-plane-plan/progress.md`,
-with per-task reports beside it. That directory is git-ignored, so it is
-local-only and does not survive a clean.
+with per-task reports beside it. The PR 293 stabilization pass has its own at
+`.superpowers/sdd/2026-07-29-pr293-stabilization-index/`. Both directories are
+git-ignored, so they are local-only and do not survive a clean.
+
+Note that the stabilization pass's own report states full-suite, label and
+smoke verification were left "controller-owned" and unperformed. The
+2026-07-30 session ran them: `all_tests` plus `ctest -j8` was green at
+568/568 on `282779b0`, and 570/570 after the three chip commits below.
 
 ---
 
@@ -80,19 +79,48 @@ committed, pushed, and on a PR ready for merge.
 
 | Chip | Subject | State |
 | --- | --- | --- |
-| `task_5a929186` | ANAN-G2E locks up on disconnect | **Done.** Became PR #306, now merged to main. Root cause was not our stop frame: teardown reopened ConnectionPanel, whose ctor auto-scans, so a discovery burst hit the radio 7 to 15 ms after `run=0`. Fix is a 3 s post-disconnect discovery quiet period. |
-| `task_16e1289c` | RX audio dies mid-session after TX or TUNE | Work landed in this branch as `d7c59434` ("the MOX barrier withdrawal cannot strand a slice"). **Verify it actually fixes the bench symptom before closing.** |
-| `task_c1e6fbad` | Per-slice gaps found during Sub-Epic J | Open. Covers NB tuning sliders hardcoded to channel 0, the TCI live-broadcast `rx_volume` path in `TciServer.cpp`, and APF/BIN stub shims. |
+| `task_5a929186` | ANAN-G2E locks up on disconnect | **Closed 2026-07-30.** Became PR #306, merged to main. All four commits (`5baaec33`, `443b5e1e`, `2dfe7f65`, merge `d1b497b2`) confirmed ancestors of this branch's HEAD. Root cause was not our stop frame: teardown reopened ConnectionPanel, whose ctor auto-scans, so a discovery burst hit the radio 7 to 15 ms after `run=0`. Fix is a 3 s post-disconnect discovery quiet period. |
+| `task_16e1289c` | RX audio dies mid-session after TX or TUNE | **Code landed and pushed**, `d7c59434` ("the MOX barrier withdrawal cannot strand a slice"), further hardened by finding H3 of the stabilization pass in `644936df` (mixer withdrawal / drain race). **Still bench-gated: do not close until the symptom is confirmed gone on the radio.** |
+| `task_c1e6fbad` | Per-slice gaps found during Sub-Epic J | **Closed 2026-07-30**, all three sub-items, on this branch. See below. |
+
+`task_c1e6fbad` closed as three commits:
+
+- `ca6c33cd` `rx_volume` was broadcast from `AudioEngine::volumeChanged`,
+  spraying one radio-global value across all four slots. Upstream drives it
+  from a separate per-rx event (`RXGainChangedHandlers` ->
+  `OnRxAfGainChanged` -> `RxAfGainChanged`, TCIServer.cs:6780 / 7722-7733 /
+  1118-1124 [v2.10.3.15]); `OnVolumeChanged` calls only `sendVolume`. Now
+  hangs off `SliceModel::afGainChanged` in `wireSliceForBroadcast`.
+- `0a8e63e6` NB1/NB2/SNB detail sliders wrote WDSP channel 0 only, and their
+  readiness gate probed channel 0 specifically so the whole page went dead
+  when that one channel was down. Upstream writes each knob to every receiver
+  (setup.cs:8603-8608 / 16260-16279 / 17007-17019 / 17647-17661
+  [v2.10.3.15]). `RadioModel::nbTuningTargetChannels()` plus eight
+  `setNb*AllRx` / `setSnb*AllRx` methods now own the fan-out. Note the
+  in-code TODO this replaced proposed per-slice `SliceModel` properties;
+  that would have been wrong, because NB lives on the DDC stream
+  (`cmaster.h:74-82`) and has no upstream per-receiver UI.
+- `56174c12` `setRxApf` / `setRxBin` stored into private arrays and read back
+  out, so a TCI client could enable APF or binaural, query it, be told it was
+  on, and reach no DSP. Both already had `SliceModel` properties wired to
+  `RxChannel`. Routed through `sliceById(rx)` and the dead arrays deleted.
+  `setRxNf` stays a stub deliberately: upstream is asymmetric (query reads
+  per-rx `GetMNF(rx + 1)`, set writes radio-global `TNFActive`,
+  TCIServer.cs:1895-1910 [v2.10.3.15]) and NereusSDR has no MNF/TNF model to
+  route either half to.
 
 Open PRs are only **#293** (draft, this branch) and **#291** (ready,
 `feature/rfkit-rf2ks-applet`, TX audio quality). Everything else has merged.
-The chips are committing directly into this branch rather than onto their own
+The chips commit directly into this branch rather than onto their own
 branches, which is why coordination matters.
 
 For each chip: confirm what actually landed, confirm it is committed and
 pushed, and either fold it into PR #293 or give it its own PR. Do not close a
-chip on an agent's report alone. Two fixes today were reported DONE with
-passing tests and did not work on the bench.
+chip on an agent's report alone. Two fixes on 2026-07-29 were reported DONE
+with passing tests and did not work on the bench.
+
+A chip fix that only a bench can confirm stays open until the bench confirms
+it. `task_16e1289c` is the live example.
 
 ---
 
@@ -155,11 +183,18 @@ syncs onto the active slice only. Also the 8-row Sub-Epic J matrix in its
 plan, and the **two-pan simultaneous audio listen test**, which is what
 started this whole thread and still has not been done.
 
-**2. Chip closeout**, per section 2.
+**2. Chip closeout**, per section 2. Two of three are closed; `task_16e1289c`
+needs the bench.
 
-**3. Merge decision on PR #293.** Roughly +59k lines over 100+ commits,
-draft, and **no Codex review has ever run on it**. Gate the merge on the
-bench matrix rather than the suite alone.
+**3. Merge decision on PR #293.** Roughly +67k lines over 103 commits, still
+draft, and **no review of any kind has ever run on it** (`reviewCount` is
+literally 0; the four comments on the PR are CT1IQI's two technical notes and
+two replies). Confirmed 2026-07-30: all nine CI checks pass, `mergeable` is
+MERGEABLE and `mergeStateStatus` is CLEAN, and the full suite is green at
+570/570 through the `all_tests` target. So nothing mechanical blocks the
+merge. What blocks it is judgement: an unreviewed +67k diff that reorganises
+the RX data plane, and a bench matrix that has never been run. Gate on those
+two, not on the suite.
 
 **4. Diversity.** The contributor's specification is the agreed target: DDC n
 and n+1 with n even, n synchronous on ADC0, n+1 on ADC1, Alex0 and Alex1
@@ -243,6 +278,25 @@ Each looked like coverage. That pattern found more real bugs today than
 writing new code did, and a deliberate sweep for it would likely find more.
 The general shape: **a check that reads a different thing than the code
 decides on is worse than no check, because it buys false confidence.**
+
+**2026-07-30 adds three more, all found by closing `task_c1e6fbad`:**
+
+- `setRxApf` / `setRxBin` stored into a private array and read back out of
+  it. `stub_dsp_toggles_roundtrip` asserted set-then-get and passed, because
+  round-trip through a variable is a tautology. The property that decides
+  anything, and that was already wired to WDSP, was never consulted. This was
+  the third appearance of this exact defect on this exact block of shims.
+- The NB Setup page's crash gate probed channel 0, then the writes it guarded
+  also went to channel 0. It read the same wrong thing the code decided on,
+  so it looked consistent while making the whole page dead whenever channel 0
+  in particular was down.
+- The stale comment is its own failure mode. The APF/BIN header said
+  "SliceModel doesn't expose these as Q_PROPERTYs yet" long after it did, and
+  that sentence is why the shims kept getting skipped. Comments asserting an
+  absence need re-checking as hard as code does.
+
+Corollary worth adding: **assert the destination, not the echo.** A test that
+sets a value and reads it back proves storage, never effect.
 
 ---
 
