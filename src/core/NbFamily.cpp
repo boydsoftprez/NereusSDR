@@ -409,61 +409,6 @@ void NbFamily::setNbLagMs(double hangMs)
 #endif
 }
 
-void NbFamily::setNb2Mode(int mode)
-{
-    m_tuning.nb2Mode = mode;
-#ifdef HAVE_WDSP
-    if (m_skipWdsp) return;
-    // From Thetis setup.cs:17017-17018 [v2.10.3.15] — comboDSPNOBmode:
-    //   console.radio.GetDSPRX(0, 0).NBMode = nbmode;
-    //   console.radio.GetDSPRX(1, 0).NBMode = nbmode;
-    // Raw pass-through of the combo index; the negative-index guard that
-    // precedes it upstream lives in the Setup page, which owns the combo.
-    SetEXTNOBMode(m_channelId, mode);
-#endif
-}
-
-// SNB knobs. These match the raw calls seedSnbFromSettings() makes at channel
-// create time, so a live slider move and a fresh channel converge on the same
-// WDSP state. Same OpenChannel precondition applies: rxa[m_channelId].snba must
-// exist or the SetRXASNBA* setters null-deref (Codex review PR #120, P2).
-void NbFamily::setSnbK1(double k1)
-{
-#ifdef HAVE_WDSP
-    if (m_skipWdsp) return;
-    // From Thetis setup.cs:17650-17652 [v2.10.3.15] — udDSPSNBThresh1:
-    //   WDSP.SetRXASNBAk1(WDSP.id(0, 0), (double)udDSPSNBThresh1.Value);
-    //   WDSP.SetRXASNBAk1(WDSP.id(0, 1), (double)udDSPSNBThresh1.Value);
-    //   WDSP.SetRXASNBAk1(WDSP.id(2, 0), (double)udDSPSNBThresh1.Value);
-    SetRXASNBAk1(m_channelId, k1);
-#else
-    Q_UNUSED(k1);
-#endif
-}
-
-void NbFamily::setSnbK2(double k2)
-{
-#ifdef HAVE_WDSP
-    if (m_skipWdsp) return;
-    // From Thetis setup.cs:17658-17660 [v2.10.3.15] — udDSPSNBThresh2.
-    SetRXASNBAk2(m_channelId, k2);
-#else
-    Q_UNUSED(k2);
-#endif
-}
-
-void NbFamily::setSnbOutputBandwidthHz(int bwHz)
-{
-#ifdef HAVE_WDSP
-    if (m_skipWdsp) return;
-    // Symmetric around DC, matching seedSnbFromSettings() above.
-    const double half = static_cast<double>(bwHz) / 2.0;
-    SetRXASNBAOutputBandwidth(m_channelId, -half, half);
-#else
-    Q_UNUSED(bwHz);
-#endif
-}
-
 // Live sample-rate change. Re-ports the receiver branch of Thetis
 // cmaster.c:464-470 SetXcmInrate [v2.10.3.13]:
 //   SetRCVRANBBuffsize  (0, rx, pcm->xcm_insize[in_id]);
