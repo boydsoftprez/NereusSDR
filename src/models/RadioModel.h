@@ -1828,14 +1828,24 @@ public slots:
     Q_INVOKABLE void setRxAnf(int rx, bool on);
     Q_INVOKABLE bool rxAnf(int rx) const;
 
-    // ── Stub categories: SliceModel doesn't expose these as Q_PROPERTYs yet ─
-    // Each stub stores the requested value in a small per-slice array so
-    // round-trip (set then get) returns the operator's last value.  Real
-    // wiring to WDSP comes when the underlying feature lands.
+    // setRxBin / rxBin: routes to SliceModel::binauralEnabled.
+    // setRxApf / rxApf: routes to SliceModel::apfEnabled.
+    // Both are per-receiver upstream (handleRxBinEnable TCIServer.cs:1854-1869,
+    // handleRxApfEnable TCIServer.cs:1870-1894 [v2.10.3.15]) and both already
+    // had SliceModel properties wired to RxChannel, but Phase 3F chip
+    // task_c1e6fbad found these two shims still storing into private arrays
+    // and reading straight back out, so a TCI client could set either one, be
+    // told it took effect, and change nothing in the DSP chain.
     Q_INVOKABLE void setRxBin(int rx, bool on);
     Q_INVOKABLE bool rxBin(int rx) const;
     Q_INVOKABLE void setRxApf(int rx, bool on);
     Q_INVOKABLE bool rxApf(int rx) const;
+
+    // ── Stub categories: SliceModel doesn't expose these as Q_PROPERTYs yet ─
+    // Each stub stores the requested value in a small per-slice array so
+    // round-trip (set then get) returns the operator's last value.  Real
+    // wiring to WDSP comes when the underlying feature lands.  NF also has an
+    // upstream asymmetry to resolve first (see setRxNf in RadioModel.cpp).
     Q_INVOKABLE void setRxNf(int rx, bool on);
     Q_INVOKABLE bool rxNf(int rx) const;
     Q_INVOKABLE void setRxEnable(int rx, bool on);
@@ -3149,8 +3159,11 @@ private:
     // PR #279 review P1 (2026-05-22).
     QString     m_tciAudioStreamSampleType{QStringLiteral("float32")};
     // Per-slice DSP toggle stubs (set-and-read only; not wired to WDSP).
-    std::array<bool, kTciStubSliceMax> m_tciStubRxBin{};
-    std::array<bool, kTciStubSliceMax> m_tciStubRxApf{};
+    // BIN and APF used to live here too; Phase 3F chip task_c1e6fbad routed
+    // them to SliceModel::binauralEnabled / apfEnabled, which are wired to
+    // RxChannel, and deleted their arrays rather than leaving state nothing
+    // reads. NF stays because upstream is asymmetric about it -- see the
+    // setRxNf comment in RadioModel.cpp.
     std::array<bool, kTciStubSliceMax> m_tciStubRxNf{};
     std::array<bool, kTciStubSliceMax> m_tciStubRxCtun{};
     std::array<bool, kTciStubSliceMax> m_tciStubRxEnable{ {true, false, false, false} };

@@ -450,21 +450,24 @@ private slots:
     void stub_dsp_toggles_roundtrip() {
         RadioModel m;
         setupOneSlice(m);
-        // setRxBin / setRxApf / setRxNf / setRxEnable / setRxCtun share the
-        // same per-slice atomic-stub backing storage (m_tciStubRx*).  setRxAnf
-        // used to reuse this same group (aliased onto the APF slot) until
-        // Phase 3F Sub-Epic J Task 10 routed it to SliceModel::anfEnabled --
-        // see anf_routes_to_slice_anf_enabled / anf_no_longer_aliases_apf
-        // below for that shim's own coverage.
+        // setRxNf / setRxEnable / setRxCtun are what is left on the per-slice
+        // stub backing storage (m_tciStubRx*).  Three shims have since moved
+        // off it to real SliceModel properties: setRxAnf in Phase 3F Sub-Epic J
+        // Task 10, then setRxApf and setRxBin in chip task_c1e6fbad.  Their
+        // coverage is anf_routes_to_slice_anf_enabled,
+        // apf_routes_to_slice_apf_enabled and
+        // bin_routes_to_slice_binaural_enabled below.  Round-trip still holds
+        // for all of them, which is exactly why round-trip alone never caught
+        // that the stubbed ones reached no DSP: assert the destination, not
+        // just the echo.
         for (const QByteArray name :
-             {"setRxBin", "setRxApf", "setRxNf",
-              "setRxEnable", "setRxCtun"})
+             {"setRxNf", "setRxEnable", "setRxCtun"})
         {
             QMetaObject::invokeMethod(&m, name.constData(),
                                       Q_ARG(int, 0), Q_ARG(bool, true));
         }
         const QByteArray getters[] = {
-            "rxBin", "rxApf", "rxNf", "rxEnable", "rxCtun"
+            "rxNf", "rxEnable", "rxCtun"
         };
         for (const QByteArray& g : getters) {
             bool out = false;
@@ -529,6 +532,89 @@ private slots:
         QVERIFY2(!apfAfter,
                  "setRxAnf must not flip APF's stored state (pre-Task-10 "
                  "bug: both shims aliased the same m_tciStubRxApf array)");
+    }
+
+    // Phase 3F chip task_c1e6fbad: APF and BIN join ANF in routing to their
+    // real SliceModel properties.  Both existed as Q_PROPERTYs wired to WDSP
+    // (RadioModel.cpp connects apfEnabledChanged -> RxChannel::setApfEnabled
+    // and binauralEnabledChanged -> RxChannel::setBinauralEnabled) while these
+    // two shims still stored into m_tciStubRxApf / m_tciStubRxBin and read
+    // straight back out, so a TCI client could set APF or BIN, be told it took
+    // effect, and change nothing in the DSP chain.
+    //
+    // Upstream is per-receiver for both:
+    //   handleRxBinEnable  TCIServer.cs:1854-1869 [v2.10.3.15]
+    //       consoleThreadSafe.SetBin(rx + 1, enabled) / GetBin(rx + 1)
+    //   handleRxApfEnable  TCIServer.cs:1870-1894 [v2.10.3.15]
+    //       SetupForm.RX1APFEnable / RX2APFEnable
+    void apf_routes_to_slice_apf_enabled() {
+        RadioModel m;
+        SliceModel* slice = setupOneSlice(m);
+        QVERIFY(slice);
+        QVERIFY(!slice->apfEnabled());  // Neutral default per SliceModel.h.
+
+        QMetaObject::invokeMethod(&m, "setRxApf",
+                                  Q_ARG(int, 0), Q_ARG(bool, true));
+        QVERIFY2(slice->apfEnabled(),
+            "setRxApf must reach SliceModel::apfEnabled, which is the property "
+            "RadioModel wires to RxChannel::setApfEnabled");
+
+        bool out = false;
+        QMetaObject::invokeMethod(&m, "rxApf",
+                                  Q_RETURN_ARG(bool, out),
+                                  Q_ARG(int, 0));
+        QVERIFY(out);
+
+        QMetaObject::invokeMethod(&m, "setRxApf",
+                                  Q_ARG(int, 0), Q_ARG(bool, false));
+        QVERIFY(!slice->apfEnabled());
+    }
+
+    void bin_routes_to_slice_binaural_enabled() {
+        RadioModel m;
+        SliceModel* slice = setupOneSlice(m);
+        QVERIFY(slice);
+        QVERIFY(!slice->binauralEnabled());  // Neutral default.
+
+        QMetaObject::invokeMethod(&m, "setRxBin",
+                                  Q_ARG(int, 0), Q_ARG(bool, true));
+        QVERIFY2(slice->binauralEnabled(),
+            "setRxBin must reach SliceModel::binauralEnabled, which is the "
+            "property RadioModel wires to RxChannel::setBinauralEnabled");
+
+        bool out = false;
+        QMetaObject::invokeMethod(&m, "rxBin",
+                                  Q_RETURN_ARG(bool, out),
+                                  Q_ARG(int, 0));
+        QVERIFY(out);
+
+        QMetaObject::invokeMethod(&m, "setRxBin",
+                                  Q_ARG(int, 0), Q_ARG(bool, false));
+        QVERIFY(!slice->binauralEnabled());
+    }
+
+    // The shim array was one-per-rx, so a fix that routed only the active
+    // slice would still read correct here on a one-slice model.  Two slices,
+    // and only the addressed one may move.
+    void apf_and_bin_address_the_requested_slice() {
+        RadioModel m;
+        const int slice0Id = m.addSlice();
+        const int slice1Id = m.addSlice();
+        SliceModel* slice0 = m.sliceById(slice0Id);
+        SliceModel* slice1 = m.sliceById(slice1Id);
+        QVERIFY(slice0 && slice1 && slice0 != slice1);
+
+        QMetaObject::invokeMethod(&m, "setRxApf",
+                                  Q_ARG(int, slice1Id), Q_ARG(bool, true));
+        QMetaObject::invokeMethod(&m, "setRxBin",
+                                  Q_ARG(int, slice1Id), Q_ARG(bool, true));
+
+        QVERIFY(slice1->apfEnabled());
+        QVERIFY(slice1->binauralEnabled());
+        QVERIFY2(!slice0->apfEnabled(),
+            "APF on one receiver must not follow onto another");
+        QVERIFY2(!slice0->binauralEnabled(),
+            "BIN on one receiver must not follow onto another");
     }
 
     void calibration_getters_return_zero() {

@@ -11889,8 +11889,9 @@ int RadioModel::rxNrIndex(int rx) const
 // (rxAnf(rx) and rxApf(rx) read the identical bool) and (b) never touched
 // real WDSP ANF at all, since nothing read m_tciStubRxApf back out into the
 // DSP chain.  Routed through sliceById(rx) now, matching every other
-// per-slice shim in this section; m_tciStubRxApf is untouched here and
-// still backs setRxApf/rxApf below (APF has not been migrated off it).
+// per-slice shim in this section.  Phase 3F chip task_c1e6fbad finished the
+// job: APF and BIN moved to their own SliceModel properties too and the stub
+// arrays are gone, so nothing aliases anything here any more.
 void RadioModel::setRxAnf(int rx, bool on)
 {
     if (auto* s = sliceById(rx)) { s->setAnfEnabled(on); }
@@ -11901,25 +11902,52 @@ bool RadioModel::rxAnf(int rx) const
     return false;
 }
 
-// ── Stub DSP toggles (no model state yet) ───────────────────────────────────
+// BIN: Thetis's binaural toggle is per receiver, handleRxBinEnable at
+// TCIServer.cs:1854-1869 [v2.10.3.15] -- consoleThreadSafe.SetBin(rx + 1,
+// enabled) on the set path, GetBin(rx + 1) on the query path.  NereusSDR's
+// analog is SliceModel::binauralEnabled, which RadioModel already wires to
+// RxChannel::setBinauralEnabled in the per-slice connect block above.
+//
+// Phase 3F chip task_c1e6fbad: this pair used to store into m_tciStubRxBin
+// and read straight back out, so a TCI client set BIN, was told it took
+// effect, and nothing in the DSP chain moved.  Same defect the ANF shim had
+// before Task 10, and the same fix: route through sliceById(rx).
 void RadioModel::setRxBin(int rx, bool on)
 {
-    if (rx >= 0 && rx < kTciStubSliceMax) { m_tciStubRxBin[rx] = on; }
+    if (auto* s = sliceById(rx)) { s->setBinauralEnabled(on); }
 }
 bool RadioModel::rxBin(int rx) const
 {
-    if (rx >= 0 && rx < kTciStubSliceMax) { return m_tciStubRxBin[rx]; }
+    if (const auto* s = sliceById(rx)) { return s->binauralEnabled(); }
     return false;
 }
+
+// APF: also per receiver upstream, handleRxApfEnable at TCIServer.cs:1870-1894
+// [v2.10.3.15] -- SetupForm.RX1APFEnable / RX2APFEnable.  Thetis holds the
+// state on the Setup form and bails when that form is null; NereusSDR keeps it
+// on the slice (SliceModel::apfEnabled, wired to RxChannel::setApfEnabled), so
+// there is no equivalent null-form gate to port.  Same stub-to-real routing as
+// BIN above.
 void RadioModel::setRxApf(int rx, bool on)
 {
-    if (rx >= 0 && rx < kTciStubSliceMax) { m_tciStubRxApf[rx] = on; }
+    if (auto* s = sliceById(rx)) { s->setApfEnabled(on); }
 }
 bool RadioModel::rxApf(int rx) const
 {
-    if (rx >= 0 && rx < kTciStubSliceMax) { return m_tciStubRxApf[rx]; }
+    if (const auto* s = sliceById(rx)) { return s->apfEnabled(); }
     return false;
 }
+
+// ── Stub DSP toggles (no model state yet) ───────────────────────────────────
+//
+// NF stays a stub, and deliberately so: upstream is asymmetric here.
+// handleRxNfEnable (TCIServer.cs:1895-1910 [v2.10.3.15]) answers a query with
+// the PER-RX notch state, consoleThreadSafe.GetMNF(rx + 1), but a set writes
+// the RADIO-GLOBAL consoleThreadSafe.TNFActive = enabled.  NereusSDR has no
+// MNF/TNF model to route either half to yet, and guessing which of the two
+// semantics to adopt would bake in a choice the upstream itself does not make
+// consistently.  Left storing and reading its own value so a round-trip still
+// returns what the operator last set.
 void RadioModel::setRxNf(int rx, bool on)
 {
     if (rx >= 0 && rx < kTciStubSliceMax) { m_tciStubRxNf[rx] = on; }
