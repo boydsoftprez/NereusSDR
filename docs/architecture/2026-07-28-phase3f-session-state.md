@@ -83,29 +83,56 @@ committed, pushed, and on a PR ready for merge.
 | `task_16e1289c` | RX audio dies mid-session after TX or TUNE | **Code landed and pushed**, `d7c59434` ("the MOX barrier withdrawal cannot strand a slice"), further hardened by finding H3 of the stabilization pass in `644936df` (mixer withdrawal / drain race). **Still bench-gated: do not close until the symptom is confirmed gone on the radio.** |
 | `task_c1e6fbad` | Per-slice gaps found during Sub-Epic J | **Closed 2026-07-30**, all three sub-items, on this branch. See below. |
 
-`task_c1e6fbad` closed as three commits:
+`task_c1e6fbad` closed. **Read this part before starting any chip work.**
 
-- `ca6c33cd` `rx_volume` was broadcast from `AudioEngine::volumeChanged`,
-  spraying one radio-global value across all four slots. Upstream drives it
-  from a separate per-rx event (`RXGainChangedHandlers` ->
-  `OnRxAfGainChanged` -> `RxAfGainChanged`, TCIServer.cs:6780 / 7722-7733 /
-  1118-1124 [v2.10.3.15]); `OnVolumeChanged` calls only `sendVolume`. Now
-  hangs off `SliceModel::afGainChanged` in `wireSliceForBroadcast`.
-- `0a8e63e6` NB1/NB2/SNB detail sliders wrote WDSP channel 0 only, and their
-  readiness gate probed channel 0 specifically so the whole page went dead
-  when that one channel was down. Upstream writes each knob to every receiver
-  (setup.cs:8603-8608 / 16260-16279 / 17007-17019 / 17647-17661
-  [v2.10.3.15]). `RadioModel::nbTuningTargetChannels()` plus eight
-  `setNb*AllRx` / `setSnb*AllRx` methods now own the fan-out. Note the
-  in-code TODO this replaced proposed per-slice `SliceModel` properties;
-  that would have been wrong, because NB lives on the DDC stream
-  (`cmaster.h:74-82`) and has no upstream per-receiver UI.
-- `56174c12` `setRxApf` / `setRxBin` stored into private arrays and read back
-  out, so a TCI client could enable APF or binaural, query it, be told it was
-  on, and reach no DSP. Both already had `SliceModel` properties wired to
-  `RxChannel`. Routed through `sliceById(rx)` and the dead arrays deleted.
-  `setRxNf` stays a stub deliberately: upstream is asymmetric (query reads
-  per-rx `GetMNF(rx + 1)`, set writes radio-global `TNFActive`,
+The chip's own session had already fixed all three sub-items and had never
+pushed. Its three commits sat in
+`.claude/worktrees/upbeat-rhodes-7dad5d` on `claude/upbeat-rhodes-7dad5d`,
+reachable from no origin ref. The 2026-07-30 session checked the chips
+against branch HEAD exactly as the rule below says, saw nothing, and did the
+work a second time.
+
+**Checking HEAD is not sufficient.** A chip that commits locally and does not
+push is indistinguishable from a chip that did nothing. Before starting chip
+work, also check the chip's own worktree:
+
+```
+git -C .claude/worktrees/<session-worktree> log --oneline origin/main..HEAD
+git -C .claude/worktrees/<session-worktree> branch -r --contains HEAD
+```
+
+An empty second command means that work exists nowhere but that folder.
+
+What the branch carries now, after reconciling the two:
+
+- `994177c2` (theirs, cherry-picked) NB1/NB2/SNB detail tuning. Where WDSP
+  keeps the state decides the design: `SetEXTANB*` -> `panb[id]`
+  (`wdsp/nob.c:376-423`), `SetEXTNOBMode` -> `pnob[id]`
+  (`wdsp/nobII.c:658-663`), both per receiver; `SetRXASNBA*` ->
+  `rxa[channel].snba` (`wdsp/snb.c:621-670`), per RXA channel. So the five
+  NB1/NB2 knobs are per-slice with stream-shared mirroring across
+  `slicesOnStream`, matching `nbMode`, and the three SNB knobs stay
+  independent. Adds 8 `SliceModel` properties, per-slice per-band
+  persistence, and a one-time fallback to the old radio-global keys.
+  Supersedes `0a8e63e6` (reverted at `06247179`), which read Thetis's Setup
+  page and wrote every knob to every receiver. That is faithful to a console
+  with exactly two receivers and loses per-slice control on ours, and it
+  misses the Sub-Epic I Task 4b hazard where the stream's single blanking
+  pass goes to whichever co-host reaches `processIq` first.
+- `6fbd23d3` (theirs, cherry-picked) `rx_volume` plus `rx_anf_enable` live
+  broadcast. The `rx_volume` half matches `ca6c33cd` (reverted at `3189cbf8`)
+  exactly, down to the citations. The extra half is the one that was missed:
+  `rx_anf_enable`'s broadcast hung off `activeNrChanged`, which stopped
+  firing on a pure ANF toggle once Task 1 gave ANF its own property, so
+  flipping ANF told no connected client until reconnect. Thetis subscribes
+  to ANF separately (`ANFChangedHandlers`, TCIServer.cs:6761 [v2.10.3.15]).
+- `56174c12` (kept) `setRxApf` / `setRxBin` stored into private arrays and
+  read back out, so a TCI client could enable APF or binaural, query it, be
+  told it was on, and reach no DSP. Both already had `SliceModel` properties
+  wired to `RxChannel`. Routed through `sliceById(rx)` and the dead arrays
+  deleted. Functionally equivalent to the chip's `d28bf1c4`; this one also
+  records why `setRxNf` stays a stub, namely that upstream is asymmetric
+  (query reads per-rx `GetMNF(rx + 1)`, set writes radio-global `TNFActive`,
   TCIServer.cs:1895-1910 [v2.10.3.15]) and NereusSDR has no MNF/TNF model to
   route either half to.
 
@@ -121,6 +148,46 @@ with passing tests and did not work on the bench.
 
 A chip fix that only a bench can confirm stays open until the bench confirms
 it. `task_16e1289c` is the live example.
+
+### Sessions holding unpushed work, 2026-07-30
+
+Archiving a session deletes its worktree. These were found holding work that
+exists on no origin ref, so they must not be archived until it is landed or
+deliberately dropped:
+
+| Worktree | At risk |
+| --- | --- |
+| `upbeat-rhodes-7dad5d` | the chip work above; two of three now cherry-picked onto this branch |
+| `container-refactor-worktree-cf9a3b` | 46 commits, meters / ANAN MM refactor |
+| `heuristic-keller-530529` | 3 design docs, remote daemon (nereusd) architecture |
+| `wonderful-boyd-27018b` | 3 uncommitted files plus 1 unpushed commit |
+| `tx-display` | 1 uncommitted file, 32 commits |
+| 6 others | 1 to 2 uncommitted files each: `awesome-yalow-c268f7`, `elegant-liskov-73ad75`, `gifted-pike-182801`, `strange-dubinsky-6f972f`, `sweet-dewdney-00b0fd`, `thirsty-ellis-558747` |
+
+Confirmed safe, everything on origin: `angry-maxwell-3a8f5b` (the G2E bench
+session), `intelligent-ellis-8e5932` (the `task_16e1289c` chip), and the two
+`agent-*` 3F worktrees.
+
+The session list's `prNumber` / `prState` fields are stale and cannot be
+trusted: several PRs it reports OPEN are merged. Re-check with `gh pr view`
+before acting on them.
+
+### One Codex fix that belongs here and is not here
+
+`9c3f9f72` (`fix(spectrum): initialize and release the overlay textures
+[Codex P1 + P2]`) lives only on `feature/rfkit-rf2ks-applet`, PR #291, which
+has never merged to main. Both of its defects are live in this branch's tree:
+`m_overlayStatic` / `m_overlayDynamic` are allocated without `fill()` so the
+waterfall region composites uninitialised memory after init or resize, and
+`releaseResources()` unlocks only `m_overlayDynamic` while
+`initOverlayPipeline()` locks both and re-runs on device or surface
+recreation, leaking a MemoryLock registration every time.
+
+It matters more here than where it was fixed. This branch is the
+multi-panadapter epic, so every pan is its own SpectrumWidget with its own
+overlay pair and both faults scale with pan count. The patch applies cleanly
+to this branch (one file, +26 lines). PR #291 is CONFLICTING and cannot merge
+as-is, so waiting for it couples a 26-line fix to an 85-file untangle.
 
 ---
 
