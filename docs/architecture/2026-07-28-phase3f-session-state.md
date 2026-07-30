@@ -272,10 +272,26 @@ diversity id rather than the channel id, and `pdiv[id]` dereferences
 unallocated state and **crashes for id >= 2**. Sub-Epic G landed only 4 of
 its 25 tasks.
 
-**5. Design tension worth its own look.** The antenna is per-band-global in
-`AlexController` while ADC routing is per-slice in the codec, so the two
-models do not fully compose on a multi-slice radio. It works for the current
-operator flow.
+**5. Per-slice antenna versus ADC routing. Diagnosed 2026-07-30, not fixed.**
+This was recorded here as a design tension that "works for the current
+operator flow". It does not. Two slices on the SAME band, second slice set to
+EXT1: the selection applies, a sibling slice reverts it 2.6 s later, and
+neither pan ever reaches chain 1.
+
+Two root causes, both verified in code against a live G2 log. The antenna is
+stored per band rather than per slice, so two slices on 80m share one value
+and the one on ANT1 clears the other's EXT1 for the whole band. And
+`SliceStreamAllocator` places slices by frequency alone, so it co-hosts a pair
+whose antennas have just made co-hosting impossible: one stream is one DDC,
+and one DDC has one ADC.
+
+Both have to move together, because fixing either alone leaves the symptom.
+Full diagnosis, log evidence, and the constraints a fix must respect:
+`docs/architecture/2026-07-30-per-slice-antenna-adc-routing.md`.
+
+Agreed plan: PR #293 ships as is with this recorded as a known limitation,
+and the fix runs as its own branch afterwards. Row 17 of the G2 matrix now
+covers the same-band case that rows 15 and 16 structurally cannot catch.
 
 ---
 
