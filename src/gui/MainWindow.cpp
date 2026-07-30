@@ -5129,6 +5129,26 @@ void MainWindow::buildMenuBar()
                         const QString panId = QStringLiteral("pan-%1").arg(i);
                         m_radioModel->addSliceOnPan(panId);
                     }
+
+                    // Codex review, PR #293: the loop above only ever adds, so
+                    // with existing > target its body never ran and shrinking
+                    // the layout left slices pointing at panes applyLayout had
+                    // just deleted. They lost their VFO widget, did not come
+                    // back when the layout was re-expanded because nothing
+                    // emitted panKeyChanged, and held their DDC, stream and
+                    // audio throughout.
+                    //
+                    // The reconciliation lives on RadioModel so that it can be
+                    // tested; this lambda cannot be (see
+                    // tst_slice_rehome_on_layout_shrink, and §6 of the Phase 3F
+                    // session-state doc on MainWindow not being constructible
+                    // in the harness).
+                    const int rehomed = m_radioModel->rehomeSlicesToPans(ids);
+                    if (rehomed > 0) {
+                        qCInfo(lcContainer) << "Layout shrink: rehomed"
+                                            << rehomed << "slice(s) onto"
+                                            << ids.value(0);
+                    }
                 }
             }
         });

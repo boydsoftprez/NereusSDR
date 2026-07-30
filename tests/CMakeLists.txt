@@ -5676,6 +5676,10 @@ nereus_add_test(tst_p2_wideband_marshalling)
 # from whichever slice happened to change last.
 nereus_add_test(tst_wideband_chain_state)
 
+# Codex review, PR #293: shrinking the pan layout must rehome the slices whose
+# panes were deleted, not orphan them holding a DDC.
+nereus_add_test(tst_slice_rehome_on_layout_shrink)
+
 # Phase 3F Sub-Epic C Task 7: RadioModel slice lifecycle.
 # 2 tests: addSliceOnPan_exists_and_is_callable (cap enforcement after
 # the first successful add), removeSlice_refuses_to_remove_last_slice

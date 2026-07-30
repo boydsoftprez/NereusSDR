@@ -667,6 +667,30 @@ public:
     /// (+RX button handler).
     Q_INVOKABLE void addSliceOnPan(const QString& panId);
 
+    /// Re-point any slice whose pan is not in `livePanIds` at the first one
+    /// that is. Returns how many moved.
+    ///
+    /// Codex review, PR #293. Shrinking the pan layout deleted the omitted
+    /// PanadapterApplets, but the slice-side loop in MainWindow only ever
+    /// added (`for (i = existing; i < target; ++i)`), so with existing >
+    /// target its body never ran. Slices whose panKey named a deleted pane
+    /// were left pointing at nothing: their VFO widgets went with the pane,
+    /// re-expanding did not re-associate them because nothing emitted
+    /// panKeyChanged, and they went on holding a DDC, a stream and audio.
+    ///
+    /// Rehomes rather than removes. A slice carries the operator's frequency,
+    /// mode, filter and DSP state, and throwing that away as a side effect of
+    /// picking a smaller layout is destructive and was never asked for.
+    ///
+    /// An empty `livePanIds` is a no-op: there is nowhere to move to, and
+    /// leaving a slice on a stale pan id beats pointing it at an empty string
+    /// that no pane will ever match.
+    ///
+    /// Lives here rather than in the MainWindow lambda that has the defect,
+    /// because MainWindow is not constructible in the test harness and logic
+    /// put there cannot be tested at all.
+    int rehomeSlicesToPans(const QStringList& livePanIds);
+
     /// Phase 3F closeout — public helper for invoking the antennaAutoSwitched
     /// signal from operator surfaces (Tools menu "Test antenna switch toast"
     /// entry) and from future conflict-detection logic in AlexController.

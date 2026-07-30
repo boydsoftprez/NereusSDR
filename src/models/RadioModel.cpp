@@ -13746,6 +13746,29 @@ void RadioModel::stopExternalDiversityRoute()
     m_externalDiversityChunkSize = 0;
 }
 
+// Codex review, PR #293. See RadioModel.h for the defect and for why this
+// rehomes instead of removing.
+int RadioModel::rehomeSlicesToPans(const QStringList& livePanIds)
+{
+    if (livePanIds.isEmpty()) {
+        return 0;
+    }
+
+    const QString survivor = livePanIds.first();
+    int moved = 0;
+    for (SliceModel* s : std::as_const(m_slices)) {
+        if (!s) { continue; }
+        if (livePanIds.contains(s->panKey())) { continue; }
+        // setPanKey emits panKeyChanged, which is what MainWindow needs in
+        // order to move the slice's VfoWidget onto the surviving pan. Its
+        // absence was half the defect: even re-expanding the layout left the
+        // recreated pane with no flag on it.
+        s->setPanKey(survivor);
+        ++moved;
+    }
+    return moved;
+}
+
 // Codex review, PR #293. See RadioModel.h for why this is a chain property
 // rather than a slice one.
 bool RadioModel::widebandActiveForChain(int chainIdx) const
