@@ -382,6 +382,23 @@ public:
     /// callers go through here so there is one push and not two copies of it.
     void pushWidebandStateForChain(int chainIdx);
 
+    /// Push every filter chain's wideband state.
+    ///
+    /// Codex review round 4, PR #293, and the reason this is a sweep rather
+    /// than another trigger. The answer for a chain changes on more inputs
+    /// than one signal can name: a slice's request moving, a slice being
+    /// removed, and a slice migrating between chains when its antenna moves
+    /// its DDC to the other ADC. Each of those was found in a separate review
+    /// round, because each was wired as its own hook and the next one was
+    /// always missing.
+    ///
+    /// Reconciling every chain from current state instead makes the operation
+    /// idempotent and complete: any input can change however it likes, and one
+    /// sweep afterwards is correct. Called from publishDdcAssignment, which
+    /// already recomputes DDC, chain and psPaused for every slice the same
+    /// way, so chain migration is covered by construction.
+    void reconcileWidebandForAllChains();
+
     /// Operator-facing sentence naming WHY the given chain is bypassed.
     /// One string per cause, per design doc §16.4.4. Public so the Filter
     /// Policy dialog can show the same wording the badge tooltip carries.
@@ -702,6 +719,22 @@ public:
     /// because MainWindow is not constructible in the test harness and logic
     /// put there cannot be tested at all.
     int rehomeSlicesToPans(const QStringList& livePanIds);
+
+    /// Which of `panIds` currently host no slice, in the order given.
+    ///
+    /// Codex review round 4, PR #293, and a regression rehomeSlicesToPans
+    /// created. The layout handler decided which pans to populate with
+    /// `for (i = slices().size(); i < target; ++i)`, which assumes the slice
+    /// COUNT is the first unoccupied pan index. Rehoming breaks that: shrink
+    /// a 2x2 to one pane and all four slices land on pan-0, so expanding back
+    /// has existing == target == 4, the loop adds nothing, and three panes
+    /// come up with no VFO and no RX entry. Co-hosting slices by hand, or
+    /// removing a non-final slice id, breaks the same assumption.
+    ///
+    /// Occupancy is the question the caller is actually asking, so it is the
+    /// question answered here. Co-hosted slices count once: a pan with three
+    /// slices on it is occupied, not three-times occupied.
+    QStringList pansWithoutSlices(const QStringList& panIds) const;
 
     /// Phase 3F closeout — public helper for invoking the antennaAutoSwitched
     /// signal from operator surfaces (Tools menu "Test antenna switch toast"

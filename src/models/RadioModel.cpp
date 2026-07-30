@@ -4300,11 +4300,12 @@ int RadioModel::addSlice(const QString& initialPanId)
     // (Sub-Epic F Task 1 wiring) so the radio starts streaming the
     // wideband packets.  Off-flip restores both.
     connect(slice, &SliceModel::widebandExtensionRequestedChanged, this,
-            [this, slice](bool) {
+            [this](bool) {
         // The incoming boolean is deliberately ignored. SliceModel has already
-        // committed it, so the recompute inside pushWidebandStateForChain
-        // reads the new value along with every other slice's.
-        pushWidebandStateForChain(slice->chainIndex());
+        // committed it, so the sweep reads the new value along with every
+        // other slice's. Sweeping rather than pushing just this slice's chain
+        // keeps one entry point for the whole reconciliation.
+        reconcileWidebandForAllChains();
     });
 
     if (!m_activeSlice) {
@@ -4373,11 +4374,6 @@ void RadioModel::removeSlice(int sliceId)
         m_txSliceArbiter->requestHandoff(fallback->sliceIndex());
     }
 
-    // Captured before the removal: afterwards the slice is out of m_slices,
-    // and widebandActiveForChain has nothing left to tell it which chain to
-    // recompute. (Codex review round 3, PR #293.)
-    const int departedChain = m_slices.at(position)->chainIndex();
-
     SliceModel* slice = m_slices.takeAt(position);
 
     // Reassert the invariant after the victim leaves the list.
@@ -4385,12 +4381,13 @@ void RadioModel::removeSlice(int sliceId)
         m_txSliceArbiter->syncToSliceList();
     }
 
-    // Removing a slice changes its chain's wideband answer without any request
-    // property moving, and the handler only runs on those edges. So taking
-    // away the sole requester left the preselector bypassed and the radio
-    // still streaming wideband until some unrelated slice happened to toggle.
-    // Recomputed here against whichever slices survive.
-    pushWidebandStateForChain(departedChain);
+    // No explicit wideband push here. removeSlice reaches
+    // reconcileWidebandForAllChains through requestDdcAssignment below, which
+    // calls invokeCodecDdcAssignment and then publishDdcAssignment directly on
+    // this thread. Round 3 added a hook here; round 4 replaced the whole
+    // per-trigger approach with that sweep, and a second call would be exactly
+    // the duplicate-owner pattern this branch keeps paying for. Verified by
+    // removing it and watching the removal tests stay green.
 
     // Phase 3F Sub-Epic I: free the stream if this was its last slice, so
     // the DDC drops out of the ddcEnable bitmask and the radio stops
@@ -13743,6 +13740,32 @@ int RadioModel::rehomeSlicesToPans(const QStringList& livePanIds)
     return moved;
 }
 
+// Codex review round 4, PR #293. See RadioModel.h.
+QStringList RadioModel::pansWithoutSlices(const QStringList& panIds) const
+{
+    QSet<QString> occupied;
+    for (const SliceModel* s : m_slices) {
+        if (!s) { continue; }
+        const QString key = s->panKey();
+        if (!key.isEmpty()) { occupied.insert(key); }
+    }
+
+    QStringList empty;
+    for (const QString& id : panIds) {
+        if (!occupied.contains(id)) { empty << id; }
+    }
+    return empty;
+}
+
+// Codex review round 4, PR #293. See RadioModel.h for why this is a sweep.
+void RadioModel::reconcileWidebandForAllChains()
+{
+    const int chains = std::max(1, boardCapabilities().rxFilterChainCount);
+    for (int chain = 0; chain < chains; ++chain) {
+        pushWidebandStateForChain(chain);
+    }
+}
+
 // Codex review rounds 2 and 3, PR #293. See RadioModel.h.
 void RadioModel::pushWidebandStateForChain(int chainIdx)
 {
@@ -13997,6 +14020,14 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
         // right; only the pill's wording is narrower than the state it shows.
         s->setPsPaused(validStream && assignment.streamDdc[st] < 0);
     }
+
+    // Codex review round 4, PR #293: every slice's chain has just been
+    // restamped above, so any of them may have migrated between filter
+    // chains without its wideband request property moving at all. Reconcile
+    // all chains from current state rather than trying to name which ones
+    // changed. Idempotent, so running it on every assignment costs nothing
+    // when nothing moved.
+    reconcileWidebandForAllChains();
 
     // ── Phase 3F Sub-Epic I closeout, defect F3 ─────────────────────────
     //

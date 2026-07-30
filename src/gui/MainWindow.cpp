@@ -8495,31 +8495,39 @@ void MainWindow::applyPanLayout(const QString& layoutId)
     if (!m_panStack) { return; }
 
     const QStringList ids = panIdsForLayout(layoutId);
-    const int needed = ids.size();
 
     qCInfo(lcContainer) << "Pan layout: applying" << layoutId << "with ids" << ids;
     m_panStack->applyLayout(layoutId, ids);
 
     if (!m_radioModel) { return; }
 
-    // Grow: a new pan gets its own slice, so it has a VfoWidget and an RX
-    // applet entry. Capped at maxSlices (HL2 = 1, G2 = 5).
-    // Phase 3F bench fix 2026-06-03.
-    const int existing = m_radioModel->slices().size();
-    const int maxS     = m_radioModel->maxSlices();
-    const int target   = qMin(needed, maxS);
-    for (int i = existing; i < target; ++i) {
-        m_radioModel->addSliceOnPan(QStringLiteral("pan-%1").arg(i));
-    }
-
-    // Shrink: the loop above only ever adds, so slices left on panes that
-    // applyLayout just deleted would keep a dangling panKey, lose their VFO
-    // widget, and hold a DDC, a stream and audio the operator can no longer
-    // reach.
+    // Shrink first. Slices left on panes applyLayout just deleted would keep a
+    // dangling panKey, lose their VFO widget, and hold a DDC, a stream and
+    // audio the operator can no longer reach. Running this before the grow
+    // step also means the occupancy question below sees the settled answer.
     const int rehomed = m_radioModel->rehomeSlicesToPans(ids);
     if (rehomed > 0) {
-        qCInfo(lcContainer) << "Layout shrink: rehomed" << rehomed
+        qCInfo(lcContainer) << "Layout: rehomed" << rehomed
                             << "slice(s) onto" << ids.value(0);
+    }
+
+    // Grow. Every pan wants a slice so that it has a VfoWidget and an RX
+    // applet entry (Phase 3F bench fix 2026-06-03).
+    //
+    // Asked as an occupancy question rather than as
+    // `for (i = slices().size(); i < target; ++i)`. That form assumed the
+    // slice COUNT is the first unoccupied pan index, which stops being true
+    // the moment slices co-host or get rehomed: shrinking a 2x2 to one pane
+    // puts all four slices on pan-0, and expanding back then saw
+    // existing == target, added nothing, and left three panes empty.
+    // (Codex review round 4, PR #293.)
+    //
+    // No maxSlices arithmetic here: addSliceOnPan enforces the cap itself and
+    // emits sliceAddRejected with an operator-facing reason when it cannot,
+    // so restating it would be a second copy of that policy.
+    const QStringList emptyPans = m_radioModel->pansWithoutSlices(ids);
+    for (const QString& emptyPan : emptyPans) {
+        m_radioModel->addSliceOnPan(emptyPan);
     }
 }
 

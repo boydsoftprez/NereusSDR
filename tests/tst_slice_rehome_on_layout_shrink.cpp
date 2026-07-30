@@ -119,6 +119,67 @@ private slots:
         QCOMPARE(spy.count(), 0);
     }
 
+    // Codex review round 4, P2, and a regression the rehoming above created.
+    // The layout handler decided which pans to populate with
+    //     for (i = slices().size(); i < target; ++i) addSliceOnPan("pan-i")
+    // which assumes the slice COUNT is the first unoccupied pan index. After
+    // a 2x2 shrink to one pane, rehoming puts all four slices on pan-0;
+    // expanding back to 2x2 then has existing == target == 4, so the loop adds
+    // nothing and pan-1 through pan-3 come up with no VFO and no RX entry.
+    // Co-hosting slices by hand, or removing a non-final slice id, breaks the
+    // same assumption.
+    //
+    // Occupancy is the actual question, so ask it directly.
+    void empty_pans_are_identified_by_occupancy_not_by_slice_count()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        for (int i = 0; i < 4; ++i) {
+            model.addSlice(QStringLiteral("pan-%1").arg(i));
+        }
+
+        // The shrink: everything lands on pan-0.
+        model.rehomeSlicesToPans({QStringLiteral("pan-0")});
+
+        // Now expand again. Four slices exist, so a count-based loop adds
+        // nothing, yet three panes are empty.
+        const QStringList wanted{QStringLiteral("pan-0"), QStringLiteral("pan-1"),
+                                 QStringLiteral("pan-2"), QStringLiteral("pan-3")};
+        const QStringList empty = model.pansWithoutSlices(wanted);
+
+        QCOMPARE(empty, (QStringList{QStringLiteral("pan-1"),
+                                     QStringLiteral("pan-2"),
+                                     QStringLiteral("pan-3")}));
+    }
+
+    // Co-hosted slices must not make a pan look empty, and an occupied pan
+    // must never be listed however many slices share it.
+    void co_hosted_slices_still_occupy_their_pan()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        model.addSlice(QStringLiteral("pan-0"));
+        model.addSlice(QStringLiteral("pan-0"));   // co-hosted
+        model.addSlice(QStringLiteral("pan-2"));
+
+        const QStringList empty = model.pansWithoutSlices(
+            {QStringLiteral("pan-0"), QStringLiteral("pan-1"),
+             QStringLiteral("pan-2")});
+
+        QCOMPARE(empty, (QStringList{QStringLiteral("pan-1")}));
+    }
+
+    void every_pan_occupied_reports_none_empty()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        model.addSlice(QStringLiteral("pan-0"));
+        model.addSlice(QStringLiteral("pan-1"));
+
+        QVERIFY(model.pansWithoutSlices({QStringLiteral("pan-0"),
+                                         QStringLiteral("pan-1")}).isEmpty());
+    }
+
     // Defensive: an empty survivor list means there is nowhere to move to.
     // Leaving the slices pointing at their old panes is strictly better than
     // pointing them at an empty string, which no pane will ever match.

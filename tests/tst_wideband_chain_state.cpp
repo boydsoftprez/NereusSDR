@@ -21,6 +21,7 @@
 #include <QtTest/QtTest>
 
 #include "core/P2RadioConnection.h"
+#include "core/DdcAssignment.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -190,6 +191,54 @@ private slots:
         QVERIFY2((cmdGeneralWbMask(conn) & 0x01) == 0x01,
             "slice A is still zoomed out, so removing B must not drop the "
             "chain");
+    }
+
+    // Codex review round 4, P1. A slice can change chain without its request
+    // property moving: on a dual-chain radio, picking EXT1 moves its DDC from
+    // chain 0 to chain 1. Reconciling only the chains named by an edge left
+    // the old chain bypassed and streaming while the new one stayed filtered
+    // with no stream.
+    //
+    // The fix is structural rather than another hook. publishDdcAssignment
+    // already recomputes DDC, chain and psPaused for every slice from the
+    // assignment, so wideband is reconciled for EVERY chain in the same pass.
+    // Migration is then covered by construction, not by remembering to add a
+    // trigger for it.
+    void a_slice_changing_chains_reconciles_both_of_them()
+    {
+        P2RadioConnection conn;
+        RadioModel model;
+        model.injectConnectionForTest(&conn);
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+
+        const int a = model.addSlice();
+        SliceModel* slice = model.sliceById(a);
+        QVERIFY(slice);
+        const int stream = slice->streamIndex();
+        QVERIFY(stream >= 0);
+
+        slice->setWidebandExtensionRequested(true);
+        QCOMPARE(slice->chainIndex(), 0);
+        QCOMPARE(cmdGeneralWbMask(conn) & 0x03, 0x01);
+
+        // Move the slice's DDC onto ADC1, which is what selecting an RX-only
+        // antenna does. Nothing touches widebandExtensionRequested.
+        DdcAssignment moved{};
+        moved.streamDdc[stream] = 2;
+        moved.rate[2]           = 192000;
+        moved.ddcEnable         = 0x04;
+        // DDC2's ADC selector is bits 5:4 of adcCtrl1; 01 there is ADC1.
+        moved.adcCtrl1          = (1 << 4);
+        model.publishDdcAssignmentForTest(moved);
+
+        QCOMPARE(slice->chainIndex(), 1);
+        QVERIFY2(!model.widebandActiveForChainForTest(0),
+            "the chain the slice left must stop being held wideband");
+        QVERIFY2(model.widebandActiveForChainForTest(1),
+            "the chain it moved to must pick the request up");
+        QVERIFY2((cmdGeneralWbMask(conn) & 0x01) == 0x00,
+            "and the old chain's wideband stream must stop");
     }
 
     // The capable case, so the gate above is not simply switching the feature
