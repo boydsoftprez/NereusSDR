@@ -13740,6 +13740,37 @@ int RadioModel::rehomeSlicesToPans(const QStringList& livePanIds)
     return moved;
 }
 
+// Codex review round 5, PR #293. See RadioModel.h.
+int RadioModel::spreadSlicesOntoEmptyPans(const QStringList& panIds)
+{
+    int moved = 0;
+    for (const QString& emptyPan : pansWithoutSlices(panIds)) {
+        // Find a pan carrying more than one slice and take one of its
+        // extras. Recounted every iteration, because the previous move
+        // changed the occupancy this decision rests on.
+        QHash<QString, int> occupancy;
+        for (const SliceModel* s : m_slices) {
+            if (s) { occupancy[s->panKey()] += 1; }
+        }
+
+        SliceModel* donor = nullptr;
+        for (SliceModel* s : std::as_const(m_slices)) {
+            if (!s) { continue; }
+            if (occupancy.value(s->panKey()) > 1) { donor = s; break; }
+        }
+        if (!donor) {
+            // No surplus anywhere. The caller creates slices for whatever is
+            // still empty, which is the case this function exists to shrink
+            // rather than to replace.
+            break;
+        }
+
+        donor->setPanKey(emptyPan);
+        ++moved;
+    }
+    return moved;
+}
+
 // Codex review round 4, PR #293. See RadioModel.h.
 QStringList RadioModel::pansWithoutSlices(const QStringList& panIds) const
 {
@@ -13826,9 +13857,9 @@ bool RadioModel::widebandActiveForChain(int chainIdx) const
     //
     // Gated on the count being zero rather than on chainIdx < widebandAdcs,
     // deliberately. A chain index is not an ADC index: ANAN-100D and 200D
-    // report two ADCs behind one preselector chain, so comparing one against
-    // the other is the exact ADC-count-versus-chain-count confusion that has
-    // already produced defects on this branch. The zero test is the part that
+    // carry .adcCount == 2 behind one preselector chain, so comparing one
+    // against the other is the exact ADC-count-versus-chain-count confusion
+    // that has already produced defects on this branch. The zero test is the part that
     // is unambiguous and it covers the reported case. Narrowing further needs
     // the chain-to-ADC mapping to be settled first; that is recorded as a
     // follow-up rather than guessed at here.

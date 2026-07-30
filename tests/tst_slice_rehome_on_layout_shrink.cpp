@@ -180,6 +180,61 @@ private slots:
                                          QStringLiteral("pan-1")}).isEmpty());
     }
 
+    // Codex review round 5, P2, and a regression the occupancy fix created.
+    // After shrinking a 2x2 to one pane, all four slices sit on pan-0.
+    // Expanding back finds three empty pans and, if the caller simply creates
+    // a slice for each, spends the maxSlices budget on NEW slices while four
+    // co-hosted ones sit idle on pan-0. On a 5-slice radio that fills pan-1
+    // and then hits the cap, leaving pan-2 and pan-3 empty AND the model
+    // carrying a surplus fifth slice.
+    //
+    // The surplus is already there. Move it before making more.
+    void surplus_co_hosted_slices_are_spread_before_any_are_created()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        for (int i = 0; i < 4; ++i) {
+            model.addSlice(QStringLiteral("pan-%1").arg(i));
+        }
+
+        // Shrink: everything piles onto pan-0.
+        model.rehomeSlicesToPans({QStringLiteral("pan-0")});
+        QCOMPARE(model.pansWithoutSlices({QStringLiteral("pan-0"),
+                                          QStringLiteral("pan-1"),
+                                          QStringLiteral("pan-2"),
+                                          QStringLiteral("pan-3")}).size(), 3);
+
+        // Expand: the four slices we already have are enough to cover four
+        // pans, so nothing new should be needed.
+        const QStringList wanted{QStringLiteral("pan-0"), QStringLiteral("pan-1"),
+                                 QStringLiteral("pan-2"), QStringLiteral("pan-3")};
+        const int spread = model.spreadSlicesOntoEmptyPans(wanted);
+
+        QCOMPARE(spread, 3);
+        QCOMPARE(model.slices().size(), 4);            // none created
+        QVERIFY2(model.pansWithoutSlices(wanted).isEmpty(),
+            "every pan should now hold one of the slices that already existed");
+    }
+
+    // A pan that already has exactly one slice must not be raided to fill
+    // another, or expanding would just move the hole around.
+    void a_pan_with_one_slice_is_not_raided()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        model.addSlice(QStringLiteral("pan-0"));
+        model.addSlice(QStringLiteral("pan-1"));
+
+        // pan-2 is empty but there is no surplus anywhere to move.
+        const int spread = model.spreadSlicesOntoEmptyPans(
+            {QStringLiteral("pan-0"), QStringLiteral("pan-1"),
+             QStringLiteral("pan-2")});
+
+        QCOMPARE(spread, 0);
+        QCOMPARE(model.slices().at(0)->panKey(), QStringLiteral("pan-0"));
+        QCOMPARE(model.slices().at(1)->panKey(), QStringLiteral("pan-1"));
+    }
+
     // Defensive: an empty survivor list means there is nowhere to move to.
     // Leaving the slices pointing at their old panes is strictly better than
     // pointing them at an empty string, which no pane will ever match.

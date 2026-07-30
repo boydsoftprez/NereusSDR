@@ -8525,8 +8525,21 @@ void MainWindow::applyPanLayout(const QString& layoutId)
     // No maxSlices arithmetic here: addSliceOnPan enforces the cap itself and
     // emits sliceAddRejected with an operator-facing reason when it cannot,
     // so restating it would be a second copy of that policy.
-    const QStringList emptyPans = m_radioModel->pansWithoutSlices(ids);
-    for (const QString& emptyPan : emptyPans) {
+    //
+    // Spread before creating. After a shrink every slice is co-hosted on
+    // pan-0, so the slices these empty pans need already exist. Creating new
+    // ones instead spends the maxSlices budget filling one pan and leaves the
+    // rest empty with a surplus slice in the model. (Codex review round 5.)
+    const int spread = m_radioModel->spreadSlicesOntoEmptyPans(ids);
+    if (spread > 0) {
+        qCInfo(lcContainer) << "Layout: spread" << spread
+                            << "co-hosted slice(s) onto empty pans";
+    }
+
+    // Whatever is still empty after the surplus has been used up genuinely
+    // needs a new slice.
+    const QStringList stillEmpty = m_radioModel->pansWithoutSlices(ids);
+    for (const QString& emptyPan : stillEmpty) {
         m_radioModel->addSliceOnPan(emptyPan);
     }
 }

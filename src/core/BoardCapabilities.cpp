@@ -475,7 +475,12 @@ const BoardCapabilities kAngelia = {
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: Angelia 5-slice cap (2-ADC, 7 DDCs; DDC0+1 reserved for PS+Div)
     .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Angelia user DDCs = DDC2-6 (design doc §2)
-    .widebandAdcs     = 2,   // Phase 3F: 2-ADC P1 board — ADC0 + ADC1 both support wideband stream
+    .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
+                             // Was 2, which contradicted every other Protocol1 row and this
+                             // row's own .protocol field. NereusSDR has no P1 wideband receive
+                             // path, so advertising ADCs for it let extended view bypass the
+                             // Alex preselector for a stream that never arrives, losing receive
+                             // filtering for nothing. (Codex review round 5, PR #293.)
     .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
     .maxSampleRate    = 384000,
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
@@ -528,7 +533,12 @@ const BoardCapabilities kOrion = {
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: Orion 5-slice cap (2-ADC, 7 DDCs; DDC0+1 reserved for PS+Div)
     .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Orion user DDCs = DDC2-6 (design doc §2)
-    .widebandAdcs     = 2,   // Phase 3F: 2-ADC P1 board — ADC0 + ADC1 both support wideband stream
+    .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
+                             // Was 2, which contradicted every other Protocol1 row and this
+                             // row's own .protocol field. NereusSDR has no P1 wideband receive
+                             // path, so advertising ADCs for it let extended view bypass the
+                             // Alex preselector for a stream that never arrives, losing receive
+                             // filtering for nothing. (Codex review round 5, PR #293.)
     .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
     .maxSampleRate    = 384000,
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},

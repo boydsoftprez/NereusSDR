@@ -20,6 +20,7 @@
 
 #include <QtTest/QtTest>
 
+#include "core/BoardCapabilities.h"
 #include "core/P2RadioConnection.h"
 #include "core/DdcAssignment.h"
 #include "models/RadioModel.h"
@@ -239,6 +240,68 @@ private slots:
             "the chain it moved to must pick the request up");
         QVERIFY2((cmdGeneralWbMask(conn) & 0x01) == 0x00,
             "and the old chain's wideband stream must stop");
+    }
+
+    // Codex review round 5, P2. The round-2 gate tested widebandAdcs <= 0,
+    // which looked like the unambiguous choice and is not sufficient.
+    // ANAN-100D (Angelia) and ANAN-200D (Orion) are PROTOCOL 1 boards whose
+    // capability rows advertise widebandAdcs = 2, so the gate passed, the
+    // chain was marked wideband and the Alex filter bypassed, while the only
+    // wire push is a P2RadioConnection cast that no-ops on P1. Receive
+    // filtering was lost for a stream that could never arrive: exactly the
+    // harm the gate was added to prevent.
+    // Codex review round 5, P2. The gate tested widebandAdcs <= 0, which was
+    // right, and ANAN-100D (Angelia) and ANAN-200D (Orion) still reached
+    // extended mode because THEIR CAPABILITY ROWS WERE WRONG: both declare
+    // .protocol = Protocol1 and then advertised widebandAdcs = 2, contradicting
+    // their own protocol field and every other Protocol1 row, all of which set
+    // 0 with "wideband mechanism differs; deferred to 3F-W".
+    //
+    // Fixed in the table rather than by adding a second gate in front of it,
+    // and pinned as an invariant over every board rather than as two per-SKU
+    // assertions, so the next row added cannot reintroduce it. NereusSDR has
+    // no Protocol 1 wideband receive path: the only wire push is a
+    // P2RadioConnection cast, so any P1 board claiming wideband ADCs buys a
+    // bypassed preselector and no stream.
+    void no_protocol1_board_advertises_wideband_adcs()
+    {
+        // The whole table, so a SKU added later is covered by construction
+        // rather than by remembering to extend a list here.
+        int protocol1Rows = 0;
+        for (const BoardCapabilities& caps : BoardCapsTable::all()) {
+            if (caps.protocol != ProtocolVersion::Protocol1) { continue; }
+            ++protocol1Rows;
+            QVERIFY2(caps.widebandAdcs == 0,
+                qPrintable(QStringLiteral("%1 declares Protocol1 but advertises "
+                    "widebandAdcs=%2. There is no P1 wideband receive path, so "
+                    "extended view would bypass its preselector for a stream "
+                    "that never arrives.")
+                    .arg(caps.displayName).arg(caps.widebandAdcs)));
+        }
+        QVERIFY2(protocol1Rows > 0,
+            "the table should contain Protocol1 boards; if it does not, this "
+            "invariant is passing vacuously");
+    }
+
+    // The consequence at the model level, for the board that carried the bad
+    // row.
+    void an_anan_100d_does_not_reach_extended_mode()
+    {
+        P2RadioConnection conn;
+        RadioModel model;
+        model.injectConnectionForTest(&conn);
+        model.setHpsdrModelForTest(HPSDRModel::ANAN100D);
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+
+        const int a = model.addSlice();
+        SliceModel* slice = model.sliceById(a);
+        QVERIFY(slice);
+
+        slice->setWidebandExtensionRequested(true);
+
+        QVERIFY2(!model.widebandActiveForChainForTest(0),
+            "ANAN-100D is a Protocol 1 board with no wideband path, so the "
+            "preselector must stay in");
     }
 
     // The capable case, so the gate above is not simply switching the feature

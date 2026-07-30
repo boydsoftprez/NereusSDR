@@ -736,6 +736,21 @@ public:
     /// slices on it is occupied, not three-times occupied.
     QStringList pansWithoutSlices(const QStringList& panIds) const;
 
+    /// Move surplus co-hosted slices onto pans in `panIds` that have none.
+    /// Returns how many moved.
+    ///
+    /// Codex review round 5, PR #293, and a regression pansWithoutSlices
+    /// created. After a 2x2 shrinks to one pane every slice sits on pan-0;
+    /// expanding again finds three empty pans, and creating a slice for each
+    /// spends the maxSlices budget on NEW slices while four co-hosted ones sit
+    /// idle. On a five-slice radio that fills pan-1, hits the cap, and leaves
+    /// pan-2 and pan-3 empty with a surplus fifth slice in the model.
+    ///
+    /// The slices needed are already there, so they are moved before any are
+    /// made. Only genuinely surplus ones move: a pan holding a single slice is
+    /// never raided, or expanding would just relocate the hole.
+    int spreadSlicesOntoEmptyPans(const QStringList& panIds);
+
     /// Phase 3F closeout — public helper for invoking the antennaAutoSwitched
     /// signal from operator surfaces (Tools menu "Test antenna switch toast"
     /// entry) and from future conflict-detection logic in AlexController.
