@@ -1218,7 +1218,18 @@ DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
     //   Also: console.cs:8276-8285 (diversity + PS): same cntrl1 formula, PS wins.
     if (ctx.puresignalRun && ctx.mox) {
         // PS pair occupies DDC0 (fwd/TX monitor) + DDC1 (rev/PA-feedback).
-        a.ddcEnable |= 0x03;                        // set DDC0 + DDC1
+        // Only DDC0 goes in the enable mask. Upstream is explicit that the
+        // synchronized leg is named in SyncEnable and nowhere else: the block
+        // quoted above is DDCEnable = DDC0 + DDC2 with SyncEnable = DDC1.
+        // DDC2 is already set by the plain-RX pass, so this arrives at the
+        // same DDC0 + DDC2 upstream writes.
+        //
+        // Setting bit 1 here as well asked the radio to run DDC1 as its own
+        // independent stream on top of the synchronized pair, so the second
+        // leg would be delivered twice: once standalone and once folded into
+        // DDC0's packet, which is the only copy
+        // P2RadioConnection::processIqPacket expects. (Codex review, PR #293.)
+        a.ddcEnable |= 0x01;                        // set DDC0 only
         a.syncEnable |= 0x02;                       // DDC1 syncs to DDC0
         a.rate[0] = kPsRate;
         a.rate[1] = kPsRate;
@@ -1245,8 +1256,11 @@ DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
     //   cntrl1 = rx_adc_ctrl1 & 0xff;  // same as no-mox: no PS active
     else if (ctx.diversity) {
         // Stream 0 migrates: DDC2 is disabled, DDC0+DDC1 sync pair takes over.
+        // Same rule as the PS branch above, and the two upstream blocks quoted
+        // directly above this one say it twice: DDCEnable = DDC0, SyncEnable =
+        // DDC1, for both the no-mox and the mox diversity paths.
         a.ddcEnable &= ~0x04;                       // clear DDC2
-        a.ddcEnable |= 0x03;                        // set DDC0 + DDC1
+        a.ddcEnable |= 0x01;                        // set DDC0 only
         a.syncEnable |= 0x02;                       // DDC1 syncs to DDC0
         if (slices[0].live) {
             // From Thetis console.cs:8237-8238 [v2.10.3.15]: Rate[0]=Rate[1]=rx1_rate
