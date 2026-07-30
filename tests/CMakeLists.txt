@@ -5671,6 +5671,11 @@ nereus_add_test(tst_p2_ddc_assignment_marshalling)
 # Source: NereusSDR-original (marshalling glue, no Thetis upstream).
 nereus_add_test(tst_p2_wideband_marshalling)
 
+# Codex review, PR #293: the wideband state of a chain is an OR across the
+# live slices on it, gated on BoardCapabilities::widebandAdcs, not the edge
+# from whichever slice happened to change last.
+nereus_add_test(tst_wideband_chain_state)
+
 # Phase 3F Sub-Epic C Task 7: RadioModel slice lifecycle.
 # 2 tests: addSliceOnPan_exists_and_is_callable (cap enforcement after
 # the first successful add), removeSlice_refuses_to_remove_last_slice

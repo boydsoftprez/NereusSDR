@@ -4300,8 +4300,16 @@ int RadioModel::addSlice(const QString& initialPanId)
     // (Sub-Epic F Task 1 wiring) so the radio starts streaming the
     // wideband packets.  Off-flip restores both.
     connect(slice, &SliceModel::widebandExtensionRequestedChanged, this,
-            [this, slice](bool on) {
+            [this, slice](bool) {
         const int chainIdx = slice->chainIndex();
+        // Codex review, PR #293: the chain's state, not this slice's edge.
+        // The incoming boolean is deliberately ignored; SliceModel has already
+        // committed it, so recomputing across all live slices on the chain
+        // reads the new value along with everyone else's. Forwarding the edge
+        // directly let one slice zooming back in switch off a chain another
+        // slice was still using. See RadioModel.h on widebandActiveForChain,
+        // which also applies the widebandAdcs capability gate.
+        const bool on = widebandActiveForChain(chainIdx);
         m_alexController.setWidebandActive(chainIdx, on);
         //
         // ── Phase 3F Sub-Epic I closeout: marshal to the connection thread ──
@@ -13736,6 +13744,40 @@ void RadioModel::stopExternalDiversityRoute()
     m_externalDiversityPrimaryDdc = -1;
     m_externalDiversitySecondaryDdc = -1;
     m_externalDiversityChunkSize = 0;
+}
+
+// Codex review, PR #293. See RadioModel.h for why this is a chain property
+// rather than a slice one.
+bool RadioModel::widebandActiveForChain(int chainIdx) const
+{
+    if (chainIdx < 0) {
+        return false;
+    }
+
+    // The capability gate. widebandAdcs is the number of ADCs on this board
+    // that can carry a wideband stream; 0 means the board has no such
+    // mechanism at all, which is every Protocol 1 SKU in the table
+    // ("wideband mechanism differs; deferred to 3F-W", BoardCapabilities.cpp).
+    //
+    // Gated on the count being zero rather than on chainIdx < widebandAdcs,
+    // deliberately. A chain index is not an ADC index: ANAN-100D and 200D
+    // report two ADCs behind one preselector chain, so comparing one against
+    // the other is the exact ADC-count-versus-chain-count confusion that has
+    // already produced defects on this branch. The zero test is the part that
+    // is unambiguous and it covers the reported case. Narrowing further needs
+    // the chain-to-ADC mapping to be settled first; that is recorded as a
+    // follow-up rather than guessed at here.
+    if (boardCapabilities().widebandAdcs <= 0) {
+        return false;
+    }
+
+    // Any live slice on this chain still asking is enough to hold it on.
+    for (const SliceModel* s : m_slices) {
+        if (!s) { continue; }
+        if (s->chainIndex() != chainIdx) { continue; }
+        if (s->widebandExtensionRequested()) { return true; }
+    }
+    return false;
 }
 
 NereusSDR::DdcAssignment RadioModel::computeDdcAssignment() const

@@ -348,6 +348,28 @@ public:
     /// range has to be counted against that one bank.
     int chainForStream(int stream) const;
 
+    /// The wideband state a chain should actually be in, as opposed to what
+    /// one slice just asked for.
+    ///
+    /// Codex review, PR #293. The widebandExtensionRequestedChanged handler
+    /// forwarded the changing slice's boolean straight through, so on a chain
+    /// hosting two slices whichever one cleared last switched the chain off
+    /// while the other was still zoomed out: the Alex preselector came back in
+    /// and the P2 wideband-enable bit dropped underneath a live extended view.
+    /// The answer is a property of the chain, not of the slice that moved, so
+    /// it is recomputed here as an OR across every live slice on it.
+    ///
+    /// Also the one place BoardCapabilities::widebandAdcs is honoured. That
+    /// field was declared per SKU and read by nothing, so a board that cannot
+    /// stream wideband at all still had its preselector forced into bypass by
+    /// a zoom it could never satisfy, costing receive filtering for nothing.
+    bool widebandActiveForChain(int chainIdx) const;
+
+    /// Test seam for the above. Read-only, no production caller.
+    bool widebandActiveForChainForTest(int chainIdx) const {
+        return widebandActiveForChain(chainIdx);
+    }
+
     /// Operator-facing sentence naming WHY the given chain is bypassed.
     /// One string per cause, per design doc §16.4.4. Public so the Filter
     /// Policy dialog can show the same wording the badge tooltip carries.
