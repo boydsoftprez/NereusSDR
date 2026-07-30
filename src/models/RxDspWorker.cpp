@@ -71,6 +71,8 @@
 #include "core/Resampler.h"
 #include "core/audio/RealtimeAudioPriority.h"
 
+#include <algorithm>
+
 namespace NereusSDR {
 
 RxDspWorker::RxDspWorker(QObject* parent)
@@ -122,6 +124,290 @@ void RxDspWorker::setEngines(WdspEngine* wdsp, AudioEngine* audio)
 {
     m_wdspEngine  = wdsp;
     m_audioEngine = audio;
+}
+
+int RxDspWorker::externalDiversityChunkSize() const
+{
+    if (m_wdspEngine && m_externalDiversityRoute.targetSliceId >= 0) {
+        if (RxChannel* target =
+                m_wdspEngine->rxChannel(
+                    m_externalDiversityRoute.targetSliceId)) {
+            if (target->bufferSize() > 0) {
+                return target->bufferSize();
+            }
+        }
+    }
+    return m_inSize.load(std::memory_order_relaxed);
+}
+
+void RxDspWorker::prepareExternalDiversityBuffers(int chunkSize)
+{
+    if (chunkSize <= 0 || chunkSize > kMaxSaneSamplesPerBatch) {
+        return;
+    }
+
+    m_externalDiversityChunkSize = chunkSize;
+    m_externalDiversityMaxQueuedSamples =
+        chunkSize + kMaxSaneSamplesPerBatch;
+
+    m_externalDiversityPrimary.i.reserve(
+        m_externalDiversityMaxQueuedSamples);
+    m_externalDiversityPrimary.q.reserve(
+        m_externalDiversityMaxQueuedSamples);
+    m_externalDiversitySecondary.i.reserve(
+        m_externalDiversityMaxQueuedSamples);
+    m_externalDiversitySecondary.q.reserve(
+        m_externalDiversityMaxQueuedSamples);
+
+    const int complexDoubles = 2 * chunkSize;
+    m_externalDiversityPrimaryInterleaved.resize(complexDoubles);
+    m_externalDiversitySecondaryInterleaved.resize(complexDoubles);
+    m_externalDiversityOutputInterleaved.resize(complexDoubles);
+    m_externalDiversityOutputI.resize(chunkSize);
+    m_externalDiversityOutputQ.resize(chunkSize);
+
+    // The combined stream still passes through the target RxChannel and audio
+    // interleave path. Size those shared scratch buffers here as part of route
+    // publication as well: feedExternalDiversityTarget then performs no growth
+    // on the steady-state DSP path.
+    const int outSize = m_outSize.load(std::memory_order_relaxed);
+    const int scratchLen = qMax(chunkSize, outSize);
+    m_sliceOutI.resize(scratchLen);
+    m_sliceOutQ.resize(scratchLen);
+    m_interleavedOut.resize(2 * outSize);
+    m_interleavedOutAux.resize(2 * outSize);
+}
+
+void RxDspWorker::setExternalDiversityRoute(
+    int extDivId, int targetSliceId, int primaryStream, int secondaryStream)
+{
+    clearExternalDiversityRoute();
+
+    ExternalDiversityRoute route{
+        extDivId, targetSliceId, primaryStream, secondaryStream,
+    };
+    if (!route.active()) {
+        return;
+    }
+
+    m_externalDiversityRoute = route;
+    prepareExternalDiversityBuffers(externalDiversityChunkSize());
+    if (m_externalDiversityChunkSize <= 0) {
+        m_externalDiversityRoute = {};
+        return;
+    }
+
+#ifdef NEREUS_BUILD_TESTS
+    if (m_externalDiversityRouteHookForTest) {
+        m_externalDiversityRouteHookForTest(
+            true, route.targetSliceId,
+            route.primaryStream, route.secondaryStream);
+    }
+#endif
+}
+
+void RxDspWorker::clearExternalDiversityRoute()
+{
+    const ExternalDiversityRoute oldRoute = m_externalDiversityRoute;
+    m_externalDiversityPrimary.i.clear();
+    m_externalDiversityPrimary.q.clear();
+    m_externalDiversitySecondary.i.clear();
+    m_externalDiversitySecondary.q.clear();
+    m_externalDiversityRoute = {};
+    m_externalDiversityChunkSize = 0;
+    m_externalDiversityMaxQueuedSamples = 0;
+
+#ifdef NEREUS_BUILD_TESTS
+    if (oldRoute.active() && m_externalDiversityRouteHookForTest) {
+        m_externalDiversityRouteHookForTest(
+            false, oldRoute.targetSliceId,
+            oldRoute.primaryStream, oldRoute.secondaryStream);
+    }
+#endif
+}
+
+bool RxDspWorker::isExternalDiversityTarget(int sliceId) const noexcept
+{
+    return m_externalDiversityRoute.active()
+        && sliceId == m_externalDiversityRoute.targetSliceId;
+}
+
+void RxDspWorker::appendExternalDiversitySamples(
+    StreamAccum& destination, const QVector<float>& interleavedIQ)
+{
+    const int samples = interleavedIQ.size() / 2;
+    if (samples <= 0 || samples > kMaxSaneSamplesPerBatch
+        || m_externalDiversityMaxQueuedSamples <= 0) {
+        return;
+    }
+
+    // Bound a missing-leg backlog. Route setup reserves exactly this maximum,
+    // so after warm-up the append and drain path cannot grow either vector.
+    const int overflow =
+        destination.i.size() + samples - m_externalDiversityMaxQueuedSamples;
+    if (overflow > 0) {
+        const int drop = qMin(overflow, destination.i.size());
+        destination.i.remove(0, drop);
+        destination.q.remove(0, drop);
+    }
+
+    for (int sample = 0; sample < samples; ++sample) {
+        destination.i.append(interleavedIQ[2 * sample]);
+        destination.q.append(interleavedIQ[2 * sample + 1]);
+    }
+}
+
+void RxDspWorker::processExternalDiversityIqBatch(
+    int sourceStream, const QVector<float>& interleavedIQ)
+{
+    if (!m_externalDiversityRoute.active()) {
+        return;
+    }
+
+    if (sourceStream == m_externalDiversityRoute.primaryStream) {
+        appendExternalDiversitySamples(
+            m_externalDiversityPrimary, interleavedIQ);
+    } else if (sourceStream == m_externalDiversityRoute.secondaryStream) {
+        appendExternalDiversitySamples(
+            m_externalDiversitySecondary, interleavedIQ);
+    } else {
+        return;
+    }
+
+    drainExternalDiversity();
+}
+
+void RxDspWorker::feedExternalDiversityTarget(int samples)
+{
+    for (int sample = 0; sample < samples; ++sample) {
+        m_externalDiversityOutputI[sample] =
+            static_cast<float>(
+                m_externalDiversityOutputInterleaved[2 * sample]);
+        m_externalDiversityOutputQ[sample] =
+            static_cast<float>(
+                m_externalDiversityOutputInterleaved[2 * sample + 1]);
+    }
+
+#ifdef NEREUS_BUILD_TESTS
+    if (m_externalDiversityOutputHookForTest) {
+        m_externalDiversityOutputHookForTest(
+            m_externalDiversityRoute.targetSliceId,
+            m_externalDiversityOutputI.constData(),
+            m_externalDiversityOutputQ.constData(),
+            samples);
+    }
+#endif
+
+    RxChannel* target =
+        m_wdspEngine
+            ? m_wdspEngine->rxChannel(
+                  m_externalDiversityRoute.targetSliceId)
+            : nullptr;
+    const int outSize = m_outSize.load(std::memory_order_relaxed);
+
+    if (target && m_audioEngine) {
+        const int scratchLen = qMax(samples, outSize);
+        if (m_sliceOutI.size() < scratchLen) {
+            // Route setup occurs after the target channel exists in
+            // production, so this is a one-time control-path growth.
+            m_sliceOutI.resize(scratchLen);
+            m_sliceOutQ.resize(scratchLen);
+        }
+        m_sliceOutI.fill(0.0f);
+        m_sliceOutQ.fill(0.0f);
+
+        // The target is excluded from normal source-stream fan-out. It owns
+        // the single blanker pass on the already-combined stream instead.
+        target->setNoiseBlankerBypassed(false);
+        target->processIq(
+            m_externalDiversityOutputI.data(),
+            m_externalDiversityOutputQ.data(),
+            m_sliceOutI.data(), m_sliceOutQ.data(),
+            samples, outSize);
+
+        QVector<float>& scratch =
+            (m_externalDiversityRoute.targetSliceId == 0)
+                ? m_interleavedOut
+                : m_interleavedOutAux;
+        if (scratch.size() < 2 * outSize) {
+            scratch.resize(2 * outSize);
+        }
+        for (int sample = 0; sample < outSize; ++sample) {
+            scratch[2 * sample] = m_sliceOutI[sample];
+            scratch[2 * sample + 1] = m_sliceOutQ[sample];
+        }
+        m_audioEngine->rxBlockReady(
+            m_externalDiversityRoute.targetSliceId,
+            scratch.data(), outSize);
+    }
+
+    // The signal is the no-real-channel unit-test seam and the same
+    // post-process observation point used by ordinary slice fan-out.
+    if (target || !m_audioEngine) {
+        emit sliceProcessed(
+            m_externalDiversityRoute.targetSliceId, samples);
+    }
+}
+
+void RxDspWorker::drainExternalDiversity()
+{
+    if (!m_externalDiversityRoute.active() || !m_wdspEngine) {
+        return;
+    }
+
+    const int chunkSize = externalDiversityChunkSize();
+    if (chunkSize <= 0) {
+        return;
+    }
+    if (chunkSize != m_externalDiversityChunkSize) {
+        // A geometry change invalidates unmatched samples. Buffer growth is
+        // deliberately forbidden here: RadioModel republishes the route from
+        // its control thread after changing the target channel's rate, which
+        // is where prepareExternalDiversityBuffers may allocate.
+        m_externalDiversityPrimary.i.clear();
+        m_externalDiversityPrimary.q.clear();
+        m_externalDiversitySecondary.i.clear();
+        m_externalDiversitySecondary.q.clear();
+        return;
+    }
+
+    while (m_externalDiversityPrimary.i.size() >= chunkSize
+           && m_externalDiversitySecondary.i.size() >= chunkSize) {
+        for (int sample = 0; sample < chunkSize; ++sample) {
+            m_externalDiversityPrimaryInterleaved[2 * sample] =
+                m_externalDiversityPrimary.i[sample];
+            m_externalDiversityPrimaryInterleaved[2 * sample + 1] =
+                m_externalDiversityPrimary.q[sample];
+            m_externalDiversitySecondaryInterleaved[2 * sample] =
+                m_externalDiversitySecondary.i[sample];
+            m_externalDiversitySecondaryInterleaved[2 * sample + 1] =
+                m_externalDiversitySecondary.q[sample];
+        }
+
+        double* inputs[2] = {
+            m_externalDiversityPrimaryInterleaved.data(),
+            m_externalDiversitySecondaryInterleaved.data(),
+        };
+        const bool processed = m_wdspEngine->processExternalDiversity(
+            m_externalDiversityRoute.extDivId, chunkSize,
+            inputs, m_externalDiversityOutputInterleaved.data());
+
+        m_externalDiversityPrimary.i.remove(0, chunkSize);
+        m_externalDiversityPrimary.q.remove(0, chunkSize);
+        m_externalDiversitySecondary.i.remove(0, chunkSize);
+        m_externalDiversitySecondary.q.remove(0, chunkSize);
+
+        if (!processed) {
+            // A stop racing queued input must not leave stale paired samples
+            // to replay if the same route is enabled later.
+            m_externalDiversityPrimary.i.clear();
+            m_externalDiversityPrimary.q.clear();
+            m_externalDiversitySecondary.i.clear();
+            m_externalDiversitySecondary.q.clear();
+            return;
+        }
+        feedExternalDiversityTarget(chunkSize);
+    }
 }
 
 void RxDspWorker::setBufferSizes(int inSize, int outSize)
@@ -229,7 +515,6 @@ void RxDspWorker::processIqBatch(int receiverIndex,
     // heap detector (EXC_BREAKPOINT in libsystem_malloc).  P2 frames are
     // 238 samples typically; even 1536 kHz never exceeds a few thousand
     // per packet.  Anything wildly larger is a corrupt stream — drop it.
-    constexpr int kMaxSaneSamplesPerBatch = 65536;
     if (numSamples <= 0 || numSamples > kMaxSaneSamplesPerBatch) {
         return;
     }
@@ -281,7 +566,12 @@ void RxDspWorker::processIqBatch(int receiverIndex,
         // topology, not whether NB happens to be switched on, and fires
         // without engines wired so the contract stays observable in unit
         // tests (same rule as chunkDrained / sliceProcessed).
-        if (!slices.isEmpty()) {
+        const bool hasOrdinarySlice =
+            std::any_of(slices.cbegin(), slices.cend(),
+                        [this](int sliceId) {
+                            return !isExternalDiversityTarget(sliceId);
+                        });
+        if (hasOrdinarySlice) {
             emit streamNoiseBlankerApplied(receiverIndex);
         }
 
@@ -307,6 +597,10 @@ void RxDspWorker::processIqBatch(int receiverIndex,
             // so it is never bypassed).
             bool streamBlankerClaimed = false;
             for (int sliceIdx : slices) {
+                if (isExternalDiversityTarget(sliceIdx)) {
+                    continue;
+                }
+
                 // Invariant: WDSP channel id == slice index.
                 RxChannel* rxCh = m_wdspEngine->rxChannel(sliceIdx);
                 if (rxCh == nullptr) {
@@ -490,6 +784,9 @@ void RxDspWorker::processIqBatch(int receiverIndex,
             // contract so the signal sequence stays observable, exactly
             // as chunkDrained already fires without engines.
             for (int sliceIdx : slices) {
+                if (isExternalDiversityTarget(sliceIdx)) {
+                    continue;
+                }
                 emit sliceProcessed(sliceIdx, inSize);
             }
         }

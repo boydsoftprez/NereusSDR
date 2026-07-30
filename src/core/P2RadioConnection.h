@@ -260,32 +260,13 @@ public slots:
     void setMicPTTDisabled(bool disabled) override;
     void setMicXlr(bool xlrJack) override;
 
-    // Phase 3M-4 Task 17 chunk B — apply per-board PS DDC config.
-    //
-    // Receives the wire-byte map computed by the per-board codec
-    // (P2CodecOrionMkII::applyPureSignalDdcConfig and friends), translates
-    // it into m_rx[i] state, and re-sends CmdRx so the radio reconfigures
-    // its DDCs in real time.
-    //
-    // Mirrors Thetis console.cs:8527-8534 UpdateDDCs() [v2.10.3.13]:
-    //   NetworkIO.EnableRxs(ddcEnable);
-    //   NetworkIO.EnableRxSync(0, syncEnable);
-    //   for (int i = 0; i < 4; i++) NetworkIO.SetDDCRate(i, rate[i]);
-    //   NetworkIO.SetADC_cntrl1(cntrl1);
-    //   NetworkIO.SetADC_cntrl2(cntrl2);
-    // In NereusSDR these wire bytes are emitted via the next CmdRx packet
-    // (composeCmdRx reads ctx.p2RxEnable / p2RxSamplingRate / p2RxSync from
-    // m_rx[i] state).  Wired in RadioModel::wireConnectionSignals to
-    // ReceiverManager::ddcConfigChanged.
-    void applyPsDdcConfig(const NereusSDR::PsDdcConfig& cfg);
-
     // Phase 3F Sub-Epic B Task 15: apply a multi-slice DDC assignment from
     // the codec.  Updates m_rx[i].{enable, samplingRate, rxAdc, sync} from the
     // struct, then re-sends CmdRx so the radio reconfigures its DDCs.
     //
-    // Replaces the bulk applyPsDdcConfig path for the multi-slice 3F case;
-    // the existing PS-only path still works by constructing a DdcAssignment
-    // with only the PS DDC pair populated.
+    // This is the sole Protocol 2 DDC wire writer. PureSignal and diversity
+    // transitions recompute this full assignment instead of dispatching a
+    // second, partial PsDdcConfig writer.
     //
     // Mirrors Thetis console.cs:8527-8534 UpdateDDCs() [v2.10.3.15]:
     //   NetworkIO.EnableRxs(ddcEnable);
@@ -362,7 +343,8 @@ signals:
     // Phase 3M-4 Task 17 chunk B/E: emitted from selectCodec() once
     // m_codec is assigned.  RadioModel::wireConnectionSignals subscribes
     // and forwards p2Codec() into ReceiverManager::setP2Codec so the
-    // ddcConfigChanged dispatch path becomes live.
+    // ddcConfigChanged observation path (for example PsccPump) becomes live.
+    // Protocol 2 wire state is written only by applyDdcAssignment().
     void p2CodecChanged();
 
     // Phase 3F Sub-Epic F Task 3: emitted once a full 32-packet wideband
@@ -539,8 +521,8 @@ private:
 
     // --- PureSignal DDC pair (Phase 3M-4 bench-fix 2026-05-23) ───────────
     //
-    // Latched from applyPsDdcConfig() each time the per-board codec emits
-    // a new PsDdcConfig.  Both default to -1 (no PS pair configured) so
+    // Latched from applyDdcAssignment() each time the per-board codec emits
+    // a full assignment. Both default to -1 (no PS pair configured) so
     // the deinterleave loop in processIqPacket only emits the source-first
     // paired signal psPairedIqDataReceived when the codec has actually
     // configured a PS pair.
@@ -558,7 +540,7 @@ private:
     // --- DDC enable-mask ownership (Phase 3F Sub-Epic I closeout) ─────────
     //
     // False until a per-board codec has computed a mask for this session,
-    // true from the first applyDdcAssignment() / applyPsDdcConfig() onward.
+    // true from the first applyDdcAssignment() onward.
     // While true, setActiveReceiverCount() writes no enable bits.
     //
     // Upstream owns the mask in exactly one place. From Thetis

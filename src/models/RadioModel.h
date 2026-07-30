@@ -1234,6 +1234,11 @@ public:
     // state handler, and override board capabilities. Production code
     // must never use these.
     void injectConnectionForTest(RadioConnection* conn) { m_connection = conn; }
+    // Install a real PureSignal coordinator without the full WDSP/connect
+    // pipeline so codec-context tests can distinguish the auto-cal preference
+    // from the cmd-state machine's effective PSEnabled state. RadioModel owns
+    // the returned coordinator, matching production lifetime.
+    PureSignal* installPureSignalForTest(TxChannel* tx);
     // Phase 3F Sub-Epic I closeout, defect F1: attach a DSP worker without
     // standing up the connection / DSP-thread pipeline, so a test can
     // reproduce connectToRadio's real ordering (pool sized and slices bound
@@ -2502,6 +2507,26 @@ public:
     /// transmit-critical state.
     bool diversityActive() const;
 
+    /// Reconcile the process-wide WDSP slot and the DSP worker's paired raw-DDC
+    /// route against one complete codec assignment. This is the sole start
+    /// owner, which keeps source selection and hardware publication atomic from
+    /// the model's point of view.
+    void reconcileExternalDiversityRoute(
+        const NereusSDR::DdcAssignment& assignment);
+
+    /// Resolve the stable target's primary DDC plus the assignment's DDC0 sync
+    /// partner. Returns false when PureSignal owns the pair or the codec did not
+    /// publish two equal-rate diversity legs. The sync partner need not also
+    /// appear in ddcEnable; Hermes-class Thetis assignments enable DDC0 and
+    /// activate DDC1 through syncEnable alone.
+    bool resolveExternalDiversitySources(
+        const NereusSDR::DdcAssignment& assignment,
+        const SliceModel* target, int& primaryDdc, int& secondaryDdc) const;
+
+    /// Apply the target's current phase/gain rotation to an already-created
+    /// external-diversity slot.
+    void configureExternalDiversityRotation(const SliceModel* target);
+
     // Phase 3F Sub-Epic I Task 7b: publish a computed assignment onto the
     // client-side model. Routes each stream's hardware DDC to its logical
     // receiver via ReceiverManager::setDdcMapping, stamps every slice with
@@ -2579,12 +2604,17 @@ public:
     /// call on a single-rate radio.
     void applyStreamDspGeometry();
 
-    /// Phase 3F Sub-Epic I closeout, defect F3: re-run the codec and republish
-    /// client-side after a MOX or PureSignal transition, so a slice whose DDC
-    /// the radio just reclaimed stops reporting the one it had before. Does
-    /// NOT push to the wire; ReceiverManager::updateDdcAssignment already owns
-    /// that transition.
+    /// Re-run the codec after a MOX, effective PureSignal, or diversity
+    /// transition through the same complete request used by slice binding.
+    /// Protocol 2 therefore has one full DdcAssignment wire owner; Protocol 1
+    /// keeps its legacy PsDdcConfig wire path while this request publishes
+    /// the client-side assignment.
     void refreshDdcAssignmentForRadioState();
+
+    /// Prevent new paired feeds, then stop and destroy WDSP external-diversity
+    /// slot 0. The worker clear is synchronous when it lives on the DSP thread,
+    /// so no queued raw-I/Q delivery can process against a torn-down slot.
+    void stopExternalDiversityRoute();
 
     /// Streams the codec left without a DDC while slices are still bound to
     /// them. Empty in steady state.
@@ -2736,6 +2766,16 @@ private:
     // indexed by stream. -1 = that stream is idle, so an emptied stream
     // leaves no stale DDC behind. Backs ddcForStream().
     std::array<int, 5> m_streamDdc{{-1, -1, -1, -1, -1}};
+
+    // Process-wide WDSP pdiv[0] lifecycle shadow. Main-thread-only: the worker
+    // route itself is published/cleared synchronously on m_dspThread before
+    // this state changes.
+    static constexpr int kExternalDiversityId = 0;
+    static constexpr int kExternalDiversityTargetSliceId = 0;
+    bool m_externalDiversityRouteActive{false};
+    int m_externalDiversityPrimaryDdc{-1};
+    int m_externalDiversitySecondaryDdc{-1};
+    int m_externalDiversityChunkSize{0};
 
     // Defect D1: the ADC that same assignment routed each stream to, decoded
     // from its adcCtrl bytes. Backs chainForStream(), which is what the Alex

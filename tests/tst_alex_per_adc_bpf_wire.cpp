@@ -306,6 +306,9 @@ private slots:
         model.configureStreamPool(5, 5, 192000);
         P2CodecSaturn codec;
         model.receiverManager()->setP2Codec(&codec);
+        for (int st = 0; st < 5; ++st) {
+            model.receiverManager()->createReceiver();
+        }
         auto* mock = new MockConnection();
         model.injectConnectionForTest(mock);
         DetachConnection detach{&model};
@@ -316,11 +319,20 @@ private slots:
         model.slices().at(b)->setFrequency(14200000.0);
         model.setActiveSlice(b);
         model.slices().at(b)->setRxAntenna(QStringLiteral("EXT1"));
+        const int streamB = model.slices().at(b)->streamIndex();
+        QCOMPARE(model.slices().at(b)->chainIndex(), 1);
+        QCOMPARE(model.receiverManager()->receiverConfig(streamB).adcIndex, 1);
+        QCOMPARE(model.slices().at(b)->ddcIndex(),
+                 model.receiverManager()->receiverConfig(streamB).ddcIndex);
         QCOMPARE(model.alexController().adcState(0).effective,
                  AlexController::BpfEffective::Filtered);
 
         model.slices().at(b)->setRxAntenna(QStringLiteral("ANT1"));
 
+        QCOMPARE(model.slices().at(b)->chainIndex(), 0);
+        QCOMPARE(model.receiverManager()->receiverConfig(streamB).adcIndex, 0);
+        QCOMPARE(model.slices().at(b)->ddcIndex(),
+                 model.receiverManager()->receiverConfig(streamB).ddcIndex);
         QCOMPARE(model.alexController().adcState(0).effective,
                  AlexController::BpfEffective::Bypass);
         QVERIFY(!mock->bpfCalls.isEmpty());

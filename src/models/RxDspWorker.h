@@ -156,6 +156,25 @@ public:
     int inSize() const { return m_inSize.load(std::memory_order_relaxed); }
     int outSize() const { return m_outSize.load(std::memory_order_relaxed); }
     double sampleRate() const { return m_sampleRate; }
+    static constexpr int kMaxSaneExternalDiversityChunk = 65536;
+
+#ifdef NEREUS_BUILD_TESTS
+    using ExternalDiversityOutputHookForTest =
+        void (*)(int targetSlice, const float* i, const float* q, int samples);
+    using ExternalDiversityRouteHookForTest =
+        void (*)(bool active, int targetSlice,
+                 int primarySource, int secondarySource);
+    void setExternalDiversityOutputHookForTest(
+        ExternalDiversityOutputHookForTest hook)
+    {
+        m_externalDiversityOutputHookForTest = hook;
+    }
+    void setExternalDiversityRouteHookForTest(
+        ExternalDiversityRouteHookForTest hook)
+    {
+        m_externalDiversityRouteHookForTest = hook;
+    }
+#endif
 
 public slots:
     // Receive a batch of interleaved I/Q from ReceiverManager. Runs
@@ -164,6 +183,25 @@ public slots:
     // and forwards the decoded audio to AudioEngine.
     void processIqBatch(int receiverIndex,
                         const QVector<float>& interleavedIQ);
+
+    /// Feed one raw hardware-DDC stream into the paired diversity route.
+    ///
+    /// This is deliberately separate from processIqBatch(): the primary DDC
+    /// is also mapped by ReceiverManager to a logical stream for ordinary
+    /// co-hosted slices, while the synced partner DDC has no logical receiver.
+    /// A dedicated raw path therefore supplies each diversity leg exactly
+    /// once without changing the normal logical-stream fan-out.
+    void processExternalDiversityIqBatch(
+        int sourceStream, const QVector<float>& interleavedIQ);
+
+    /// Select the two raw source streams and the stable target slice for one
+    /// WdspEngine external-diversity slot. Runs on the DSP thread through a
+    /// queued/blocking invocation from RadioModel.
+    void setExternalDiversityRoute(int extDivId, int targetSliceId,
+                                   int primaryStream, int secondaryStream);
+
+    /// Disable the worker route and flush both unmatched source queues.
+    void clearExternalDiversityRoute();
 
     // Drop any partial accumulator state. Called from RadioModel
     // teardown via Qt::BlockingQueuedConnection so it executes on
@@ -375,6 +413,56 @@ private:
     // stay coherent here is the (size, accumulator) pair, which only the DSP
     // thread ever touches.
     std::unordered_map<int, int>          m_streamInSize;
+
+    // ── Phase 3F Sub-Epic A: paired external-diversity route ──────────────
+    //
+    // WDSP external diversity consumes two equally sized interleaved-double
+    // buffers. Radio packets can arrive at different times and in different
+    // chunk sizes, so each raw DDC leg has a separate bounded accumulator.
+    // Route changes clear the queues and pre-size every scratch vector on the
+    // DSP control path; steady-state drains then perform no heap allocation.
+    struct ExternalDiversityRoute {
+        int extDivId{-1};
+        int targetSliceId{-1};
+        int primaryStream{-1};
+        int secondaryStream{-1};
+
+        bool active() const noexcept
+        {
+            return extDivId >= 0 && targetSliceId >= 0
+                && primaryStream >= 0 && secondaryStream >= 0
+                && primaryStream != secondaryStream;
+        }
+    };
+
+    static constexpr int kMaxSaneSamplesPerBatch =
+        kMaxSaneExternalDiversityChunk;
+
+    ExternalDiversityRoute m_externalDiversityRoute;
+    StreamAccum m_externalDiversityPrimary;
+    StreamAccum m_externalDiversitySecondary;
+    int m_externalDiversityChunkSize{0};
+    int m_externalDiversityMaxQueuedSamples{0};
+    QVector<double> m_externalDiversityPrimaryInterleaved;
+    QVector<double> m_externalDiversitySecondaryInterleaved;
+    QVector<double> m_externalDiversityOutputInterleaved;
+    QVector<float> m_externalDiversityOutputI;
+    QVector<float> m_externalDiversityOutputQ;
+
+#ifdef NEREUS_BUILD_TESTS
+    ExternalDiversityOutputHookForTest
+        m_externalDiversityOutputHookForTest{nullptr};
+    ExternalDiversityRouteHookForTest
+        m_externalDiversityRouteHookForTest{nullptr};
+#endif
+
+    int externalDiversityChunkSize() const;
+    void prepareExternalDiversityBuffers(int chunkSize);
+    void appendExternalDiversitySamples(StreamAccum& destination,
+                                        const QVector<float>& interleavedIQ);
+    void drainExternalDiversity();
+    void feedExternalDiversityTarget(int samples);
+    bool isExternalDiversityTarget(int sliceId) const noexcept;
 
     // Reusable interleaved stereo scratch handed to AudioEngine::rxBlockReady.
     // Sized to outSize*2 on first use and reused in-place per batch so the

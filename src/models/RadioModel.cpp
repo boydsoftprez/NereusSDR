@@ -790,7 +790,9 @@ RadioModel::RadioModel(QObject* parent)
     //   ReceiverManager::setMox(on)
     //     → updateDdcAssignment()
     //     → m_p2Codec->applyPureSignalDdcConfig(...)        // PsDdcConfig out
-    //     → emit ddcConfigChanged(config)                   // chunk B consumer
+    //     → emit ddcConfigChanged(config)                   // observation only
+    // Protocol 2 wire state follows the separate full-DdcAssignment request
+    // made by onMoxHardwareFlipped().
     // Mirrors Thetis console.cs:8186-8538 UpdateDDCs() [v2.10.3.13] firing
     // on MOX edge: in Thetis the call goes through `chkMOX_CheckedChanged`
     // → `UpdateDDCs(false)` immediately after `mox = chkMOX.Checked`.
@@ -3616,6 +3618,11 @@ void RadioModel::setStreamSampleRate(int streamIndex, int rateHz)
         if (setSampleRateLive(rateHz) < 0) {
             return;
         }
+    } else if (m_externalDiversityRouteActive) {
+        // P2 may resize one stream independently. Quiesce the paired route
+        // before applyStreamDspGeometry mutates any target channel; the full
+        // assignment request at the end recreates it with resolved geometry.
+        stopExternalDiversityRoute();
     }
 
     auto applyTo = [this, rateHz](int st) {
@@ -4195,6 +4202,13 @@ void RadioModel::removeSlice(int sliceId)
     // created; the AetherSDR +RX/-RX UI relies on this invariant.
     if (m_slices.size() == 1) {
         return;
+    }
+
+    // External diversity has one stable source owner: Slice A (id 0). Stop
+    // while that object and its worker route are still intact, before list
+    // removal can make any positional lookup observe Slice B as "first".
+    if (sliceId == kExternalDiversityTargetSliceId) {
+        stopExternalDiversityRoute();
     }
 
     // Phase 3F Sub-Epic C Task 7: if the victim is currently TX-bound, hand
@@ -5871,14 +5885,11 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // nothing recomputed the stream assignment when it moved, so a
             // slice kept reporting a DDC the radio had already reclaimed.
             //
-            // Both signals, deliberately. computeDdcAssignment reads
-            // isAutoCalEnabled() for puresignalRun, so autoCalEnabledChanged
-            // is the edge that actually changes the codec's answer;
-            // psEnabledChanged is the radio/DDC fan-out the wire side uses
-            // (Codex Fix C above). Subscribing to both means the model
-            // refreshes whichever flag the current path moves. The refresh is
-            // client-side only and its emit is change-gated, so the duplicate
-            // when they move together costs nothing.
+            // Follow the effective PSEnabled state, not the auto-cal
+            // preference. Single Cal and restored corrections never toggle
+            // autoCalEnabled, while preference-on precedes the cmd-state
+            // machine actually enabling PS. psEnabledChanged is therefore the
+            // one edge that keeps codec context and wire state coherent.
             //
             // Target the member function, NOT a lambda wrapping it.
             // Qt::UniqueConnection is only implemented for pointer-to-member
@@ -5892,11 +5903,8 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // not see it: those tests drive the model API directly rather than
             // through the signal.
             //
-            // The signals carry a bool the slot does not take, which is fine --
+            // The signal carries a bool the slot does not take, which is fine --
             // a slot may accept fewer arguments than its signal.
-            connect(m_pureSignal.get(), &PureSignal::autoCalEnabledChanged,
-                    this, &RadioModel::refreshDdcAssignmentForRadioState,
-                    Qt::UniqueConnection);
             connect(m_pureSignal.get(), &PureSignal::psEnabledChanged,
                     this, &RadioModel::refreshDdcAssignmentForRadioState,
                     Qt::UniqueConnection);
@@ -7442,13 +7450,9 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         conn->setSampleRate(wireSampleRate);
     });
 
-    // Phase 3M-4 Task 17 — keep ReceiverManager's m_rx1Rate in sync with
-    // the connection sample rate so the per-board codec's
-    // applyPureSignalDdcConfig() emits the correct rate[2] = rx1Rate
-    // (e.g. 192000 for 192 kHz, NOT the default 48000).  Without this,
-    // P2RadioConnection::applyPsDdcConfig writes m_rx[2].samplingRate=48
-    // and breaks RX1 audio.  Same wireSampleRate value used for the
-    // connection setSampleRate above so both stay aligned.
+    // Keep ReceiverManager's m_rx1Rate in sync so its PsDdcConfig
+    // observation consumers report the same rate as the complete assignment.
+    // Protocol 2 wire state itself is owned by applyDdcAssignment.
     m_receiverManager->setRx1Rate(wireSampleRate);
     // Push active receiver count to the connection. P1 uses this to encode
     // nrx bits in the C&C bank 0 frame. P2 DDC assignment is more complex
@@ -7654,30 +7658,17 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
         }
     });
 
-    // ── Phase 3M-4 Task 17 chunk B — wire ReceiverManager::ddcConfigChanged
-    //                                   → P2RadioConnection::applyPsDdcConfig
-    //
-    // When ReceiverManager::setMox / setPureSignalEnabled fires (chunk A),
-    // updateDdcAssignment() asks the per-board codec for the new
-    // PsDdcConfig and emits ddcConfigChanged.  P2RadioConnection consumes
-    // it: writes the wire-byte map into m_rx[i] state and resends CmdRx so
-    // the radio reconfigures its DDCs in real time.
-    //
-    // P1 does its own thing (bank 11 wire bit via setPuresignalRun); only
-    // P2 needs this DDC-level reconfig because P2 PureSignal routes the
-    // feedback through DDC0/DDC1 (the codec returns ddcEnable=DDC0+DDC2,
-    // syncEnable=DDC1, rate[0]=rate[1]=192000 during PS+MOX).
+    // Protocol 2 codec injection remains live for ReceiverManager's
+    // ddcConfigChanged observation consumers (notably PsccPump). The P2 wire
+    // deliberately does not consume that partial PsDdcConfig signal:
+    // refreshDdcAssignmentForRadioState sends one full DdcAssignment instead.
     if (auto* p2 = qobject_cast<NereusSDR::P2RadioConnection*>(m_connection)) {
-        connect(m_receiverManager, &ReceiverManager::ddcConfigChanged,
-                p2, &P2RadioConnection::applyPsDdcConfig,
-                Qt::QueuedConnection);
-
         // Phase 3M-4 Task 17 — feed the per-board codec into ReceiverManager
         // so updateDdcAssignment() can produce a non-empty PsDdcConfig.
         // Without this, ReceiverManager::m_p2Codec stays null and
-        // applyPureSignalDdcConfig is never invoked → ddcConfigChanged
-        // never fires → applyPsDdcConfig above is dead wire.  Fires once
-        // when selectCodec runs at connectToRadio time.
+        // applyPureSignalDdcConfig is never invoked, so ddcConfigChanged
+        // observation consumers never receive the PS pair. Fires once when
+        // selectCodec runs at connectToRadio time.
         connect(p2, &P2RadioConnection::p2CodecChanged, this, [this, p2]() {
             m_receiverManager->setP2Codec(p2->p2Codec());
         });
@@ -7795,6 +7786,15 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     connect(m_receiverManager, &ReceiverManager::iqDataForReceiver,
             m_dspWorker, &RxDspWorker::processIqBatch,
             Qt::QueuedConnection);
+
+    // External diversity needs both physical DDC legs. ReceiverManager maps
+    // only the designated primary onto a logical user stream; the synchronized
+    // partner deliberately has no logical receiver. Fork the raw hardware-DDC
+    // signal directly to the worker once, while leaving ReceiverManager's
+    // ordinary fan-out above unchanged for every co-hosted slice.
+    connect(m_connection, &RadioConnection::iqDataReceived,
+            m_dspWorker, &RxDspWorker::processExternalDiversityIqBatch,
+            Qt::QueuedConnection);
     m_dspThread->start();
 
     // ── Phase 3F Sub-Epic I closeout, defect F1 ─────────────────────────
@@ -7818,6 +7818,11 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     // must be explicitly declared empty so the constructor seed cannot
     // leave slice 0 attached to a stream it no longer sits on.
     republishAllStreamBindings();
+
+    // A persisted diversity flag may have produced its assignment before the
+    // worker existed. Publish the already-computed source ownership now that
+    // both the raw feed and DSP thread are live.
+    reconcileExternalDiversityRoute(computeDdcAssignment());
 
     // Phase 3R K-bench: retroactive RADE RX wire-up.
     //
@@ -9309,51 +9314,45 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         scheduleSettingsSave();
     });
 
-    // Phase 3F Sub-Epic G Task 13: route SliceModel diversity state to the
-    // WDSP RxChannel External Diversity wrappers (Task 1 plumbing).
+    // Phase 3F Sub-Epic G Task 13: route SliceModel diversity state to
+    // WdspEngine's process-wide External Diversity owner.
     //
     // CRITICAL: WDSP pdiv[] is a 2-slot array (MAX_EXT_DIVS=2) keyed by
     // External Diversity id (0 or 1), NOT the RXA channel id. For bench-
-    // minimum, route ONLY Slice A through DivId 0 via rxChannel(slice->sliceIndex()). Slice
-    // B and per-pan diversity defer to a follow-up when a proper DivId
-    // allocator lands. The per-slice gate inside each lambda enforces the
-    // Slice-A-only path; downstream wrappers receive m_channelId == 0
-    // which is the safe pdiv[] index until expansion lands.
+    // minimum, route ONLY the stable Slice A id through DivId 0. Slice B and
+    // per-pan diversity defer to a follow-up when a proper DivId allocator
+    // lands.
     connect(slice, &SliceModel::diversityEnabledChanged, this,
             [this, slice](bool on) {
-        if (slice != m_slices.value(0)) { return; }  // Slice A only
-        if (!m_wdspEngine) { return; }
-        RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
-        if (!rxCh) { return; }
-        rxCh->setExtDivNr(2);        // DDC0 + DDC1 = 2 inputs
-        rxCh->setExtDivOutput(0);    // combined output
-        rxCh->setExtDivRun(on);
+        if (slice->sliceIndex() != kExternalDiversityTargetSliceId
+            || sliceById(kExternalDiversityTargetSliceId) != slice) {
+            return;
+        }
+        if (!on) {
+            stopExternalDiversityRoute();
+        }
+        // Recompute first on enable so source resolution uses the assignment
+        // that actually migrated Slice A onto DDC0/DDC1. On disable the route
+        // is already clear/stopped/destroyed before the wire state reverts.
+        refreshDdcAssignmentForRadioState();
     });
     connect(slice, &SliceModel::diversityPhaseDegChanged, this,
             [this, slice](double /*deg*/) {
-        if (slice != m_slices.value(0)) { return; }
-        if (!m_wdspEngine) { return; }
-        RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
-        if (!rxCh) { return; }
-        // I/Q rotation: input 0 identity; input 1 phase + gain rotated.
-        // Gain stored as dB on SliceModel; convert to linear here.
-        const double gainLin = std::pow(10.0, slice->diversityGainDb() / 20.0);
-        const double rad = slice->diversityPhaseDeg() * M_PI / 180.0;
-        double iRot[2] = {1.0, gainLin * std::cos(rad)};
-        double qRot[2] = {0.0, gainLin * std::sin(rad)};
-        rxCh->setExtDivRotate(2, iRot, qRot);
+        if (!m_externalDiversityRouteActive
+            || slice->sliceIndex() != kExternalDiversityTargetSliceId
+            || sliceById(kExternalDiversityTargetSliceId) != slice) {
+            return;
+        }
+        configureExternalDiversityRotation(slice);
     });
     connect(slice, &SliceModel::diversityGainDbChanged, this,
             [this, slice](double /*db*/) {
-        if (slice != m_slices.value(0)) { return; }
-        if (!m_wdspEngine) { return; }
-        RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
-        if (!rxCh) { return; }
-        const double gainLin = std::pow(10.0, slice->diversityGainDb() / 20.0);
-        const double rad = slice->diversityPhaseDeg() * M_PI / 180.0;
-        double iRot[2] = {1.0, gainLin * std::cos(rad)};
-        double qRot[2] = {0.0, gainLin * std::sin(rad)};
-        rxCh->setExtDivRotate(2, iRot, qRot);
+        if (!m_externalDiversityRouteActive
+            || slice->sliceIndex() != kExternalDiversityTargetSliceId
+            || sliceById(kExternalDiversityTargetSliceId) != slice) {
+            return;
+        }
+        configureExternalDiversityRotation(slice);
     });
 
     // Send initial frequency to radio (after connection init completes).
@@ -10133,6 +10132,12 @@ void RadioModel::teardownConnection()
         return;
     }
 
+    // The external pdiv slot is independent of RXA channel ownership. Quiesce
+    // its worker feed, stop Run, and destroy it before the DSP thread or any
+    // target RxChannel begins teardown. WdspEngine::shutdown's global sweep is
+    // then an idempotent safety net rather than the primary lifecycle owner.
+    stopExternalDiversityRoute();
+
     // 2026-07-27 (ANAN-G2E lockup): quiet period for discovery.  Disconnect
     // reopens the ConnectionPanel, whose ctor auto-scans — wire captures show
     // the broadcast probe burst landing 7-15 ms after our run=0 frame, and
@@ -10247,6 +10252,7 @@ void RadioModel::teardownConnection()
     // so the m_dspWorker pointer may dangle after wait() returns —
     // null it out to avoid a use-after-free in any later teardown.
     if (m_dspWorker != nullptr) {
+        QObject::disconnect(m_connection, nullptr, m_dspWorker, nullptr);
         QObject::disconnect(m_receiverManager, nullptr, m_dspWorker, nullptr);
     }
     if (m_dspThread != nullptr) {
@@ -10559,13 +10565,12 @@ void RadioModel::applyHpsdrModel(HPSDRModel m)
         m_receiverManager->setHpsdrModel(m_hardwareProfile.model);
 
         // Defect D2, second consumer. ReceiverManager keeps its own shadow of
-        // the per-DDC ADC routing word for the Phase 3M-4 PureSignal path
-        // (updateDdcAssignment -> applyPureSignalDdcConfig -> applyPsDdcConfig),
-        // which is a wire writer independent of the Phase 3F codec path.
+        // the per-DDC ADC routing word for PsDdcConfig observation consumers
+        // and for Protocol 1's legacy wire path.
         // setRxAdcCtrl1 / setRxAdcCtrl2 had no production caller at all, so
-        // that shadow sat at 0 while the codec path was about to start
-        // seeding 4, and the two writers would have disagreed about where
-        // DDC1 lives.
+        // that shadow sat at 0 while the complete-assignment path was about
+        // to start seeding 4, so the observation and wire views would have
+        // disagreed about where DDC1 lives.
         //
         // The disagreement is currently invisible on the wire -- the PS
         // branches mask the field out with `(adcCtrl1 & 0xf3) | 0x08` and
@@ -12224,6 +12229,16 @@ qint64 RadioModel::setSampleRateLive(int newRateHz)
     qCInfo(lcConnection) << "setSampleRateLive:" << m_connectionSampleRateHz
                          << "Hz ->" << newRateHz << "Hz";
 
+    // External diversity owns reusable buffers and a WDSP slot sized to the
+    // target channel's input geometry. Stop its raw-DDC feed before changing
+    // that geometry; it is recreated on the control path below, so the DSP hot
+    // loop never has to allocate in response to a rate mismatch.
+    const bool restartExternalDiversity =
+        m_externalDiversityRouteActive;
+    if (restartExternalDiversity) {
+        stopExternalDiversityRoute();
+    }
+
     // Source-first port of Thetis setup.cs::comboAudioSampleRate1_SelectedIndexChanged
     // [v2.10.3.13:7003-7159].  The Thetis path mutates the running WDSP
     // channel via cmaster.SetXcmInrate (cmaster.c:453-507) — the channel
@@ -12374,6 +12389,10 @@ qint64 RadioModel::setSampleRateLive(int newRateHz)
     // ── Step 12: Update state and emit ───────────────────────────────────
     m_connectionSampleRateHz = newRateHz;
     emit wireSampleRateChanged(static_cast<double>(newRateHz));
+
+    if (restartExternalDiversity) {
+        reconcileExternalDiversityRoute(computeDdcAssignment());
+    }
 
     // Persist the new rate per-MAC so the next connect picks it up.
     if (!m_lastRadioInfo.macAddress.isEmpty()) {
@@ -13195,10 +13214,23 @@ NereusSDR::CodecContext RadioModel::currentCodecContext() const
         return ctx;
     }
     ctx.mox           = m_moxController ? m_moxController->isMox() : false;
-    ctx.puresignalRun = (m_pureSignal && m_pureSignal->isAutoCalEnabled());
+    ctx.puresignalRun = (m_pureSignal && m_pureSignal->isPsEnabled());
     ctx.diversity     = diversityActive();
     return ctx;
 }
+
+#ifdef NEREUS_BUILD_TESTS
+PureSignal* RadioModel::installPureSignalForTest(TxChannel* tx)
+{
+    m_pureSignal = std::make_unique<PureSignal>(
+        /*engine=*/nullptr, tx, /*fb=*/nullptr, /*mox=*/nullptr,
+        /*stepAtt=*/nullptr, /*twoTone=*/nullptr, /*parent=*/nullptr);
+    connect(m_pureSignal.get(), &PureSignal::psEnabledChanged,
+            this, &RadioModel::refreshDdcAssignmentForRadioState,
+            Qt::UniqueConnection);
+    return m_pureSignal.get();
+}
+#endif
 
 bool RadioModel::diversityActive() const
 {
@@ -13212,10 +13244,184 @@ bool RadioModel::diversityActive() const
     // Slice A only, and that is a known limitation rather than a choice here:
     // WDSP's pdiv[] is a 2-slot array keyed by External Diversity id, so
     // Sub-Epic G gates the whole path to Slice A (RadioModel.cpp guard in
-    // wireSliceSignals). Reading slice A's flag matches what the codec has
-    // always read.
+    // wireSliceSignals). Resolve the stable Slice A id, not list position:
+    // removing A must not silently promote B into ownership.
     if (m_ddcCtxForTest) { return m_ddcCtxDivForTest; }
-    return m_slices.isEmpty() ? false : m_slices.first()->diversityEnabled();
+    const SliceModel* target =
+        sliceById(kExternalDiversityTargetSliceId);
+    return target && target->diversityEnabled();
+}
+
+bool RadioModel::resolveExternalDiversitySources(
+    const NereusSDR::DdcAssignment& assignment,
+    const SliceModel* target, int& primaryDdc, int& secondaryDdc) const
+{
+    primaryDdc = -1;
+    secondaryDdc = -1;
+    if (!target) {
+        return false;
+    }
+
+    const int stream = target->streamIndex();
+    if (stream < 0 || stream >= 5) {
+        return false;
+    }
+
+    primaryDdc = assignment.streamDdc[stream];
+
+    // DdcAssignment::syncEnable names DDCs synchronized to DDC0. A valid
+    // diversity assignment therefore publishes the designated stream on DDC0
+    // and one equal-rate partner in that mask. The Hermes-class assignment
+    // activates DDC1 through syncEnable without repeating it in ddcEnable.
+    // During MOX+PureSignal
+    // the designated stream remains on its user DDC while DDC0/DDC1 belong to
+    // PS; rejecting any non-zero primary prevents that pair from being fed into
+    // the diversity combiner.
+    if (primaryDdc != 0
+        || (assignment.ddcEnable & (1 << primaryDdc)) == 0
+        || assignment.rate[primaryDdc] <= 0) {
+        return false;
+    }
+
+    for (int ddc = 1; ddc < 8; ++ddc) {
+        const int bit = 1 << ddc;
+        if ((assignment.syncEnable & bit) == 0
+            || assignment.rate[ddc] != assignment.rate[primaryDdc]) {
+            continue;
+        }
+        secondaryDdc = ddc;
+        return true;
+    }
+
+    return false;
+}
+
+void RadioModel::configureExternalDiversityRotation(
+    const SliceModel* target)
+{
+    if (!target || !m_wdspEngine) {
+        return;
+    }
+
+    // I/Q rotation: input 0 is the identity; input 1 carries the operator's
+    // phase and gain correction. Output == nr selects WDSP's mixed result.
+    const double gainLin =
+        std::pow(10.0, target->diversityGainDb() / 20.0);
+    const double rad = target->diversityPhaseDeg() * M_PI / 180.0;
+    double iRot[2] = {1.0, gainLin * std::cos(rad)};
+    double qRot[2] = {0.0, gainLin * std::sin(rad)};
+    m_wdspEngine->configureExternalDiversity(
+        kExternalDiversityId, 2, iRot, qRot, 2);
+}
+
+void RadioModel::reconcileExternalDiversityRoute(
+    const NereusSDR::DdcAssignment& assignment)
+{
+    SliceModel* target =
+        sliceById(kExternalDiversityTargetSliceId);
+    int primaryDdc = -1;
+    int secondaryDdc = -1;
+    const bool sourcesReady =
+        target && target->diversityEnabled()
+        && m_wdspEngine && m_dspWorker
+        && resolveExternalDiversitySources(
+            assignment, target, primaryDdc, secondaryDdc);
+
+    int chunkSize = 0;
+    if (sourcesReady) {
+        if (RxChannel* channel =
+                m_wdspEngine->rxChannel(target->sliceIndex())) {
+            chunkSize = channel->bufferSize();
+        }
+        // Unit/model-only construction has no open RxChannel. The codec rate
+        // is the same source used to size that channel in production, so it is
+        // also the deterministic fallback for partial startup and tests.
+        if (chunkSize <= 0 && assignment.rate[primaryDdc] > 0) {
+            chunkSize = bufferSizeForRate(assignment.rate[primaryDdc]);
+        }
+    }
+
+    if (!sourcesReady || chunkSize <= 0
+        || chunkSize > RxDspWorker::kMaxSaneExternalDiversityChunk) {
+        if (m_externalDiversityRouteActive) {
+            stopExternalDiversityRoute();
+        }
+        return;
+    }
+
+    const bool unchanged =
+        m_externalDiversityRouteActive
+        && m_externalDiversityPrimaryDdc == primaryDdc
+        && m_externalDiversitySecondaryDdc == secondaryDdc
+        && m_externalDiversityChunkSize == chunkSize;
+    if (unchanged) {
+        return;
+    }
+
+    if (m_externalDiversityRouteActive) {
+        stopExternalDiversityRoute();
+    }
+
+    // Upstream ordering: CreateRadio creates stopped; the console configures
+    // it; InboundBlock may only enter after the paired source route exists.
+    if (!m_wdspEngine->createExternalDiversity(
+            kExternalDiversityId, 2, chunkSize)) {
+        return;
+    }
+    configureExternalDiversityRotation(target);
+
+    auto publishRoute = [this, target, primaryDdc, secondaryDdc]() {
+        m_dspWorker->setExternalDiversityRoute(
+            kExternalDiversityId, target->sliceIndex(),
+            primaryDdc, secondaryDdc);
+    };
+    const bool workerThreadRunning =
+        m_dspThread && m_dspThread->isRunning()
+        && m_dspWorker->thread() != QThread::currentThread();
+    if (workerThreadRunning) {
+        QMetaObject::invokeMethod(
+            m_dspWorker, publishRoute, Qt::BlockingQueuedConnection);
+    } else {
+        publishRoute();
+    }
+
+    m_wdspEngine->setExternalDiversityRunning(
+        kExternalDiversityId, true);
+    m_externalDiversityRouteActive = true;
+    m_externalDiversityPrimaryDdc = primaryDdc;
+    m_externalDiversitySecondaryDdc = secondaryDdc;
+    m_externalDiversityChunkSize = chunkSize;
+}
+
+void RadioModel::stopExternalDiversityRoute()
+{
+    // Clear the worker first. A BlockingQueuedConnection is the barrier that
+    // prevents any raw I/Q event already ahead of this control call from
+    // reaching WDSP after slot 0 is stopped or destroyed.
+    if (m_dspWorker) {
+        const bool workerThreadRunning =
+            m_dspThread && m_dspThread->isRunning()
+            && QThread::currentThread() != m_dspThread;
+        if (workerThreadRunning) {
+            QMetaObject::invokeMethod(
+                m_dspWorker, &RxDspWorker::clearExternalDiversityRoute,
+                Qt::BlockingQueuedConnection);
+        } else {
+            m_dspWorker->clearExternalDiversityRoute();
+        }
+    }
+
+    if (m_wdspEngine) {
+        m_wdspEngine->setExternalDiversityRunning(
+            kExternalDiversityId, false);
+        m_wdspEngine->destroyExternalDiversity(
+            kExternalDiversityId);
+    }
+
+    m_externalDiversityRouteActive = false;
+    m_externalDiversityPrimaryDdc = -1;
+    m_externalDiversitySecondaryDdc = -1;
+    m_externalDiversityChunkSize = 0;
 }
 
 NereusSDR::DdcAssignment RadioModel::computeDdcAssignment() const
@@ -13347,21 +13553,29 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
         for (int st = 0; st < streams; ++st) {
             const int ddc = assignment.streamDdc[st];
             if (ddc < 0) { continue; }   // suspended: keep the last known ADC
-            const int adc = NereusSDR::adcForDdc(assignment, ddc);
-            m_streamAdc[static_cast<size_t>(st)] = adc;
+            const size_t streamIndex = static_cast<size_t>(st);
+            m_streamAdc[streamIndex] =
+                NereusSDR::adcForDdc(assignment, ddc);
             if (m_receiverManager) {
-                m_receiverManager->setAdcForReceiver(st, adc);
+                // Mirror the already-decoded physical map. Do not decode the
+                // control bytes again here: SliceModel, ReceiverManager, and
+                // the Alex chain analysis must all consume one answer.
+                m_receiverManager->setAdcForReceiver(st,
+                                                     m_streamAdc[streamIndex]);
             }
         }
     }
 
-    // Stamp every slice with the DDC of the stream hosting it, so co-hosted
-    // slices agree. SliceModel::setDdcIndex had zero callers before Task 7,
-    // so slice->ddcIndex() was permanently -1.
+    // Stamp every slice with both physical-routing coordinates of the stream
+    // hosting it, so co-hosted slices agree. chainForStream reads the same
+    // m_streamAdc entry just mirrored into ReceiverManager above and performs
+    // the board-specific ADC-to-filter-chain fold in exactly one place.
     for (SliceModel* s : std::as_const(m_slices)) {
         if (!s) { continue; }
         const int st = s->streamIndex();
-        s->setDdcIndex((st >= 0 && st < 5) ? assignment.streamDdc[st] : -1);
+        const bool validStream = st >= 0 && st < 5;
+        s->setDdcIndex(validStream ? assignment.streamDdc[st] : -1);
+        s->setChainIndex(validStream ? chainForStream(st) : -1);
     }
 
     // ── Phase 3F Sub-Epic I closeout, defect F3 ─────────────────────────
@@ -13436,6 +13650,11 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
             }
         }
     }
+
+    // The same complete assignment that selected the hardware DDCs owns the
+    // paired worker route. Keeping this at the publish boundary prevents a
+    // second source-selection policy from drifting from the wire state.
+    reconcileExternalDiversityRoute(assignment);
 }
 
 QString RadioModel::describeSuspendedStreams(const QVector<int>& streams) const
@@ -13480,24 +13699,12 @@ QString RadioModel::describeSuspendedStreams(const QVector<int>& streams) const
 
 void RadioModel::refreshDdcAssignmentForRadioState()
 {
-    // Phase 3F Sub-Epic I closeout, defect F3.
-    //
-    // MOX and PureSignal are inputs to the codec (CodecContext::mox /
-    // ::puresignalRun) but nothing recomputed the assignment when either
-    // moved: requestDdcAssignment fires only from the three slice-binding
-    // sites. So when PureSignal reclaimed the DDCs at MOX, the radio really
-    // did stop streaming the extra ones while the model went on reporting
-    // each slice's pre-MOX ddcIndex, and nothing anywhere said so.
-    //
-    // Deliberately NOT routed through requestDdcAssignment /
-    // invokeCodecDdcAssignment: that pushes a P2 wire frame, and the DDC
-    // reconfiguration for PureSignal already has a wire owner in
-    // ReceiverManager::updateDdcAssignment -> applyPureSignalDdcConfig ->
-    // RadioConnection::applyPsDdcConfig (Phase 3M-4 Task 6). Adding a second
-    // writer on the same transition would have the two fighting over the
-    // enable mask mid-transmit. publishDdcAssignment is documented as
-    // client-side only, which is exactly the half that was missing.
-    publishDdcAssignment(computeDdcAssignment());
+    // MOX, effective PureSignal run state, and diversity are codec inputs.
+    // Use the same complete request as slice binding so Protocol 2 has one
+    // owner for enable/rate/ADC/sync wire state. Protocol 1's invocation is
+    // client-side only; ReceiverManager::ddcConfigChanged retains its P1
+    // applyPsDdcConfig wire path.
+    requestDdcAssignment();
 }
 
 void RadioModel::invokeCodecDdcAssignment()

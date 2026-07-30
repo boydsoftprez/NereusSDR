@@ -5702,10 +5702,9 @@ nereus_add_test(tst_wideband_frame_accumulator)
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-f-wideband-plan.md Task 4.
 nereus_add_test(tst_wideband_fft_engine)
 
-# Phase 3F Sub-Epic G Task 1: RxChannel WDSP External Diversity wrappers
-# (SetEXTDIVRun / Nr / Output / Rotate). Compile-time signature smoke;
-# real DSP exercised by Sub-Epic H bench. Ported from Thetis dsp.cs:609-619
-# [v2.10.3.15] P/Invoke decls.
+# Phase 3F: WdspEngine-owned external-diversity lifecycle/order/process tests
+# for create/destroy/xdiv plus SetEXTDIVRun / Nr / Output / Rotate. Ported
+# from Thetis dsp.cs:609-619 [v2.10.3.15] P/Invoke declarations.
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-g-diversity-plan.md Task 1.
 nereus_add_test(tst_rx_channel_ext_div_wrappers)
 

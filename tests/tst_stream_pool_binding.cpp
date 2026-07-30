@@ -9,6 +9,7 @@
 // =================================================================
 #include <QtTest/QtTest>
 #include <QSignalSpy>
+#include "core/DdcAssignment.h"
 #include "core/P1RadioConnection.h"
 #include "core/ReceiverManager.h"
 #include "core/RxChannel.h"
@@ -237,6 +238,74 @@ private slots:
         QCOMPARE(model.receiverManager()->ddcIndex(2), -1);
     }
 
+    void published_assignment_updates_slice_and_receiver_physical_routing()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::Saturn);
+        model.configureStreamPool(5, 5, 192000);
+        for (int st = 0; st < 5; ++st) {
+            model.receiverManager()->createReceiver();
+        }
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(14225000.0);
+        const int c = model.addSlice();
+        model.slices().at(c)->setFrequency(7150000.0);
+
+        SliceModel* sliceA = model.slices().at(a);
+        SliceModel* sliceB = model.slices().at(b);
+        SliceModel* sliceC = model.slices().at(c);
+        const int streamAB = sliceA->streamIndex();
+        const int streamC = sliceC->streamIndex();
+        QCOMPARE(sliceB->streamIndex(), streamAB);
+        QVERIFY(streamAB >= 0);
+        QVERIFY(streamC >= 0);
+        QVERIFY(streamAB != streamC);
+
+        // First publication: co-hosted A/B use DDC2 on ADC/chain 0 while C
+        // uses DDC4 on ADC/chain 1. DDC4 exercises adcCtrl2 as well as the
+        // low-byte route used by the first stream.
+        DdcAssignment first{};
+        first.streamDdc[streamAB] = 2;
+        first.streamDdc[streamC] = 4;
+        first.ddcEnable = (1 << 2) | (1 << 4);
+        first.adcCtrl2 = 0x01; // DDC4 -> ADC1
+        model.publishDdcAssignmentForTest(first);
+
+        QCOMPARE(sliceA->ddcIndex(), 2);
+        QCOMPARE(sliceB->ddcIndex(), 2);
+        QCOMPARE(sliceC->ddcIndex(), 4);
+        QCOMPARE(sliceA->chainIndex(), 0);
+        QCOMPARE(sliceB->chainIndex(), 0);
+        QCOMPARE(sliceC->chainIndex(), 1);
+        QCOMPARE(model.receiverManager()->receiverConfig(streamAB).ddcIndex, 2);
+        QCOMPARE(model.receiverManager()->receiverConfig(streamAB).adcIndex, 0);
+        QCOMPARE(model.receiverManager()->receiverConfig(streamC).ddcIndex, 4);
+        QCOMPARE(model.receiverManager()->receiverConfig(streamC).adcIndex, 1);
+
+        // Republish a different complete physical map. Both the receiver
+        // routing mirror and every hosted slice must move together.
+        DdcAssignment second{};
+        second.streamDdc[streamAB] = 3;
+        second.streamDdc[streamC] = 5;
+        second.ddcEnable = (1 << 3) | (1 << 5);
+        second.adcCtrl1 = (1 << (3 * 2)); // DDC3 -> ADC1
+        model.publishDdcAssignmentForTest(second);
+
+        QCOMPARE(sliceA->ddcIndex(), 3);
+        QCOMPARE(sliceB->ddcIndex(), 3);
+        QCOMPARE(sliceC->ddcIndex(), 5);
+        QCOMPARE(sliceA->chainIndex(), 1);
+        QCOMPARE(sliceB->chainIndex(), 1);
+        QCOMPARE(sliceC->chainIndex(), 0);
+        QCOMPARE(model.receiverManager()->receiverConfig(streamAB).ddcIndex, 3);
+        QCOMPARE(model.receiverManager()->receiverConfig(streamAB).adcIndex, 1);
+        QCOMPARE(model.receiverManager()->receiverConfig(streamC).ddcIndex, 5);
+        QCOMPARE(model.receiverManager()->receiverConfig(streamC).adcIndex, 0);
+    }
+
     void protocol1_leaves_receiver_routing_auto_assigned()
     {
         RadioModel model;
@@ -447,6 +516,7 @@ private slots:
         // Plain RX: both slices have a real DDC and nothing is suspended.
         QVERIFY(model.slices().at(a)->ddcIndex() >= 0);
         QVERIFY(model.slices().at(b)->ddcIndex() >= 0);
+        QCOMPARE(model.slices().at(b)->chainIndex(), 0);
         QVERIFY(model.suspendedStreams().isEmpty());
 
         QSignalSpy spy(&model, &RadioModel::streamsSuspended);
@@ -471,6 +541,8 @@ private slots:
         // ...and slice B must not still be advertising the DDC it had before
         // the key. That stale number is what made this invisible.
         QCOMPARE(model.slices().at(b)->ddcIndex(), -1);
+        QCOMPARE(model.slices().at(b)->streamIndex(), streamB);
+        QCOMPARE(model.slices().at(b)->chainIndex(), 0);
     }
 
     void unkeying_restores_the_suspended_streams()

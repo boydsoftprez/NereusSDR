@@ -94,6 +94,8 @@ warren@wpratt.com
 #include <QString>
 #include <QVector>
 
+#include <array>
+#include <atomic>
 #include <map>
 #include <memory>
 #include <vector>
@@ -237,6 +239,45 @@ public:
 
     // Look up an existing RX channel by WDSP channel ID.
     RxChannel* rxChannel(int channelId) const;
+
+    // --- External Diversity management ---------------------------------
+    //
+    // WDSP owns exactly two external-diversity slots in a process-wide
+    // pdiv[MAX_EXT_DIVS] table (third_party/wdsp/src/div.c:104-105). These
+    // IDs are independent of RXA channel IDs, so their lifecycle belongs to
+    // WdspEngine rather than RxChannel.
+    //
+    // Upstream ownership/order:
+    //   CreateRadio -> create_sync -> create_divEXT(0, 0, 2, 1024)
+    //   InboundBlock -> xdivEXT
+    //   DestroyRadio -> destroy_sync -> destroy_divEXT
+    // From Thetis ChannelMaster/cmsetup.c:89-102 and sync.c:32-51 [@501e3f5].
+    bool createExternalDiversity(int id, int inputs, int complexSamples);
+    void configureExternalDiversity(int id, int output,
+                                    const double* iRotate,
+                                    const double* qRotate,
+                                    int inputs);
+    bool processExternalDiversity(int id, int complexSamples,
+                                  double** inputs, double* output);
+    void setExternalDiversityRunning(int id, bool running);
+    void destroyExternalDiversity(int id);
+
+#ifdef NEREUS_BUILD_TESTS
+    // Injectable C-API table for lifecycle/order tests. Production builds
+    // bind the corresponding members to the real WDSP symbols in the
+    // constructor and do not expose a replacement seam.
+    struct ExternalDiversityApiForTest {
+        void (*create)(int, int, int, int);
+        void (*destroy)(int);
+        void (*process)(int, int, double**, double*);
+        void (*setRun)(int, int);
+        void (*setNr)(int, int);
+        void (*setOutput)(int, int);
+        void (*setRotate)(int, int, double*, double*);
+    };
+    void setExternalDiversityApiForTest(
+        const ExternalDiversityApiForTest& api);
+#endif
 
     // Rebuild an RX channel in-place: capture state, destroy the existing
     // WDSP channel, recreate with new config, reapply state.
@@ -587,6 +628,29 @@ private:
 
     // RX channels keyed by WDSP channel ID.
     std::map<int, std::unique_ptr<RxChannel>> m_rxChannels;
+
+    struct ExternalDiversitySlot {
+        std::atomic_bool created{false};
+        std::atomic_bool running{false};
+        int inputs{0};
+        int complexSamples{0};
+    };
+    static constexpr int kExternalDiversitySlots = 2;
+    static bool validExternalDiversityId(int id)
+    {
+        return id >= 0 && id < kExternalDiversitySlots;
+    }
+    std::array<ExternalDiversitySlot, kExternalDiversitySlots>
+        m_externalDiversity;
+
+    void (*m_extDivCreate)(int, int, int, int){nullptr};
+    void (*m_extDivDestroy)(int){nullptr};
+    void (*m_extDivProcess)(int, int, double**, double*){nullptr};
+    void (*m_extDivSetRun)(int, int){nullptr};
+    void (*m_extDivSetNr)(int, int){nullptr};
+    void (*m_extDivSetOutput)(int, int){nullptr};
+    void (*m_extDivSetRotate)(int, int, double*, double*){nullptr};
+    void destroyAllExternalDiversity();
 
     // RADE channels keyed by slice ID (Phase 3R Task J2).  Shares the
     // integer namespace with m_rxChannels / m_txChannels by convention;

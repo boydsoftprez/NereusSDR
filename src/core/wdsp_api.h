@@ -1323,6 +1323,18 @@ void SetPSTxIdx(int id, int idx);
 // elsewhere in this header.  Caller is responsible for the lifetime.
 // =====================================================================
 
+// Allocate one of WDSP's two process-wide external-diversity slots.
+// From Thetis ChannelMaster/sync.c:32-35 and wdsp/div.c:108 [v2.10.3.15] [@501e3f5].
+void create_divEXT(int id, int run, int nr, int size);
+
+// Release a slot allocated by create_divEXT.
+// From Thetis ChannelMaster/sync.c:38-41 and wdsp/div.c:114 [v2.10.3.15] [@501e3f5].
+void destroy_divEXT(int id);
+
+// Combine nsamples complex samples from the configured inputs.
+// From Thetis ChannelMaster/sync.c:45-51 and wdsp/div.c:126 [v2.10.3.15] [@501e3f5].
+void xdivEXT(int id, int nsamples, double** in, double* out);
+
 // 0 - does nothing; 1 - operates
 // From Thetis wdsp/div.c:138 [v2.10.3.15].
 void SetEXTDIVRun(int id, int run);

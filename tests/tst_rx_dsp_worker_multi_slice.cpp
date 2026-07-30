@@ -7,12 +7,123 @@
 // =================================================================
 #include <QtTest/QtTest>
 #include <QSignalSpy>
+#include "core/P2RadioConnection.h"
+#include "core/WdspEngine.h"
+#include "models/RadioModel.h"
 #include "models/RxDspWorker.h"
+#include "models/SliceModel.h"
 
 using namespace NereusSDR;
 
 class TestRxDspWorkerMultiSlice : public QObject {
     Q_OBJECT
+
+    struct DetachConnection {
+        RadioModel* model{nullptr};
+        ~DetachConnection()
+        {
+            if (model) {
+                model->injectConnectionForTest(nullptr);
+            }
+        }
+    };
+
+    struct DiversityRecorder {
+        int processCalls{0};
+        int runStops{0};
+        int destroys{0};
+        QStringList lifecycle;
+        QVector<double> primary;
+        QVector<double> secondary;
+        int targetSlice{-1};
+        QVector<float> targetI;
+        QVector<float> targetQ;
+    };
+
+    static inline DiversityRecorder* s_diversity = nullptr;
+
+    static void divCreate(int, int, int, int)
+    {
+        s_diversity->lifecycle.append(QStringLiteral("create"));
+    }
+    static void divDestroy(int)
+    {
+        ++s_diversity->destroys;
+        s_diversity->lifecycle.append(QStringLiteral("destroy"));
+    }
+    static void divProcess(int, int samples, double** inputs, double* output)
+    {
+        ++s_diversity->processCalls;
+        s_diversity->primary =
+            QVector<double>(inputs[0], inputs[0] + 2 * samples);
+        s_diversity->secondary =
+            QVector<double>(inputs[1], inputs[1] + 2 * samples);
+        for (int i = 0; i < 2 * samples; ++i) {
+            output[i] = inputs[0][i] + inputs[1][i];
+        }
+    }
+    static void divRun(int, int run)
+    {
+        if (run == 0) {
+            ++s_diversity->runStops;
+            s_diversity->lifecycle.append(QStringLiteral("run0"));
+        } else {
+            s_diversity->lifecycle.append(QStringLiteral("run1"));
+        }
+    }
+    static void divNr(int, int)
+    {
+        s_diversity->lifecycle.append(QStringLiteral("nr"));
+    }
+    static void divOutput(int, int)
+    {
+        s_diversity->lifecycle.append(QStringLiteral("output"));
+    }
+    static void divRotate(int, int, double*, double*)
+    {
+        s_diversity->lifecycle.append(QStringLiteral("rotate"));
+    }
+
+    static WdspEngine::ExternalDiversityApiForTest diversityApi()
+    {
+        return {
+            &divCreate, &divDestroy, &divProcess, &divRun,
+            &divNr, &divOutput, &divRotate,
+        };
+    }
+
+    static void captureDiversityTarget(int targetSlice,
+                                       const float* i,
+                                       const float* q,
+                                       int samples)
+    {
+        s_diversity->targetSlice = targetSlice;
+        s_diversity->targetI = QVector<float>(i, i + samples);
+        s_diversity->targetQ = QVector<float>(q, q + samples);
+    }
+
+    static void captureDiversityRoute(bool active, int targetSlice,
+                                      int primarySource, int secondarySource)
+    {
+        s_diversity->lifecycle.append(
+            active ? QStringLiteral("route") : QStringLiteral("clear"));
+        if (active) {
+            QCOMPARE(targetSlice, 0);
+            QCOMPARE(primarySource, 0);
+            QCOMPARE(secondarySource, 1);
+        }
+    }
+
+    static void armDiversity(WdspEngine& engine, int samples)
+    {
+        engine.setExternalDiversityApiForTest(diversityApi());
+        QVERIFY(engine.createExternalDiversity(0, 2, samples));
+        double iRotate[2] = {1.0, 1.0};
+        double qRotate[2] = {0.0, 0.0};
+        engine.configureExternalDiversity(0, 2, iRotate, qRotate, 2);
+        engine.setExternalDiversityRunning(0, true);
+    }
+
 private slots:
     void streams_do_not_share_an_accumulator()
     {
@@ -303,6 +414,298 @@ private slots:
         QCOMPARE(spy.count(), 2);
         QCOMPARE(spy.at(0).at(1).toInt(), 8);
         QCOMPARE(spy.at(1).at(1).toInt(), 8);
+    }
+
+    void one_diversity_source_alone_produces_no_output()
+    {
+        DiversityRecorder record;
+        s_diversity = &record;
+        WdspEngine engine;
+        armDiversity(engine, 4);
+
+        RxDspWorker worker;
+        worker.setEngines(&engine, nullptr);
+        worker.setBufferSizes(4, 64);
+        worker.setExternalDiversityOutputHookForTest(&captureDiversityTarget);
+        worker.setExternalDiversityRoute(0, 7, 10, 11);
+
+        const QVector<float> primary{
+            1, 101, 2, 102, 3, 103, 4, 104,
+        };
+        worker.processExternalDiversityIqBatch(10, primary);
+
+        QCOMPARE(record.processCalls, 0);
+        QCOMPARE(record.targetSlice, -1);
+    }
+
+    void paired_sources_keep_order_and_feed_only_the_designated_target()
+    {
+        DiversityRecorder record;
+        s_diversity = &record;
+        WdspEngine engine;
+        armDiversity(engine, 4);
+
+        RxDspWorker worker;
+        worker.setEngines(&engine, nullptr);
+        worker.setBufferSizes(4, 64);
+        worker.setExternalDiversityOutputHookForTest(&captureDiversityTarget);
+        worker.setExternalDiversityRoute(0, 7, 10, 11);
+        QSignalSpy sliceSpy(&worker, &RxDspWorker::sliceProcessed);
+
+        const QVector<float> primary{
+            1, 101, 2, 102, 3, 103, 4, 104,
+        };
+        const QVector<float> secondary{
+            10, 110, 20, 120, 30, 130, 40, 140,
+        };
+        worker.processExternalDiversityIqBatch(10, primary);
+        worker.processExternalDiversityIqBatch(11, secondary);
+
+        QCOMPARE(record.processCalls, 1);
+        QCOMPARE(record.primary, QVector<double>({
+            1, 101, 2, 102, 3, 103, 4, 104,
+        }));
+        QCOMPARE(record.secondary, QVector<double>({
+            10, 110, 20, 120, 30, 130, 40, 140,
+        }));
+        QCOMPARE(record.targetSlice, 7);
+        QCOMPARE(record.targetI, QVector<float>({11, 22, 33, 44}));
+        QCOMPARE(record.targetQ, QVector<float>({211, 222, 233, 244}));
+        QCOMPARE(sliceSpy.count(), 1);
+        QCOMPARE(sliceSpy.at(0).at(0).toInt(), 7);
+    }
+
+    void ordinary_cohosted_slices_continue_while_target_skips_normal_fanout()
+    {
+        DiversityRecorder record;
+        s_diversity = &record;
+        WdspEngine engine;
+        armDiversity(engine, 4);
+
+        RxDspWorker worker;
+        worker.setEngines(&engine, nullptr);
+        worker.setBufferSizes(4, 64);
+        worker.setStreamSlices(10, QVector<int>{7, 8});
+        worker.setStreamSlices(11, QVector<int>{9});
+        worker.setExternalDiversityRoute(0, 7, 10, 11);
+        QSignalSpy sliceSpy(&worker, &RxDspWorker::sliceProcessed);
+
+        const QVector<float> chunk{
+            1, 2, 3, 4, 5, 6, 7, 8,
+        };
+        worker.processIqBatch(10, chunk);
+        worker.processIqBatch(11, chunk);
+
+        QCOMPARE(sliceSpy.count(), 2);
+        QCOMPARE(sliceSpy.at(0).at(0).toInt(), 8);
+        QCOMPARE(sliceSpy.at(1).at(0).toInt(), 9);
+        QCOMPARE(record.processCalls, 0);
+    }
+
+    void differently_chunked_sources_wait_for_equal_target_chunks()
+    {
+        DiversityRecorder record;
+        s_diversity = &record;
+        WdspEngine engine;
+        armDiversity(engine, 4);
+
+        RxDspWorker worker;
+        worker.setEngines(&engine, nullptr);
+        worker.setBufferSizes(4, 64);
+        worker.setExternalDiversityRoute(0, 7, 10, 11);
+
+        worker.processExternalDiversityIqBatch(
+            10, QVector<float>{1, 1, 2, 2, 3, 3});
+        worker.processExternalDiversityIqBatch(
+            11, QVector<float>{10, 10, 20, 20});
+        worker.processExternalDiversityIqBatch(
+            11, QVector<float>{30, 30, 40, 40});
+        QCOMPARE(record.processCalls, 0);
+
+        worker.processExternalDiversityIqBatch(
+            10, QVector<float>{4, 4});
+        QCOMPARE(record.processCalls, 1);
+    }
+
+    void route_clear_flushes_unmatched_samples_and_never_promotes_a_slice()
+    {
+        DiversityRecorder record;
+        s_diversity = &record;
+        WdspEngine engine;
+        armDiversity(engine, 4);
+
+        RxDspWorker worker;
+        worker.setEngines(&engine, nullptr);
+        worker.setBufferSizes(4, 64);
+        worker.setExternalDiversityOutputHookForTest(&captureDiversityTarget);
+        worker.setStreamSlices(10, QVector<int>{3, 7});
+        worker.setExternalDiversityRoute(0, 7, 10, 11);
+
+        worker.processExternalDiversityIqBatch(
+            10, QVector<float>{1, 1, 2, 2});
+        worker.clearExternalDiversityRoute();
+        engine.setExternalDiversityRunning(0, false);
+        engine.destroyExternalDiversity(0);
+
+        // Re-arm the same stable target after the source lifecycle changes.
+        armDiversity(engine, 4);
+        worker.setExternalDiversityRoute(0, 7, 10, 11);
+        worker.processExternalDiversityIqBatch(
+            11, QVector<float>{10, 10, 20, 20, 30, 30, 40, 40});
+        worker.processExternalDiversityIqBatch(
+            10, QVector<float>{3, 3, 4, 4});
+        QCOMPARE(record.processCalls, 0); // old primary samples were flushed
+
+        worker.processExternalDiversityIqBatch(
+            10, QVector<float>{5, 5, 6, 6});
+        QCOMPARE(record.processCalls, 1);
+        QCOMPARE(record.targetSlice, 7); // never positional first slice 3
+        QCOMPARE(record.runStops, 1);
+        QCOMPARE(record.destroys, 1);
+    }
+
+    // Mutation caught: removing clearExternalDiversityRoute() from
+    // RadioModel's disable sequence leaves the worker route live after the
+    // WDSP slot is destroyed. Recreating slot 0 later then lets packets from
+    // the old source pair reach the old target.
+    void radio_model_disable_flushes_the_worker_route_before_slot_teardown()
+    {
+        DiversityRecorder record;
+        s_diversity = &record;
+        RxDspWorker worker;
+        RadioModel model;
+        P2RadioConnection connection;
+        connection.setBoardForTest(HPSDRHW::Saturn);
+        model.injectConnectionForTest(&connection);
+        DetachConnection detach{&model};
+        model.configureStreamPool(
+            /*userDdcCount=*/2, /*maxSlices=*/2, /*defaultRateHz=*/48000);
+        const int targetId = model.addSlice();
+        QCOMPARE(targetId, 0);
+        SliceModel* target = model.sliceById(targetId);
+        QVERIFY(target != nullptr);
+
+        model.attachDspWorkerForTest(&worker);
+        worker.setEngines(model.wdspEngine(), nullptr);
+        worker.setBufferSizes(64, 64);
+
+        model.wdspEngine()->setExternalDiversityApiForTest(diversityApi());
+        target->setDiversityEnabled(true);
+
+        target->setDiversityEnabled(false);
+        QCOMPARE(record.runStops, 1);
+        QCOMPARE(record.destroys, 1);
+
+        // Reusing slot 0 must not resurrect the disabled route.
+        armDiversity(*model.wdspEngine(), 4);
+        worker.processExternalDiversityIqBatch(
+            0, QVector<float>{1, 1, 2, 2, 3, 3, 4, 4});
+        worker.processExternalDiversityIqBatch(
+            1, QVector<float>{10, 10, 20, 20, 30, 30, 40, 40});
+        QCOMPARE(record.processCalls, 0);
+    }
+
+    // Mutation caught: starting Run before publishing the worker route creates
+    // a live pdiv slot with no paired source owner. Likewise, configuring
+    // before Create is silently ignored by WdspEngine's lifecycle guard.
+    void radio_model_enable_orders_create_configure_route_then_run_data()
+    {
+        QTest::addColumn<int>("board");
+        QTest::newRow("Saturn-ddcEnable-includes-partner")
+            << static_cast<int>(HPSDRHW::Saturn);
+        QTest::newRow("Hermes-syncEnable-owns-partner")
+            << static_cast<int>(HPSDRHW::Hermes);
+    }
+
+    void radio_model_enable_orders_create_configure_route_then_run()
+    {
+        QFETCH(int, board);
+        DiversityRecorder record;
+        s_diversity = &record;
+        RxDspWorker worker;
+        RadioModel model;
+        P2RadioConnection connection;
+        connection.setBoardForTest(static_cast<HPSDRHW>(board));
+        model.injectConnectionForTest(&connection);
+        DetachConnection detach{&model};
+        model.configureStreamPool(
+            /*userDdcCount=*/2, /*maxSlices=*/2, /*defaultRateHz=*/48000);
+        const int targetId = model.addSlice();
+        QCOMPARE(targetId, 0);
+        SliceModel* target = model.sliceById(targetId);
+        QVERIFY(target != nullptr);
+
+        model.attachDspWorkerForTest(&worker);
+        worker.setEngines(model.wdspEngine(), nullptr);
+        worker.setBufferSizes(64, 64);
+        worker.setExternalDiversityRouteHookForTest(&captureDiversityRoute);
+        model.wdspEngine()->setExternalDiversityApiForTest(diversityApi());
+
+        record.lifecycle.clear();
+        target->setDiversityEnabled(true);
+
+        QCOMPARE(record.lifecycle, QStringList({
+            QStringLiteral("create"),
+            QStringLiteral("nr"),
+            QStringLiteral("output"),
+            QStringLiteral("rotate"),
+            QStringLiteral("route"),
+            QStringLiteral("run1"),
+        }));
+        QCOMPARE(target->ddcIndex(), 0);
+
+        QVector<float> primary(2 * 64, 1.0f);
+        QVector<float> secondary(2 * 64, 2.0f);
+        worker.processExternalDiversityIqBatch(0, primary);
+        worker.processExternalDiversityIqBatch(1, secondary);
+        QCOMPARE(record.processCalls, 1);
+    }
+
+    // Mutation caught: list-position lookup promotes Slice B after Slice A is
+    // removed. The stable target id must stop exactly once and remain absent.
+    void removing_stable_diversity_target_stops_once_without_promotion()
+    {
+        DiversityRecorder record;
+        s_diversity = &record;
+        RxDspWorker worker;
+        RadioModel model;
+        P2RadioConnection connection;
+        connection.setBoardForTest(HPSDRHW::Saturn);
+        model.injectConnectionForTest(&connection);
+        DetachConnection detach{&model};
+        model.configureStreamPool(
+            /*userDdcCount=*/2, /*maxSlices=*/2, /*defaultRateHz=*/48000);
+        const int targetId = model.addSlice();
+        const int remainingId = model.addSlice();
+        QCOMPARE(targetId, 0);
+        QCOMPARE(remainingId, 1);
+        SliceModel* target = model.sliceById(targetId);
+        SliceModel* remaining = model.sliceById(remainingId);
+        QVERIFY(target != nullptr);
+        QVERIFY(remaining != nullptr);
+
+        model.attachDspWorkerForTest(&worker);
+        worker.setEngines(model.wdspEngine(), nullptr);
+        worker.setBufferSizes(64, 64);
+        worker.setExternalDiversityRouteHookForTest(&captureDiversityRoute);
+        model.wdspEngine()->setExternalDiversityApiForTest(diversityApi());
+        target->setDiversityEnabled(true);
+
+        record.lifecycle.clear();
+        model.removeSlice(targetId);
+        QCOMPARE(record.lifecycle, QStringList({
+            QStringLiteral("clear"),
+            QStringLiteral("run0"),
+            QStringLiteral("destroy"),
+        }));
+        QCOMPARE(record.runStops, 1);
+        QCOMPARE(record.destroys, 1);
+
+        record.lifecycle.clear();
+        remaining->setDiversityEnabled(true);
+        QVERIFY(record.lifecycle.isEmpty());
+        QCOMPARE(record.runStops, 1);
+        QCOMPARE(record.destroys, 1);
     }
 };
 

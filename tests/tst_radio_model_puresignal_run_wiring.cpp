@@ -42,6 +42,7 @@
 #include "core/P1RadioConnection.h"
 #include "core/PureSignal.h"
 #include "core/TxChannel.h"
+#include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 
 using namespace NereusSDR;
@@ -266,6 +267,80 @@ private slots:
         QCOMPARE(tm.pureSigEnabled(), true);
     }
 
+    // The auto-cal checkbox is a preference. Until the cmd-state machine
+    // actually enters a TurnOn* state, the codec must see PS as stopped.
+    //
+    // Mutation caught: currentCodecContext reading isAutoCalEnabled() turns
+    // on feedback DDC routing before PSEnabled has changed.
+    void codecContext_autoCalPreferenceAlone_doesNotRunPuresignal()
+    {
+        TxChannel tx(/*WDSP TX channel*/ 1);
+        RadioModel model;
+        PureSignal* ps = model.installPureSignalForTest(&tx);
+        QVERIFY(ps != nullptr);
+
+        ps->setEnabled(true);
+        ps->setTimersEnabled(false);
+        ps->setAutoCalEnabled(true);
+
+        QVERIFY(ps->isAutoCalEnabled());
+        QCOMPARE(model.currentCodecContextForTest().puresignalRun, false);
+    }
+
+    // Single Cal never enables the auto-cal preference, but it does set the
+    // effective PSEnabled state. The codec must follow that real run state.
+    //
+    // Mutation caught: deriving puresignalRun from the preference leaves the
+    // DDC0/DDC1 pair off during Single Cal.
+    void codecContext_singleCalRun_isEffectiveWithoutAutoCalPreference()
+    {
+        TxChannel tx(/*WDSP TX channel*/ 1);
+        RadioModel model;
+        PureSignal* ps = model.installPureSignalForTest(&tx);
+        QVERIFY(ps != nullptr);
+
+        ps->setEnabled(true);
+        ps->setTimersEnabled(false);
+        ps->singleCalibrate();
+
+        int info[16] = {};
+        ps->processNewInfo(info); // Off -> TurnOnSingleCalibrate
+        ps->processNewInfo(info); // PSEnabled=true
+
+        QVERIFY(!ps->isAutoCalEnabled());
+        QCOMPARE(model.currentCodecContextForTest().puresignalRun, true);
+    }
+
+    // Disabling after Single Cal drains through TurnOff and Off. Only the
+    // effective true->false edge should request a new DDC assignment; the
+    // intermediate cmd-state visits do not change the wire run predicate.
+    void codecContext_disable_returnsFalse_withOneDdcRecompute()
+    {
+        TxChannel tx(/*WDSP TX channel*/ 1);
+        RadioModel model;
+        PureSignal* ps = model.installPureSignalForTest(&tx);
+        QVERIFY(ps != nullptr);
+
+        ps->setEnabled(true);
+        ps->setTimersEnabled(false);
+        ps->singleCalibrate();
+
+        int info[16] = {};
+        ps->processNewInfo(info);
+        ps->processNewInfo(info);
+        QCOMPARE(model.currentCodecContextForTest().puresignalRun, true);
+
+        QSignalSpy assignmentSpy(&model, &RadioModel::ddcAssignmentRequested);
+        ps->reset();
+        info[15] = 0; // EngineState::LRESET
+        ps->processNewInfo(info); // SingleCalibrate -> TurnOff
+        ps->processNewInfo(info); // TurnOff -> Off
+        ps->processNewInfo(info); // Off -> PSEnabled=false
+
+        QCOMPARE(model.currentCodecContextForTest().puresignalRun, false);
+        QCOMPARE(assignmentSpy.count(), 1);
+    }
+
     // ── Codex Fix C: Single Cal triggers setPuresignalRun(true) via the
     //                 new PureSignal::psEnabledChanged fan-out ─────────────
     //
@@ -320,5 +395,5 @@ private slots:
     }
 };
 
-QTEST_APPLESS_MAIN(TstRadioModelPuresignalRunWiring)
+QTEST_GUILESS_MAIN(TstRadioModelPuresignalRunWiring)
 #include "tst_radio_model_puresignal_run_wiring.moc"

@@ -234,8 +234,8 @@ class SliceModel : public QObject {
     //   gainDb           -20..+20 (default 0)
     //   fineNullEnabled  bool (default false)
     // The 8-memory slots (T3) + direction-finding fields (T11) land in those
-    // tasks. The wire path (these properties -> RxChannel::setExtDivRotate)
-    // lands in Sub-Epic G Task 13.
+    // tasks. The DSP path publishes these rotations through WdspEngine's
+    // process-wide external-diversity slot.
     Q_PROPERTY(double diversityPhaseDeg READ diversityPhaseDeg WRITE setDiversityPhaseDeg NOTIFY diversityPhaseDegChanged)
     Q_PROPERTY(double diversityGainDb READ diversityGainDb WRITE setDiversityGainDb NOTIFY diversityGainDbChanged)
     Q_PROPERTY(bool diversityFineNullEnabled READ diversityFineNullEnabled WRITE setDiversityFineNullEnabled NOTIFY diversityFineNullEnabledChanged)

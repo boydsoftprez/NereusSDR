@@ -60,12 +60,29 @@ constexpr quint8 kMaskCount2    = 0x03;   // what a count of 2 would derive
 // From Thetis ChannelMaster/network.c:1097-1103 [v2.10.3.15]:
 //   packetbuf[7] = (prn->rx[6].enable << 6 | ... | prn->rx[0].enable) & 0xff;
 constexpr int kCmdRxEnableByte = 7;
+constexpr int kCmdRxSyncByte = 1363;
 
 quint8 cmdRxEnableMask(const P2RadioConnection& conn)
 {
     quint8 buf[1444] = {};
     conn.composeCmdRxForTest(buf);
     return buf[kCmdRxEnableByte];
+}
+
+int cmdRxRateKhz(const P2RadioConnection& conn, int ddc)
+{
+    quint8 buf[1444] = {};
+    conn.composeCmdRxForTest(buf);
+    const int base = 17 + (ddc * 6);
+    return (static_cast<int>(buf[base + 1]) << 8)
+           | static_cast<int>(buf[base + 2]);
+}
+
+quint8 cmdRxSyncMask(const P2RadioConnection& conn)
+{
+    quint8 buf[1444] = {};
+    conn.composeCmdRxForTest(buf);
+    return buf[kCmdRxSyncByte];
 }
 
 // A Saturn-class assignment for `liveStreams` streams, shaped the way
@@ -341,6 +358,92 @@ private slots:
         model.sliceById(a)->setFrequency(14225000.0);
         model.sliceById(a)->setFrequency(14250000.0);
         QCOMPARE(cmdRxEnableMask(conn), kMaskDdc2);
+    }
+
+    // A radio-state edge must take the same complete-assignment path as a
+    // slice/rate bind. The five user streams deliberately carry distinct
+    // rates so a partial PS writer cannot collapse DDC4-6 while updating the
+    // DDC0/DDC1 feedback pair.
+    //
+    // Mutation caught: changing refreshDdcAssignmentForRadioState back to a
+    // client-only publish (or reconnecting the legacy PsDdcConfig P2 writer)
+    // leaves the old mask/rates on the wire and/or produces no full request.
+    void radio_state_edges_rewrite_one_complete_assignment()
+    {
+        RadioModel model;
+        TestableP2Connection conn;
+        conn.setBoardForTest(HPSDRHW::Saturn);
+        conn.markConnectedForTest();
+        model.injectConnectionForTest(&conn);
+        DetachConnection detach{&model};
+
+        model.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5,
+                                  /*defaultRateHz*/ 192000);
+        createReceiversForPool(model, 5);
+
+        const std::array<double, 5> frequencies{
+            14200000.0, 7150000.0, 3800000.0, 21200000.0, 28400000.0
+        };
+        for (double frequency : frequencies) {
+            const int id = model.addSlice();
+            model.sliceById(id)->setFrequency(frequency);
+        }
+        QCOMPARE(model.activeStreamCount(), 5);
+
+        const std::array<int, 5> userRateHz{
+            48000, 96000, 192000, 384000, 768000
+        };
+        for (int stream = 0; stream < 5; ++stream) {
+            model.setStreamSampleRate(stream, userRateHz[stream]);
+        }
+
+        QCOMPARE(cmdRxEnableMask(conn), quint8{0x7c}); // DDC2..DDC6
+        for (int stream = 0; stream < 5; ++stream) {
+            QCOMPARE(cmdRxRateKhz(conn, stream + 2), userRateHz[stream] / 1000);
+        }
+
+        QSignalSpy assignmentSpy(&model, &RadioModel::ddcAssignmentRequested);
+
+        // MOX alone keeps all five user DDCs. It still performs one complete
+        // recompute because MOX is an input to every per-board codec.
+        model.setDdcContextForTest(/*mox*/ true, /*puresignalRun*/ false,
+                                   /*diversity*/ false);
+        model.refreshDdcAssignmentForRadioState();
+        QCOMPARE(assignmentSpy.count(), 1);
+        QCOMPARE(cmdRxEnableMask(conn), quint8{0x7c});
+        for (int stream = 0; stream < 5; ++stream) {
+            QCOMPARE(cmdRxRateKhz(conn, stream + 2), userRateHz[stream] / 1000);
+        }
+
+        // Effective PS adds the DDC0/DDC1 pair without rewriting any user
+        // DDC. DDC1 is synchronized to DDC0.
+        assignmentSpy.clear();
+        model.setDdcContextForTest(/*mox*/ true, /*puresignalRun*/ true,
+                                   /*diversity*/ false);
+        model.refreshDdcAssignmentForRadioState();
+        QCOMPARE(assignmentSpy.count(), 1);
+        QCOMPARE(cmdRxEnableMask(conn), quint8{0x7f});
+        QCOMPARE(cmdRxSyncMask(conn), quint8{0x02});
+        QCOMPARE(cmdRxRateKhz(conn, 0), 192);
+        QCOMPARE(cmdRxRateKhz(conn, 1), 192);
+        for (int stream = 0; stream < 5; ++stream) {
+            QCOMPARE(cmdRxRateKhz(conn, stream + 2), userRateHz[stream] / 1000);
+        }
+
+        // Diversity migrates stream 0 to the DDC0/DDC1 pair. Streams 1..4
+        // remain on DDC3..6 with their distinct rates.
+        assignmentSpy.clear();
+        model.setDdcContextForTest(/*mox*/ false, /*puresignalRun*/ false,
+                                   /*diversity*/ true);
+        model.refreshDdcAssignmentForRadioState();
+        QCOMPARE(assignmentSpy.count(), 1);
+        QCOMPARE(cmdRxEnableMask(conn), quint8{0x7b});
+        QCOMPARE(cmdRxSyncMask(conn), quint8{0x02});
+        QCOMPARE(cmdRxRateKhz(conn, 0), userRateHz[0] / 1000);
+        QCOMPARE(cmdRxRateKhz(conn, 1), userRateHz[0] / 1000);
+        for (int stream = 1; stream < 5; ++stream) {
+            QCOMPARE(cmdRxRateKhz(conn, stream + 2), userRateHz[stream] / 1000);
+        }
     }
 };
 

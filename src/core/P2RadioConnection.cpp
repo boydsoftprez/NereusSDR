@@ -610,7 +610,7 @@ void P2RadioConnection::connectToRadio(const RadioInfo& info)
 
     // New session: no codec has computed a mask yet, so the board-aware
     // bootstrap on the next line plus setActiveReceiverCount hold byte 7
-    // until the first applyDdcAssignment / applyPsDdcConfig takes ownership.
+    // until the first applyDdcAssignment takes ownership.
     // Reset here (not in disconnect) so a reconnect on the same object gets
     // the same start state as a freshly constructed one.
     m_ddcMaskOwnedByCodec = false;
@@ -1697,156 +1697,6 @@ void P2RadioConnection::setPuresignalRun(bool run)
 }
 
 // ---------------------------------------------------------------------------
-// applyPsDdcConfig (Phase 3M-4 Task 17 chunk B)
-//
-// Receives the wire-byte map computed by the per-board codec
-// (P2CodecOrionMkII::applyPureSignalDdcConfig and friends), writes it into
-// m_rx[i] state, and re-sends CmdRx so the radio reconfigures its DDCs.
-//
-// Mirrors Thetis console.cs:8527-8534 UpdateDDCs() [v2.10.3.13]:
-//   NetworkIO.EnableRxs(ddcEnable);            // byte 7 of CmdRx
-//   NetworkIO.EnableRxSync(0, syncEnable);     // byte 1363 of CmdRx
-//   for (int i = 0; i < 4; i++)
-//       NetworkIO.SetDDCRate(i, rate[i]);      // bytes 18-19, 24-25, ... per RX
-//   NetworkIO.SetADC_cntrl1(cntrl1);
-//   NetworkIO.SetADC_cntrl2(cntrl2);
-//
-// In NereusSDR these wire bytes are emitted via composeCmdRx (P2 codec
-// reads ctx.p2RxEnable / p2RxSamplingRate / p2RxSync from m_rx[i] state
-// snapshotted by buildCodecContext at line 1546+).
-//
-// Block-level semantic mapping:
-//   cfg.ddcEnable   bit i → m_rx[i].enable
-//   cfg.syncEnable  bit i → m_rx[i].sync
-//   cfg.rate[i] (Hz)      → m_rx[i].samplingRate (kHz)
-//
-// cfg.cntrl1 / cfg.cntrl2 are ADC dither/random bits — those are sourced
-// from m_adc[i].dither / m_adc[i].random already (no path here yet; the
-// applyPureSignalDdcConfig output's adcCtrl1/adcCtrl2 bytes mirror the
-// existing ADC config in steady state).  TODO follow-up if PS auto-cal
-// ever needs dither/random adjustments mid-cycle.
-// ---------------------------------------------------------------------------
-void P2RadioConnection::applyPsDdcConfig(const PsDdcConfig& cfg)
-{
-    bool changed = false;
-
-    // The per-board codec computed this mask, so from here on it owns byte 7
-    // and setActiveReceiverCount must not rewrite it. See
-    // m_ddcMaskOwnedByCodec for the upstream ownership evidence.
-    m_ddcMaskOwnedByCodec = true;
-
-    // From Thetis console.cs:8527 [v2.10.3.13]: NetworkIO.EnableRxs(ddcEnable).
-    // From Thetis ChannelMaster netInterface.c:1211-1226 EnableRxs() and
-    // network.c:1097-1103 [v2.10.3.13]: byte 7 of CmdRx is built from
-    // prn->rx[i].enable for i=0..6.
-    // ddcEnable is a bitmask: bit 0 = DDC0, bit 1 = DDC1, ..., bit 6 = DDC6.
-    //
-    // Sync'd DDCs are NOT in the enable mask — when byte 1363 (sync byte,
-    // see below) has bit i set, the radio folds DDC i's samples into
-    // DDC0's packet stream as multi-stream interleaved I/Q (Thetis
-    // ChannelMaster xrouter de-interleaves via router.c:71-108
-    // function=2 case → InboundBlock(id=1) at sync.c:53-58 [v2.10.3.13]).
-    // The host-side de-interleaver lives in P2RadioConnection::
-    // processIqPacket below.
-    constexpr int kMaxDdcRoutes = 7;
-    for (int i = 0; i < kMaxDdcRoutes; ++i) {
-        const int wantEnable = (cfg.ddcEnable & (1 << i)) ? 1 : 0;
-        if (m_rx[i].enable != wantEnable) {
-            m_rx[i].enable = wantEnable;
-            changed = true;
-        }
-    }
-
-    // From Thetis console.cs:8529-8530 [v2.10.3.13]:
-    //   for (int i = 0; i < 4; i++) NetworkIO.SetDDCRate(i, rate[i]);
-    // PsDdcConfig populates rate[] in Hz; m_rx[i].samplingRate is in kHz
-    // (matches Thetis netInterface.c:1430-1450 [v2.10.3.13] storage).
-    // Loop over all 4 indices (codec supplies them sparsely — the unused
-    // slots have rate==0 and we leave m_rx[i].samplingRate at its prior
-    // RX-only steady-state value).
-    for (int i = 0; i < 4; ++i) {
-        if (cfg.rate[i] > 0) {
-            const int wantKhz = static_cast<int>(cfg.rate[i] / 1000);
-            if (m_rx[i].samplingRate != wantKhz) {
-                m_rx[i].samplingRate = wantKhz;
-                changed = true;
-            }
-        }
-    }
-
-    // From Thetis console.cs:8528 [v2.10.3.13]:
-    //   NetworkIO.EnableRxSync(0, syncEnable);
-    // CmdRx byte 1363 carries the sync-enable mask (composeCmdRx packs
-    // ctx.p2RxSync there per Thetis network.c:1172 [v2.10.3.13]).
-    if (m_rx[0].sync != static_cast<int>(cfg.syncEnable)) {
-        m_rx[0].sync = static_cast<int>(cfg.syncEnable);
-        changed = true;
-    }
-
-    // From Thetis netInterface.c:949-962 SetADC_cntrl1 [v2.10.3.13]:
-    //   prn->rx[0].rx_adc = bits & 0x3;
-    //   prn->rx[1].rx_adc = (bits >> 2) & 0x3;
-    //   prn->rx[2].rx_adc = (bits >> 4) & 0x3;
-    //   prn->rx[3].rx_adc = (bits >> 6) & 0x3;
-    // Plus SetADC_cntrl2 (lines 971-983) for DDCs 4-6.
-    //
-    // Bench evidence (2026-05-06): without this, DDC1 stays on ADC0 (the
-    // RX path) instead of ADC2 (the PA feedback ADC), so DDC0 and DDC1
-    // produce IDENTICAL samples per the bench dump
-    //   "P2 deint stream 0/1: first I/Q = same".
-    // The codec output for PS+MOX is `cntrl1 = (adcCtrl1 & 0xf3) | 0x08`
-    // → DDC1.rx_adc = (0x08 >> 2) & 0x3 = 2 (ADC2 = PA feedback tap).
-    // composeCmdRx packs ctx.p2RxAdcAssign[i] (sourced from m_rx[i].rxAdc
-    // by buildCodecContext at line 1597) into bytes 17/23/29/35/41/47/53.
-    {
-        const int adc0 = (cfg.cntrl1 >> 0) & 0x3;
-        const int adc1 = (cfg.cntrl1 >> 2) & 0x3;
-        const int adc2 = (cfg.cntrl1 >> 4) & 0x3;
-        const int adc3 = (cfg.cntrl1 >> 6) & 0x3;
-        const int adc4 = (cfg.cntrl2 >> 0) & 0x3;
-        const int adc5 = (cfg.cntrl2 >> 2) & 0x3;
-        const int adc6 = (cfg.cntrl2 >> 4) & 0x3;
-        const int wantAdc[7] = { adc0, adc1, adc2, adc3, adc4, adc5, adc6 };
-        for (int i = 0; i < 7; ++i) {
-            if (m_rx[i].rxAdc != wantAdc[i]) {
-                m_rx[i].rxAdc = wantAdc[i];
-                changed = true;
-            }
-        }
-    }
-
-    // Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): latch the PS DDC
-    // pair so the deinterleave loop can emit the source-first paired
-    // signal.  Mirrors Thetis cmaster.cs:533-534 [v2.10.3.13] SetPSRxIdx
-    // / SetPSTxIdx convention — the per-board codec is authoritative.
-    // PsDdcConfig stores -1 when no PS pair applies (RX-only steady
-    // state); a non-negative pair means PS-MOX is engaged on this
-    // connection.
-    if (cfg.psFbDdc != m_psFbDdc) {
-        m_psFbDdc = cfg.psFbDdc;
-        changed = true;
-    }
-    if (cfg.txMonDdc != m_psTxMonDdc) {
-        m_psTxMonDdc = cfg.txMonDdc;
-        changed = true;
-    }
-
-    if (changed) {
-        qCInfo(lcConnection) << "P2: applyPsDdcConfig — ddcEnable=" << cfg.ddcEnable
-                             << "syncEnable=" << cfg.syncEnable
-                             << "rate0=" << cfg.rate[0]
-                             << "rate1=" << cfg.rate[1]
-                             << "rate2=" << cfg.rate[2]
-                             << "rate3=" << cfg.rate[3]
-                             << "psFbDdc=" << m_psFbDdc
-                             << "psTxMonDdc=" << m_psTxMonDdc;
-        if (m_running) {
-            sendCmdRx();
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // applyDdcAssignment (Phase 3F Sub-Epic B Task 15)
 //
 // Receives the wire-byte map computed by a per-board 5-slice codec
@@ -1861,8 +1711,8 @@ void P2RadioConnection::applyPsDdcConfig(const PsDdcConfig& cfg)
 //   NetworkIO.SetADC_cntrl1(cntrl1);          // ADC routing DDC0-3
 //   NetworkIO.SetADC_cntrl2(cntrl2);          // ADC routing DDC4-7
 //
-// ADC routing extraction mirrors applyPsDdcConfig which cites:
-//   Thetis netInterface.c:949-983 SetADC_cntrl1/SetADC_cntrl2 [v2.10.3.13].
+// ADC routing extraction mirrors Thetis netInterface.c:949-983
+// SetADC_cntrl1/SetADC_cntrl2 [v2.10.3.13].
 // ---------------------------------------------------------------------------
 void P2RadioConnection::applyDdcAssignment(const DdcAssignment& a)
 {
@@ -1935,8 +1785,8 @@ void P2RadioConnection::applyDdcAssignment(const DdcAssignment& a)
     }
 
     // Latch PS pair so the deinterleave loop can emit the source-first paired
-    // signal.  Mirrors applyPsDdcConfig and Thetis cmaster.cs:533-534
-    // [v2.10.3.15] SetPSRxIdx / SetPSTxIdx convention.
+    // signal. Mirrors Thetis cmaster.cs:533-534 [v2.10.3.15]
+    // SetPSRxIdx / SetPSTxIdx convention.
     if (a.psFwdDdc != m_psFbDdc) {
         m_psFbDdc = a.psFwdDdc;
         changed = true;
@@ -3159,7 +3009,7 @@ void P2RadioConnection::processIqPacket(const QByteArray& data, int ddcIndex)
         // [v2.10.3.15] + router.c:91-102 case 2 [v2.10.3.15].
         //
         // When this packet carries both the PS-feedback and TX-monitor
-        // DDCs (latched from applyPsDdcConfig), emit them as a single
+        // DDCs (latched from applyDdcAssignment), emit them as a single
         // paired signal so PsccPump can call pscc() once with both
         // buffers from the SAME deinterleave pass — no host-side ring
         // buffering, no cross-stream drift.
