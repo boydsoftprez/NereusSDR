@@ -258,6 +258,7 @@ warren@wpratt.com
 #include "widgets/VfoWidget.h"
 #include "widgets/RxDashboard.h"
 #include "widgets/AntennaSwitchToast.h"
+#include "widgets/StatusToast.h"
 #include "widgets/FilterPolicyDialog.h"
 #include "widgets/TxBoundConfirmDialog.h"
 #include "core/RxChannel.h"
@@ -637,9 +638,7 @@ MainWindow::MainWindow(QWidget* parent)
     // Prevents silent failure — the user sees why nothing happened.
     connect(m_radioModel, &RadioModel::bandClickIgnored,
             this, [this](Band /*band*/, const QString& reason) {
-        if (QStatusBar* sb = statusBar()) {
-            sb->showMessage(reason, 3000);
-        }
+        showToast(reason, ToastSeverity::Warning, 3000);
     });
 
     // Phase 3Q Task 10: auto-connect failure / ambiguity surface.
@@ -660,10 +659,10 @@ MainWindow::MainWindow(QWidget* parent)
             (reason == NereusSDR::ConnectFailure::Timeout)
                 ? QStringLiteral("isn't reachable from this network")
                 : QStringLiteral("returned an error");
-        statusBar()->showMessage(
+        showToast(
             QStringLiteral("Auto-connect target %1 %2. Pick a different radio or update the address.")
                 .arg(name, reasonText),
-            8000);
+            ToastSeverity::Warning, 8000);
     });
 
     // autoConnectAmbiguous — multiple radios have AutoConnect = true.
@@ -674,11 +673,11 @@ MainWindow::MainWindow(QWidget* parent)
         const auto saved = AppSettings::instance().savedRadio(chosenMac);
         const QString name = (saved.has_value() && !saved->info.name.isEmpty())
             ? saved->info.name : chosenMac;
-        statusBar()->showMessage(
+        showToast(
             QStringLiteral("%1 radios marked Auto-connect on launch. Using %2 (most recent). "
                            "Adjust in Manage Radios.")
                 .arg(count).arg(name),
-            6000);
+            ToastSeverity::Info, 6000);
     });
 
     // WDSP wisdom progress dialog — shown as a modal window during first-run
@@ -3497,16 +3496,14 @@ void MainWindow::buildUI()
         });
     }
 
-    // Phase 3F Sub-Epic C Task 8: status-bar toast on slice-add rejection.
+    // Phase 3F Sub-Epic C Task 8: toast on slice-add rejection.
     // RadioModel::addSliceOnPan() emits sliceAddRejected(reason) when the
     // SKU cap blocks a +RX click (e.g. "Hermes Lite 2 supports a maximum
-    // of 1 slices"). Surface that as a 4-second status-bar message so the
-    // operator sees why the click did nothing.
+    // of 1 slices"). Surface that for 4 seconds so the operator sees why
+    // the click did nothing.
     connect(m_radioModel, &RadioModel::sliceAddRejected, this,
             [this](const QString& reason) {
-        if (QStatusBar* sb = statusBar()) {
-            sb->showMessage(reason, 4000);
-        }
+        showToast(reason, ToastSeverity::Warning, 4000);
     });
 
     // Phase 3F Sub-Epic I closeout, defect F4.
@@ -3518,9 +3515,7 @@ void MainWindow::buildUI()
     // needs time to read.
     connect(m_radioModel, &RadioModel::sliceRetuneRejected, this,
             [this](int, const QString& reason) {
-        if (QStatusBar* sb = statusBar()) {
-            sb->showMessage(reason, 6000);
-        }
+        showToast(reason, ToastSeverity::Warning, 6000);
     });
 
     // Phase 3F Sub-Epic I closeout, defect F3.
@@ -3528,22 +3523,24 @@ void MainWindow::buildUI()
     // The 1-ADC HERMES class drops every extra receiver the moment PureSignal
     // transmits or diversity engages. That is what Thetis does and it stays,
     // but Thetis says nothing about it either, so on the bench a slice simply
-    // stopped producing audio with no explanation. Same status-bar surface as
-    // the rejection message above; 6 s because it names slice letters the
+    // stopped producing audio with no explanation. Same surface as the
+    // rejection message above; 6 s because it names slice letters the
     // operator has to map back to their flags.
+    //
+    // This is the notice that produced the 2026-07-30 bench report: it fires
+    // on MOX with PureSignal running, which is exactly when the operator most
+    // needs the PureSignal indicator and the TX badge it used to cover. It is
+    // a toast for that reason and must stay one.
     connect(m_radioModel, &RadioModel::streamsSuspended, this,
             [this](const QVector<int>& streams, const QString& reason) {
-        QStatusBar* sb = statusBar();
-        if (!sb) { return; }
         if (streams.isEmpty()) {
-            // Everything is back. Clear the warning rather than leaving a
-            // stale one on screen for its full timeout.
-            sb->clearMessage();
+            // Everything is back. Take the notice down rather than leaving a
+            // stale one on screen for its full timeout: on unkey the streams
+            // return in well under six seconds.
+            if (m_suspendToast) { m_suspendToast->close(); }
             return;
         }
-        if (!reason.isEmpty()) {
-            sb->showMessage(reason, 6000);
-        }
+        m_suspendToast = showToast(reason, ToastSeverity::Warning, 6000);
     });
 
     // Phase 3F closeout — Sub-Epic E Task 6 consumer wire-up.
@@ -3616,11 +3613,9 @@ void MainWindow::buildUI()
             // appeared. Announcing "TX > Slice A" on every connect would be
             // noise about something that did not happen.
             if (oldId < 0) { return; }
-            if (QStatusBar* sb = statusBar()) {
-                sb->showMessage(QStringLiteral("TX > Slice %1")
-                                    .arg(QChar(QLatin1Char('A' + newId))),
-                                2000);
-            }
+            showToast(QStringLiteral("TX > Slice %1")
+                          .arg(QChar(QLatin1Char('A' + newId))),
+                      ToastSeverity::Info, 2000);
         });
     }
 
@@ -3857,18 +3852,15 @@ void MainWindow::buildUI()
                 m_meterPoller, &MeterPoller::setInTx,
                 Qt::QueuedConnection);
 
-        // ── Phase 3M-1b K.2: MOX rejection → status-bar toast ───────────────
+        // ── Phase 3M-1b K.2: MOX rejection → toast ──────────────────────────
         // moxRejected fires when BandPlanGuard::checkMoxAllowed() rejects a
         // setMox(true) request (wrong mode, out-of-band freq, cross-band TX).
-        // showMessage(reason, 3000) presents the rejection reason for 3 seconds
-        // in the Qt status bar, matching the bandClickIgnored toast pattern
-        // wired at MainWindow.cpp:418.  The toast is transient — it clears
-        // automatically and does not affect status-bar layout or persistence.
+        // Presented for 3 seconds, matching the bandClickIgnored pattern.
+        // The toast is transient: it clears automatically and does not affect
+        // bottom-bar layout or persistence.
         connect(mox, &MoxController::moxRejected,
                 this, [this](const QString& reason) {
-            if (QStatusBar* sb = statusBar()) {
-                sb->showMessage(reason, 3000);
-            }
+            showToast(reason, ToastSeverity::Warning, 3000);
         });
     }
 
@@ -6742,8 +6734,77 @@ void MainWindow::buildStatusBar()
         m_cpuTimer->start(1000 / clampedHz);
     }
 
-    // Add the full-width bar widget to the status bar
+    // Add the full-width bar widget to the status bar.
+    //
+    // Deliberately addWidget rather than addPermanentWidget: the bar takes
+    // the full width with stretch 1, so as a permanent widget it would
+    // leave a showMessage no room to render and the notice would be lost
+    // silently. Nothing calls showMessage any more for exactly that
+    // reason; notices go through showToast() below. If you are about to
+    // add a showMessage here, it will blank this entire bar. Use
+    // showToast().
     sb->addWidget(barWidget, 1);
+}
+
+// ── Transient notices ────────────────────────────────────────────────────────
+//
+// Bench report 2026-07-30 (JJ, KG4VCF): pressing TUNE with PureSignal
+// active replaced the whole bottom bar with a single line of text for
+// six seconds. Root cause is not the message, it is the surface:
+// QStatusBar::showMessage hides every non-permanent widget while a
+// message is up, and buildStatusBar adds the entire bar as one such
+// widget. So any notice cost the operator the CH pill, the PureSignal
+// indicator, the radio name, CAT and TCI state, the PA and TX badges
+// and the clock, all at once, mid-transmit.
+//
+// The notices themselves are worth keeping. They move here instead.
+StatusToast* MainWindow::showToast(const QString& message,
+                                   ToastSeverity severity,
+                                   int timeoutMs)
+{
+    if (message.isEmpty()) { return nullptr; }
+
+    // Drop dead entries first so a repeat check and the restack below
+    // both see only live toasts.
+    m_toasts.removeIf([](const QPointer<StatusToast>& t) { return t.isNull(); });
+
+    // A repeat of something already on screen restarts its countdown
+    // rather than stacking a second copy. Several of these fire from
+    // signals that can repeat while the condition persists, and a column
+    // of identical toasts is worse than the message it replaced.
+    for (const QPointer<StatusToast>& existing : m_toasts) {
+        if (existing && existing->message() == message) {
+            existing->refresh(timeoutMs);
+            return existing;
+        }
+    }
+
+    auto* toast = new StatusToast(message, severity, timeoutMs, this);
+    connect(toast, &QObject::destroyed, this, [this]() {
+        m_toasts.removeIf([](const QPointer<StatusToast>& t) { return t.isNull(); });
+        restackToasts();
+    });
+    m_toasts.append(toast);
+    toast->show();
+    restackToasts();
+    return toast;
+}
+
+void MainWindow::restackToasts()
+{
+    // Bottom-right, newest nearest the bar, growing upward. Offset clears
+    // the status bar itself so a toast never covers the thing it was
+    // introduced to stop covering.
+    const QRect geom = frameGeometry();
+    const int rightEdge = geom.right() - 20;
+    int bottom = geom.bottom() - 60;
+
+    for (auto it = m_toasts.crbegin(); it != m_toasts.crend(); ++it) {
+        StatusToast* toast = *it;
+        if (!toast) { continue; }
+        toast->move(rightEdge - toast->width(), bottom - toast->height());
+        bottom -= toast->height() + 8;
+    }
 }
 
 // ── Phase 3M-0 Task 14 / sub-PR-8: PA trip badge update ──────────────────────
@@ -6930,32 +6991,30 @@ void MainWindow::onAmpMetersForPowerCap(float fwd, float /*swr*/)
     const QString msg = QStringLiteral("PGXL power %1 W exceeds cap %2 W")
         .arg(static_cast<int>(fwd))
         .arg(static_cast<int>(capW));
-    if (QStatusBar* sb = statusBar()) {
-        sb->showMessage(msg, 5000);
-    }
+    showToast(msg, ToastSeverity::Error, 5000);
     qCWarning(lcMeter) << msg;
 }
 
 // ── Phase 3P-II review fix C2: TX interlock warning/denial toasts ────────────
-// Both slots display a 5-second status-bar message so the operator knows why
-// TX was warned or blocked.  The distinction: warning allows TX to proceed;
-// denial means MOX was rejected.  Pattern mirrors onAmpMetersForPowerCap above
-// (QStatusBar::showMessage + qCWarning(lcMeter)).
+// Both slots display a 5-second notice so the operator knows why TX was
+// warned or blocked.  The distinction: warning allows TX to proceed; denial
+// means MOX was rejected.  Pattern mirrors onAmpMetersForPowerCap above
+// (showToast + qCWarning(lcMeter)).
+//
+// These are the strongest argument for not using QStatusBar::showMessage
+// here: both fire during transmit, and blanking the bottom bar would take
+// the PA and TX badges away at the exact moment they matter.
 void MainWindow::onTxInterlockWarning(const QString& reason)
 {
     const QString msg = QString("TX interlock warning: %1").arg(reason);
-    if (QStatusBar* sb = statusBar()) {
-        sb->showMessage(msg, 5000);
-    }
+    showToast(msg, ToastSeverity::Warning, 5000);
     qCWarning(lcMeter) << msg;
 }
 
 void MainWindow::onTxInterlockDenial(const QString& reason)
 {
     const QString msg = QString("TX interlock blocked: %1").arg(reason);
-    if (QStatusBar* sb = statusBar()) {
-        sb->showMessage(msg, 5000);
-    }
+    showToast(msg, ToastSeverity::Error, 5000);
     qCWarning(lcMeter) << msg;
 }
 
@@ -9160,7 +9219,7 @@ void MainWindow::tryAutoReconnect()
             // so the user's next manual scan uses the full timing.
             m_radioModel->discovery()->stopDiscovery();
             m_radioModel->discovery()->setProfile(DiscoveryProfile::SafeDefault);
-            // Phase 3Q Task 10: surface the failure — open panel + status bar.
+            // Phase 3Q Task 10: surface the failure — open panel + toast.
             const QString name = AppSettings::instance()
                 .savedRadio(chosenMac)
                 .value_or(SavedRadio{})
@@ -9170,11 +9229,11 @@ void MainWindow::tryAutoReconnect()
             if (m_connectionPanel) {
                 m_connectionPanel->highlightMac(chosenMac);
             }
-            statusBar()->showMessage(
+            showToast(
                 QStringLiteral("Auto-connect target %1 isn't reachable from this network. "
                                "Pick a different radio or update the address.")
                     .arg(displayName),
-                8000);
+                ToastSeverity::Warning, 8000);
         });
     } else {
         // No MAC pinning — direct connect to saved IP address.

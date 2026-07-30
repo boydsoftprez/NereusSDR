@@ -1489,6 +1489,14 @@ public:
         m_lastRadioInfo = info;
     }
 
+    // Codex review round 7, PR #293 — drive the I/Q tap fork directly.
+    // Production reaches it from the iqDataForReceiver lambda installed in
+    // wireConnectionSignals, which needs DSP threads, an RxDspWorker and a
+    // live connection. Same on*ForTest pattern as handlePaTelemetryForTest.
+    void forkIqToTapsForTest(int receiverIndex, const QVector<float>& samples) {
+        forkIqToTaps(receiverIndex, samples);
+    }
+
     // P1 full-parity §3.4 test hook — invoke the per-sample PA telemetry
     // handler directly without spinning up the full wireConnectionSignals
     // pipeline (which constructs DSP threads and the RxDspWorker).  Mirrors
@@ -2666,6 +2674,17 @@ public:
     /// Plain-English sentence naming the affected slice letters and why they
     /// lost their receiver. Empty when nothing is suspended.
     QString describeSuspendedStreams(const QVector<int>& streams) const;
+
+    /// Publish one I/Q frame to the two taps: rawIqDataForStream always,
+    /// rawIqData only for stream zero.
+    ///
+    /// Codex review round 7, PR #293. The untagged rawIqData signal
+    /// predates multi-stream, and its only subscriber (TciServer) still
+    /// hardcodes receiver 0. Forwarding every stream through it fed a
+    /// single TCI IQ client frames from unrelated frequencies under one
+    /// header. Named rather than left inline so the rule has somewhere to
+    /// be stated and somewhere to be tested.
+    void forkIqToTaps(int receiverIndex, const QVector<float>& samples);
 
     // ── Phase 3F Sub-Epic I: slice-to-stream binding ───────────────────────
 

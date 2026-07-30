@@ -7916,8 +7916,7 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     // untagged for the existing single-stream subscribers.
     connect(m_receiverManager, &ReceiverManager::iqDataForReceiver,
             this, [this](int receiverIndex, const QVector<float>& samples) {
-        emit rawIqData(samples);
-        emit rawIqDataForStream(receiverIndex, samples);
+        forkIqToTaps(receiverIndex, samples);
     }, Qt::DirectConnection);
 
     // Step 2b: ReceiverManager → DSP worker (queued, off the main thread).
@@ -13850,8 +13849,12 @@ bool RadioModel::widebandActiveForChain(int chainIdx) const
         return false;
     }
 
-    // The capability gate. widebandAdcs is the number of ADCs on this board
-    // that can carry a wideband stream; 0 means the board has no such
+    // Two gates, because the board row and the live connection are two
+    // different facts and this branch has already been bitten by treating
+    // one as the other.
+    //
+    // Gate 1, the capability. widebandAdcs is the number of ADCs on this
+    // board that can carry a wideband stream; 0 means the board has no such
     // mechanism at all, which is every Protocol 1 SKU in the table
     // ("wideband mechanism differs; deferred to 3F-W", BoardCapabilities.cpp).
     //
@@ -13859,11 +13862,34 @@ bool RadioModel::widebandActiveForChain(int chainIdx) const
     // deliberately. A chain index is not an ADC index: ANAN-100D and 200D
     // carry .adcCount == 2 behind one preselector chain, so comparing one
     // against the other is the exact ADC-count-versus-chain-count confusion
-    // that has already produced defects on this branch. The zero test is the part that
-    // is unambiguous and it covers the reported case. Narrowing further needs
-    // the chain-to-ADC mapping to be settled first; that is recorded as a
-    // follow-up rather than guessed at here.
+    // that has already produced defects on this branch. The zero test is the
+    // part that is unambiguous and it covers the reported case. Narrowing
+    // further needs the chain-to-ADC mapping to be settled first; that is
+    // recorded as a follow-up rather than guessed at here.
     if (boardCapabilities().widebandAdcs <= 0) {
+        return false;
+    }
+
+    // Gate 2, the live protocol. Codex review round 6, PR #293.
+    //
+    // The capability row carries a nominal .protocol, and round 5 corrected
+    // two rows whose value contradicted it. That was necessary and it is not
+    // sufficient: a row's protocol is what the board usually speaks, not what
+    // THIS connection is speaking. ANVELINAPRO3 and REDPITAYA both have real
+    // Protocol 1 codecs (P1RadioConnection::selectCodec) and both resolve to
+    // the kOrionMKII row, which declares Protocol2 with widebandAdcs = 2. So
+    // a live P1 connection reaches this function with a row that advertises
+    // wideband, and the extended-view path would then bypass the Alex
+    // preselector for a stream P1 has no way to deliver: receive filtering
+    // lost, nothing gained.
+    //
+    // m_lastRadioInfo.protocol is what discovery reported for the radio we
+    // actually connected to, set in connectToRadio before any of this runs.
+    // Deliberately NOT a qobject_cast on the connection: that is untestable
+    // against the RadioConnection-derived mocks in tst_alex_bpf_policy_push
+    // and tst_pan_wide_badge, and an untestable gate is how the row error
+    // survived in the first place.
+    if (m_lastRadioInfo.protocol != ProtocolVersion::Protocol2) {
         return false;
     }
 
@@ -14137,6 +14163,29 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
     // paired worker route. Keeping this at the publish boundary prevents a
     // second source-selection policy from drifting from the wire state.
     reconcileExternalDiversityRoute(assignment);
+}
+
+// Codex review round 7, PR #293. See RadioModel.h.
+void RadioModel::forkIqToTaps(int receiverIndex, const QVector<float>& samples)
+{
+    // The untagged tap is stream zero and nothing else.
+    //
+    // It predates multi-stream and its only subscriber, TciServer, still
+    // labels every frame it receives as receiver 0
+    // (TciServer.cpp onRawIqDataReceived, `constexpr int kReceiver = 0`).
+    // Once Sub-Epic I gave ReceiverManager more than one stream, this fork
+    // was handing that subscriber frames from several DDCs on different
+    // frequencies under one receiver header, so a TCI client running
+    // iq_start:0 got a time series spliced together from unrelated bands.
+    // Silent corruption: every frame is individually well-formed.
+    //
+    // Per-stream consumers use rawIqDataForStream, which is tagged and
+    // unaffected. Widening the untagged signal instead would mean giving
+    // TCI a real per-receiver IQ surface, which is its own piece of work.
+    if (receiverIndex == 0) {
+        emit rawIqData(samples);
+    }
+    emit rawIqDataForStream(receiverIndex, samples);
 }
 
 QString RadioModel::describeSuspendedStreams(const QVector<int>& streams) const

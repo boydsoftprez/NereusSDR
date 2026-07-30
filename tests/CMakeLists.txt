@@ -5680,6 +5680,21 @@ nereus_add_test(tst_wideband_chain_state)
 # panes were deleted, not orphan them holding a DDC.
 nereus_add_test(tst_slice_rehome_on_layout_shrink)
 
+# Codex review round 7, PR #293: the untagged rawIqData tap is stream zero only.
+# Its sole subscriber (TciServer) labels every frame it receives as receiver 0,
+# so once Sub-Epic I gave ReceiverManager more than one stream, a TCI client on
+# iq_start:0 was fed consecutive blocks from unrelated DDCs under one header.
+nereus_add_test(tst_legacy_iq_tap_is_stream_zero)
+
+# Bench report 2026-07-30: TUNE with PureSignal active blanked the whole bottom
+# bar for six seconds. QStatusBar::showMessage hides every non-permanent widget
+# while a message is up, and MainWindow::buildStatusBar adds the entire bar as
+# one such widget, so any notice took the CH pill, PureSignal indicator, radio
+# name, CAT/TCI state, PA/TX badges and clock with it. All twelve notices moved
+# to StatusToast. Case 1 pins the Qt behaviour that caused it, so the rest of
+# the file has a stated reason to exist.
+nereus_add_test(tst_status_toast_preserves_bottom_bar)
+
 # Phase 3F Sub-Epic C Task 7: RadioModel slice lifecycle.
 # 2 tests: addSliceOnPan_exists_and_is_callable (cap enforcement after
 # the first successful add), removeSlice_refuses_to_remove_last_slice

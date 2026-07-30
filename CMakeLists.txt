@@ -748,6 +748,8 @@ set(GUI_SOURCES
     src/gui/widgets/AntennaPickerMenu.h
     src/gui/widgets/AntennaSwitchToast.cpp
     src/gui/widgets/AntennaSwitchToast.h
+    src/gui/widgets/StatusToast.cpp
+    src/gui/widgets/StatusToast.h
     src/gui/widgets/DiversityRadarWidget.cpp
     src/gui/widgets/DiversityRadarWidget.h
     src/gui/widgets/TxBoundConfirmDialog.cpp

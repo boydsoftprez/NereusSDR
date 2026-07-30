@@ -86,6 +86,10 @@ class QMenu;
 
 namespace NereusSDR {
 
+/// Defined in gui/widgets/StatusToast.h. Forward-declared with its fixed
+/// underlying type so this header keeps to Qt includes only.
+enum class ToastSeverity : int;
+
 class RadioModel;
 class ConnectionPanel;
 class SupportDialog;
@@ -874,6 +878,38 @@ private:
     int  m_tciClientCount{0};
     bool m_tciServerRunning{false};
     bool m_tciHasTxClient{false};
+
+    /// Live notification toasts, newest last. Bench report 2026-07-30:
+    /// QStatusBar::showMessage hides every non-permanent widget for the
+    /// life of the message, and the whole bottom bar is one such widget
+    /// (see buildStatusBar), so a TUNE with PureSignal active blanked the
+    /// CH pill, PS indicator, radio name, CAT/TCI state, PA/TX badges and
+    /// the clock for six seconds. Notices moved off the bar to here.
+    ///
+    /// QPointer because each toast deletes itself on close, by timer or
+    /// by click, without telling us first.
+    QList<QPointer<class StatusToast>> m_toasts;
+
+
+
+    /// Show a transient notice without disturbing the bottom bar.
+    /// Repeats of a message already on screen restart that toast's
+    /// countdown instead of stacking a duplicate beneath it.
+    ///
+    /// Returns the toast so a caller whose condition can end early can
+    /// dismiss it rather than leaving a stale notice up for its full
+    /// timeout. Hold it by QPointer: it deletes itself on close.
+    StatusToast* showToast(const QString& message,
+                           ToastSeverity severity,
+                           int timeoutMs);
+
+    /// The suspended-streams notice, kept so it can be taken down the
+    /// moment the streams come back instead of aging out.
+    QPointer<class StatusToast> m_suspendToast;
+
+    /// Re-stack live toasts bottom-right, newest nearest the bar.
+    /// Called on show, on close, and on move/resize.
+    void restackToasts();
 
     // Spectrum overlay panel
     /// Pan-0's strip. Kept as a stable target for the display-settings and

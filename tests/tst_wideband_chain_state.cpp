@@ -42,6 +42,24 @@ quint8 cmdGeneralWbMask(const P2RadioConnection& conn)
     return buf[kCmdGeneralWbEnableByte];
 }
 
+/// Declare a live connection to a wideband-capable Protocol 2 radio.
+///
+/// Two facts, not one. widebandActiveForChain gates on the board row's
+/// widebandAdcs AND on the protocol of the radio actually connected, and
+/// those are genuinely different questions (Codex review round 6, PR #293):
+/// ANVELINAPRO3 and REDPITAYA both resolve to the kOrionMKII row, which
+/// declares Protocol2 with widebandAdcs = 2, and both have real Protocol 1
+/// codecs in P1RadioConnection::selectCodec. So a test that declares only
+/// the board is describing a connection that may or may not exist, and the
+/// gate it thinks it is exercising may not be the one that answered.
+void declareP2Radio(RadioModel& model, HPSDRModel board)
+{
+    model.setHpsdrModelForTest(board);
+    RadioInfo info;
+    info.protocol = ProtocolVersion::Protocol2;
+    model.setLastRadioInfoForTest(info);
+}
+
 } // namespace
 
 class TestWidebandChainState : public QObject {
@@ -58,7 +76,7 @@ private slots:
         // A wideband-capable board, or the capability gate below correctly
         // refuses the whole thing and this test would pass for the wrong
         // reason. The default profile advertises widebandAdcs == 0.
-        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        declareP2Radio(model, HPSDRModel::ANAN_G2);
 
         const int a = model.addSlice();
         const int b = model.addSlice();
@@ -95,7 +113,7 @@ private slots:
         // A wideband-capable board, or the capability gate below correctly
         // refuses the whole thing and this test would pass for the wrong
         // reason. The default profile advertises widebandAdcs == 0.
-        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        declareP2Radio(model, HPSDRModel::ANAN_G2);
 
         const int a = model.addSlice();
         const int b = model.addSlice();
@@ -146,7 +164,7 @@ private slots:
         P2RadioConnection conn;
         RadioModel model;
         model.injectConnectionForTest(&conn);
-        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        declareP2Radio(model, HPSDRModel::ANAN_G2);
         model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
 
         const int a = model.addSlice();
@@ -175,7 +193,7 @@ private slots:
         P2RadioConnection conn;
         RadioModel model;
         model.injectConnectionForTest(&conn);
-        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        declareP2Radio(model, HPSDRModel::ANAN_G2);
         model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
 
         const int a = model.addSlice();
@@ -210,7 +228,7 @@ private slots:
         P2RadioConnection conn;
         RadioModel model;
         model.injectConnectionForTest(&conn);
-        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        declareP2Radio(model, HPSDRModel::ANAN_G2);
         model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
 
         const int a = model.addSlice();
@@ -304,6 +322,71 @@ private slots:
             "preselector must stay in");
     }
 
+    // Codex review round 6, PR #293. The table invariant above is necessary
+    // and not sufficient.
+    //
+    // A row's .protocol is what the board usually speaks, not what THIS
+    // connection is speaking. ANVELINAPRO3 and REDPITAYA both resolve to
+    // HPSDRHW::OrionMKII (HpsdrModel.h:157 and :159), whose row declares
+    // Protocol2 with widebandAdcs = 2, and both have real Protocol 1 codecs
+    // in P1RadioConnection::selectCodec (P1CodecAnvelinaPro3,
+    // P1CodecRedPitaya). So a live P1 connection can reach the wideband
+    // decision holding a row that advertises wideband, and no amount of
+    // auditing the table fixes that: the table is right, the connection is
+    // the thing that differs.
+    //
+    // Isolates gate 2 deliberately. The board here has widebandAdcs = 2, so
+    // gate 1 passes and only the protocol gate can refuse.
+    void a_protocol1_connection_is_refused_by_a_wideband_capable_row()
+    {
+        P2RadioConnection conn;
+        RadioModel model;
+        model.injectConnectionForTest(&conn);
+        model.setHpsdrModelForTest(HPSDRModel::ANVELINAPRO3);
+
+        // Precondition: this is the awkward case, not a board that would be
+        // refused by the capability gate anyway.
+        QVERIFY2(model.boardCapabilities().widebandAdcs > 0,
+            "AnvelinaPro3 must still resolve to the kOrionMKII row; if it "
+            "stops, this case no longer isolates the protocol gate");
+
+        RadioInfo p1;
+        p1.protocol = ProtocolVersion::Protocol1;
+        model.setLastRadioInfoForTest(p1);
+
+        const int a = model.addSlice();
+        SliceModel* slice = model.sliceById(a);
+        QVERIFY(slice);
+
+        slice->setWidebandExtensionRequested(true);
+
+        QVERIFY2(!model.widebandActiveForChainForTest(0),
+            "a Protocol 1 connection has no wideband receive path, whatever "
+            "the board row advertises, so the preselector must stay in");
+        QVERIFY2((cmdGeneralWbMask(conn) & 0xff) == 0x00,
+            "and no P2 wideband enable bit may be set for it");
+    }
+
+    // The same board on the connection its row describes. Without this the
+    // case above could pass by refusing AnvelinaPro3 outright, which would be
+    // a different bug wearing the same green tick.
+    void the_same_board_on_protocol2_still_engages()
+    {
+        P2RadioConnection conn;
+        RadioModel model;
+        model.injectConnectionForTest(&conn);
+        declareP2Radio(model, HPSDRModel::ANVELINAPRO3);
+
+        const int a = model.addSlice();
+        SliceModel* slice = model.sliceById(a);
+        QVERIFY(slice);
+
+        slice->setWidebandExtensionRequested(true);
+
+        QVERIFY2(model.widebandActiveForChainForTest(0),
+            "the protocol gate must refuse P1 connections, not this board");
+    }
+
     // The capable case, so the gate above is not simply switching the feature
     // off for everyone.
     void a_wideband_capable_board_still_engages()
@@ -311,7 +394,7 @@ private slots:
         P2RadioConnection conn;
         RadioModel model;
         model.injectConnectionForTest(&conn);
-        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        declareP2Radio(model, HPSDRModel::ANAN_G2);
         QVERIFY(model.boardCapabilities().widebandAdcs > 0);
 
         const int a = model.addSlice();

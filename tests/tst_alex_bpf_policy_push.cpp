@@ -190,11 +190,22 @@ private slots:
     void wideband_toggle_reaches_the_wire_without_a_retune()
     {
         RadioModel model;
-        // Codex review, PR #293: wideband now honours
+        // Codex review rounds 5 and 6, PR #293: wideband honours
         // BoardCapabilities::widebandAdcs, which a boardless model reports as
-        // 0. This test is about the push path, not the capability, so declare
-        // the wideband-capable board it always implicitly assumed.
+        // 0, AND the protocol of the radio actually connected, which an
+        // undeclared RadioInfo reports as Protocol1. This test is about the
+        // push path, not either gate, so declare the wideband-capable P2
+        // radio it always implicitly assumed.
+        //
+        // Round 5 supplied the board half and round 6 found the other half
+        // missing, which is the same incompleteness one level down: the test
+        // described a board without describing the connection it was on.
         model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        {
+            RadioInfo info;
+            info.protocol = ProtocolVersion::Protocol2;
+            model.setLastRadioInfoForTest(info);
+        }
         model.configureStreamPool(5, 5, 192000);
         auto* mock = new BpfMockConnection();
         model.injectConnectionForTest(mock);
@@ -223,11 +234,22 @@ private slots:
     void wideband_release_restores_the_filtered_bits()
     {
         RadioModel model;
-        // Codex review, PR #293: wideband now honours
+        // Codex review rounds 5 and 6, PR #293: wideband honours
         // BoardCapabilities::widebandAdcs, which a boardless model reports as
-        // 0. This test is about the push path, not the capability, so declare
-        // the wideband-capable board it always implicitly assumed.
+        // 0, AND the protocol of the radio actually connected, which an
+        // undeclared RadioInfo reports as Protocol1. This test is about the
+        // push path, not either gate, so declare the wideband-capable P2
+        // radio it always implicitly assumed.
+        //
+        // Round 5 supplied the board half and round 6 found the other half
+        // missing, which is the same incompleteness one level down: the test
+        // described a board without describing the connection it was on.
         model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        {
+            RadioInfo info;
+            info.protocol = ProtocolVersion::Protocol2;
+            model.setLastRadioInfoForTest(info);
+        }
         model.configureStreamPool(5, 5, 192000);
         auto* mock = new BpfMockConnection();
         model.injectConnectionForTest(mock);

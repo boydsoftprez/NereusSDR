@@ -61,6 +61,18 @@ void seedTwoChainRadio(RadioModel& model, int streamCount)
 {
     model.setBoardForTest(HPSDRHW::Saturn);
 
+    // A Saturn is a Protocol 2 radio, so say so. Codex review round 6,
+    // PR #293: wideband gates on the protocol of the radio actually
+    // connected, not on the board row's nominal one, because ANVELINAPRO3
+    // and REDPITAYA resolve to a Protocol2 row while having real Protocol 1
+    // codecs. An undeclared RadioInfo reports Protocol1, which would leave
+    // this helper describing a Saturn reached over P1: a radio that does not
+    // exist. Declared here rather than in the one test that noticed, because
+    // this helper is where "what radio is this" is decided.
+    RadioInfo info;
+    info.protocol = ProtocolVersion::Protocol2;
+    model.setLastRadioInfoForTest(info);
+
     ReceiverManager* rm = model.receiverManager();
     QVERIFY(rm);
     for (int st = 0; st < streamCount; ++st) {
