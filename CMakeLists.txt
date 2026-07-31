@@ -1034,6 +1034,14 @@ if(APPLE)
         MACOSX_RPATH ON
         INSTALL_NAME_DIR "@rpath"
     )
+elseif(UNIX)
+    # The library has its own runtime dependencies, librade.so in particular,
+    # which end up beside it in the AppImage's usr/lib. $ORIGIN makes it find
+    # them itself rather than relying on linuxdeploy to rewrite a file that
+    # cmake --install, not linuxdeploy, put in the AppDir.
+    set_target_properties(NereusSDRLib PROPERTIES
+        INSTALL_RPATH "$ORIGIN"
+    )
 endif()
 
 add_executable(NereusSDR src/main.cpp ${APP_ICON_SOURCES})
