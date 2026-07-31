@@ -80,7 +80,7 @@ endif()
 # unoptimised so single-step debugging still works.
 option(NEREUSSDR_AGGRESSIVE_OPT "Use -O3 (instead of -O2) for release builds" ON)
 # 2026-05-26 KG4VCF: LTO default flipped to OFF.  With LTO enabled on
-# the shared NereusSDRObjs object library, every test binary (526 of
+# the shared NereusSDRLib object library, every test binary (526 of
 # them) inherits the LTO bitcode and triggers a multi-minute LTO link
 # of its own.  Net effect on a clean build: 1+ hour, load avg 250+,
 # unusable while building.  Per-target IPO=FALSE on tests doesn't
@@ -113,7 +113,7 @@ if(NEREUSSDR_ENABLE_LTO)
         # main NereusSDR executable + the parallel NereusSDRObjs_LTO
         # object library it links).  We deliberately do NOT set the
         # global CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO
-        # flag, because that would make the shared NereusSDRObjs (used
+        # flag, because that would make the shared NereusSDRLib (used
         # by 526 test executables) produce LTO bitcode, and every test
         # link would then trigger a multi-minute LTO pass.  Net effect
         # of the old global setting on a clean build: ~1 hour, load
@@ -946,7 +946,7 @@ endif()
 # --------------------------------------------------------------------------
 # Object library — shared between the app executable and test targets so
 # the same translation units are compiled once and consumed by both
-# (Phase 3I test infrastructure). Properties on NereusSDRObjs propagate
+# (Phase 3I test infrastructure). Properties on NereusSDRLib propagate
 # to consumers (PUBLIC) via the CMake INTERFACE; the thin executable just
 # links src/main.cpp on top.
 #
@@ -957,7 +957,7 @@ endif()
 # the executable target below so .icns lands in Contents/Resources/ and
 # Windows .rc lands on the linker line.
 # --------------------------------------------------------------------------
-add_library(NereusSDRObjs OBJECT
+add_library(NereusSDRLib OBJECT
     ${CORE_SOURCES}
     ${MODEL_SOURCES}
     ${GUI_SOURCES}
@@ -969,14 +969,14 @@ add_library(NereusSDRObjs OBJECT
 # already gates the menu wiring on Q_OS_LINUX, so the .cpp shouldn't enter
 # the build on macOS or Windows.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_sources(NereusSDRObjs PRIVATE src/gui/VaxLinuxFirstRunDialog.cpp)
+    target_sources(NereusSDRLib PRIVATE src/gui/VaxLinuxFirstRunDialog.cpp)
 endif()
 
 # 2026-05-26 KG4VCF: parallel LTO-enabled object library, ONLY built
-# when NEREUSSDR_ENABLE_LTO=ON.  Same sources as NereusSDRObjs above,
+# when NEREUSSDR_ENABLE_LTO=ON.  Same sources as NereusSDRLib above,
 # but compiled with LTO bitcode so the main NereusSDR app's link can
 # do cross-translation-unit optimization.  Tests continue to link the
-# plain NereusSDRObjs (no bitcode), so test link times stay fast.
+# plain NereusSDRLib (no bitcode), so test link times stay fast.
 #
 # This is more work to build a release artifact (sources compile
 # twice) but it keeps the dev loop fast while preserving the LTO perf
@@ -1010,7 +1010,7 @@ if(NEREUSSDR_LTO_AVAILABLE)
         INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
         INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
 else()
-    target_link_libraries(NereusSDR PRIVATE NereusSDRObjs)
+    target_link_libraries(NereusSDR PRIVATE NereusSDRLib)
 endif()
 
 set_target_properties(NereusSDR PROPERTIES
@@ -1043,14 +1043,14 @@ if(APPLE)
     )
 endif()
 
-target_include_directories(NereusSDRObjs PUBLIC
+target_include_directories(NereusSDRLib PUBLIC
     ${CMAKE_SOURCE_DIR}/src
 )
 
 # --------------------------------------------------------------------------
 # Linking
 # --------------------------------------------------------------------------
-target_link_libraries(NereusSDRObjs PUBLIC
+target_link_libraries(NereusSDRLib PUBLIC
     Qt6::Core
     Qt6::Widgets
     Qt6::Network
@@ -1067,26 +1067,26 @@ endif()
 if(APPLE)
     # AVFoundation provides AVCaptureDevice for the launch-time mic-permission
     # prompt (src/core/MacMicPermission.mm, issue #203).
-    target_link_libraries(NereusSDRObjs PUBLIC "-framework AVFoundation")
+    target_link_libraries(NereusSDRLib PUBLIC "-framework AVFoundation")
 
     # CoreAudio framework for AudioObjectGetPropertyData +
     # kAudioDevicePropertyIOThreadOSWorkgroup used by
     # src/core/audio/RealtimeAudioPriority.cpp.  The os_workgroup_*
     # APIs themselves come from libSystem (already linked) but the
     # property-query helpers and AudioDeviceID type live in CoreAudio.
-    target_link_libraries(NereusSDRObjs PUBLIC "-framework CoreAudio")
+    target_link_libraries(NereusSDRLib PUBLIC "-framework CoreAudio")
 endif()
 
 if(WIN32)
     # avrt provides AvSetMmThreadCharacteristicsW + AvRevertMmThreadCharacteristics
     # used by src/core/audio/RealtimeAudioPriority.cpp to join the
     # "Pro Audio" MMCSS task class.
-    target_link_libraries(NereusSDRObjs PUBLIC avrt)
+    target_link_libraries(NereusSDRLib PUBLIC avrt)
 endif()
 
 if(Qt6SerialPort_FOUND)
-    target_link_libraries(NereusSDRObjs PUBLIC Qt6::SerialPort)
-    target_compile_definitions(NereusSDRObjs PUBLIC HAVE_SERIALPORT)
+    target_link_libraries(NereusSDRLib PUBLIC Qt6::SerialPort)
+    target_compile_definitions(NereusSDRLib PUBLIC HAVE_SERIALPORT)
 endif()
 
 # Qt6::WebSockets is REQUIRED above; the link and HAVE_WEBSOCKETS define
@@ -1094,24 +1094,24 @@ endif()
 # FreeDVReporterClient, MainWindow, and SpotHubDialog are now redundant
 # but left in place to keep this PR surgical; cleanup tracked as a
 # follow-up.
-target_link_libraries(NereusSDRObjs PUBLIC Qt6::WebSockets)
-target_compile_definitions(NereusSDRObjs PUBLIC HAVE_WEBSOCKETS)
+target_link_libraries(NereusSDRLib PUBLIC Qt6::WebSockets)
+target_compile_definitions(NereusSDRLib PUBLIC HAVE_WEBSOCKETS)
 
 if(FFTW3_FOUND)
-    target_include_directories(NereusSDRObjs PUBLIC ${FFTW3_INCLUDE_DIRS})
-    target_link_libraries(NereusSDRObjs PUBLIC ${FFTW3_LIBRARIES})
-    target_compile_definitions(NereusSDRObjs PUBLIC HAVE_FFTW3)
+    target_include_directories(NereusSDRLib PUBLIC ${FFTW3_INCLUDE_DIRS})
+    target_link_libraries(NereusSDRLib PUBLIC ${FFTW3_LIBRARIES})
+    target_compile_definitions(NereusSDRLib PUBLIC HAVE_FFTW3)
 endif()
 
 # libpipewire-0.3 — gated by the pkg_check_modules block above. Only links on
 # Linux when the dev package is present; NEREUS_HAVE_PIPEWIRE lets follow-up
 # PipeWire sources compile conditionally.
 if(PIPEWIRE_FOUND)
-    target_link_libraries(NereusSDRObjs PUBLIC ${PIPEWIRE_LIBRARIES})
-    target_include_directories(NereusSDRObjs PUBLIC ${PIPEWIRE_INCLUDE_DIRS})
-    target_compile_options(NereusSDRObjs PUBLIC ${PIPEWIRE_CFLAGS_OTHER})
-    target_compile_definitions(NereusSDRObjs PUBLIC NEREUS_HAVE_PIPEWIRE)
-    target_sources(NereusSDRObjs PRIVATE
+    target_link_libraries(NereusSDRLib PUBLIC ${PIPEWIRE_LIBRARIES})
+    target_include_directories(NereusSDRLib PUBLIC ${PIPEWIRE_INCLUDE_DIRS})
+    target_compile_options(NereusSDRLib PUBLIC ${PIPEWIRE_CFLAGS_OTHER})
+    target_compile_definitions(NereusSDRLib PUBLIC NEREUS_HAVE_PIPEWIRE)
+    target_sources(NereusSDRLib PRIVATE
         src/core/audio/PipeWireThreadLoop.cpp
         src/core/audio/PipeWireStream.cpp
         src/core/audio/PipeWireBus.cpp
@@ -1125,8 +1125,8 @@ if(WDSP_FOUND)
     add_subdirectory(third_party/rnnoise)
     add_subdirectory(third_party/libspecbleach)
     add_subdirectory(third_party/wdsp)
-    target_link_libraries(NereusSDRObjs PUBLIC wdsp_static)
-    target_compile_definitions(NereusSDRObjs PUBLIC HAVE_WDSP)
+    target_link_libraries(NereusSDRLib PUBLIC wdsp_static)
+    target_compile_definitions(NereusSDRLib PUBLIC HAVE_WDSP)
 endif()
 
 # --------------------------------------------------------------------------
@@ -1144,7 +1144,7 @@ endif()
 # Opus source tree (under build_opus-prefix/src/build_opus). Upstream
 # adds these via directory-scope include_directories() in BuildOpus.cmake,
 # which only reaches sources compiled inside the rade subdirectory.
-# We re-expose them as target-scope include dirs on NereusSDRObjs so
+# We re-expose them as target-scope include dirs on NereusSDRLib so
 # any future NereusSDR consumer that #includes "rade_api.h" can resolve
 # the transitive Opus headers.
 # --------------------------------------------------------------------------
@@ -1154,8 +1154,8 @@ if(NOT TARGET rade)
     message(FATAL_ERROR "RADE library target 'rade' not found after add_subdirectory(third_party/rade)")
 endif()
 
-target_link_libraries(NereusSDRObjs PUBLIC rade)
-target_include_directories(NereusSDRObjs PUBLIC
+target_link_libraries(NereusSDRLib PUBLIC rade)
+target_include_directories(NereusSDRLib PUBLIC
     ${CMAKE_SOURCE_DIR}/third_party/rade/src
     ${CMAKE_BINARY_DIR}/third_party/rade/build_opus-prefix/src/build_opus/include
     ${CMAKE_BINARY_DIR}/third_party/rade/build_opus-prefix/src/build_opus/dnn
@@ -1187,7 +1187,7 @@ endif()
 # "CDSPResampler.h".
 # --------------------------------------------------------------------------
 add_subdirectory(third_party/r8brain)
-target_link_libraries(NereusSDRObjs PUBLIC r8brain)
+target_link_libraries(NereusSDRLib PUBLIC r8brain)
 
 # --------------------------------------------------------------------------
 # DeepFilterNet3 DFNR — pre-built neural noise reduction library (MIT/Apache-2.0)
@@ -1238,10 +1238,10 @@ if(ENABLE_DFNR)
 endif()
 
 if(ENABLE_DFNR)
-    target_sources(NereusSDRObjs PRIVATE src/core/DeepFilterFilter.cpp)
-    target_include_directories(NereusSDRObjs PRIVATE ${DEEPFILTER_DIR}/include)
-    target_link_libraries(NereusSDRObjs PRIVATE ${DFNR_LIB})
-    target_compile_definitions(NereusSDRObjs PRIVATE HAVE_DFNR)
+    target_sources(NereusSDRLib PRIVATE src/core/DeepFilterFilter.cpp)
+    target_include_directories(NereusSDRLib PRIVATE ${DEEPFILTER_DIR}/include)
+    target_link_libraries(NereusSDRLib PRIVATE ${DFNR_LIB})
+    target_compile_definitions(NereusSDRLib PRIVATE HAVE_DFNR)
     if(WIN32)
         target_link_libraries(NereusSDR PRIVATE ws2_32 bcrypt userenv ntdll)
         if(DFNR_DLL AND EXISTS ${DFNR_DLL})
@@ -1299,9 +1299,9 @@ endif()
 # --------------------------------------------------------------------------
 option(ENABLE_MNR "Enable MNR Apple Accelerate noise reduction (macOS only)" ON)
 if(ENABLE_MNR AND APPLE)
-    target_sources(NereusSDRObjs PRIVATE src/core/MacNRFilter.cpp)
-    target_link_libraries(NereusSDRObjs PUBLIC "-framework Accelerate")
-    target_compile_definitions(NereusSDRObjs PUBLIC HAVE_MNR)
+    target_sources(NereusSDRLib PRIVATE src/core/MacNRFilter.cpp)
+    target_link_libraries(NereusSDRLib PUBLIC "-framework Accelerate")
+    target_compile_definitions(NereusSDRLib PUBLIC HAVE_MNR)
     message(STATUS "MNR (Apple Accelerate) enabled")
 elseif(ENABLE_MNR)
     set(ENABLE_MNR OFF)
@@ -1310,15 +1310,15 @@ endif()
 
 # PortAudio (Phase 3O VAX) — always linked; PortAudioBus is the cross-platform
 # IAudioBus fallback when no native low-latency backend is available.
-target_link_libraries(NereusSDRObjs PRIVATE portaudio_static)
-target_include_directories(NereusSDRObjs PUBLIC ${portaudio_SOURCE_DIR}/include)
+target_link_libraries(NereusSDRLib PRIVATE portaudio_static)
+target_include_directories(NereusSDRLib PUBLIC ${portaudio_SOURCE_DIR}/include)
 
 if(NEREUS_GPU_SPECTRUM)
-    target_link_libraries(NereusSDRObjs PUBLIC Qt6::GuiPrivate)
-    target_compile_definitions(NereusSDRObjs PUBLIC NEREUS_GPU_SPECTRUM)
+    target_link_libraries(NereusSDRLib PUBLIC Qt6::GuiPrivate)
+    target_compile_definitions(NereusSDRLib PUBLIC NEREUS_GPU_SPECTRUM)
 
     if(Qt6ShaderTools_FOUND)
-        qt_add_shaders(NereusSDRObjs "nereus_shaders"
+        qt_add_shaders(NereusSDRLib "nereus_shaders"
             PREFIX "/shaders"
             FILES
                 resources/shaders/waterfall.vert
@@ -1329,7 +1329,7 @@ if(NEREUS_GPU_SPECTRUM)
                 resources/shaders/overlay.frag
         )
 
-        qt_add_shaders(NereusSDRObjs "nereus_meter_shaders"
+        qt_add_shaders(NereusSDRLib "nereus_meter_shaders"
             PREFIX "/shaders"
             FILES
                 resources/shaders/meter_textured.vert
@@ -1404,7 +1404,7 @@ add_custom_target(nereus_build_tag ALL
 add_dependencies(NereusSDR nereus_build_tag)
 
 # Deliberately PRIVATE to the executable, and deliberately consumed only by
-# src/main.cpp. Every one of the ~450 test executables links NereusSDRObjs,
+# src/main.cpp. Every one of the ~450 test executables links NereusSDRLib,
 # so a generated header reaching that object library would relink all of them
 # each time HEAD moved. Confined here, a new commit recompiles one small
 # translation unit and relinks one binary. main.cpp hands the value to
@@ -1414,7 +1414,7 @@ target_include_directories(NereusSDR PRIVATE "${CMAKE_BINARY_DIR}/generated")
 # --------------------------------------------------------------------------
 # Version define
 # --------------------------------------------------------------------------
-target_compile_definitions(NereusSDRObjs PUBLIC
+target_compile_definitions(NereusSDRLib PUBLIC
     NEREUSSDR_VERSION="${PROJECT_VERSION}"
 )
 
@@ -1422,11 +1422,11 @@ target_compile_definitions(NereusSDRObjs PUBLIC
 # Compiler warnings
 # --------------------------------------------------------------------------
 if(MSVC)
-    target_compile_options(NereusSDRObjs PRIVATE /W3 /Zc:__cplusplus)
+    target_compile_options(NereusSDRLib PRIVATE /W3 /Zc:__cplusplus)
 else()
-    target_compile_options(NereusSDRObjs PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(NereusSDRLib PRIVATE -Wall -Wextra -Wpedantic)
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        target_compile_options(NereusSDRObjs PUBLIC -fsanitize=address)
+        target_compile_options(NereusSDRLib PUBLIC -fsanitize=address)
         target_link_options(NereusSDR PRIVATE -fsanitize=address)
     endif()
 endif()
@@ -1437,7 +1437,7 @@ endif()
 # CI bake-off (ubuntu-24.04, 4 vCPU, 451 test executables) showed Linux
 # spending ~33m in the build step vs ~6m on macOS / ~12m on Windows.
 # Most of that is repeated parsing of Qt6 + STL headers across the
-# NereusSDRObjs translation units AND across every test target that
+# NereusSDRLib translation units AND across every test target that
 # REUSE_FROMs this PCH (see tests/CMakeLists.txt nereus_add_test()).
 #
 # Keep the list conservative: only headers used by the vast majority of
@@ -1463,7 +1463,7 @@ if(APPLE)
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 endif()
 if(NEREUS_USE_PCH)
-    target_precompile_headers(NereusSDRObjs PRIVATE
+    target_precompile_headers(NereusSDRLib PRIVATE
         # Qt6 core (every model + worker TU)
         <QObject>
         <QString>
@@ -1526,9 +1526,9 @@ install(FILES LICENSE LICENSE-DUAL-LICENSING
 option(NEREUS_BUILD_TESTS "Build NereusSDR test suite" OFF)
 if(NEREUS_BUILD_TESTS)
     # Propagate the define to the object library so test-guard blocks
-    # (e.g. isTabVisibleForTest) are compiled into NereusSDRObjs and
+    # (e.g. isTabVisibleForTest) are compiled into NereusSDRLib and
     # therefore available for linking into test executables.
-    target_compile_definitions(NereusSDRObjs PUBLIC NEREUS_BUILD_TESTS)
+    target_compile_definitions(NereusSDRLib PUBLIC NEREUS_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()

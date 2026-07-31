@@ -319,7 +319,7 @@ jobs:
         # -DNEREUS_GPU_SPECTRUM=OFF on Linux.
         #
         # mold (the apt mold package) is the fast linker. With 451 test
-        # executables linking against NereusSDRObjs + Qt6 the default
+        # executables linking against NereusSDRLib + Qt6 the default
         # ld linker dominated Linux build time at ~33 minutes. The
         # Configure (Linux) step below selects mold via -fuse-ld=mold.
         if: runner.os == 'Linux'
@@ -340,7 +340,7 @@ jobs:
       # SDK / .NET / GHC / unused hosted-tool-cache entries.  Phase
       # 3J-1 closeout pushed the total link-time on-disk footprint
       # past the remaining free budget: 451 test executables each
-      # linking against NereusSDRObjs (~700 MB stripped, much larger
+      # linking against NereusSDRLib (~700 MB stripped, much larger
       # with debug info) plus the vendored RADE neural-codec tree.
       # Run #25835957362 died mid-link with "No space left on
       # device" and the log blob got truncated before upload finished.

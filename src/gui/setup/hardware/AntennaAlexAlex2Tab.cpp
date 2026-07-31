@@ -589,7 +589,7 @@ void AntennaAlexAlex2Tab::onMasterCheckChanged(bool checked, const QString& sett
 
 // ── Test seam ─────────────────────────────────────────────────────────────────
 
-// Always compiled — NEREUS_BUILD_TESTS is set on NereusSDRObjs globally.
+// Always compiled — NEREUS_BUILD_TESTS is set on NereusSDRLib globally.
 // Returns whether the status bar reflects an "Active" (hasAlex2=true) board.
 bool AntennaAlexAlex2Tab::isAlex2Active() const
 {
