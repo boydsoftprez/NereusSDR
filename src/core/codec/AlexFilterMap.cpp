@@ -206,4 +206,28 @@ quint8 computeLpf(double freqMhz)
     return 0x10;                             // 6m LPF
 }
 
+// ---------------------------------------------------------------------------
+// receiveLpfFrequencyMhz: the receive-side counterpart of computeLpf's input.
+//
+// Straight translation of the body of Thetis's UpdateAlexTXFilter, minus the
+// `if (!_mox)` wrapper, which the callers carry because they also have to
+// decide which of the two masks the wire word takes.
+//
+// From Thetis console.cs:15487-15498 UpdateAlexTXFilter [v2.10.3.15]
+//   if (!_rx2_preamp_present && chkRX2.Checked)
+//   {
+//       if (rx1_dds_freq_mhz > rx2_dds_freq_mhz) setAlexLPF(rx1_dds_freq_mhz, false);
+//       else setAlexLPF(rx2_dds_freq_mhz, false);
+//   }
+//   else setAlexLPF(rx1_dds_freq_mhz, false);
+// ---------------------------------------------------------------------------
+double receiveLpfFrequencyMhz(double rx1Mhz, double rx2Mhz,
+                              bool rx2Live, bool rx2PreampPresent) noexcept
+{
+    if (!rx2PreampPresent && rx2Live) {
+        return (rx1Mhz > rx2Mhz) ? rx1Mhz : rx2Mhz;
+    }
+    return rx1Mhz;
+}
+
 } // namespace NereusSDR::codec::alex

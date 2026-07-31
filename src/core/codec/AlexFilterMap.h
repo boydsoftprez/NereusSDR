@@ -143,4 +143,40 @@ quint8 computeRxPreselector(double freqMhz, NereusSDR::HPSDRHW board);
 // From Thetis console.cs:7168-7234 [@501e3f5]
 quint8 computeLpf(double freqMhz);
 
+// Which RECEIVE frequency selects the low-pass when more than one receiver is
+// listening. Returns the frequency to hand to computeLpf, in MHz.
+//
+// The low-pass the radio is receiving through is a different selection from
+// the one it transmits through, and it is not simply "whichever receiver moved
+// last". A low-pass passes everything BELOW its corner, so with two receivers
+// sharing the Alex chain the HIGHER frequency has to pick the filter: choosing
+// the lower receiver's would attenuate the higher one into silence.
+//
+// From Thetis console.cs:15487-15498 UpdateAlexTXFilter [v2.10.3.15]
+//   private void UpdateAlexTXFilter()
+//   {
+//       if (!_mox)
+//       {
+//           if (!_rx2_preamp_present && chkRX2.Checked)
+//           {
+//               if (rx1_dds_freq_mhz > rx2_dds_freq_mhz) setAlexLPF(rx1_dds_freq_mhz, false);
+//               else setAlexLPF(rx2_dds_freq_mhz, false);
+//           }
+//           else setAlexLPF(rx1_dds_freq_mhz, false);
+//       }
+//   }
+//
+// Its mirror image takes the LOWER frequency for the high-pass, so the pair
+// together spans both receivers:
+//   From Thetis console.cs:15500-15510 UpdateAlexRXFilter [v2.10.3.15]
+//     if (rx1_dds_freq_mhz < rx2_dds_freq_mhz) setAlex1HPF(rx1_dds_freq_mhz);
+//     else setAlex1HPF(rx2_dds_freq_mhz);
+//
+// `rx2Live` is Thetis's chkRX2.Checked, meaning a second receiver is actually
+// listening. `rx2PreampPresent` is BoardCapabilities::rx2PreampPresent: true
+// means RX2 has its own front end and never shares this filter, so the first
+// receiver decides alone.
+double receiveLpfFrequencyMhz(double rx1Mhz, double rx2Mhz,
+                              bool rx2Live, bool rx2PreampPresent) noexcept;
+
 } // namespace NereusSDR::codec::alex

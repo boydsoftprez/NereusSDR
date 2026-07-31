@@ -1520,6 +1520,20 @@ nereus_add_test(tst_alex_bpf_policy_push)
 # NereusSDR-original: no Thetis port.
 nereus_add_test(tst_alex_tx_lpf_source)
 
+# ── Which frequency selects the Protocol 1 Alex low-pass (bank 10 C4) ────────
+# P1 carries one low-pass field, not P2's Alex0/Alex1 pair, and Thetis fills it
+# from prbpfilter -- the Alex0 struct (networkproto1.c:587-590 [v2.10.3.15];
+# mi0bot's HL2 loop does the same at :1085-1088 [v2.10.3.14-beta1]). Alex0 is
+# written by the `isMox || !isTX` arm of SetAlexLPFBits, so the byte carries the
+# transmit selection while keyed and the RECEIVE selection while not. NereusSDR
+# wrote it only from setTxFrequency and emitted it in both states, so with the
+# transmitter bound to one slice and the operator listening on another the
+# receiver sat behind the transmit band's low-pass. Also locks which receive
+# frequency wins: UpdateAlexTXFilter takes the higher of the two on a board
+# whose RX2 shares the Alex chain (console.cs:15487-15498 [v2.10.3.15]).
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_p1_alex_lpf_word_source)
+
 # ── RF-safety companion: the transmit frequency comes from the TX-bound slice ─
 # Splitting the LPF masks only holds if the transmit frequency itself is taken
 # from the slice bound to the transmitter, not from whichever slice happens to

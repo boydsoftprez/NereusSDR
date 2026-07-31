@@ -472,6 +472,10 @@ const BoardCapabilities kAngelia = {
     .board            = HPSDRHW::Angelia,
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 2,
+    // RX2 has its own front end, so RX1 alone selects the receive low-pass.
+    // From Thetis console.cs:14815-14817 SetupForHPSDRModel [v2.10.3.15]
+    //   case HPSDRModel.ANAN100D: ... _rx2_preamp_present = true;
+    .rx2PreampPresent = true,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: Angelia 5-slice cap (2-ADC, 7 DDCs; DDC0+1 reserved for PS+Div)
     .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Angelia user DDCs = DDC2-6 (design doc §2)
@@ -530,6 +534,9 @@ const BoardCapabilities kOrion = {
     .board            = HPSDRHW::Orion,
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 2,
+    // From Thetis console.cs:14819-14821 SetupForHPSDRModel [v2.10.3.15]
+    //   case HPSDRModel.ANAN200D: ... _rx2_preamp_present = true;
+    .rx2PreampPresent = true,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: Orion 5-slice cap (2-ADC, 7 DDCs; DDC0+1 reserved for PS+Div)
     .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Orion user DDCs = DDC2-6 (design doc §2)
@@ -593,6 +600,18 @@ const BoardCapabilities kOrionMKII = {
     // ANVELINAPRO3 and REDPITAYA all resolve to this HW row and all five are
     // in the setAlex2HPF model list at console.cs:15435-15443 [v2.10.3.15].
     .rxFilterChainCount = 2,
+    // All five models on this row are _rx2_preamp_present = true.
+    // From Thetis console.cs:14823-14853 SetupForHPSDRModel [v2.10.3.15]
+    // Upstream inline attribution preserved verbatim. These are the tags
+    // upstream carries in and just around the cited range, not a list of
+    // models on this row:
+    //   case HPSDRModel.ANAN_G2E: //N1GP G2E added
+    //   case HPSDRModel.ANAN_G2_1K:                          // G8NJJ: likely to need further changes for PA
+    //   case HPSDRModel.REDPITAYA: //DH1KLM
+    //   RX2PreampPresent = _rx2_preamp_present; //[2.10.3.11]MW0LGE we were setting the member var above, but this was not actually having any effect/update
+    //   case HPSDRModel.ORIONMKII / ANAN7000D / ANAN8000D -> true
+    //   case HPSDRModel.ANVELINAPRO3                      -> true
+    .rx2PreampPresent = true,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: OrionMKII/7000D/8000D/AnvelinaPro3/RedPitaya 5-slice cap (2-ADC P2; DDC0+1 reserved)
     .userDdcCount     = 5,   // Phase 3F Sub-Epic I: OrionMKII/7000D/8000D/AnvelinaPro3/RedPitaya user DDCs = DDC2-6 (design doc §2)
@@ -969,6 +988,14 @@ const BoardCapabilities kSaturn = {
     // (clsHardwareSpecific.cs:164-177 [v2.10.3.15]) and both are in the
     // setAlex2HPF model list at console.cs:15435-15443 [v2.10.3.15].
     .rxFilterChainCount = 2,
+    // Both models on this row are _rx2_preamp_present = true.
+    // From Thetis console.cs:14839-14845 SetupForHPSDRModel [v2.10.3.15]
+    //   case HPSDRModel.ANAN_G2: ... _rx2_preamp_present = true;
+    // Upstream inline attribution preserved verbatim. Tags upstream carries
+    // in and just around the cited range, not models on this row:
+    //   case HPSDRModel.ANAN_G2E: //N1GP G2E added
+    //   case HPSDRModel.ANAN_G2_1K:                          // G8NJJ: likely to need further changes for PA
+    .rx2PreampPresent = true,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: Saturn/ANAN-G2/G2-1K 5-slice cap (2-ADC P2; DDC0+1 reserved)
     .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Saturn/ANAN-G2/G2-1K user DDCs = DDC2-6 (design doc §2)
@@ -1031,6 +1058,11 @@ const BoardCapabilities kSaturnMKII = {
     // it. This row describes the ANAN-G2 MkII board revision, so it inherits
     // the ANAN-G2's two chains along with the rest of kSaturn.
     .rxFilterChainCount = 2,
+    // Inherited from kSaturn along with the rest of this row, for the same
+    // reason: no HPSDRModel resolves to HPSDRHW.SaturnMKII, so
+    // console.cs:14783-14857 [v2.10.3.15] cannot answer for it directly and
+    // the ANAN-G2 board revision it describes is _rx2_preamp_present = true.
+    .rx2PreampPresent = true,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: SaturnMKII 5-slice cap (2-ADC P2 Saturn variant; DDC0+1 reserved)
     .userDdcCount     = 5,   // Phase 3F Sub-Epic I: SaturnMKII user DDCs = DDC2-6 (design doc §2)
@@ -1094,6 +1126,11 @@ const BoardCapabilities kAndromeda = {
     // answer for it and this is a NereusSDR judgement, not an upstream fact.
     // Revisit with the rest of the row when Andromeda hardware specs land.
     .rxFilterChainCount = 2,
+    // Derived from kSaturn like the rest of this row, and a NereusSDR
+    // judgement rather than an upstream fact for the same reason: Thetis has
+    // no HPSDRHW entry for Andromeda, so console.cs:14783-14857 [v2.10.3.15]
+    // cannot answer for it. Revisit when Andromeda hardware specs land.
+    .rx2PreampPresent = true,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: Andromeda 5-slice cap (2-ADC P2; DDC0+1 reserved per Saturn class)
     .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Andromeda user DDCs = DDC2-6 (design doc §2)

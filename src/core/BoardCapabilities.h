@@ -267,6 +267,42 @@ struct BoardCapabilities {
     // chain-1 filter word composed for a chain the board does not have.
     int  rxFilterChainCount {1};
 
+    // Does RX2 have its own front end, so that it never shares the Alex
+    // low-pass with RX1?
+    //
+    // Only one thing reads it, and it is the receive-side low-pass selection:
+    //   From Thetis console.cs:15487-15498 UpdateAlexTXFilter [v2.10.3.15]
+    //     if (!_rx2_preamp_present && chkRX2.Checked)
+    //     {
+    //         if (rx1_dds_freq_mhz > rx2_dds_freq_mhz) setAlexLPF(rx1_dds_freq_mhz, false);
+    //         else setAlexLPF(rx2_dds_freq_mhz, false);
+    //     }
+    //     else setAlexLPF(rx1_dds_freq_mhz, false);
+    // false -> the two receivers share the filter, so the HIGHER frequency
+    // picks it. true -> RX1 decides alone, however RX2 is tuned.
+    //
+    // Per-model, verbatim from the upstream switch:
+    //   From Thetis console.cs:14783-14857 SetupForHPSDRModel [v2.10.3.15]
+    // Upstream inline attribution preserved verbatim, every tag in that
+    // range:
+    //   case HPSDRModel.ANAN_G2E: //N1GP G2E added
+    //   case HPSDRModel.ANAN_G2_1K:                          // G8NJJ: likely to need further changes for PA
+    //   case HPSDRModel.REDPITAYA: //DH1KLM
+    //   RX2PreampPresent = _rx2_preamp_present; //[2.10.3.11]MW0LGE we were setting the member var above, but this was not actually having any effect/update
+    //     HERMES, ANAN10, ANAN10E, ANAN100, ANAN100B, ANAN_G2E  -> false
+    //     ANAN100D, ANAN200D, ORIONMKII, ANAN7000D, ANAN8000D,
+    //     ANAN_G2, ANAN_G2_1K, ANVELINAPRO3, REDPITAYA          -> true
+    //
+    // HERMESLITE is absent from that switch, so it keeps the field
+    // initializer and is false:
+    //   From Thetis console.cs:15068 [v2.10.3.15]
+    //     private bool _rx2_preamp_present = false;
+    //
+    // adcCount does NOT predict it, and neither does rxFilterChainCount:
+    // ANAN-100D and ANAN-200D are true here while carrying one driven filter
+    // chain, and the ANAN-G2E is false while being a 1-ADC board.
+    bool rx2PreampPresent {false};
+
     int  maxReceivers;
 
     // Phase 3F: user-facing slice cap, distinct from maxReceivers (= total DDC count).
