@@ -8604,6 +8604,16 @@ void RadioModel::installBandPlanMoxCheck()
 //     if (chkRIT.Checked && bRitOk) rx_freq += (int)udRIT.Value * 0.000001;
 //     if (chkXIT.Checked)           tx_freq += (int)udXIT.Value * 0.000001;
 // ---------------------------------------------------------------------------
+quint64 RadioModel::txFrequencyForSlice(const SliceModel* slice) const
+{
+    if (!slice) { return 0; }
+
+    const qint64 xitOffset =
+        slice->xitEnabled() ? static_cast<qint64>(slice->xitHz()) : 0LL;
+    const qint64 txHz = static_cast<qint64>(slice->frequency()) + xitOffset;
+    return (txHz < 0) ? 0 : static_cast<quint64>(txHz);
+}
+
 void RadioModel::pushTxFrequencyFromTxSlice()
 {
     if (!m_connection) { return; }
@@ -8611,10 +8621,7 @@ void RadioModel::pushTxFrequencyFromTxSlice()
     SliceModel* slice = txBoundSlice();
     if (!slice) { return; }
 
-    const qint64 xitOffset =
-        slice->xitEnabled() ? static_cast<qint64>(slice->xitHz()) : 0LL;
-    const qint64 txHz = static_cast<qint64>(slice->frequency()) + xitOffset;
-    const quint64 txFreqHz = (txHz < 0) ? 0 : static_cast<quint64>(txHz);
+    const quint64 txFreqHz = txFrequencyForSlice(slice);
 
     QMetaObject::invokeMethod(m_connection, [conn = m_connection, txFreqHz]() {
         conn->setTxFrequency(txFreqHz);
@@ -11473,8 +11480,10 @@ void RadioModel::setTune(bool on)
         // tune carrier on whichever slice the operator was looking at.
         SliceModel* const tuneSlice = txBoundSlice();
         if (tuneSlice && m_connection) {
-            const quint64 dialHz =
-                static_cast<quint64>(tuneSlice->frequency());
+            // Dial plus XIT, not the raw dial: Thetis applies the TUNE offset
+            // to tx_freq, which already carries XIT
+            // (console.cs:31782-31783 then 31845-31860 [v2.10.3.15]).
+            const quint64 dialHz = txFrequencyForSlice(tuneSlice);
             const qint64 adjustedTxHz =
                 static_cast<qint64>(dialHz) - static_cast<qint64>(signedFreq);
             const quint64 wireHz =
@@ -12354,8 +12363,9 @@ void RadioModel::completeTuneOff()
     // Same TX-bound source as the setTune arm above — the carrier returns to
     // the transmitter's own dial, not to whichever slice is on screen.
     if (SliceModel* const tuneSlice = txBoundSlice(); tuneSlice && m_connection) {
-        const quint64 dialHz =
-            static_cast<quint64>(tuneSlice->frequency());
+        // Same source as the setTune arm above: dial plus XIT, matching the
+        // tx_freq that Thetis drops the TUNE offset from on unkey.
+        const quint64 dialHz = txFrequencyForSlice(tuneSlice);
         auto* conn = m_connection;
         QMetaObject::invokeMethod(conn, [conn, dialHz]() {
             conn->setTxFrequency(dialHz);

@@ -1397,6 +1397,13 @@ public:
     // injecting a mock connection, mirroring what wireConnectionSignals() does
     // when a real radio connects.
     void wireSliceSignalsForTest() { wireSliceSignals(m_activeSlice); }
+    // The transmit-frequency derivation the push and both TUNE arms share.
+    // setTune() itself is unreachable from a unit test (it requires a live
+    // connection AND an audio engine, console.cs:30035-30043 [v2.10.3.15]'s
+    // PowerOn guard), so the shared derivation is what gets pinned.
+    quint64 txFrequencyForSliceForTest(const SliceModel* s) const {
+        return txFrequencyForSlice(s);
+    }
     void installBandPlanMoxCheckForTest() { installBandPlanMoxCheck(); }
     // Issue #182 — invoke the mic_ptt_disabled wiring helper directly so
     // tst_radio_model_mic_ptt_wire can verify the signal/slot bind + prime
@@ -2532,6 +2539,26 @@ private:
     // XIT is included and RIT is not, per Thetis console.cs:31782-31784
     // [v2.10.3.15]: udXIT lands on tx_freq, udRIT on rx_freq.
     void pushTxFrequencyFromTxSlice();
+
+    // The frequency a slice would actually transmit on: its dial plus XIT.
+    //
+    // One answer for three callers, because they had drifted apart. The
+    // transmit-frequency push folded XIT in; both TUNE arms read the raw
+    // dial. Keying TUNE with XIT set therefore put the carrier somewhere the
+    // transmit chain had not been told about, and with XIT straddling a
+    // filter edge that included the Alex transmit low-pass.
+    //
+    // From Thetis console.cs:31774-31783 [v2.10.3.15]
+    //   double tx_freq = freq;
+    //   ...
+    //   if (chkXIT.Checked) tx_freq += (int)udXIT.Value * 0.000001;
+    // The TUNE offsets are applied to that same tx_freq afterwards
+    // (console.cs:31845-31860 [v2.10.3.15]) before it becomes
+    // tx_dds_freq_mhz at console.cs:31891, so TUNE transmits on the
+    // XIT-shifted frequency too.
+    //
+    // Returns 0 for a null slice, and clamps at 0 rather than wrapping.
+    quint64 txFrequencyForSlice(const SliceModel* slice) const;
     void teardownConnection();
 
     // Derives the 16-digit dashed FlexRadio-style serial number from the

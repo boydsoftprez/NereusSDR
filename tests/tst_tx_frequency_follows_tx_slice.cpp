@@ -242,6 +242,63 @@ private slots:
         delete mock;
     }
 
+    // TUNE keys the PA, so it must key on the same frequency the transmit
+    // chain was configured for, XIT included. Both TUNE arms used to read the
+    // raw dial while the push folded XIT in, so keying TUNE with XIT set put
+    // the carrier off where the Alex transmit low-pass had been selected for,
+    // and with XIT straddling a filter edge that is a different filter.
+    //
+    // From Thetis console.cs:31774-31783 [v2.10.3.15]
+    //   double tx_freq = freq;
+    //   ...
+    //   if (chkXIT.Checked) tx_freq += (int)udXIT.Value * 0.000001;
+    // The TUNE offsets are applied to that same tx_freq afterwards
+    // (console.cs:31845-31860 [v2.10.3.15]) before it becomes
+    // tx_dds_freq_mhz (console.cs:31891).
+    //
+    // setTune() is unreachable here (its PowerOn guard wants a live
+    // connection and an audio engine, console.cs:30035-30043 [v2.10.3.15]),
+    // so what is pinned is the derivation all three call sites now share.
+    void tuneAndThePush_agreeOnWhatTheTransmitFrequencyIs()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+        auto* mock = new TxFreqMockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(k20mHz);
+        model.setActiveSlice(a);
+        model.wireSliceSignalsForTest();
+
+        SliceModel* const slice = model.slices().at(a);
+
+        // No XIT: dial, unchanged.
+        QCOMPARE(model.txFrequencyForSliceForTest(slice), quint64(k20mHz));
+
+        // XIT on: the push and TUNE must both see the shifted frequency.
+        slice->setXitHz(1200);
+        slice->setXitEnabled(true);
+        QCOMPARE(model.txFrequencyForSliceForTest(slice),
+                 quint64(k20mHz) + 1200);
+        QVERIFY(!mock->txFreqCalls.isEmpty());
+        QCOMPARE(mock->txFreqCalls.last(),
+                 model.txFrequencyForSliceForTest(slice));
+
+        // Negative XIT, and XIT switched back off.
+        slice->setXitHz(-2500);
+        QCOMPARE(model.txFrequencyForSliceForTest(slice),
+                 quint64(k20mHz) - 2500);
+        slice->setXitEnabled(false);
+        QCOMPARE(model.txFrequencyForSliceForTest(slice), quint64(k20mHz));
+
+        // A null slice is 0 rather than a crash or a wrapped quint64.
+        QCOMPARE(model.txFrequencyForSliceForTest(nullptr), quint64(0));
+
+        delete mock;
+    }
+
     // TX-global consumers must qualify the SliceModel that emitted their
     // signal. The operator may keep listening to A while C owns TX; A's
     // band/mode changes are then RX/UI state, not permission to retune TX,
