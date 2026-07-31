@@ -3,13 +3,17 @@
 #include <QSignalSpy>
 
 #include "core/HpsdrModel.h"
+#include "core/P1RadioConnection.h"
+#include "core/RadioDiscovery.h"
 #include "core/ReceiverManager.h"
 #include "core/codec/CodecContext.h"
 #include "core/codec/P1CodecHl2.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "fakes/P1FakeRadio.h"
 
 using namespace NereusSDR;
+using NereusSDR::Test::P1FakeRadio;
 
 namespace {
 // ReceiverManager has no getter for the config it last computed, so read it
@@ -23,6 +27,19 @@ PsDdcConfig lastConfig(QSignalSpy& spy)
 
 class TestP1Hl2Rx2Wiring : public QObject {
     Q_OBJECT
+private:
+    RadioInfo makeInfo(P1FakeRadio& fake) const {
+        RadioInfo info;
+        info.address         = fake.localAddress();
+        info.port            = fake.localPort();
+        info.boardType       = HPSDRHW::HermesLite;
+        info.protocol        = ProtocolVersion::Protocol1;
+        info.macAddress      = QStringLiteral("aa:bb:cc:11:22:33");
+        info.firmwareVersion = 72;
+        info.name            = QStringLiteral("FakeHL2");
+        return info;
+    }
+
 private slots:
     // ReceiverManager::setRx2Enabled had no caller anywhere in src/ or
     // tests/, so m_rx2Enabled was permanently false and the rx2 arms of
@@ -96,6 +113,94 @@ private slots:
 
         QVERIFY(model.buildStreamConfigsForCodecForTest()[1].live);
         QVERIFY(model.receiverManager()->rx2Enabled());
+    }
+
+    // Changing the announced receiver count changes the ep6 slot layout on
+    // both sides at once (parseEp6Frame's slotBytes = 6 * numRx + 2). A bare
+    // assignment leaves frames in flight that were composed under the old
+    // layout, and parseEp6Frame cannot detect the mismatch: its 7F 7F 7F sync
+    // check is layout-independent, so those frames are misparsed into
+    // corrupted audio rather than rejected. restartStreamWithCount does the
+    // stop, prime, start, prime cycle that makes both sides agree.
+    void ps_ddc_config_count_change_restarts_the_stream()
+    {
+        P1FakeRadio fake;
+        fake.setAutoStreamEnabled(false);   // no ep6 noise; we only count stops
+        fake.start();
+
+        P1RadioConnection conn;
+        conn.init();
+        // setAutoStreamEnabled(false) below means no ep6 frame arrives after
+        // the one we send by hand to complete the handshake. Without this,
+        // P1RadioConnection's own silence watchdog (kWatchdogSilenceMs =
+        // 2000, P1RadioConnection.h:471) fires ~2 s in, tears the link down
+        // to LinkLost, and reconnects on its own -- which also calls
+        // sendMetisStop() and would satisfy the assertion below for a
+        // reason unrelated to the fix under test. Push both timings well
+        // past this test's lifetime so that confound cannot fire.
+        conn.setReconnectTimingForTest(30000, 30000);
+        conn.connectToRadio(makeInfo(fake));
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+        // setAutoStreamEnabled(false) means the fake never sends an ep6
+        // frame on its own, so the Connecting -> Connected handshake (which
+        // fires on the first 1032-byte datagram, P1RadioConnection.cpp
+        // onReadyRead) needs exactly one sent by hand. buildEp6Frame's
+        // default numRx=1 is fine here: only the state transition and the
+        // stop count are asserted below, not sample content.
+        fake.sendEp6Frames(1);
+        QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connected, 3000);
+
+        const int stopsBefore = fake.metisStopCount();
+
+        PsDdcConfig cfg{};
+        cfg.p1RxCount = 4;      // connect seeds 2 (P1RadioConnection.cpp:695)
+        cfg.nDdc      = 4;
+        conn.applyPsDdcConfig(cfg);
+
+        QTRY_VERIFY_WITH_TIMEOUT(fake.metisStopCount() > stopsBefore, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+    }
+
+    // The same count must not restart. restartStreamWithCount is idempotent
+    // and a spurious stop/start costs the operator an audio dropout.
+    void ps_ddc_config_same_count_does_not_restart()
+    {
+        P1FakeRadio fake;
+        fake.setAutoStreamEnabled(false);
+        fake.start();
+
+        P1RadioConnection conn;
+        conn.init();
+        // See ps_ddc_config_count_change_restarts_the_stream: without this,
+        // the silence watchdog reconnects on its own after ~2 s and would
+        // add a spurious stop this test must not observe.
+        conn.setReconnectTimingForTest(30000, 30000);
+        conn.connectToRadio(makeInfo(fake));
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+        // See ps_ddc_config_count_change_restarts_the_stream: one manual
+        // ep6 frame is required to reach Connected when auto-stream is off.
+        fake.sendEp6Frames(1);
+        QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connected, 3000);
+
+        PsDdcConfig first{};
+        first.p1RxCount = 4;
+        first.nDdc      = 4;
+        conn.applyPsDdcConfig(first);
+        // fake.isRunning() was already true before this call (from the
+        // connect handshake above), so waiting on it alone would return
+        // immediately on its stale pre-restart value without ever pumping
+        // the event loop far enough to deliver this restart's stop
+        // datagram -- exactly the race that made stopsBefore below read 0
+        // instead of 1 the first time this test was written. Wait for the
+        // stop count itself to move first, then for the matching start.
+        QTRY_VERIFY_WITH_TIMEOUT(fake.metisStopCount() >= 1, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+
+        const int stopsBefore = fake.metisStopCount();
+        conn.applyPsDdcConfig(first);     // identical config, second time
+
+        QTest::qWait(200);
+        QCOMPARE(fake.metisStopCount(), stopsBefore);
     }
 };
 

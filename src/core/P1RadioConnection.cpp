@@ -1824,7 +1824,15 @@ void P1RadioConnection::applyPsDdcConfig(const NereusSDR::PsDdcConfig& cfg)
     // actually sends during PS-MOX, and nDdc → m_psNDdc for the bank-2/3
     // freq override gate.
     if (cfg.p1RxCount > 0 && m_activeRxCount != cfg.p1RxCount) {
-        m_activeRxCount = cfg.p1RxCount;
+        // restartStreamWithCount rather than a bare assignment. The count is
+        // the ep6 slot layout (parseEp6Frame's slotBytes = 6 * numRx + 2),
+        // and both sides have to change together: a frame composed under the
+        // old layout and parsed under the new one is silently misparsed,
+        // because the 7F 7F 7F sync check does not encode the layout. The
+        // stop, prime, start, prime cycle is the existing mechanism for
+        // exactly this (restartStreamWithCount, this file). Idempotent, and
+        // a plain record of the value when the stream is not yet running.
+        restartStreamWithCount(cfg.p1RxCount);
         changed = true;
     }
     if (cfg.nDdc > 0 && m_psNDdc != cfg.nDdc) {

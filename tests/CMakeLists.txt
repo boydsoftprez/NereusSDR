@@ -643,7 +643,12 @@ nereus_add_test(tst_p1_codec_hl2)
 # directions (rm.setRx2Enabled driving PsDdcConfig) plus the production path
 # end to end (RadioModel::invokeCodecDdcAssignment publishing stream-1
 # liveness from buildStreamConfigsForCodec()).
-nereus_add_test(tst_p1_hl2_rx2_wiring)
+#
+# Phase 3F Task 5 extended this with a loopback P1FakeRadio pair verifying
+# that a receiver-count change in applyPsDdcConfig restarts the ep6 stream
+# (restartStreamWithCount) instead of a bare assignment: hence the
+# P1FakeRadio.cpp source, matching tst_p1_loopback_connection's pattern.
+nereus_add_test(tst_p1_hl2_rx2_wiring fakes/P1FakeRadio.cpp)
 
 # ── Phase 3P-A regression-freeze gate (Task 16) ──
 nereus_add_test(tst_p1_regression_freeze)

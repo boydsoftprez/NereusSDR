@@ -357,6 +357,71 @@ deferred to Phase 3F Sub-Epic C". The P1 wire path runs through
 `applyPsDdcConfig` instead. This change works within that split rather than
 closing it.
 
+### 6.5 Fleet-wide effect of routing through restartStreamWithCount
+
+`applyPsDdcConfig` is not HL2-specific. It is `P1RadioConnection`'s single
+entry point for every Protocol 1 board's PS DDC config, so the
+`restartStreamWithCount` fix in §6.2.2 changes connect-time wire behaviour
+for every board whose codec reports a steady-state `p1RxCount` other than the
+`2` seeded at `P1RadioConnection.cpp:695`, not only the HL2.
+
+Boards that see the change, because their codec's live count differs from
+the seed:
+
+| Board (physical) | `HPSDRModel` value(s) | `p1RxCount` | Change on connect |
+| --- | --- | --- | --- |
+| HermesLite (HL2) | HERMESLITE | 4, always (`P1CodecHl2`) | 2 to 4 |
+| Hermes | HERMES, ANAN10, ANAN100 | 4, always (`psDdcConfigHermesClass`) | 2 to 4 |
+| Angelia | ANAN100D | 5, always (`psDdcConfigG2Class`) | 2 to 5 |
+| Orion | ANAN200D | 5, always (`psDdcConfigG2Class`) | 2 to 5 |
+
+Unaffected:
+
+- HermesII (ANAN10E, ANAN100B): `psDdcConfigHermesIIClass` always returns 2,
+  matching the seed. `restartStreamWithCount`'s idempotency guard makes this
+  a no-op.
+- Atlas (HPSDR): the default switch arm returns an unset `PsDdcConfig{}`
+  (`p1RxCount = 0`), which the `cfg.p1RxCount > 0` guard in `applyPsDdcConfig`
+  skips entirely.
+
+**A board list needs one correction against an easy misreading of the
+switch statement.** `P1CodecStandard::applyPureSignalDdcConfig` also names
+`ORIONMKII`, `ANAN7000D`, `ANAN8000D`, `ANAN_G2`, `ANAN_G2_1K`, and
+`ANVELINAPRO3` alongside Angelia and Orion in the same case group (Thetis's
+own switch groups them together), and names `ANAN_G2E` alongside
+Hermes/ANAN10/ANAN100. None of those seven models is on this risk surface:
+each one's `HPSDRHW` board (`OrionMKII`, `Saturn`, or `HermesC10`) carries
+`.protocol = ProtocolVersion::Protocol2` in `BoardCapabilities.cpp`, so a
+real unit of any of those types connects through `P2RadioConnection`, never
+`P1RadioConnection`. (`ANVELINAPRO3` gets its own codec class,
+`P1CodecAnvelinaPro3`, at `selectCodec()`'s dispatch; it does not override
+`applyPureSignalDdcConfig`, so it genuinely inherits this same 5 from the
+`P1CodecStandard` base rather than the arm being dead code, but the board
+mapping makes the point moot either way.) Those switch arms exist for
+byte-for-byte parity with Thetis's C# `UpdateDDCs`, not because NereusSDR
+ever dispatches a live Protocol 1 connection to them. In particular, a real
+ANAN-G2 is a Protocol 2 radio and is not affected by this change at all.
+
+**Unavoidable.** `applyPsDdcConfig` is shared code, not a per-board
+dispatch. A board-specific carve-out, routing through
+`restartStreamWithCount` only for the HL2, would leave the identical
+misparse-on-count-change bug live for Hermes, Angelia, and Orion, which is
+the exact bug this task exists to fix. Restricting the fix to the HL2 was
+never a real option.
+
+**Closest existing precedent.** The same stop, prime, start, prime shape
+already ships for a different field: `restartStreamWithRate`
+(`P1RadioConnection.cpp`, same file as `restartStreamWithCount`) performs
+the identical cycle for live sample-rate changes, across every Protocol 1
+board, since Task 1.6. It is the closest existing evidence that a
+mid-session stop and restart on this radio family does not itself cause
+problems. It is not proof for the receiver-count field specifically, and it
+does not substitute for the bench rows below.
+
+**Unverified.** Bench access on this branch is limited to a live HL2 (§9).
+No Hermes, Angelia, or Orion unit has exercised this change. §9 rows 14 and
+15 name what a non-HL2 Protocol 1 bench would need to confirm.
+
 ---
 
 ## 7. Open question: four panadapters
@@ -433,7 +498,10 @@ discoverable by broadcast.
 
 Rows 1 to 7 verify the cap correction (§6.1). Rows 8 to 13 are the correctness
 gate on the approved deviation (§6.2). **If any of rows 8 to 13 fail, commit 2
-is reverted and §6.1 ships alone.**
+is reverted and §6.1 ships alone.** Rows 14 and 15 verify the fleet-wide
+connect-time effect documented in §6.5, on a non-HL2 Protocol 1 board (Hermes,
+Angelia, or Orion). No such hardware exists on this branch; both rows are
+blocked until it does.
 
 | # | Check | Expected |
 | --- | --- | --- |
@@ -450,12 +518,18 @@ is reverted and §6.1 ships alone.**
 | 11 | Toggle PureSignal on and off 10 times | C4 tracks `0x18` and `0x08`; each transition costs one brief dropout and recovers clean, with no lingering misparse |
 | 12 | 384 kHz, PS off, 2 slices | Link load roughly halved against the pre-change baseline, near 47 Mbit/s rather than near 89 |
 | 13 | Rows 9 to 12 over the 45 ms tunnel | Stable, no ep6 stalls |
+| 14 | Connect a non-HL2 Protocol 1 board (Hermes, Angelia, or Orion). §6.5's fix now stops, primes, starts and primes on this connect where it previously did not (Hermes 2 to 4, Angelia/Orion 2 to 5) | Reaches a streaming Connected state; no rejected frames, clicks, dropouts or corrupted audio in the first minute. **Requires hardware nobody on this branch has.** |
+| 15 | Same connect, watch the ep6 silence path across the extra stop/start | The radio-side turnaround does not run long enough to trip the 2000 ms ep6 silence watchdog (`kWatchdogSilenceMs`, `P1RadioConnection.h:471`) into a `LinkLost`/reconnect cycle. **Requires hardware nobody on this branch has.** |
 
 Row 9 is the one that matters most. `nddc = 2` is sent today only during the
 first moments of a connection, so a sustained run is the first real evidence
 that HL2 gateware streams a two-slot layout correctly for an extended period.
 A misparse would show as corrupted audio rather than a rejected frame, because
 the sync check is layout-independent (§6.2.2), so listen as well as read the log.
+
+Rows 14 and 15 are not a re-run of row 9 on different hardware: they check
+that the connect-time restart itself completes cleanly on boards other than
+the HL2, which nothing on this branch has verified (§6.5).
 
 ---
 

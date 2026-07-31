@@ -190,6 +190,7 @@ void P1FakeRadio::handleMetisCommand(const QByteArray& pkt,
         m_clientPort    = port;
     } else if (cmd == 0x00) {
         m_running = false;
+        ++m_stopCount;
     }
 }
 
