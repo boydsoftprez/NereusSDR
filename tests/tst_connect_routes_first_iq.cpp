@@ -186,7 +186,39 @@ private slots:
         }
     }
 
-    // ── 4. A real suspension still deactivates ───────────────────────────
+    // ── 4. Connect raises no suspended-stream notice ─────────────────────
+    //
+    // The dropped packets were the reported symptom, not the only one. The
+    // same fabricated assignment also satisfied the suspension block twenty
+    // lines above the activation loop -- stream 0 hosting a slice with no DDC
+    // is exactly its condition -- so every connect emitted streamsSuspended
+    // and MainWindow raised a six-second warning toast reading "Slice A has no
+    // receiver: this radio has no DDC free for them right now."
+    //
+    // Worth its own assertion rather than being left to follow from the
+    // activation fix: it is the operator-visible half, it is driven from a
+    // different block, and a future change could restore one without the
+    // other.
+    void connect_raises_no_suspended_stream_notice()
+    {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::HERMESLITE);
+        ReceiverManager* rm = model.receiverManager();
+        QVERIFY(rm);
+
+        QSignalSpy suspended(&model, &RadioModel::streamsSuspended);
+
+        runConnectSequence(model, /*userDdcCount*/ 1, /*maxSlices*/ 1);
+        P1CodecHl2 codec;
+        rm->setP1Codec(&codec);
+
+        QVERIFY2(suspended.isEmpty(),
+                 "a normal connect must not tell the operator their slice has "
+                 "no receiver: nothing was suspended, the codec had simply not "
+                 "been asked yet");
+    }
+
+    // ── 5. A real suspension still deactivates ───────────────────────────
     //
     // Guard on the fix's blast radius, held here as well as in
     // tst_suspended_stream_has_no_receiver: once a codec IS present, a -1
