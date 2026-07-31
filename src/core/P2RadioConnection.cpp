@@ -883,8 +883,19 @@ void P2RadioConnection::setTxFrequency(quint64 frequencyHz)
     // UpdateTXDDSFreq on both MOX edges (console.cs:29099 + 29148
     // HdwMOXChanged [v2.10.3.15]), so the transmit selection is kept live
     // whether the radio is keyed or not.
-    m_alex.lpfBitsTx =
+    const int newLpfBitsTx =
         NereusSDR::codec::alex::computeLpf(static_cast<double>(frequencyHz) / 1e6);
+    if (newLpfBitsTx != m_alex.lpfBitsTx) {
+        // The one line that makes the transmit low-pass observable on a bench.
+        // Logged on change only, so it marks the event rather than the
+        // cadence. Same shape as setAlexRxBpf's line above.
+        qCDebug(lcConnection) << "P2::setTxFrequency txLpf="
+                              << Qt::hex << newLpfBitsTx << Qt::dec
+                              << "for" << bandLabel(bandFromFrequency(
+                                     static_cast<double>(frequencyHz)))
+                              << "tx=" << frequencyHz << "Hz";
+    }
+    m_alex.lpfBitsTx = newLpfBitsTx;
 
     if (m_running) {
         sendCmdHighPriority();
@@ -1197,7 +1208,7 @@ quint8 P2RadioConnection::effectiveRxHpfBitsAdc0() const
 //
 // Alex1 is unambiguous: it is the transmit word and always carries the
 // transmit low-pass. Alex0 is dual-purpose. Thetis spells out why in
-// ChannelMaster/netInterface.c:686-690 [v2.10.3.15], preserved verbatim:
+// ChannelMaster/netInterface.c:676-680 [v2.10.3.15], preserved verbatim:
 //   // LPF bits can be used in older radioas as part of RX filtering too.
 //   // Change to protocol 2 from 4.3 onwards: TX settings are encoded in the
 //   // Alex1 word to remain comparible with older hardware, the logic will be:

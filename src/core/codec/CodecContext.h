@@ -153,7 +153,7 @@ struct CodecContext {
     //     setAlexLPF(tx_dds_freq_mhz, true);   // the only isTX=true caller
     // Upstream inline attribution preserved verbatim (console.cs:15471):
     //   if (MOX)//[2.10.3.13]MW0LGE
-    //   Upstream comment preserved verbatim (netInterface.c:686-690):
+    //   Upstream comment preserved verbatim (netInterface.c:676-680):
     //     // LPF bits can be used in older radioas as part of RX filtering too.
     //     // Change to protocol 2 from 4.3 onwards: TX settings are encoded in
     //     // the Alex1 word to remain comparible with older hardware, the logic

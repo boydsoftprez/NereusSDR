@@ -23,7 +23,7 @@
 //     void SetAlexLPFBits(int bits, bool isTX, bool isMox)
 //     if (isMox || isTX)   -> write Alex1 (prbpfilter2, Alex1LPFMask)
 //     if (isMox || !isTX)  -> write Alex0 (prbpfilter,  AlexLPFMask)
-//   Upstream comment preserved verbatim (netInterface.c:686-690):
+//   Upstream comment preserved verbatim (netInterface.c:676-680):
 //     // LPF bits can be used in older radioas as part of RX filtering too.
 //     // Change to protocol 2 from 4.3 onwards: TX settings are encoded in
 //     // the Alex1 word to remain comparible with older hardware, the logic
