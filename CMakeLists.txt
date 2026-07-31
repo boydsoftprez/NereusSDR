@@ -1401,6 +1401,28 @@ if(NOT NEREUSSDR_BUILD_TAG)
             set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                          "${_nereus_git_dir}/HEAD")
         endif()
+
+        # HEAD alone is not enough. It changes when the checked-out ref
+        # changes, so it catches a branch switch, and it does NOT change when
+        # a commit lands on the branch already checked out: that writes the
+        # ref file HEAD points at. Without this the branch name stayed right
+        # while the SHA silently aged, which is the confidently-wrong build
+        # name this whole stamp exists to prevent. Caught immediately on the
+        # first commit after it shipped.
+        #
+        # Loose refs only. A packed ref has no file to watch, and an active
+        # branch being committed to is loose by construction; if it is ever
+        # packed the SHA goes stale again and the branch name still does not.
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" symbolic-ref --quiet HEAD
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            OUTPUT_VARIABLE _nereus_head_ref
+            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        if(_nereus_git_dir AND _nereus_head_ref
+           AND EXISTS "${_nereus_git_dir}/${_nereus_head_ref}")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                         "${_nereus_git_dir}/${_nereus_head_ref}")
+        endif()
     endif()
 endif()
 
