@@ -14225,9 +14225,38 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
     // implemented. Both activateReceiver/deactivateReceiver no-op when
     // already in the target state, so this is cheap to run on every
     // assignment change.
+    //
+    // A stream the radio has stopped is NOT active, however many slices are
+    // sitting on it. Bench report 2026-07-31 (JJ, KG4VCF): tuning up on
+    // slice B, the TUNE tone appeared on pan 0 and came out the speakers,
+    // while the transmitter was on slice B's pan.
+    //
+    // This loop asked "does this stream host slices", twenty lines after the
+    // suspension block asked "did the codec give this stream a DDC". Two
+    // checks, two different facts, and during PureSignal transmit they
+    // disagree completely: every streamDdc is -1 and every stream still
+    // hosts its slices, so this re-activated receivers the radio had just
+    // stopped streaming.
+    //
+    // An active receiver holds a DDC mapping (ReceiverManager::
+    // rebuildHardwareMapping assigns m_hwToLogical entries to active
+    // receivers only). On the 1-ADC HERMES class, slice A's stream maps to
+    // DDC0 (P2CodecHermes streamDdc[0] = 0) and PureSignal's feedback leg
+    // ALSO uses DDC0 (psFwdDdc = 0, Thetis cmaster.cs:538 [v2.10.3.15]
+    // SetPSRxIdx(0, 0)). So PS feedback, which is the transmitted signal,
+    // arrived on a DDC pan 0's receiver was still listening to and went
+    // straight down the ordinary RX path: onto pan 0's FFT as a tone
+    // crawling down a panadapter that was not transmitting, and through that
+    // slice's WDSP channel to the speakers.
+    //
+    // Deactivating drops the mapping, so those packets hit the
+    // "feedIqData dropped" path instead, which is what should happen to
+    // samples belonging to a receiver that does not currently exist.
     if (m_receiverManager) {
         for (int st = 0; st < streamPoolSize(); ++st) {
-            if (slicesOnStream(st).isEmpty()) {
+            const bool radioIsStreamingIt =
+                st < 5 && assignment.streamDdc[st] >= 0;
+            if (slicesOnStream(st).isEmpty() || !radioIsStreamingIt) {
                 m_receiverManager->deactivateReceiver(st);
             } else {
                 m_receiverManager->activateReceiver(st);

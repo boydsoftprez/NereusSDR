@@ -5686,6 +5686,16 @@ nereus_add_test(tst_slice_rehome_on_layout_shrink)
 # receiver. A new pan is a new receiver; +RX on an existing pan still shares.
 nereus_add_test(tst_new_pan_is_its_own_receiver)
 
+# Bench report 2026-07-31: tuning up on slice B put the TUNE tone on pan 0's
+# waterfall and in the speakers. publishDdcAssignment decided receiver
+# activation from "does this stream host slices" while the suspension block
+# twenty lines above decided from "did the codec give this stream a DDC".
+# During PureSignal transmit those disagree, so receivers the radio had
+# stopped stayed active, kept their DDC mapping, and PS feedback (the
+# transmitted signal, on DDC0, the DDC slice A held) took the ordinary RX
+# path to a panadapter and the speakers.
+nereus_add_test(tst_suspended_stream_has_no_receiver)
+
 # Bench report 2026-07-30, second half: pans past the first did not honour the
 # display settings. A pan opening for the first time has no per-pan keys, so
 # every read fell through to the ship defaults instead of looking like the pan

@@ -1378,11 +1378,43 @@ if(NOT NEREUSSDR_BUILD_TAG)
                 OUTPUT_VARIABLE _nereus_sha
                 OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 
+            # Uncommitted changes get said out loud. Without this the title
+            # names a commit that does not contain what is actually running,
+            # which is how a smoke build gets tested and reported against the
+            # wrong SHA. Caught on the bench 2026-07-31: a fix was built and
+            # handed over while the title still named the commit before it.
+            #
+            # READ THIS BEFORE TRUSTING IT. The check runs at CONFIGURE time,
+            # so "+local" present is reliable and "+local" absent is NOT
+            # proof of a clean tree: edits made after the last configure
+            # produce a binary that differs from HEAD with no marker. Making
+            # it exact would mean generating the tag at build time through a
+            # custom command, which has not been done.
+            #
+            # The actual discipline is to COMMIT before handing a build to
+            # someone. This marker catches the case where that was forgotten
+            # and configure happened to re-run; it does not replace it.
+            #
+            # Only tracked, modified files count. Untracked scratch files are
+            # not part of the binary and would leave most working trees
+            # permanently marked, which would make the marker meaningless.
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" status --porcelain --untracked-files=no
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE _nereus_dirty
+                OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            set(_nereus_dirty_suffix "")
+            if(_nereus_dirty)
+                set(_nereus_dirty_suffix "+local")
+            endif()
+
             if(_nereus_branch AND _nereus_sha)
-                set(NEREUSSDR_BUILD_TAG "${_nereus_branch}@${_nereus_sha}")
+                set(NEREUSSDR_BUILD_TAG
+                    "${_nereus_branch}@${_nereus_sha}${_nereus_dirty_suffix}")
             elseif(_nereus_sha)
                 # Detached HEAD that is not on a tag.
-                set(NEREUSSDR_BUILD_TAG "detached@${_nereus_sha}")
+                set(NEREUSSDR_BUILD_TAG
+                    "detached@${_nereus_sha}${_nereus_dirty_suffix}")
             endif()
         endif()
 
