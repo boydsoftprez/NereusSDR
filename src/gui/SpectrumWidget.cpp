@@ -586,20 +586,61 @@ void SpectrumWidget::loadSettings()
 {
     auto& s = AppSettings::instance();
 
+    // A pan that has never been configured looks like pan 0.
+    //
+    // Bench report 2026-07-30 (JJ, KG4VCF): the second and later pans did
+    // not honour the display settings. Two separate causes; this is the
+    // second. Setup was pushing to one widget (fixed in MainWindow), and
+    // separately a pan opening for the first time had no keys of its own, so
+    // every read fell through to the hardcoded ship defaults and the new pan
+    // came up looking nothing like the one beside it.
+    //
+    // Inheriting is done at read time rather than by copying pan 0's keys
+    // into the new pan's namespace. Copying would make the new pan's
+    // settings independent immediately, freezing whatever pan 0 happened to
+    // look like at that instant; the fallback instead means an untouched pan
+    // keeps following pan 0, and stops the moment the operator gives it a
+    // value of its own, because that write creates the per-pan key which
+    // then wins. "Follow pan 1 until you say otherwise", which is the model
+    // chosen on 2026-07-30, expressed in one place.
+    //
+    // Pan 0 has no fallback to take, and must not: settingsKey(base, 0)
+    // returns `base` itself, so recursing would just re-read the same key.
+    auto rawValue = [&](const QString& key) -> QString {
+        const QString own = s.value(settingsKey(key, m_panIndex)).toString();
+        if (!own.isEmpty() || m_panIndex == 0) { return own; }
+        return s.value(settingsKey(key, 0)).toString();
+    };
+
     auto readFloat = [&](const QString& key, float def) -> float {
-        QString val = s.value(settingsKey(key, m_panIndex)).toString();
+        QString val = rawValue(key);
         if (val.isEmpty()) { return def; }
         bool ok = false;
         float v = val.toFloat(&ok);
         return ok ? v : def;
     };
     auto readInt = [&](const QString& key, int def) -> int {
-        QString val = s.value(settingsKey(key, m_panIndex)).toString();
+        QString val = rawValue(key);
         if (val.isEmpty()) { return def; }
         bool ok = false;
         int v = val.toInt(&ok);
         return ok ? v : def;
     };
+    auto readBool = [&](const QString& key, bool def) -> bool {
+        const QString val = rawValue(key);
+        if (val.isEmpty()) { return def; }
+        return val == QStringLiteral("True");
+    };
+
+    // Note for anyone adding a setting here: keys wrapped in settingsKey()
+    // are per pan and inherit pan 0 through rawValue above. Keys read
+    // straight off AppSettings (Active Peak Hold, Peak Blobs) are global and
+    // every pan already sees the same value, which is deliberate and matches
+    // Thetis keeping some display settings global while splitting others
+    // per receiver (SpectrumGridMax vs RX2SpectrumGridMax, display.cs:1750
+    // and :1855 [v2.10.3.15]). Pick which one a new setting is; do not read
+    // a per-pan key without going through rawValue, or that setting will
+    // silently stop inheriting.
 
     // Ship defaults — calibrated 2026-04-30 against a live ANAN-G2 with
     // a typical residential noise floor (-115 to -120 dBm in the
@@ -632,11 +673,9 @@ void SpectrumWidget::loadSettings()
     m_wfActiveHighThreshold = m_wfHighThreshold;
     m_wfActiveLowThreshold  = m_wfLowThreshold;
     m_fillAlpha      = readFloat(QStringLiteral("DisplayFftFillAlpha"), 0.70f);
-    m_panFill        = s.value(settingsKey(QStringLiteral("DisplayPanFill"), m_panIndex),
-                               QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_panFill        = readBool(QStringLiteral("DisplayPanFill"), true);
 
-    m_ctunEnabled    = s.value(settingsKey(QStringLiteral("DisplayCtunEnabled"), m_panIndex),
-                               QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_ctunEnabled    = readBool(QStringLiteral("DisplayCtunEnabled"), true);
 
     int scheme = readInt(QStringLiteral("DisplayWfColorScheme"), 0);
     m_wfColorScheme = static_cast<WfColorScheme>(qBound(0, scheme,
@@ -692,10 +731,8 @@ void SpectrumWidget::loadSettings()
     m_peakHoldDelayMs  = readInt(QStringLiteral("DisplayPeakHoldResetMs"), 2000);
     m_lineWidth        = readFloat(QStringLiteral("DisplayLineWidth"), 1.5f);
     m_dbmCalOffset     = readFloat(QStringLiteral("DisplayCalOffset"), 0.0f);
-    const bool peakOn = s.value(settingsKey(QStringLiteral("DisplayPeakHoldEnabled"), m_panIndex),
-                                QStringLiteral("False")).toString() == QStringLiteral("True");
-    const bool gradOn = s.value(settingsKey(QStringLiteral("DisplayGradientEnabled"), m_panIndex),
-                                QStringLiteral("False")).toString() == QStringLiteral("True");
+    const bool peakOn = readBool(QStringLiteral("DisplayPeakHoldEnabled"), false);
+    const bool gradOn = readBool(QStringLiteral("DisplayGradientEnabled"), false);
     m_gradientEnabled = gradOn;
     // Delay the peak hold enable path until the timer infra is ready.
     if (peakOn) {
@@ -770,15 +807,12 @@ void SpectrumWidget::loadSettings()
     }
 
     // Phase 3G-8 commit 4: waterfall renderer state.
-    m_wfAgcEnabled = s.value(settingsKey(QStringLiteral("DisplayWfAgc"), m_panIndex),
-                             QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_wfAgcEnabled = readBool(QStringLiteral("DisplayWfAgc"), true);
     // Task 2.8: NF-AGC settings (DisplayWfReverseScroll key intentionally not
     // read here — W5 removed; key migration handled in Task 5.1).
-    m_wfNfAgcEnabled = s.value(settingsKey(QStringLiteral("WaterfallNFAGCEnabled"), m_panIndex),
-                               QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_wfNfAgcEnabled = readBool(QStringLiteral("WaterfallNFAGCEnabled"), false);
     m_wfNfAgcOffsetDb = readInt(QStringLiteral("WaterfallAGCOffsetDb"), 0);
-    m_wfStopOnTx = s.value(settingsKey(QStringLiteral("WaterfallStopOnTx"), m_panIndex),
-                           QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_wfStopOnTx = readBool(QStringLiteral("WaterfallStopOnTx"), false);
     m_wfOpacity          = readInt(QStringLiteral("DisplayWfOpacity"), 100);
     m_wfUpdatePeriodMs   = readInt(QStringLiteral("DisplayWfUpdatePeriodMs"), 30);
 
@@ -787,8 +821,7 @@ void SpectrumWidget::loadSettings()
         settingsKey(QStringLiteral("DisplayWaterfallHistoryMs"), m_panIndex),
         QString::number(static_cast<qint64>(kDefaultWaterfallHistoryMs))
     ).toLongLong();
-    m_wfUseSpectrumMinMax = s.value(settingsKey(QStringLiteral("DisplayWfUseSpectrumMinMax"), m_panIndex),
-                                    QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_wfUseSpectrumMinMax = readBool(QStringLiteral("DisplayWfUseSpectrumMinMax"), false);
     const int wfAvgRaw = readInt(QStringLiteral("DisplayWfAverageMode"),
                                  static_cast<int>(AverageMode::None));
     m_wfAverageMode = static_cast<AverageMode>(qBound(0, wfAvgRaw,
@@ -801,13 +834,11 @@ void SpectrumWidget::loadSettings()
                                   static_cast<int>(TimestampMode::UTC));
     m_wfTimestampMode = static_cast<TimestampMode>(qBound(0, tsModeRaw,
                             static_cast<int>(TimestampMode::Count) - 1));
-    m_showRxFilterOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowRxFilterOnWaterfall"), m_panIndex),
-                                        QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_showRxFilterOnWaterfall = readBool(QStringLiteral("DisplayShowRxFilterOnWaterfall"), false);
     // Default True — same rationale as DisplayDrawTxFilter above: the TX
     // overlay should be visible during MOX out of the box.  The waterfall
     // column is independently MOX-gated at the call site.
-    m_showTxFilterOnRxWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowTxFilterOnRxWaterfall"), m_panIndex),
-                                          QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_showTxFilterOnRxWaterfall = readBool(QStringLiteral("DisplayShowTxFilterOnRxWaterfall"), true);
     // Plan 4 D9 (Cluster E): persist DrawTXFilter flag.
     // From Thetis display.cs:2481 [v2.10.3.13]: DrawTXFilter property.
     // Until the Setup → Display TX Display page has a wired checkbox,
@@ -816,25 +847,17 @@ void SpectrumWidget::loadSettings()
     // sites (m_txFilterVisible && m_moxOverlay).  Without this, MOX flips
     // m_moxOverlay true, the RX cyan correctly hides, but the TX orange
     // never paints — the panadapter goes "clear" during TX/TUNE.
-    m_txFilterVisible = s.value(settingsKey(QStringLiteral("DisplayDrawTxFilter"), m_panIndex),
-                                QStringLiteral("True")).toString() == QStringLiteral("True");
-    m_showRxZeroLineOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowRxZeroLine"), m_panIndex),
-                                          QStringLiteral("False")).toString() == QStringLiteral("True");
-    m_showTxZeroLineOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowTxZeroLine"), m_panIndex),
-                                          QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_txFilterVisible = readBool(QStringLiteral("DisplayDrawTxFilter"), true);
+    m_showRxZeroLineOnWaterfall = readBool(QStringLiteral("DisplayShowRxZeroLine"), false);
+    m_showTxZeroLineOnWaterfall = readBool(QStringLiteral("DisplayShowTxZeroLine"), false);
 
     // Phase 3G-8 commit 5: grid / scales state.
-    m_gridEnabled = s.value(settingsKey(QStringLiteral("DisplayGridEnabled"), m_panIndex),
-                            QStringLiteral("True")).toString() == QStringLiteral("True");
-    m_showZeroLine = s.value(settingsKey(QStringLiteral("DisplayShowZeroLine"), m_panIndex),
-                             QStringLiteral("False")).toString() == QStringLiteral("True");
-    m_showFps = s.value(settingsKey(QStringLiteral("DisplayShowFps"), m_panIndex),
-                        QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_gridEnabled = readBool(QStringLiteral("DisplayGridEnabled"), true);
+    m_showZeroLine = readBool(QStringLiteral("DisplayShowZeroLine"), false);
+    m_showFps = readBool(QStringLiteral("DisplayShowFps"), false);
     // B8 Task 21: cursor frequency readout persists across restarts.
-    m_showCursorFreq = s.value(settingsKey(QStringLiteral("DisplayShowCursorFreq"), m_panIndex),
-                               QStringLiteral("True")).toString() == QStringLiteral("True");
-    m_dbmScaleVisible = s.value(settingsKey(QStringLiteral("DisplayDbmScaleVisible"), m_panIndex),
-                                QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_showCursorFreq = readBool(QStringLiteral("DisplayShowCursorFreq"), true);
+    m_dbmScaleVisible = readBool(QStringLiteral("DisplayDbmScaleVisible"), true);
     m_bandPlanFontSize = s.value(QStringLiteral("BandPlanFontSize"),
                                  QStringLiteral("6")).toInt();
     const int alignRaw = readInt(QStringLiteral("DisplayFreqLabelAlign"),

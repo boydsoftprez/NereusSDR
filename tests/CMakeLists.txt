@@ -5680,6 +5680,21 @@ nereus_add_test(tst_wideband_chain_state)
 # panes were deleted, not orphan them holding a DDC.
 nereus_add_test(tst_slice_rehome_on_layout_shrink)
 
+# Bench report 2026-07-30: two pans panned and tuned together. Not a wiring
+# fault; addSlice seeds a new pan's slice on the active slice's frequency, so
+# the allocator shared the DDC and the two pans became two views of one
+# receiver. A new pan is a new receiver; +RX on an existing pan still shares.
+nereus_add_test(tst_new_pan_is_its_own_receiver)
+
+# Bench report 2026-07-30, second half: pans past the first did not honour the
+# display settings. A pan opening for the first time has no per-pan keys, so
+# every read fell through to the ship defaults instead of looking like the pan
+# beside it. It now inherits pan 0 until given a value of its own.
+# Touches real display keys (AppSettings has no test-path override); every key
+# is snapshotted and restored so running the suite cannot change how the
+# operator's panadapters look.
+nereus_add_test(tst_pan_display_settings_inherit)
+
 # Codex review round 7, PR #293: a restored per-band sample rate has to reach
 # the DDC. SliceModel::restoreFromSettings called setSampleRateHz, a plain
 # property setter, so the VFO menu reported the saved rate while the receiver,

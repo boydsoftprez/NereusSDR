@@ -57,9 +57,39 @@ int SliceStreamAllocator::firstFreeStream() const
 }
 
 SliceStreamAllocator::Placement
-SliceStreamAllocator::placeSlice(double frequencyHz) const
+SliceStreamAllocator::placeSlice(double frequencyHz, bool preferDedicated) const
 {
     Placement p;
+
+    // Claiming a DDC of its own, when asked for and one is spare.
+    //
+    // Bench report 2026-07-30 (JJ, KG4VCF): "creating a second pan, then
+    // retuning the first or second pan causes both to tune... they should be
+    // independent." They were not independent because they were not two
+    // receivers. A new pan's slice is seeded on the active slice's frequency,
+    // which lands inside the active stream's window, so step 1 below shared
+    // the DDC. One DDC has one centre and one FFT stream, so the two pans
+    // were two views of a single receiver: panning either moved the shared
+    // window and both followed, correctly and uselessly.
+    //
+    // A new pan means a new receiver (operator decision, 2026-07-30), which
+    // matches AetherSDR and Thetis RX1/RX2. Adding a slice to a pan that
+    // already has one still shares that pan's receiver, so `+RX` keeps
+    // costing no hardware.
+    //
+    // Deliberately a preference and not a demand: if every DDC is spoken
+    // for, sharing beats refusing to open the pan at all. The operator gets
+    // a pan that works and is coupled, rather than no pan and a toast.
+    if (preferDedicated) {
+        const int freeStream = firstFreeStream();
+        if (freeStream >= 0) {
+            p.outcome           = Outcome::NewStream;
+            p.streamIndex       = freeStream;
+            p.shiftOffsetHz     = 0.0;
+            p.newStreamCentreHz = frequencyHz;
+            return p;
+        }
+    }
 
     // 1. Prefer sharing: an active stream whose window already covers this
     //    frequency costs no extra DDC and no extra bus bandwidth.

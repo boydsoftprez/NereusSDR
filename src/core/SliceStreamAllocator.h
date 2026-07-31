@@ -60,7 +60,19 @@ public:
     void deactivateStream(int streamIndex);
 
     /// Where should a brand-new slice at `frequencyHz` go?
-    Placement placeSlice(double frequencyHz) const;
+    ///
+    /// `preferDedicated` asks for a DDC of this slice's own even when an
+    /// active window already covers the frequency. A new PAN wants that: it
+    /// is a new receiver, and sharing a DDC would make it a second view of
+    /// an existing one, tuning and panning in lockstep because one DDC has
+    /// one centre. A slice added to a pan that already has slices does NOT
+    /// want it; sharing that pan's receiver is the point and costs no
+    /// hardware.
+    ///
+    /// A preference, not a demand. With every DDC spoken for it falls
+    /// through to the sharing path, because a coupled pan beats no pan.
+    Placement placeSlice(double frequencyHz,
+                         bool preferDedicated = false) const;
 
     /// Where should an existing slice go after retuning to `frequencyHz`?
     ///

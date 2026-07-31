@@ -2345,9 +2345,37 @@ void MainWindow::buildUI()
     // Task 13 wires per-pan rebinding when the active pan changes; for
     // now we just log/no-op.  Future polish: re-attach overlay panel,
     // peak-detector, spot bridges, etc. to the new active pan's widget.
+    // Point the Setup dialog's Display pages at the pan the operator is on.
+    //
+    // Bench report 2026-07-30 (JJ, KG4VCF): "the second-N panadapters seem
+    // not to honour the settings for display, pan 1 does, seems no way to
+    // adjust the others."
+    //
+    // RadioModel::m_spectrumWidget is the single hook every Display setup
+    // page pushes through (82 call sites across DisplaySetupPages,
+    // AppearanceSetupPages and SpectrumPeaksPage). It was assigned once
+    // during wiring from activeSpectrumWidget() and never again, so it kept
+    // whichever widget happened to be active at startup for the whole
+    // session. Every display control in Setup therefore acted on one pan and
+    // silently did nothing for the others.
+    //
+    // Following the active pan is the smallest thing that makes the controls
+    // reachable at all, and it suits the per-pan model: SpectrumWidget
+    // already persists every display preference under
+    // settingsKey(key, m_panIndex), so the pans genuinely have their own
+    // settings and Setup just needs to say which one it means. Selecting a
+    // pan and opening Setup now adjusts that pan.
+    //
+    // Not an activePanId indirection of the kind that rule forbids: this is
+    // a global dialog choosing a target, not a control drawn on one pan
+    // reaching sideways into another. A per-pan selector inside Setup, the
+    // way Thetis splits RX1 and RX2 display settings, is the fuller answer.
     connect(m_panStack, &PanadapterStack::activePanChanged, this,
-            [](const QString& panId) {
-        Q_UNUSED(panId);
+            [this](const QString& panId) {
+        if (!m_radioModel || !m_panStack) { return; }
+        if (SpectrumWidget* sw = m_panStack->spectrum(panId)) {
+            m_radioModel->setSpectrumWidget(sw);
+        }
     });
 
     // Phase 3F: the status overlay's non-slice trigger. countChanged fires

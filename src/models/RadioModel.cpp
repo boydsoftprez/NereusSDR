@@ -3832,7 +3832,8 @@ bool RadioModel::setStreamSampleRate(int streamIndex, int rateHz)
     return true;
 }
 
-bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
+bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
+                                   bool preferDedicatedStream)
 {
     if (!slice) { return false; }
 
@@ -3861,9 +3862,12 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
     const bool soleOccupant =
         previousStream >= 0 && slicesOnStream(previousStream).size() == 1;
 
+    // preferDedicatedStream applies to the first bind only. A retune has an
+    // existing window and a co-host set to answer to; asking for a fresh DDC
+    // there would migrate a slice off a stream other slices may still need.
     const auto placement =
         (previousStream < 0)
-            ? m_streamAllocator.placeSlice(frequencyHz)
+            ? m_streamAllocator.placeSlice(frequencyHz, preferDedicatedStream)
             : m_streamAllocator.retuneSlice(previousStream, soleOccupant,
                                             ddcPinned, frequencyHz);
 
@@ -4112,7 +4116,30 @@ int RadioModel::addSlice(const QString& initialPanId)
         slice->setFrequency(m_activeSlice->frequency());
         slice->setDspMode(m_activeSlice->dspMode());
     }
-    bindSliceToStream(slice, slice->frequency());
+
+    // A new pan is a new receiver; a slice joining an existing pan shares
+    // that pan's receiver.
+    //
+    // Bench report 2026-07-30 (JJ, KG4VCF): with two pans open, panning or
+    // tuning either one moved both. Not a wiring fault. The seed above puts
+    // the new slice on the active slice's frequency, which is inside the
+    // active stream's window, so the allocator shared the DDC. A DDC has one
+    // centre and feeds one FFT stream, so the two pans were two views of a
+    // single receiver, moving together exactly as a single receiver should.
+    //
+    // Operator decision, 2026-07-30: a new pan should be independent. That
+    // matches AetherSDR, and Thetis's RX1/RX2, where each display has its
+    // own receiver. `+RX` on a pan that already has slices keeps sharing,
+    // which is what makes co-hosted slices on one panadapter free.
+    //
+    // The frequency seed stays either way, so a new pan still opens on the
+    // band being worked rather than the 14.225 MHz ctor default that read as
+    // "Slice C is stuck on 20 m" on an earlier bench. It just gets its own
+    // window on that band now, which it can then be tuned away from.
+    const bool openingANewPan =
+        !initialPanId.isEmpty() && slicesOnPan(initialPanId, slice).isEmpty();
+
+    bindSliceToStream(slice, slice->frequency(), openingANewPan);
 
     // Retuning re-runs the allocator: the slice may stay on its stream
     // (shift only), move its stream's centre if it is the sole occupant, or
@@ -13773,6 +13800,19 @@ int RadioModel::rehomeSlicesToPans(const QStringList& livePanIds)
         ++moved;
     }
     return moved;
+}
+
+// See RadioModel.h.
+QVector<SliceModel*> RadioModel::slicesOnPan(const QString& panId,
+                                             const SliceModel* except) const
+{
+    QVector<SliceModel*> found;
+    if (panId.isEmpty()) { return found; }
+    for (SliceModel* s : m_slices) {
+        if (!s || s == except) { continue; }
+        if (s->panKey() == panId) { found.append(s); }
+    }
+    return found;
 }
 
 // Codex review round 5, PR #293. See RadioModel.h.

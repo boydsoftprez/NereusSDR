@@ -754,6 +754,17 @@ public:
     /// slices on it is occupied, not three-times occupied.
     QStringList pansWithoutSlices(const QStringList& panIds) const;
 
+    /// Slices currently living on `panId`, optionally skipping one.
+    ///
+    /// `except` exists for the add path: addSlice appends the new slice to
+    /// m_slices before binding it, so asking "does this pan already have
+    /// slices" would otherwise always answer yes and count the newcomer
+    /// itself. That distinction decides whether the slice opens a new
+    /// receiver or joins an existing one, so getting it wrong is the whole
+    /// difference between two independent pans and two views of one.
+    QVector<SliceModel*> slicesOnPan(const QString& panId,
+                                     const SliceModel* except = nullptr) const;
+
     /// Move surplus co-hosted slices onto pans in `panIds` that have none.
     /// Returns how many moved.
     ///
@@ -2712,7 +2723,18 @@ public:
     /// room. Returns false silently when the pool has not been sized yet
     /// (disconnected): there is no DDC to bind to, and a slice with
     /// streamIndex() < 0 is unbound and feeds nothing.
-    bool bindSliceToStream(SliceModel* slice, double frequencyHz);
+    /// Bind a slice to a DDC stream, claiming or sharing as the allocator
+    /// decides.
+    ///
+    /// `preferDedicatedStream` asks for a DDC of this slice's own when one
+    /// is spare, and is honoured on the FIRST bind only. Set it when the
+    /// slice is opening a new pan: a pan is a receiver, and a shared DDC
+    /// would make it a second view of an existing one, panning and tuning in
+    /// lockstep because a DDC has a single centre. Leave it false for a
+    /// slice joining a pan that already has slices, where sharing that pan's
+    /// receiver is the intent.
+    bool bindSliceToStream(SliceModel* slice, double frequencyHz,
+                           bool preferDedicatedStream = false);
 
     /// Push the current slice set for `streamIndex` to RxDspWorker and emit
     /// streamBindingsChanged. Called after every bind / unbind.
