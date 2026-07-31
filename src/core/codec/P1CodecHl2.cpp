@@ -739,10 +739,15 @@ PsDdcConfig P1CodecHl2::applyPureSignalDdcConfig(
 //       }
 //
 // NereusSDR architectural note:
-//   HL2 hardware has maxSlices=1 (BoardCapabilities enforces this).  Slices B-E
-//   are never live for HL2; the defensive check below guards against caller bugs.
+//   Streams 0 and 1 map to DDC0 and DDC1, per the mi0bot rx2_enabled blocks
+//   restored below (console.cs:8425-8429 and :8453-8457 [v2.10.3.13-beta2]).
+//   Streams 2-4 are never assigned: no arm of the mi0bot HERMESLITE case
+//   enables anything above DDC1, and DDC2/DDC3 are the PureSignal pair
+//   (console.cs:8757-8762 [v2.10.3.13-beta2] GetDDC()).
 //   The diversity path (P1_DDCConfig=5) is logically available but HL2 hardware
 //   does not support RX diversity in practice; retained for completeness.
+//   See docs/architecture/2026-07-31-hl2-slice-cap-design.md for the receiver
+//   capacity this function is expected to expose.
 //
 // mi0bot divergence from ramdor: the PS-MOX branch uses rx1_rate (not ps_rate=192k)
 //   for HL2, preserving high-rate operation through PureSignal TX.
@@ -758,13 +763,6 @@ DdcAssignment P1CodecHl2::applyDdcAssignment(
     constexpr int DDC0bit = 1;
     constexpr int DDC1bit = 2;
 
-    // HL2: maxSlices=1; only stream 0 is used. Streams 1-4 are ignored even if
-    // .live (defensive; HL2 BoardCapabilities.maxSlices=1 enforces this at
-    // the caller level).
-    if (!slices[0].live) {
-        return a;
-    }
-
     // From mi0bot console.cs:8412-8413 [v2.10.3.13-beta2]:
     //   case HPSDRModel.HERMESLITE: // MI0BOT: HL2 (at console.cs:8409)
     //   P1_rxcount = 4;   // RX4 used for puresignal feedback
@@ -773,25 +771,47 @@ DdcAssignment P1CodecHl2::applyDdcAssignment(
     a.p1RxCount = 4;  // RX4 used for puresignal feedback
     a.nDdc = 4;
 
-    // Phase 3F Sub-Epic I Task 7b: stream 0 always demodulates from DDC0 on
-    // HL2 (maxSlices=1), in every branch below (mox/diversity/PS all keep
-    // DDCEnable = DDC0bit); only DDC1's role as a sync/PS partner changes.
-    // The early return above already guarantees slices[0].live here.
-    a.streamDdc[0] = 0;
+    // Phase 3F: stream 0 on DDC0, stream 1 on DDC1.
+    //
+    // Streams 2-4 are never assigned on the HL2. No arm of the mi0bot
+    // HERMESLITE case enables anything above DDC1, and DDC2/DDC3 are the
+    // PureSignal pair (mi0bot console.cs:8757-8762 [v2.10.3.13-beta2]
+    // GetDDC() returns rx1 = 0; rx2 = 1; psrx = 2; pstx = 3 for HL2 P1
+    // PS-MOX).
+    //
+    // Neither stream is assumed live. A slice-B-only configuration is
+    // reachable whenever slice A is removed from a two-slice layout, and an
+    // early return on slices[0] stranded it.
+    const bool rx1Live = slices[0].live;
+    const bool rx2Live = slices[1].live;
+    const int  rx1Rate = rx1Live ? slices[0].sampleRateHz : 0;
+    const int  rx2Rate = rx2Live ? slices[1].sampleRateHz : 0;
 
-    const int rx1Rate = slices[0].sampleRateHz;
+    if (rx1Live) { a.streamDdc[0] = 0; }
 
     if (!ctx.mox) {
         if (!ctx.diversity) {
             // From mi0bot console.cs:8417-8430 [v2.10.3.13-beta2]:
             //   P1_DDCConfig = 4; DDCEnable = DDC0; SyncEnable = 0;
             //   Rate[0] = rx1_rate; cntrl1 = 0; cntrl2 = 0;
+            //   if (rx2_enabled)
+            //   {
+            //       DDCEnable += DDC1;
+            //       Rate[1] = rx2_rate;
+            //   }
             a.p1DdcConfig = 4;
             a.ddcEnable = DDC0bit;
             a.syncEnable = 0;
             a.rate[0] = rx1Rate;
             a.adcCtrl1 = 0;
             a.adcCtrl2 = 0;
+
+            // From mi0bot console.cs:8425-8429 [v2.10.3.13-beta2]
+            if (rx2Live) {
+                a.ddcEnable += DDC1bit;
+                a.rate[1] = rx2Rate;
+                a.streamDdc[1] = 1;
+            }
         } else {
             // From mi0bot console.cs:8432-8440 [v2.10.3.13-beta2]:
             //   P1_DDCConfig = 5; DDCEnable = DDC0; SyncEnable = DDC1;
@@ -809,12 +829,24 @@ DdcAssignment P1CodecHl2::applyDdcAssignment(
             // From mi0bot console.cs:8444-8458 [v2.10.3.13-beta2]:
             //   P1_DDCConfig = 4; DDCEnable = DDC0; SyncEnable = 0;
             //   Rate[0] = rx1_rate; cntrl1 = 0; cntrl2 = 0;
+            //   if (rx2_enabled)
+            //   {
+            //       DDCEnable += DDC1;
+            //       Rate[1] = rx2_rate;
+            //   }
             a.p1DdcConfig = 4;
             a.ddcEnable = DDC0bit;
             a.syncEnable = 0;
             a.rate[0] = rx1Rate;
             a.adcCtrl1 = 0;
             a.adcCtrl2 = 0;
+
+            // From mi0bot console.cs:8453-8457 [v2.10.3.13-beta2]
+            if (rx2Live) {
+                a.ddcEnable += DDC1bit;
+                a.rate[1] = rx2Rate;
+                a.streamDdc[1] = 1;
+            }
         } else if (ctx.diversity && !ctx.puresignalRun) {
             // From mi0bot console.cs:8459-8468 [v2.10.3.13-beta2]:
             //   P1_DDCConfig = 5; DDCEnable = DDC0; SyncEnable = DDC1;

@@ -2,6 +2,8 @@
 #include <QtTest/QtTest>
 #include <array>
 #include "core/codec/P1CodecHl2.h"
+#include "core/DdcAssignment.h"
+#include "core/codec/CodecContext.h"
 
 using namespace NereusSDR;
 
@@ -292,6 +294,123 @@ private slots:
                  "bank 10 C2 bit 3 (HL2 PA enable) must coexist with mic_boost / line_in");
         QVERIFY2((out[2] & 0x40) != 0,
                  "bank 10 C2 bit 6 (always-on) must remain set");
+    }
+
+    // Phase 3F: HL2 supports a second receiver on DDC1.
+    // From mi0bot console.cs:8425-8429 [v2.10.3.13-beta2], inside
+    // case HPSDRModel.HERMESLITE, the !mox && !diversity arm:
+    //   if (rx2_enabled)
+    //   {
+    //       DDCEnable += DDC1;
+    //       Rate[1] = rx2_rate;
+    //   }
+    void ddc_assignment_plain_rx_gives_stream1_ddc1() {
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        ctx.mox = false;
+        ctx.diversity = false;
+        ctx.puresignalRun = false;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].sampleRateHz = 192000;
+        slices[1].live = true;
+        slices[1].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.streamDdc[0], 0);
+        QCOMPARE(a.streamDdc[1], 1);
+        QCOMPARE(a.ddcEnable, 1 + 2);          // DDC0 + DDC1
+        QCOMPARE(a.rate[0], 192000);
+        QCOMPARE(a.rate[1], 192000);
+        QCOMPARE(a.p1DdcConfig, 4);
+        QCOMPARE(a.syncEnable, 0);
+    }
+
+    // From mi0bot console.cs:8453-8457 [v2.10.3.13-beta2], the
+    // mox && !diversity && !puresignal arm, same rx2 block.
+    void ddc_assignment_mox_no_ps_gives_stream1_ddc1() {
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        ctx.mox = true;
+        ctx.diversity = false;
+        ctx.puresignalRun = false;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].sampleRateHz = 192000;
+        slices[1].live = true;
+        slices[1].sampleRateHz = 96000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.streamDdc[1], 1);
+        QCOMPARE(a.ddcEnable, 1 + 2);
+        QCOMPARE(a.rate[1], 96000);
+    }
+
+    // Slice B alone must still get a DDC. The old early return dropped the
+    // whole assignment when slices[0] was dormant.
+    void ddc_assignment_stream1_only_still_assigns() {
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[1].live = true;
+        slices[1].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.streamDdc[0], -1);
+        QCOMPARE(a.streamDdc[1], 1);
+    }
+
+    // PureSignal reclaims DDC0+DDC1 as a sync pair, so stream 1 is
+    // suppressed rather than left bound to a repurposed DDC.
+    // From mi0bot console.cs:8469-8488 [v2.10.3.13-beta2].
+    //MI0BOT  [that span also carries the HL2 high-sample-rate marker at
+    //         console.cs:8476, already reproduced at P1CodecHl2.cpp's
+    //         PS-MOX arm; unrelated to the suppression asserted here]
+    void ddc_assignment_ps_mox_suppresses_stream1() {
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        ctx.mox = true;
+        ctx.puresignalRun = true;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].sampleRateHz = 192000;
+        slices[1].live = true;
+        slices[1].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.streamDdc[1], -1);
+        QCOMPARE(a.syncEnable, 2);             // DDC1 is the sync partner
+
+        // Deliberately NOT asserting psFwdDdc / psRevDdc here. See the
+        // note below this task: the two are inconsistent with
+        // applyPureSignalDdcConfig today and pinning either value in a test
+        // would freeze a question that belongs to the maintainer.
+    }
+
+    // No arm of the mi0bot HERMESLITE case enables anything above DDC1.
+    // DDC2 and DDC3 are the PureSignal pair (console.cs:8757-8762 GetDDC:
+    // rx1 = 0; rx2 = 1; psrx = 2; pstx = 3).
+    void ddc_assignment_never_assigns_above_ddc1() {
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        for (int i = 0; i < 5; ++i) {
+            slices[i].live = true;
+            slices[i].sampleRateHz = 192000;
+        }
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.streamDdc[2], -1);
+        QCOMPARE(a.streamDdc[3], -1);
+        QCOMPARE(a.streamDdc[4], -1);
     }
 };
 
