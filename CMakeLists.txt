@@ -944,20 +944,28 @@ elseif(WIN32)
 endif()
 
 # --------------------------------------------------------------------------
-# Object library — shared between the app executable and test targets so
-# the same translation units are compiled once and consumed by both
-# (Phase 3I test infrastructure). Properties on NereusSDRLib propagate
-# to consumers (PUBLIC) via the CMake INTERFACE; the thin executable just
+# Shared application library — the whole app (core + models + gui) built
+# once and linked dynamically by both the executable and every test target
+# (Phase 3I test infrastructure). Properties on NereusSDRLib propagate to
+# consumers (PUBLIC) via the CMake INTERFACE; the thin executable just
 # links src/main.cpp on top.
 #
-# APP_ICON_SOURCES is intentionally NOT in the OBJECT library: CMake's
+# SHARED, not OBJECT: as an OBJECT library every one of the ~514 test
+# executables embedded a private copy of the entire application (roughly
+# 22 MB each, 12 GB of build/tests on disk), and macOS malware-scans every
+# freshly linked Mach-O on first execution, so a cold suite run paid that
+# scan 514 times over. As a shared library the application image is linked
+# once and each test becomes a small stub.
+# See docs/architecture/2026-07-25-test-execution-speed-phase1-design.md.
+#
+# APP_ICON_SOURCES is intentionally NOT in this library: CMake's
 # MACOSX_PACKAGE_LOCATION property only takes effect when the file is a
-# direct source of a MACOSX_BUNDLE TRUE target. OBJECT libraries propagate
-# compiled object files, not bundle-resource sources. Attach the icon to
-# the executable target below so .icns lands in Contents/Resources/ and
+# direct source of a MACOSX_BUNDLE TRUE target, and a library propagates
+# linkable code, not bundle-resource sources. Attach the icon to the
+# executable target below so .icns lands in Contents/Resources/ and
 # Windows .rc lands on the linker line.
 # --------------------------------------------------------------------------
-add_library(NereusSDRLib OBJECT
+add_library(NereusSDRLib SHARED
     ${CORE_SOURCES}
     ${MODEL_SOURCES}
     ${GUI_SOURCES}
@@ -997,6 +1005,37 @@ if(NEREUSSDR_LTO_AVAILABLE)
         INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
 endif()
 
+# --------------------------------------------------------------------------
+# Shared-library plumbing
+# --------------------------------------------------------------------------
+# WINDOWS_EXPORT_ALL_SYMBOLS: the tree carries no __declspec annotations and
+# no export macro, so without this the DLL would export nothing and every
+# consumer would fail to link. Set on the target rather than via the global
+# CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS so the vendored third_party targets are
+# left alone.
+#
+# Known limit: this covers function symbols. Global *data* symbols still
+# require __declspec(dllimport) at the reference site, which nothing here
+# has. Qt's per-class staticMetaObject is the case to watch. This cannot be
+# caught by CI as currently configured because only the Linux job sets
+# NEREUS_BUILD_TESTS=ON, so the Windows job links the app but never the
+# test executables.
+set_target_properties(NereusSDRLib PROPERTIES
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
+
+# No VERSION/SOVERSION: this is an application-private library, never
+# consumed by anything outside this build, so the usual .so.MAJOR symlink
+# chain would only add cases for the three packaging paths to get wrong.
+if(APPLE)
+    # Resolve via @rpath so the same dylib works from the build tree, from
+    # inside the .app bundle, and after install without being rewritten.
+    set_target_properties(NereusSDRLib PROPERTIES
+        MACOSX_RPATH ON
+        INSTALL_NAME_DIR "@rpath"
+    )
+endif()
+
 add_executable(NereusSDR src/main.cpp ${APP_ICON_SOURCES})
 if(NEREUSSDR_LTO_AVAILABLE)
     # Main app + its OBJECT-lib link both get LTO when enabled.  The
@@ -1011,6 +1050,26 @@ if(NEREUSSDR_LTO_AVAILABLE)
         INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
 else()
     target_link_libraries(NereusSDR PRIVATE NereusSDRLib)
+endif()
+
+# Runtime search paths for the shared library.
+#
+# BUILD_RPATH *adds* to the rpath CMake computes automatically for the build
+# tree, it does not replace it, so the build-tree app resolves the dylib
+# either through the automatic build-tree entry or through the bundle copy
+# staged by the POST_BUILD step below. Both are present, either works.
+if(APPLE)
+    set_target_properties(NereusSDR PROPERTIES
+        BUILD_RPATH   "@executable_path/../Frameworks"
+        INSTALL_RPATH "@executable_path/../Frameworks"
+    )
+elseif(UNIX)
+    # AppImage layout: usr/bin/NereusSDR alongside usr/lib/libNereusSDRLib.so.
+    # linuxdeploy does not scan AppDir/usr/lib when tracing dependencies, but
+    # it does honour RPATH, so this is what lets it resolve the library.
+    set_target_properties(NereusSDR PROPERTIES
+        INSTALL_RPATH "$ORIGIN/../lib"
+    )
 endif()
 
 set_target_properties(NereusSDR PROPERTIES
@@ -1033,12 +1092,26 @@ set_target_properties(NereusSDR PROPERTIES
 # Uses Set-then-Add pattern via /bin/sh so the operation is idempotent:
 # Set succeeds when the key already exists from a prior build; falls
 # through to Add on the first build (when the key is absent).
+#
+# Ordering is load-bearing. The dylib is staged into Contents/Frameworks as
+# the FIRST commands of this POST_BUILD list, before Info.plist is touched
+# and before codesign runs, because codesign seals the bundle's resources:
+# adding a Mach-O to Frameworks after signing invalidates the signature.
+# Keeping all of it in one add_custom_command is what guarantees the order,
+# since CMake runs POST_BUILD commands in list order.
+#
+# codesign gains --deep so the nested dylib is signed too. A bundle whose
+# Frameworks contain unsigned code fails `codesign --verify --deep --strict`.
+# This matches release.yml's ad-hoc signing fallback, which already uses
+# --deep.
 if(APPLE)
     set(_nereus_mic_desc "NereusSDR uses the microphone for SSB voice transmission and live mic level monitoring.")
     add_custom_command(TARGET NereusSDR POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Frameworks"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:NereusSDRLib>" "$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Frameworks/"
         COMMAND /bin/sh -c "/usr/libexec/PlistBuddy -c \"Set :NSMicrophoneUsageDescription '${_nereus_mic_desc}'\" \"$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Info.plist\" 2>/dev/null || /usr/libexec/PlistBuddy -c \"Add :NSMicrophoneUsageDescription string '${_nereus_mic_desc}'\" \"$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Info.plist\""
-        COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:NereusSDR>"
-        COMMENT "Inject NSMicrophoneUsageDescription + re-sign bundle (mic-permission gate)"
+        COMMAND codesign --force --deep --sign - "$<TARGET_BUNDLE_DIR:NereusSDR>"
+        COMMENT "Stage libNereusSDRLib.dylib into Frameworks, inject NSMicrophoneUsageDescription, re-sign bundle"
         VERBATIM
     )
 endif()
@@ -1061,7 +1134,12 @@ target_link_libraries(NereusSDRLib PUBLIC
 
 if(WIN32)
     # Needed by RadioDiscovery.cpp's setsockopt() call for SO_BROADCAST.
-    target_link_libraries(NereusSDR PRIVATE ws2_32)
+    # Belongs on the library, not the executable: RadioDiscovery.cpp is a
+    # library translation unit, so the library is what carries the
+    # undefined reference. This resolved against the executable only while
+    # NereusSDRLib was an OBJECT library and its objects were merged into
+    # the exe link line.
+    target_link_libraries(NereusSDRLib PRIVATE ws2_32)
 endif()
 
 if(APPLE)
@@ -1242,8 +1320,12 @@ if(ENABLE_DFNR)
     target_include_directories(NereusSDRLib PRIVATE ${DEEPFILTER_DIR}/include)
     target_link_libraries(NereusSDRLib PRIVATE ${DFNR_LIB})
     target_compile_definitions(NereusSDRLib PRIVATE HAVE_DFNR)
+    # The Rust runtime deps below back ${DFNR_LIB}, which is linked into
+    # NereusSDRLib above, so they belong on the library for the same reason
+    # as ws2_32: the library holds the undefined references. Attaching them
+    # to the executable worked only while this was an OBJECT library.
     if(WIN32)
-        target_link_libraries(NereusSDR PRIVATE ws2_32 bcrypt userenv ntdll)
+        target_link_libraries(NereusSDRLib PRIVATE ws2_32 bcrypt userenv ntdll)
         if(DFNR_DLL AND EXISTS ${DFNR_DLL})
             add_custom_command(TARGET NereusSDR POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -1252,10 +1334,10 @@ if(ENABLE_DFNR)
         endif()
     elseif(APPLE)
         # Rust runtime deps on macOS
-        target_link_libraries(NereusSDR PRIVATE "-framework Security" "-framework CoreFoundation")
+        target_link_libraries(NereusSDRLib PRIVATE "-framework Security" "-framework CoreFoundation")
     else()
         # Rust runtime deps on Linux
-        target_link_libraries(NereusSDR PRIVATE pthread dl m)
+        target_link_libraries(NereusSDRLib PRIVATE pthread dl m)
     endif()
     # Copy the model tarball to build dir + app bundle Resources so
     # findModelPath() in DeepFilterFilter.cpp can locate it at runtime.
@@ -1507,6 +1589,21 @@ install(TARGETS NereusSDR
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     BUNDLE  DESTINATION .
 )
+
+# The shared application library has to travel with the executable in every
+# artifact. On Linux this is what puts it in AppDir/usr/lib so the AppImage
+# build finds it (release.yml's "Install to AppDir" step runs cmake --install).
+# On Windows the DLL is a RUNTIME artifact and belongs beside the .exe.
+#
+# macOS is deliberately absent: the bundle carries its own copy, staged into
+# Contents/Frameworks by the NereusSDR POST_BUILD step above, and installing
+# the .app copies that subtree wholesale.
+if(NOT APPLE)
+    install(TARGETS NereusSDRLib
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+endif()
 
 # Bundle third-party license notices + NereusSDR's LICENSE into release artifacts.
 # LICENSE-DUAL-LICENSING is shipped alongside LICENSE because Thetis maintains

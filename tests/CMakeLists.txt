@@ -1,8 +1,9 @@
 # NereusSDR test suite. Opt-in via -DNEREUS_BUILD_TESTS=ON.
 #
-# Test targets compile against NereusSDRLib (the OBJECT library that backs
-# the main executable) so behavior under test is byte-identical to shipped
-# code. Each test gets its own thin executable + add_test() registration.
+# Test targets link NereusSDRLib (the shared library that backs the main
+# executable) so behavior under test is byte-identical to shipped code:
+# tests and the app run the same library image, not two separate builds of
+# it. Each test gets its own thin executable + add_test() registration.
 #
 # CI parallel sharding (added 2026-05-13, Linux speed-alignment epic):
 # When -DNEREUS_TEST_SHARDS=N -DNEREUS_TEST_SHARD=I is passed (0 ≤ I < N)
@@ -186,6 +187,20 @@ function(nereus_add_test name)
     set_tests_properties(${name} PROPERTIES
         LABELS "${_test_labels}"
         TIMEOUT 120)
+
+    # Windows resolves DLLs relative to the executable's own directory, and
+    # test executables land in build/tests/ while NereusSDRLib.dll lands in
+    # build/. Without this every test would fail to start once the app became
+    # a shared library. Unix needs nothing equivalent: CMake bakes a build-tree
+    # RPATH into each test binary automatically.
+    #
+    # ENVIRONMENT_MODIFICATION needs CMake 3.22 and this project's floor is
+    # 3.20, so guard rather than raise the floor for a platform that does not
+    # currently build tests in CI at all.
+    if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
+        set_tests_properties(${name} PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:NereusSDRLib>")
+    endif()
 
     # Per-label build aggregates, so `ctest -L core` has a matching
     # `tests_core` target that actually builds what it is about to run.
