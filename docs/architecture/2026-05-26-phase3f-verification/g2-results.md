@@ -217,9 +217,9 @@ Still desk work. Nothing below has touched a radio.
    must not go silent (this was a real defect until `30a2efae`). Then close a
    whole pan: whatever survives must still take Ctrl+R without the app
    targeting the pan that just went away (`d190c580`).
-7. **Do not transmit with two slices on different bands until step 1 has been
-   confirmed clean.** The TX low-pass fix is unverified on hardware, and the
-   failure mode it corrects was full power through a filter for the wrong band.
+7. **Two-band transmit.** Superseded by Session 9, which desk-verified the
+   TX low-pass against the Thetis source and pinned it with byte-level tests.
+   Run row 30 in the Session 9 checklist instead of skipping the case.
 
 ### If something is wrong
 
@@ -298,7 +298,7 @@ rather than continuing, because later rows assume the earlier ones.
 | 9 | Close Slice C (x on its flag) | C disappears from the RX applet; A and B keep working; radio does not go silent. |
 | 10 | Close a whole pan | A surviving pan takes `Ctrl+R` without targeting the pan that just went away. |
 | 11 | Audio check on each slice | Each slice is independently audible. |
-| 12 | **Do not transmit** with two slices on different bands until row 1 is clean | TX low-pass fix is still unverified on hardware; the failure it corrects was full power through the wrong band's filter. |
+| 12 | Two-band transmit | Superseded by Session 9 row 30, which replaces the blanket "do not transmit" with a graded procedure. The commanded bytes are now desk-verified and byte-level tested; what row 30 checks is that the relays follow. |
 
 ### Known-imperfect, do not file as new
 
@@ -379,7 +379,7 @@ ones.
 | 11 | Audio on each slice | Each independently audible. |
 | 12 | Close a slice, then close a pan | Survivors keep working; no leftover button columns; radio not silent. |
 | 13 | `+PAN` -> `12h` | Three pans, letters A / B / C, all live. |
-| 14 | **Do not transmit** on two bands until row 1 is clean | TX low-pass fix is unverified on hardware. |
+| 14 | Two-band transmit | Superseded by Session 9 row 30. The TX low-pass is desk-verified against the Thetis source and pinned by byte-level tests on both protocols; row 30 is the graded procedure that confirms the relays follow the command. |
 | 15 | **ADC routing, unverified.** With rows 5-6 up (two slices on two bands), **click the second slice's flag to select it**, then set its antenna to **RX2 / EXT1**. Selecting first is not optional: the antenna is held per band and the resulting label is synced onto whichever slice is active. | That slice's DDC moves to **ADC1**, so the two slices no longer share a preselector. Its pan's `WIDE` pill clears and its `CH` pill reads `CH 1`. The bottom bar shows both chains filtered and neither saying `BYPASS`: `CH 0: 40m` and `CH 1: 20m`. The first pan is unchanged. Needs a real feed on the RX2 jack to HEAR anything, but the filter decision is observable without one. |
 | 16 | Set that same slice's antenna back to **ANT1** | Both slices share chain 0 again. `WIDE` returns on both pans, both `CH` pills read `CH 0`, and the bottom bar returns to `CH 0: BYPASS (multi-band: 40m + 20m)`. `CH 1` goes back to its idle text. |
 | 17 | **SAME band. KNOWN FAIL, added 2026-07-30.** Two slices on the **same** band at the same dial frequency. Select the second slice's flag, then set its antenna to **EXT1**. This row exists because rows 15-16 use two DIFFERENT bands, and that hides the defect: on different bands the per-band antenna store hands each slice its own slot, and the differing frequencies put them on separate streams. | **Expected:** that slice moves to chain 1, its pill reads `CH 1`, bottom bar reads `CH 0: 80m` and `CH 1: 80m`. **Actual today:** both pills stay `CH 0`, `CH 1` reads idle. The selection applies for roughly 2.6 s (`setAlexRxBpf adc0=-1 adc1=8`) and is then reverted by the sibling slice (`rxOnly=2` followed by `rxOnly=0`). Two root causes, both diagnosed, neither fixed: the antenna is stored per band rather than per slice, and `SliceStreamAllocator` places slices by frequency alone so it co-hosts a pair whose antennas have just made co-hosting impossible. Full writeup in `docs/architecture/2026-07-30-per-slice-antenna-adc-routing.md`. Do not file as new. |
@@ -478,6 +478,113 @@ of fixes whose model-level half is covered by
   `BoardCapsTable::all()` instead.
 - The Hermes-class PureSignal DDC0 fix lands on the G2E, not the G2. The G2
   runs the Saturn codec, which inherits OrionMkII.
+
+---
+
+## Session 9 (2026-07-31): the TX low-pass, desk-verified and unblocked
+
+The three "do not transmit on two bands" warnings above (Session 4 walkthrough
+item 7, Session 5 row 12, Session 6 row 14) all named the same reason: the
+Session 4 TX low-pass fix (`46e5390d`, `f3e2f53f`) had never been confirmed,
+and the failure it corrects is full power through a filter for the wrong band.
+This session settled what desk work can settle and replaced the blanket block
+with a graded bench row.
+
+### What was verified, and how
+
+Every path that can move the Alex transmit low-pass was traced against the
+Thetis v2.10.3.15 source and then pinned with byte-level tests that compose the
+actual wire packet.
+
+| Path | Result |
+|---|---|
+| Connect, before any tune | Seeded from the TX-bound slice on `Connected`, and on P2 also from the TX NCO seed in `connectToRadio`. Never left at a default. |
+| Band change on the TX-bound slice | Follows, on `frequencyChanged`. |
+| Band change on any OTHER slice | No effect. The gate is `slice == txBoundSlice()`. |
+| TX handoff between slices | Follows immediately on `txBoundSliceChanged`, without waiting for a retune. |
+| Split (transmitter on a slice the operator is not watching) | Follows the TX-bound slice, not the active one. NereusSDR has no VFO-B-TX flag; `TxSliceArbiter` binding is the equivalent, and it is what the push reads. |
+| XIT on, off, changed, negative | Folded into the transmit frequency. RIT deliberately is not, matching `console.cs:31782-31784 [v2.10.3.15]`. |
+| Retune arriving mid-transmission | Cannot move either word. |
+| Both MOX edges | Alex0 swaps to the transmit mask while keyed and back on unkey. |
+
+The source of truth for all of it: `SetAlexLPFBits(bits, isTX, isMox)` at
+`ChannelMaster/netInterface.c:682-726 [v2.10.3.15]` routes each write by
+intent, `UpdateTXDDSFreq` (`console.cs:15464-15468`) is the only caller fed
+from the transmit frequency, and `UpdateAlexTXFilter` (`console.cs:15487-15498`)
+is both `isTX = false` and unreachable while keyed.
+
+**Both protocols pass.** The guards are not vacuous: each was proven to go red
+by temporarily reverting the behaviour it pins (collapsing the two P2 masks back
+into one, dropping the MOX swap on P1, and sourcing the transmit frequency from
+the active slice instead of the bound one), then restored.
+
+### Found and fixed while verifying
+
+| Defect | Why it mattered |
+|---|---|
+| Protocol 1 never applied a receive-derived low-pass at all | Bank 10 C4 is the Alex0 word (`networkproto1.c:587-590 [v2.10.3.15]`; mi0bot's HL2 loop emits the same struct at `:1085-1088 [v2.10.3.14-beta1]`), and Alex0 carries the RECEIVE selection while unkeyed. NereusSDR wrote that byte only from `setTxFrequency` and emitted it in both states. Single-slice this was invisible, because one slice transmitted and received on the same frequency. Phase 3F binds the transmitter to one slice while the operator listens on another, so a transmitter parked on 80 m put a roughly 4 MHz low-pass in front of a receiver listening on 10 m. These are exactly the "older radios" the upstream comment names. |
+| The connect-time filter push never reached its gate | `RadioModel` queues the first `setReceiverFrequency` before dispatching `connectToRadio` so the opening C&C frame carries the persisted VFO, and `connectToRadio` is where `m_caps` is assigned. The gate asked `m_caps`, found null, and skipped the selection on every P1 Alex board but the HL2. Harmless while the low-pass came from `setTxFrequency` on Connected; not harmless once the receive-derived mask is what the wire reads unkeyed. Now falls back to the hardware profile, which is already in hand by then. Fixes the same hole in the high-pass gate one line above, which had it first. |
+| Which receive frequency wins was never decided | Thetis takes the HIGHER of the two receivers on a board whose RX2 shares the Alex chain, because a low-pass passes everything below its corner and the lower receiver's filter would deafen the higher one (`console.cs:15493-15494 [v2.10.3.15]`). NereusSDR took whichever stream retuned last. Ported, along with the per-model `rx2PreampPresent` flag that gates it. |
+| TUNE keyed on the dial while the transmit chain carried XIT | Three call sites answer "what is this slice's transmit frequency" and they had drifted: the transmit-frequency push folded XIT in, both TUNE arms read the raw dial. Upstream applies the TUNE offset to a `tx_freq` that already carries XIT (`console.cs:31774-31783` then `31845-31860`, becoming `tx_dds_freq_mhz` at `31891` [v2.10.3.15]). Keying TUNE with XIT set therefore put the carrier where the transmit chain had not been told to expect it. Now one shared derivation, `RadioModel::txFrequencyForSlice`. RIT stays excluded. **This moves where TUNE lands when XIT is on: bench row 33.** |
+
+The ANAN-G2 is `_rx2_preamp_present = true` (`console.cs:14839-14841
+[v2.10.3.15]`), so on this bench the first receiver decides alone and the
+higher-frequency rule does not apply. It applies on the G2E, the HL2 and the
+Hermes/ANAN-10/100 family, which are all `false`.
+
+### Bench checklist, session 9
+
+Rows 1-29 still apply. Row 30 replaces the three superseded warnings.
+
+Enable `nereus.connection` debug output before starting: `setTxFrequency` now
+logs the selected transmit low-pass on change, so the row is readable without
+a spectrum analyser.
+
+| # | Action | Expect |
+|---|---|---|
+| 30 | **Two-band transmit, graded.** Slice A on 20 m, slice B on 80 m, both live. Bind TX to A (its flag's TX button). Drop RF power to minimum and key TUNE briefly. Then hand TX to B and key again. Then raise power in steps, repeating both keyings. | On A: log reads `txLpf= 1 for 20m`, no SWR alarm, no power foldback. On B: `txLpf= 4 for 80m`, same. The selection must change **on the handoff**, before you key, not on the next VFO nudge. Start at minimum power: the byte is desk-verified but the relays are not, and this row is the first time a radio has been asked to prove it. |
+| 31 | **Retune the slice you are NOT transmitting on.** With TX bound to A on 20 m, spin slice B across 80 m, 40 m and 10 m. | No `txLpf=` line appears at all. A receive retune must not touch the transmit selection. This was the original defect (`46e5390d`) and is the one with teeth: the failure was full power through a filter for the wrong band. |
+| 32 | **XIT.** With TX bound to A, enable XIT and wind it far enough to cross a band edge (for example A at 14.340 with +20 kHz XIT). | The transmit selection follows the XIT-shifted frequency, so it moves to the 17/15 m low-pass at 14.35 MHz. RIT must not move it. |
+| 33 | **TUNE with XIT set. Behaviour change, watch this one.** With XIT on and wound to a few kHz, key TUNE at low power and listen for the carrier on a second receiver. | The carrier sits on dial plus XIT, not on the raw dial. Both TUNE arms used to read the dial while the transmit chain had been configured for dial plus XIT, so the carrier and the low-pass disagreed. Upstream folds XIT into tx_freq before the TUNE offset (`console.cs:31774-31783` then `31845-31860` [v2.10.3.15]), so this now matches, but it moves where TUNE lands for anyone who ran with XIT on. |
+
+Band to selection, as the log prints it (hex), from
+`AlexFilterMap::computeLpf`, ported from `console.cs:7177-7241 [v2.10.3.15]`:
+
+| Transmit frequency | Selection | Filter |
+|---|---|---|
+| below 2.0 MHz | `8` | 160 m |
+| 2.0 to 4.0 | `4` | 80 m |
+| 4.0 to 7.3 | `2` | 60/40 m |
+| 7.3 to 14.35 | `1` | 30/20 m |
+| 14.35 to 21.45 | `40` | 17/15 m |
+| 21.45 to 29.7 | `20` | 12/10 m |
+| 29.7 and above | `10` | 6 m |
+
+### What this session could NOT settle
+
+- **Whether the relays follow the command.** Desk work and wire-lock tests
+  prove the bytes leaving the client are right. Nothing here proves the filter
+  board switches. That is what row 30 is for, and why it starts at minimum
+  power.
+- **Protocol 2's receive-word low-pass still takes whichever stream retuned
+  last**, rather than Thetis's `UpdateAlexTXFilter` rule. Deliberately not
+  fixed here: it is the receive word, so there is no RF hazard (on
+  Saturn-class boards the low-pass bank sits in the transmit path, and while
+  unkeyed there is no transmit), and the correct receiver set on P2 is the
+  per-ADC chain membership owned by the per-slice antenna and ADC routing
+  work, which has its own branch by decision. It belongs with row 17. See
+  `docs/architecture/2026-07-30-per-slice-antenna-adc-routing.md`.
+- **The P1 receive-low-pass fix has no bench evidence either.** It is covered
+  by `tst_p1_alex_lpf_word_source` (27 cases) and lands on the HL2 and the
+  Hermes/ANAN-10/100 family, none of which was on a bench this session. The
+  observable is receive sensitivity on a high band while the transmitter is
+  bound to a low-band slice: before the fix that receiver sat behind the
+  transmit band's low-pass.
+- **`lpf_bypass` has no NereusSDR counterpart.** Thetis's `setAlexLPF` opens
+  with an `if (!_mox && lpf_bypass)` arm that forces 6 m
+  (`console.cs:7179-7184 [v2.10.3.15]`). NereusSDR has no such control, so the
+  arm is unreachable rather than mis-ported. Noted so a future port of the
+  Setup toggle does not rediscover it as a defect.
 
 ---
 
