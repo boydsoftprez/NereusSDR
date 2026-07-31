@@ -797,8 +797,30 @@ const BoardCapabilities kHermesLite = {
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 1,
     .maxReceivers     = 4,
-    .maxSlices        = 1,   // Phase 3F: HL2 single-slice cap (1-ADC; DDCs reserved for firmware quirks)
-    .userDdcCount     = 1,   // Phase 3F Sub-Epic I: HL2 user DDCs = DDC0 only (design doc §2)
+    // Phase 3F: HL2 gets two panadapters and five flags.
+    //
+    // From mi0bot console.cs:8425-8429 [v2.10.3.13-beta2], inside
+    // case HPSDRModel.HERMESLITE:
+    //   if (rx2_enabled)
+    //   {
+    //       DDCEnable += DDC1;
+    //       Rate[1] = rx2_rate;
+    //   }
+    // repeated at :8453-8457 for the mox path. No arm of that case enables
+    // anything above DDC1, so userDdcCount is 2 and not 4: DDC2 and DDC3 are
+    // the PureSignal pair (console.cs:8757-8762 GetDDC).
+    //
+    // maxSlices exceeds userDdcCount deliberately. Slices sharing one DDC
+    // window cost no wire bandwidth (BoardCapabilities.h:326-328), so flags
+    // are capped by the Phase 3F project ceiling of 5 rather than by DDC
+    // count, as on the ANAN-G2E row.
+    //
+    // These were both 1 until 2026-07-31, derived from design doc §2, whose
+    // DDC-reservation cite is ramdor console.cs:8186-8538 [v2.10.3.15]. That
+    // switch has no HERMESLITE case at all. See
+    // docs/architecture/2026-07-31-hl2-slice-cap-design.md §2.
+    .maxSlices        = 5,
+    .userDdcCount     = 2,
     .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
     .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
     .maxSampleRate    = 384000,
@@ -904,8 +926,10 @@ const BoardCapabilities kHermesLiteRxOnly = {
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 1,
     .maxReceivers     = 4,
-    .maxSlices        = 1,   // Phase 3F: HL2 RX-only 1-slice cap (mirrors kHermesLite; single-ADC firmware cap)
-    .userDdcCount     = 1,   // Phase 3F Sub-Epic I: HL2 RX-only user DDCs = DDC0 only (design doc §2)
+    // Mirrors kHermesLite: same silicon, same DDC map, TX driver absent.
+    // See that row and docs/architecture/2026-07-31-hl2-slice-cap-design.md §2.
+    .maxSlices        = 5,
+    .userDdcCount     = 2,
     .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
     .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
     .maxSampleRate    = 384000,

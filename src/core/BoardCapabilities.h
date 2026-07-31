@@ -271,7 +271,9 @@ struct BoardCapabilities {
 
     // Phase 3F: user-facing slice cap, distinct from maxReceivers (= total DDC count).
     // For 2-ADC boards this is typically maxReceivers - 2 (DDC0/1 reserved for PS + diversity).
-    // For 1-ADC boards this often equals maxReceivers, except HL2 which is force-capped to 1.
+    // For 1-ADC boards this often equals maxReceivers, except HL2 and the ANAN-G2E,
+    // where maxSlices (5) exceeds maxReceivers (4): slices sharing a DDC cost
+    // nothing, so both are capped by the project ceiling instead.
     // See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
     //
     // ── This is a POLICY ceiling, not a hardware limit ──────────────────────

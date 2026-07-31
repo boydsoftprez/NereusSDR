@@ -80,10 +80,10 @@ private slots:
     // Phase 3F Task 2: per-SKU maxSlices population tests.
     // Values from docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
 
-    void hl2_max_slices_is_1()
+    void hl2_max_slices_is_5()
     {
         const auto caps = capabilitiesFor(HPSDRModel::HERMESLITE);
-        QCOMPARE(caps.maxSlices, 1);
+        QCOMPARE(caps.maxSlices, 5);
     }
 
     void metis_max_slices_is_3()
@@ -294,7 +294,7 @@ private slots:
     void user_ddc_count_matches_design_doc_table()
     {
         QCOMPARE(capabilitiesFor(HPSDRModel::ANAN_G2).userDdcCount, 5);     // DDC2-6
-        QCOMPARE(capabilitiesFor(HPSDRModel::HERMESLITE).userDdcCount, 1); // DDC0 only
+        QCOMPARE(capabilitiesFor(HPSDRModel::HERMESLITE).userDdcCount, 2); // DDC0 + DDC1
         QCOMPARE(capabilitiesFor(HPSDRModel::ANAN10E).userDdcCount, 2);    // HermesII: DDC0-1
         QCOMPARE(capabilitiesFor(HPSDRModel::HERMES).userDdcCount, 4);     // DDC0-3
         QCOMPARE(capabilitiesFor(HPSDRModel::HPSDR).userDdcCount, 3);      // Metis: DDC0-2
@@ -387,6 +387,19 @@ private slots:
                      qPrintable(QStringLiteral("userDdcCount must not exceed maxSlices: ")
                                 + caps.displayName));
         }
+    }
+
+    // HL2 is the second row where maxSlices exceeds userDdcCount, after the
+    // ANAN-G2E. Two DDC windows (mi0bot console.cs:8425-8429
+    // [v2.10.3.13-beta2]) with up to five flags sharing them: a slice inside
+    // an active window costs no DDC and no wire bandwidth.
+    void hermeslite_flags_exceed_panadapters()
+    {
+        const BoardCapabilities& caps = BoardCapsTable::forBoard(HPSDRHW::HermesLite);
+        QCOMPARE(caps.userDdcCount, 2);
+        QCOMPARE(caps.maxSlices, 5);
+        QCOMPARE(BoardCapsTable::forBoard(HPSDRHW::HermesLiteRxOnly).userDdcCount, 2);
+        QCOMPARE(BoardCapsTable::forBoard(HPSDRHW::HermesLiteRxOnly).maxSlices, 5);
     }
 
 private:

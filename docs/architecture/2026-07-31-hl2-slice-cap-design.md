@@ -84,11 +84,12 @@ design-doc table rather than from source:
 
 **That cite is ramdor Thetis, and ramdor Thetis has no HL2 case at all.**
 `UpdateDDCs` spans `console.cs:8195-8545 [v2.10.3.15]`. Its switch contains
-seven case groups, at lines 8220, 8305, 8387, 8461 and 8533, and no `default:`
+five case groups, at lines 8220, 8305, 8387, 8461 and 8533, and no `default:`
 arm. `HERMESLITE` is not among them. Across the whole
-`Project Files/Source/Console/` tree, ramdor mentions `HERMESLITE` only in
-`enums.cs:128`, `enums.cs:397` and `clsHardwareSpecific.cs:353,393`. An HL2
-therefore leaves ramdor's `UpdateDDCs` switch with `nddc = 0`.
+`Project Files/Source/` tree, ramdor mentions `HERMESLITE` on seven lines in
+three files: `enums.cs:128,397`, `clsHardwareSpecific.cs:353,354,393`, and
+`ChannelMaster/network.h:422,444`. An HL2 therefore leaves ramdor's
+`UpdateDDCs` switch with `nddc = 0`.
 
 So the HL2 rows were derived from a source that is silent on the HL2, on a
 project where `../mi0bot-Thetis/` is the designated authority for that SKU. This

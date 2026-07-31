@@ -420,9 +420,10 @@ Immediately after the "Source cites" list in that section, add:
 
 Corrected 2026-07-31. Both HL2 rows read `DDC0 only | 1` until then, sourced
 from the "DDC reservations" cite above, ramdor Thetis `console.cs:8186-8538
-[v2.10.3.15]`. That switch has no `HERMESLITE` case: seven case groups, no
-`default:` arm, and `HERMESLITE` appears in ramdor only in `enums.cs:128,397`
-and `clsHardwareSpecific.cs:353,393`. An HL2 leaves it with `nddc = 0`.
+[v2.10.3.15]`. That switch has no `HERMESLITE` case: five case groups, no
+`default:` arm, and `HERMESLITE` appears in ramdor on seven lines across
+three files: `enums.cs:128,397`, `clsHardwareSpecific.cs:353,354,393`, and
+`ChannelMaster/network.h:422,444`. An HL2 leaves it with `nddc = 0`.
 
 mi0bot is authoritative for this SKU and enables DDC1 for RX2 in two arms of
 its `HERMESLITE` case (`console.cs:8425-8429` and `:8453-8457
@@ -461,7 +462,7 @@ way.
 
 Fixes the design doc section 2 table in the same commit, and records why it
 was wrong. Its DDC-reservation cite is ramdor console.cs:8186-8538
-[v2.10.3.15], a switch with no HERMESLITE case: seven case groups, no
+[v2.10.3.15], a switch with no HERMESLITE case: five case groups, no
 default arm. An HL2 leaves it with nddc = 0. Same failure mode the ANAN-G2E
 row carries a note for."
 ```

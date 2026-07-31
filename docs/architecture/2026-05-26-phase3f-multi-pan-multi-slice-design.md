@@ -62,8 +62,8 @@ Existing fields used as inputs: `adcCount`, `supportedSampleRates`, `defaultSamp
 
 | SKU | ADCs | DDCs | User DDCs | maxSlices | Sample-rate ladder (kHz) | hasDiversity | widebandAdcs |
 |---|---|---|---|---|---|---|---|
-| HermesLite2 (HL2) | 1 | 4 | DDC0 only | **1** | 48, 96, 192, 384 | false | 0 (defer, P1 mechanism) |
-| HermesLite2 RX-only | 1 | 4 | DDC0 only | **1** | 48, 96, 192, 384 | false | 0 |
+| HermesLite2 (HL2) | 1 | 4 | DDC0-1 | **5** | 48, 96, 192, 384 | false | 0 (defer, P1 mechanism) |
+| HermesLite2 RX-only | 1 | 4 | DDC0-1 | **5** | 48, 96, 192, 384 | false | 0 |
 | Metis | 1 | 3 | DDC0-2 | **3** | 48, 96, 192 | false | 0 |
 | Hermes (ANAN-10/100) | 1 | 4 | DDC0-3 | **4** | 48, 96, 192 | false | 0 |
 | HermesII (ANAN-10E/100B) | 1 | 2 | DDC0-1 | **2** | 48, 96, 192 | false | 0 |
@@ -94,9 +94,27 @@ What the sources actually say:
 - **4 DDCs, rx1 on DDC0.** Thetis `console.cs:8387-8392 [v2.10.3.15]` groups `ANAN_G2E` with HERMES / ANAN10 / ANAN100 on `P1_rxcount = 4; nddc = 4;`, and `console.cs:8610-8642` (P2) plus `:8704-8730` (P1) group `HermesC10` with Hermes and HermesII on `rx1 = 0; rx2 = 1;`. Across every MOX, diversity and PureSignal branch, that case never enables anything above DDC1.
 - The SKU's own authority, [2026-05-21-anan-g2e-port-design.md](2026-05-21-anan-g2e-port-design.md) §"Resolved values", recorded ADC count 1, Max RX 4 and Diversity **No** from the start. This table contradicted it for two months.
 
-**On `maxSlices = 5` over 4 user DDCs.** This is the only row where the two differ, and it is deliberate. Slices whose frequencies fall inside an existing DDC's window share that DDC (`SliceStreamAllocator::placeSlice`), so a slice cap above the DDC count is meaningful rather than an error. Per maintainer decision 2026-07-25 the ceiling holds at 5 across all SKUs until Phase 3F multi-slice is proven on a bench. A fifth G2E slice with no covering window is refused with an explanation, not silently dropped.
+**On `maxSlices = 5` over 4 user DDCs.** Until 2026-07-31 this was the only row where the two differed; the HL2 rows now follow the same pattern (see the note below). The gap is deliberate: slices whose frequencies fall inside an existing DDC's window share that DDC (`SliceStreamAllocator::placeSlice`), so a slice cap above the DDC count is meaningful rather than an error. Per maintainer decision 2026-07-25 the ceiling holds at 5 across all SKUs until Phase 3F multi-slice is proven on a bench. A fifth G2E slice with no covering window is refused with an explanation, not silently dropped.
 
 **Standing caveat.** Every DDC count in this table is Thetis's client policy, not verified silicon. Receiver count is a compile-time Verilog parameter that has shipped as 2, 4, 7 and 8 on the same board. See the `maxSlices` comment in `src/core/BoardCapabilities.h` and `docs/attribution/GATEWARE-PROVENANCE.md`. The G2E has no public gateware at all, so its DDC count in particular is the best available evidence rather than hardware truth. The ADC count is different in kind: that is a physical part, and `SetRxADC(1)` is reliable.
+
+#### Note: the HL2 rows were derived from a source that does not cover the HL2
+
+Corrected 2026-07-31. Both HL2 rows read `DDC0 only | 1` until then, sourced
+from the "DDC reservations" cite above, ramdor Thetis `console.cs:8186-8538
+[v2.10.3.15]`. That switch has no `HERMESLITE` case: five case groups, no
+`default:` arm, and `HERMESLITE` appears in ramdor on seven lines across
+three files: `enums.cs:128,397`, `clsHardwareSpecific.cs:353,354,393`, and
+`ChannelMaster/network.h:422,444`. An HL2 leaves it with `nddc = 0`.
+
+mi0bot is authoritative for this SKU and enables DDC1 for RX2 in two arms of
+its `HERMESLITE` case (`console.cs:8425-8429` and `:8453-8457
+[v2.10.3.13-beta2]`), so the row is `DDC0-1`. `maxSlices` moves to the project
+ceiling of 5 because slices sharing a DDC window cost nothing.
+
+Same failure mode as the ANAN-G2E row noted above: a value copied from a cite
+that does not describe the SKU. Full analysis in
+[2026-07-31-hl2-slice-cap-design.md](2026-07-31-hl2-slice-cap-design.md).
 
 ### Why DDC0/DDC1 are reserved on 2-ADC boards
 
