@@ -1386,43 +1386,57 @@ if(NOT NEREUSSDR_BUILD_TAG)
             endif()
         endif()
 
-        # Re-run configure when the checked-out ref changes, or the title
-        # would keep naming the branch that was current when the build tree
-        # was first configured. A confidently wrong build name is worse than
-        # none: it is the exact mistake this stamp exists to prevent. The
-        # path is resolved through git rather than assumed to be .git/HEAD,
-        # because in a worktree .git is a file and HEAD lives elsewhere.
-        execute_process(
-            COMMAND "${GIT_EXECUTABLE}" rev-parse --absolute-git-dir
-            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-            OUTPUT_VARIABLE _nereus_git_dir
-            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-        if(_nereus_git_dir AND EXISTS "${_nereus_git_dir}/HEAD")
-            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-                         "${_nereus_git_dir}/HEAD")
-        endif()
-
-        # HEAD alone is not enough. It changes when the checked-out ref
-        # changes, so it catches a branch switch, and it does NOT change when
-        # a commit lands on the branch already checked out: that writes the
-        # ref file HEAD points at. Without this the branch name stayed right
-        # while the SHA silently aged, which is the confidently-wrong build
-        # name this whole stamp exists to prevent. Caught immediately on the
-        # first commit after it shipped.
+        # Re-run configure when the checked-out commit changes, or the title
+        # keeps naming whatever was current when the build tree was first
+        # configured. A confidently wrong build name is worse than none: it
+        # is the exact mistake this stamp exists to prevent.
         #
-        # Loose refs only. A packed ref has no file to watch, and an active
-        # branch being committed to is loose by construction; if it is ever
-        # packed the SHA goes stale again and the branch name still does not.
+        # TWO files, because they change on different events:
+        #
+        #   HEAD                    changes when the checked-out ref changes
+        #                           (branch switch, detach)
+        #   refs/heads/<branch>     changes when a commit lands on the branch
+        #                           already checked out
+        #
+        # Watching only HEAD leaves the branch name right and the SHA aging
+        # silently, which is what shipped and was caught on the very next
+        # commit.
+        #
+        # Both paths come from `git rev-parse --git-path`, never from joining
+        # the git dir by hand. In a worktree those are different places:
+        # --absolute-git-dir gives .git/worktrees/<name>, HEAD does live
+        # there, and refs/heads/* live in the MAIN repo's .git. Hand-joining
+        # produced a path that simply did not exist, so the dependency was
+        # never registered and the fix silently did nothing. --git-path
+        # answers correctly for both, in a worktree and in a plain clone.
+        #
+        # Loose refs only. A packed ref has no file to watch; a branch being
+        # actively committed to is loose by construction, and if one is ever
+        # packed the SHA can age again while the branch name still cannot.
+        set(_nereus_ref_paths "HEAD")
         execute_process(
             COMMAND "${GIT_EXECUTABLE}" symbolic-ref --quiet HEAD
             WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
             OUTPUT_VARIABLE _nereus_head_ref
             OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-        if(_nereus_git_dir AND _nereus_head_ref
-           AND EXISTS "${_nereus_git_dir}/${_nereus_head_ref}")
-            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-                         "${_nereus_git_dir}/${_nereus_head_ref}")
+        if(_nereus_head_ref)
+            list(APPEND _nereus_ref_paths "${_nereus_head_ref}")
         endif()
+
+        foreach(_nereus_ref IN LISTS _nereus_ref_paths)
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" rev-parse --git-path "${_nereus_ref}"
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE _nereus_ref_file
+                OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            if(_nereus_ref_file AND EXISTS "${_nereus_ref_file}")
+                get_filename_component(_nereus_ref_file
+                                       "${_nereus_ref_file}" ABSOLUTE
+                                       BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+                set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                             "${_nereus_ref_file}")
+            endif()
+        endforeach()
     endif()
 endif()
 
