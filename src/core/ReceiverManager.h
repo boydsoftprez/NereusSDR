@@ -232,6 +232,10 @@ public:
     // HL2 PS-off path) is added to ddcEnable.
     void setRx2Enabled(bool on);
 
+    /// Phase 3F: whether stream 1 is live. Published by
+    /// RadioModel::invokeCodecDdcAssignment from buildStreamConfigsForCodec().
+    bool rx2Enabled() const { return m_rx2Enabled; }
+
     // ADC control register shadows.  G2-class PS-on cntrl1 formula is
     // (rx_adc_ctrl1 & 0xf3) | 0x08 — preserves caller's bits 0,1,4..7,
     // overrides bits 2-3 with 0x08.  cntrl2 is masked similarly per-codec.

@@ -636,6 +636,15 @@ nereus_add_test(tst_p1_codec_redpitaya)
 # ── Phase 3P-A P1CodecHl2 mi0bot WriteMainLoop_HL2 port (Tasks 9+10) ──
 nereus_add_test(tst_p1_codec_hl2)
 
+# ── Phase 3F Task 4: give ReceiverManager::setRx2Enabled a caller ────────
+# setRx2Enabled had zero callers anywhere in src/ or tests/, so m_rx2Enabled
+# was permanently false and the rx2 arms of applyPureSignalDdcConfig, ported
+# correctly all along, could never fire. Covers the codec contract in both
+# directions (rm.setRx2Enabled driving PsDdcConfig) plus the production path
+# end to end (RadioModel::invokeCodecDdcAssignment publishing stream-1
+# liveness from buildStreamConfigsForCodec()).
+nereus_add_test(tst_p1_hl2_rx2_wiring)
+
 # ── Phase 3P-A regression-freeze gate (Task 16) ──
 nereus_add_test(tst_p1_regression_freeze)
 target_compile_definitions(tst_p1_regression_freeze PRIVATE

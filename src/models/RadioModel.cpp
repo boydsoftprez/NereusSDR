@@ -14278,6 +14278,22 @@ void RadioModel::invokeCodecDdcAssignment()
 {
     const NereusSDR::DdcAssignment assignment = computeDdcAssignment();
 
+    // Phase 3F: publish stream-1 liveness to ReceiverManager.
+    //
+    // ReceiverManager::setRx2Enabled had no caller, so m_rx2Enabled was
+    // permanently false and the rx2 arms of the P1 codecs'
+    // applyPureSignalDdcConfig could never fire, whatever the capability row
+    // said. buildStreamConfigsForCodec() is the single source of stream
+    // liveness and is what computeDdcAssignment() just consumed, so reading
+    // it again here cannot disagree with the assignment above.
+    if (m_receiverManager) {
+        const std::array<NereusSDR::SliceConfig, 5> streams =
+            buildStreamConfigsForCodec();
+        m_receiverManager->setRx2Rate(streams[1].live ? streams[1].sampleRateHz
+                                                      : 0);
+        m_receiverManager->setRx2Enabled(streams[1].live);
+    }
+
     // Wire push. P2 only: the P1 codec's DdcAssignment is computed above but
     // the existing applyPsDdcConfig flow handles P1 wire writes, and full P1
     // integration is deferred to Phase 3F Sub-Epic C. Gated on a live
