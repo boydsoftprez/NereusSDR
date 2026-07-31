@@ -574,12 +574,27 @@ Band to selection, as the log prints it (hex), from
   per-ADC chain membership owned by the per-slice antenna and ADC routing
   work, which has its own branch by decision. It belongs with row 17. See
   `docs/architecture/2026-07-30-per-slice-antenna-adc-routing.md`.
-- **The P1 receive-low-pass fix has no bench evidence either.** It is covered
-  by `tst_p1_alex_lpf_word_source` (27 cases) and lands on the HL2 and the
-  Hermes/ANAN-10/100 family, none of which was on a bench this session. The
-  observable is receive sensitivity on a high band while the transmitter is
-  bound to a low-band slice: before the fix that receiver sat behind the
-  transmit band's low-pass.
+- **The P1 receive-low-pass fix cannot be fully benched on the hardware we
+  have.** It is covered by `tst_p1_alex_lpf_word_source` (28 cases). Its
+  headline case needs a Protocol 1 board running two slices, so the
+  transmitter can sit on one band while the operator listens on another.
+  The only P1 radio on this bench is the HL2, and the HL2 is
+  `maxSlices = 1` (`BoardCapabilities.cpp`, kHermesLite). With one slice the
+  receive and transmit frequency are the same number, so the two masks agree
+  and the wire byte is unchanged from before the fix.
+
+  The P1 boards that could show it are Atlas (3 slices), Hermes (4),
+  HermesII (2), ANAN-100D and ANAN-200D (5). None is on this bench.
+
+  What the HL2 CAN settle, and should be run:
+
+  | # | Action | Expect |
+  |---|---|---|
+  | 34 | **P1 no-regression.** Connect the HL2, tune across 160 m, 80 m, 40 m, 20 m, 15 m, 10 m. Listen on each; key TUNE briefly at low power on each. | Receive sensitivity and TX unchanged from before this branch. This is the row that matters: bank 10 C4 now carries the receive selection while unkeyed, and if that is wrong the N2ADR filter board picks the wrong filter on every band. With one slice and no XIT the byte should be byte-identical to the old behaviour, so any audible change here is a defect. |
+  | 35 | **XIT across a band edge, single slice.** Park the dial just below a low-pass boundary (for example 14.340) and wind XIT past it (+20 kHz). | The keyed and unkeyed selections now differ, which is new: unkeyed C4 follows the dial (30/20 m, `1`), keyed C4 follows dial plus XIT (17/15 m, `40`). Before this branch the receive path sat behind the transmit band's filter. This is the one case a single-slice radio can show. |
+
+  Needs `QT_LOGGING_RULES="nereus.connection.debug=true"` to read the
+  `txLpf=` line; see the session 9 checklist header.
 - **`lpf_bypass` has no NereusSDR counterpart.** Thetis's `setAlexLPF` opens
   with an `if (!_mox && lpf_bypass)` arm that forces 6 m
   (`console.cs:7179-7184 [v2.10.3.15]`). NereusSDR has no such control, so the
