@@ -381,6 +381,37 @@ decides on is worse than no check, because it buys false confidence.**
 Corollary worth adding: **assert the destination, not the echo.** A test that
 sets a value and reads it back proves storage, never effect.
 
+**2026-07-31 adds a sibling shape: one sentinel spelling two different facts.**
+
+Connecting dropped every I/Q packet until the operator nudged the VFO (bench
+report, JJ, KG4VCF). `computeDdcAssignment` returned a default
+`DdcAssignment` when no codec had been selected yet, and a default
+`DdcAssignment` has every `streamDdc` at -1. But -1 already meant something
+specific and load-bearing: the codec was asked and answered that the radio has
+stopped streaming that DDC. `publishDdcAssignment` is required to act on that,
+and commit `5851998a` exists because it once did not.
+
+So "nobody has been asked" and "the radio stopped every stream" arrived at the
+decision point indistinguishable. `connectToRadio` binds the slice pool before
+it installs the codec, so every connect published a fabricated suspension and
+deactivated the receiver it had activated forty lines earlier. Fix:
+`std::nullopt` for the unanswered case, which is not publishable.
+
+Two lessons. First, **a sentinel is a value with a meaning, so a second
+meaning is a bug** even when both readings are individually reasonable;
+`std::optional` is the cheap way out and the type system then enforces that
+callers decide. Second, this is the same family as section 7's opener rather
+than a new one: the activation loop read `streamDdc[st] >= 0` believing it
+meant "the codec gave this stream a DDC", and for one window it meant "a codec
+exists". Not a check reading the wrong field this time, a check reading the
+right field with the wrong confidence.
+
+Diagnostic corollary: the log line at that decision point printed only the
+outcome, and the two conditions that produce it fail for unrelated reasons and
+look identical from outside. It now prints both inputs per stream. **When one
+observable has several independent causes, log the causes, not the
+observable.**
+
 ---
 
 ## 8. Standing rules
