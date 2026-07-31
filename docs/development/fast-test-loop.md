@@ -3,10 +3,24 @@
 The suite has **513 registered tests** (517 `tst_*.cpp` files; four are
 Linux/PipeWire-only and register only on Linux).
 
-Every test executable statically links the entire application, so each one
-costs about **38 CPU-seconds to link** and lands at roughly 35 MB. Building
-all of them costs about **32 minutes**, and running them cold adds about
-5 more. Almost nothing you do day to day needs that.
+The application is built as a single shared library (`NereusSDRLib`) that
+every test links dynamically, so a test executable is about **90 KB**, not a
+private 22 MB copy of the whole app. Measured on an Apple Silicon dev
+machine, `RelWithDebInfo`, ninja, ccache warm, `-j8` / `ctest -j4`:
+
+| | Value |
+| --- | --- |
+| Touch one `src/core` file, rebuild `all_tests` | **25 s** |
+| Build `all_tests` from a warm tree | **271 s** |
+| `build/tests` on disk | **1.6 GB** |
+| Full suite, cold | **121 s** |
+| Full suite, warm | **50 to 56 s** |
+
+"Cold" means the binaries were just relinked, which is the normal case after
+any edit. It is slower than warm because macOS malware-scans every freshly
+linked Mach-O the first time it runs.
+
+Almost nothing you do day to day needs the full suite anyway.
 
 ## Everyday commands
 
@@ -53,14 +67,14 @@ blocking forever.
 ### Labels narrow the run, not the dependency
 
 Labels are derived from each test's **direct** includes, so they are a
-triage aid, not a blast-radius calculation. **85 of the 513 tests carry no
-`core` label but still statically link all of `NereusSDRObjs`**, so a
-`src/core` edit genuinely affects them even though `ctest -L core` will not
-run them.
+triage aid, not a blast-radius calculation. **85 of the 514 tests carry no
+`core` label but still link all of `NereusSDRLib`**, so a `src/core` edit
+genuinely affects them even though `ctest -L core` will not run them.
 
-Until the Phase 1 library split lands, every test depends on every source
-file. Use `-L` to get fast feedback while iterating; use the full suite
-before you call something done.
+Every test depends on every source file, and the shared library does not
+change that: it makes each dependency cheap, not narrower. Use `-L` to get
+fast feedback while iterating; use the full suite before you call something
+done.
 
 ## Building tests is opt-in
 
@@ -76,7 +90,7 @@ Everything that runs tests must therefore name a target first:
 ```bash
 cmake --build build --target tst_slice_auto_agc   # one test
 cmake --build build --target tests_core           # one subsystem
-cmake --build build --target all_tests            # the lot (~32 min cold)
+cmake --build build --target all_tests            # the lot (~271 s warm tree)
 ```
 
 Then run `ctest`. **Skipping the build step is the one real footgun here**:
@@ -160,13 +174,33 @@ on macOS it resolves elsewhere (see `src/core/AppSettings.cpp:112-118`):
 If you are verifying that a test did not touch it, check the right one. A
 check against the wrong path silently "passes" while proving nothing.
 
-## Why the suite is slow, structurally
+## Why the suite costs what it does
 
-Linking dominates: about 32 minutes of the 37 is the linker, not the tests.
-The cause is that `NereusSDRObjs` is one all-or-nothing OBJECT library
-spanning `core`, `models`, and `gui`, so every source file is a transitive
-input to every test binary and the build graph cannot tell that a
-`SpectrumWidget` edit is irrelevant to a protocol test.
+Two structural facts, in order of how much they cost:
+
+**Every source file is a transitive input to every test binary.**
+`NereusSDRLib` is one all-or-nothing library spanning `core`, `models`, and
+`gui`, so the build graph cannot tell that a `SpectrumWidget` edit is
+irrelevant to a protocol test. Touching any library source relinks all 514
+tests. Building it shared made each of those relinks cheap; it did not make
+the graph narrower. A subsystem split would, but 83% of tests include a
+`core/` header, so even a perfect split leaves a `src/core` edit relinking
+most of the suite. That is why the split was rejected.
+
+**macOS rescans every freshly linked binary.** Gatekeeper malware-scans each
+new Mach-O on first execution, which is the whole gap between the cold
+(121 s) and warm (50 to 56 s) suite figures above. It used to cost far more:
+while each test embedded a private 22 MB copy of the application, the same
+scan ran over 12 GB of binaries and a cold run took 302 s. Exempting your
+terminal under Developer Tools removes most of what remains.
+
+One tradeoff worth knowing: the warm suite got slightly *slower* when the
+app became a shared library (43 s to 50-56 s), because each of 514 test
+processes now pays dyld symbol binding against a 22 MB library. Cold is the
+case that matters, since any library edit relinks everything and makes the
+next run cold.
 
 Measurements and the phased fix are in
-[docs/architecture/2026-07-25-test-execution-speed-design.md](../architecture/2026-07-25-test-execution-speed-design.md).
+[docs/architecture/2026-07-25-test-execution-speed-design.md](../architecture/2026-07-25-test-execution-speed-design.md)
+and
+[docs/architecture/2026-07-25-test-execution-speed-phase1-design.md](../architecture/2026-07-25-test-execution-speed-phase1-design.md).

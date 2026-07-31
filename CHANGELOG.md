@@ -44,6 +44,51 @@
 
 - Source-first audit caught a wire-format bug in Sub-Epic F Task 1 plan: the wideband enable mask belongs in CmdGeneral byte 23 (Thetis network.c:879), not CmdRx byte 23 (which is rx[1].rx_adc per Thetis network.c:1118). Following the plan as written would have silently broken RX1 ADC routing the moment any user enabled an alternate ADC. Caught + fixed before implementation landed.
 
+### Build
+
+- **The application is now built as a single shared library (`NereusSDRLib`).**
+  Each of the 514 test executables previously embedded a private 22.8 MB copy
+  of the whole app, which put 12 GB in `build/tests` and meant macOS
+  Gatekeeper malware-scanned all of it on every cold suite run. A test binary
+  is now about 90 KB, `build/tests` is 1.6 GB, and a cold `ctest -j4` goes
+  from 302 s to 121 s. Touching one `src/core` file and rebuilding every test
+  goes from 34 s to 25 s. 514/514 tests pass on both link modes.
+  One tradeoff: a *warm* suite re-run is 15 to 30% slower (43 s to 50-56 s)
+  because each short-lived test process now pays dyld symbol binding against
+  the library. Cold is the case that matters, since any library edit relinks
+  everything and makes the next run cold.
+  No application behaviour changes. The renamed target (was `NereusSDRObjs`)
+  ships as `libNereusSDRLib.dylib` inside `NereusSDR.app/Contents/Frameworks`,
+  `libNereusSDRLib.so` in the AppImage's `usr/lib`, and `NereusSDRLib.dll`
+  beside the .exe in both the portable ZIP and the NSIS installer.
+- **Fixed four system libraries linked to the wrong target.** `ws2_32`
+  (needed by `RadioDiscovery.cpp`) and the DFNR Rust runtime dependencies
+  (`bcrypt`/`userenv`/`ntdll`, `Security`/`CoreFoundation`, `pthread`/`dl`/`m`)
+  were attached to the executable while the code needing them lives in the
+  library. That resolved only as long as the library was an OBJECT library
+  whose objects merged into the executable's link line.
+
+### Tests
+
+- **`tst_tx_mic_source::concurrent_producerConsumer_noDataCorruption` no
+  longer fails under load.** It asserted that every sample pushed through
+  `TxMicSource` came back, but the ring overwrites on overrun by design
+  (inherited from Thetis `Inbound()` at `cmbuffs.c:108-109 [v2.10.3.13]`), so
+  the test encoded a guarantee the implementation never made. It now asserts
+  what is actually guaranteed, that every drained block is a whole intact
+  produced block, and reports overruns via `qInfo` instead of failing.
+  Assertions also moved off the consumer thread, where a QtTest failure would
+  have silently truncated the loop rather than failing the test.
+
+### Documentation
+
+- **Corrected the test-suite cost figures in `CONTRIBUTING.md` and
+  `docs/development/fast-test-loop.md`.** Both stated that building all tests
+  costs about 32 minutes. Re-measuring found 34 s before this change and 25 s
+  after. The 32-minute figure came from a link-time measurement in the Phase 0
+  design doc that does not reproduce; the design docs now carry a correction
+  banner recording that, since the rest of their evidence stands.
+
 ## [0.5.2] - 2026-05-24
 
 > [!IMPORTANT]

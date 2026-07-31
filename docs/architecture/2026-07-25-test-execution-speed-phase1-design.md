@@ -1,6 +1,8 @@
 # Test Execution Speed, Phase 1: Shared Application Library
 
-**Status:** Design, pending approval
+**Status:** Implemented 2026-07-31. **The §2 link-time evidence below did
+not reproduce at implementation time and is superseded by §2.0.** The
+decision still stands, but on different grounds than originally argued.
 **Date:** 2026-07-25
 **Supersedes:** the subsystem-split approach in §5 Phase 1 of
 [2026-07-25-test-execution-speed-design.md](2026-07-25-test-execution-speed-design.md)
@@ -20,7 +22,66 @@ is both more expensive and less effective than going shared.
 
 ---
 
-## 2. Evidence
+## 2.0 Corrected evidence, measured at implementation (2026-07-31)
+
+Same machine, same settings, both sides measured back to back on
+`build/shared-app-library`: Apple Silicon, macOS 26.5.2, Qt 6.11.0,
+`RelWithDebInfo`, ninja, ccache warm, `cmake --build -j8`, `ctest -j4`.
+The OBJECT column was measured on the commit immediately before the flip,
+not extrapolated.
+
+| Metric | OBJECT | SHARED | Change |
+| --- | --- | --- | --- |
+| Touch one `src/core` file, rebuild all tests | 34 s | **25 s** | 1.4x |
+| Relink 20 deleted binaries | 1 s | 1 s | none |
+| Build `all_tests`, warm tree | 454 s | **271 s** | 1.7x |
+| `build/tests` on disk | 12 GB | **1.6 GB** | 7.5x |
+| `tst_smoke` | 22,804,600 B | **88,728 B** | 257x |
+| Full suite, cold | 302 s | **121 s** | 2.5x |
+| Full suite, warm | 43 s | **50 to 56 s** | **0.8x, worse** |
+| Tests passing | 514/514 | **514/514** | none |
+
+**The link-time case in §2 does not hold.** §2 reports 20 binaries
+relinking in 73.5 s wall / 762 CPU-s, and extrapolates 31.4 min for the
+full suite. Re-running that exact experiment (delete 20, rebuild) measures
+**1 s**, and a touch-one-core-file rebuild of the whole suite measures
+**34 s**, not 31 minutes. 38 CPU-s for a single 22 MB link is not a
+plausible figure; the original sample most likely captured compile work or
+a differently configured tree. Every size figure in §2 reproduced exactly,
+so the discrepancy is specific to the link-time measurement.
+
+**What the change actually buys.** Not link time. The win is macOS
+Gatekeeper: it malware-scans every freshly linked Mach-O on first
+execution, and it was scanning 12 GB of test binaries on every cold run.
+Collapsing each test from 22 MB to 90 KB is what takes the cold suite from
+302 s to 121 s. Since any library edit relinks all 514 tests, the next run
+is always cold, so the realistic edit-and-verify loop goes from about
+336 s to about 146 s, a 2.3x improvement. Disk drops 7.5x.
+
+**The one regression.** The warm suite is 15 to 30% *slower*: each of 514
+short-lived processes now pays dyld symbol binding against a 22 MB library.
+Measured 43 s before, 50 to 56 s after across three runs. Warm runs matter
+only when the suite is re-run with nothing rebuilt, which is not the
+common case.
+
+**Windows verification is not available.** §5 mitigates the
+`WINDOWS_EXPORT_ALL_SYMBOLS` risk with "verify the Windows CI row links all
+tests before merge". That is not achievable: only the Linux CI job sets
+`NEREUS_BUILD_TESTS=ON`, so the Windows job links the app and never the
+test executables. The data-symbol limitation of
+`WINDOWS_EXPORT_ALL_SYMBOLS` therefore remains unverified against the test
+suite.
+
+**`NEREUSSDR_ENABLE_LTO` does not exist on `main`.** §5 asks to verify a
+`-DNEREUSSDR_ENABLE_LTO=ON` release build. `6ed89682` never landed on
+`main`: PRs #304 and #305 brought the Phase 0 half (`EXCLUDE_FROM_ALL`,
+`all_tests`, labels, timeouts) but not the LTO option. The generic
+`-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON` release path was verified
+instead.
+
+---
+
+## 2. Evidence (as originally written; see §2.0)
 
 Measured on this machine (Apple Silicon, macOS 26.5.2, Qt 6.11.0,
 `RelWithDebInfo`, ninja, ccache warm) by building the full tree both ways.
