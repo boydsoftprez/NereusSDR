@@ -13,8 +13,8 @@ machine, `RelWithDebInfo`, ninja, ccache warm, `-j8` / `ctest -j4`:
 | Touch one `src/core` file, rebuild `all_tests` | **25 s** |
 | Build `all_tests` from a warm tree | **271 s** |
 | `build/tests` on disk | **1.6 GB** |
-| Full suite, cold | **121 s** |
-| Full suite, warm | **50 to 56 s** |
+| Full suite, cold | **121 s** (was 273 s) |
+| Full suite, warm | **50 to 56 s** (was 34 s) |
 
 "Cold" means the binaries were just relinked, which is the normal case after
 any edit. It is slower than warm because macOS malware-scans every freshly
@@ -188,17 +188,19 @@ the graph narrower. A subsystem split would, but 83% of tests include a
 most of the suite. That is why the split was rejected.
 
 **macOS rescans every freshly linked binary.** Gatekeeper malware-scans each
-new Mach-O on first execution, which is the whole gap between the cold
+new Mach-O on first execution, which is most of the gap between the cold
 (121 s) and warm (50 to 56 s) suite figures above. It used to cost far more:
 while each test embedded a private 22 MB copy of the application, the same
-scan ran over 12 GB of binaries and a cold run took 302 s. Exempting your
+scan ran over 12 GB of binaries and a cold run took 273 s. Exempting your
 terminal under Developer Tools removes most of what remains.
 
-One tradeoff worth knowing: the warm suite got slightly *slower* when the
-app became a shared library (43 s to 50-56 s), because each of 514 test
-processes now pays dyld symbol binding against a 22 MB library. Cold is the
-case that matters, since any library edit relinks everything and makes the
-next run cold.
+One tradeoff worth knowing: the warm suite got **slower** when the app
+became a shared library, 34 s to 50-56 s, because each of 514 short-lived
+test processes now pays dyld symbol binding against a 22 MB library. Cold is
+the case that matters for the edit-verify loop, since any library edit
+relinks everything and makes the next run cold, and there the shared library
+wins by more than it loses here. But if you are re-running an unchanged
+suite repeatedly, that is the one thing that got worse.
 
 Measurements and the phased fix are in
 [docs/architecture/2026-07-25-test-execution-speed-design.md](../architecture/2026-07-25-test-execution-speed-design.md)

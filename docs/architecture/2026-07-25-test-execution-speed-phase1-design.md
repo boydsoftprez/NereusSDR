@@ -37,9 +37,21 @@ not extrapolated.
 | Build `all_tests`, warm tree | 454 s | **271 s** | 1.7x |
 | `build/tests` on disk | 12 GB | **1.6 GB** | 7.5x |
 | `tst_smoke` | 22,804,600 B | **88,728 B** | 257x |
-| Full suite, cold | 302 s | **121 s** | 2.5x |
-| Full suite, warm | 43 s | **50 to 56 s** | **0.8x, worse** |
+| Full suite, cold | 273 s | **121 s** | 2.3x |
+| Full suite, warm | 34 s | **50 to 56 s** | **0.6x, worse** |
+| App RSS | 512 to 562 MB | 473 to 564 MB | within noise |
 | Tests passing | 514/514 | **514/514** | none |
+
+Cold, warm and RSS were measured three times each on both sides. Warm was
+34 s on all three OBJECT runs and 50, 56, 56 s on the SHARED runs, so the
+warm regression is real and larger than a single sample first suggested.
+
+RSS is the opposite case: single samples suggested a 15% regression, but
+three samples per side gave 512.5 / 561.6 / 547.0 MB for OBJECT against
+473.1 / 563.7 / 533.3 MB for SHARED. The run-to-run spread is about
+50 MB, the distributions overlap completely, and SHARED's mean is
+marginally lower. §8's "within 10%" acceptance criterion is met, and
+**any single-sample RSS comparison of this application is meaningless.**
 
 **The link-time case in §2 does not hold.** §2 reports 20 binaries
 relinking in 73.5 s wall / 762 CPU-s, and extrapolates 31.4 min for the
@@ -54,15 +66,19 @@ so the discrepancy is specific to the link-time measurement.
 Gatekeeper: it malware-scans every freshly linked Mach-O on first
 execution, and it was scanning 12 GB of test binaries on every cold run.
 Collapsing each test from 22 MB to 90 KB is what takes the cold suite from
-302 s to 121 s. Since any library edit relinks all 514 tests, the next run
-is always cold, so the realistic edit-and-verify loop goes from about
-336 s to about 146 s, a 2.3x improvement. Disk drops 7.5x.
+273 s to 121 s. Since any library edit relinks all 514 tests, the next run
+is always cold, so the realistic edit-and-verify loop (rebuild, then run)
+goes from about 307 s to about 146 s, a 2.1x improvement. Disk drops 7.5x.
 
-**The one regression.** The warm suite is 15 to 30% *slower*: each of 514
-short-lived processes now pays dyld symbol binding against a 22 MB library.
-Measured 43 s before, 50 to 56 s after across three runs. Warm runs matter
-only when the suite is re-run with nothing rebuilt, which is not the
-common case.
+**The one regression.** The warm suite is roughly 60% *slower*, 34 s to
+50-56 s: each of 514 short-lived processes now pays dyld symbol binding
+against a 22 MB library, and at these run times that per-process cost is a
+large fraction of the total. Warm runs matter only when the suite is
+re-run with nothing rebuilt, which is not the common case, but this is a
+genuine cost and not a rounding error. If warm re-runs ever become the
+dominant workflow, `-fvisibility=hidden` on the library would cut the
+export table and with it most of the binding cost; §7 currently lists that
+as a non-goal.
 
 **Windows verification is not available.** §5 mitigates the
 `WINDOWS_EXPORT_ALL_SYMBOLS` risk with "verify the Windows CI row links all
