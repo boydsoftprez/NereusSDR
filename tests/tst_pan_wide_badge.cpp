@@ -149,8 +149,9 @@ void pinToAdcs(RadioModel& model, const QList<QPair<SliceModel*, int>>& pins)
 // the client-side half and deliberately writes no wire frame.
 //
 // Safe to call after pinToAdcs even with no codec injected: computeDdcAssignment
-// then returns a bare DdcAssignment whose streamDdc entries are all -1, and the
-// ADC loop in publishDdcAssignment skips those, so the pins survive.
+// then returns std::nullopt, so publishDdcAssignment does not run at all and
+// cannot overwrite the pins. republishAlexAdcSlices is called by
+// requestDdcAssignment itself, not by the publish, so it still runs.
 void recomputeChains(RadioModel& model)
 {
     model.requestDdcAssignment();

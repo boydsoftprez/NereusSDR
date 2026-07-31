@@ -525,6 +525,25 @@ RadioModel::RadioModel(QObject* parent)
     // standalone).
     m_audioEngine->setRadioModel(this);
 
+    // The per-board codec arriving makes a previously unanswerable DDC
+    // assignment answerable, so ask again.
+    //
+    // connectToRadio activates receiver 0 and binds the slice pool
+    // (RadioModel.cpp:5527 and :5579) before wireConnectionSignals installs
+    // the codec (:7674). computeDdcAssignment now returns nullopt for that
+    // window instead of a fabricated all-idle assignment, which stops the
+    // connect-time deactivation, but on its own it would leave the codec's
+    // real answer unpublished until something else moved a slice. On the
+    // bench that something else was the operator's first VFO nudge (JJ,
+    // KG4VCF, 2026-07-31).
+    //
+    // Wired here rather than in wireConnectionSignals because ReceiverManager
+    // outlives each connection and there are four separate installers (a
+    // codecChanged lambda plus a catch-up poll, per protocol). One wire on the
+    // setter that all four go through cannot drift from them.
+    connect(m_receiverManager, &ReceiverManager::ddcCodecChanged, this,
+            &RadioModel::requestDdcAssignment);
+
     // Phase 3P-I-a T9 — AlexController → connection pump.
     // Any per-band edit (from Setup grid, RxApplet, or VFO Flag via T12)
     // reapplies to the wire when the changed band matches the current
@@ -8078,7 +8097,15 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     // A persisted diversity flag may have produced its assignment before the
     // worker existed. Publish the already-computed source ownership now that
     // both the raw feed and DSP thread are live.
-    reconcileExternalDiversityRoute(computeDdcAssignment());
+    //
+    // An absent codec falls through as a default assignment on purpose, and
+    // unlike the publish path that is not a fabricated claim: this call only
+    // ever reads DDC numbers to resolve a diversity pair, and with no codec
+    // there is no pair to resolve. resolveExternalDiversitySources fails on
+    // the default, so the route stops, which is what "there is no wire state
+    // to route from" should do.
+    reconcileExternalDiversityRoute(
+        computeDdcAssignment().value_or(NereusSDR::DdcAssignment{}));
 
     // Phase 3R K-bench: retroactive RADE RX wire-up.
     //
@@ -12779,7 +12806,10 @@ qint64 RadioModel::setSampleRateLive(int newRateHz,
     emit wireSampleRateChanged(static_cast<double>(newRateHz));
 
     if (restartExternalDiversity && reconcileDiversity) {
-        reconcileExternalDiversityRoute(computeDdcAssignment());
+        // Same reasoning as the other reconcile call site: no codec means no
+        // DDC pair to resolve, and the default assignment stops the route.
+        reconcileExternalDiversityRoute(
+            computeDdcAssignment().value_or(NereusSDR::DdcAssignment{}));
     }
 
     // Persist the new rate per-MAC so the next connect picks it up.
@@ -14011,7 +14041,7 @@ bool RadioModel::widebandActiveForChain(int chainIdx) const
     return false;
 }
 
-NereusSDR::DdcAssignment RadioModel::computeDdcAssignment() const
+std::optional<NereusSDR::DdcAssignment> RadioModel::computeDdcAssignment() const
 {
     // NereusSDR-original glue. No Thetis equivalent at this abstraction layer.
     const NereusSDR::CodecContext ctx = currentCodecContext();
@@ -14041,9 +14071,26 @@ NereusSDR::DdcAssignment RadioModel::computeDdcAssignment() const
         }
     }
 
-    // No codec selected yet: no board, so no DDC numbers exist. Every
-    // streamDdc entry stays at the -1 idle sentinel.
-    return NereusSDR::DdcAssignment{};
+    // No codec selected yet, which is not an assignment and must not be
+    // returned as one.
+    //
+    // An assignment whose streamDdc entries are all -1 is a real wire state
+    // with a specific meaning: the codec was asked and answered that the radio
+    // has stopped streaming those DDCs. That is what the Hermes-class codecs
+    // emit while PureSignal transmits, and publishDdcAssignment is required to
+    // act on it -- commit 5851998a exists because it did not, and PureSignal
+    // feedback reached a panadapter and the speakers through a receiver left
+    // active.
+    //
+    // "Nobody has been asked yet" carries none of that. Returning the same
+    // shape for both made every connect publish a fabricated suspension:
+    // connectToRadio binds the slice pool (RadioModel.cpp:5579) before the
+    // connection object exists (:5855) and before wireConnectionSignals
+    // installs the codec (:7674), so the bind's requestDdcAssignment tail
+    // deactivated the receiver activated at :5527, emptied the hardware
+    // mapping, and left every I/Q packet to be dropped in
+    // ReceiverManager::feedIqData until the operator nudged the VFO.
+    return std::nullopt;
 }
 
 void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment)
@@ -14289,7 +14336,22 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
         for (int st = 0; st < streamPoolSize(); ++st) {
             const bool radioIsStreamingIt =
                 st < 5 && assignment.streamDdc[st] >= 0;
-            if (slicesOnStream(st).isEmpty() || !radioIsStreamingIt) {
+            const int sliceCount = slicesOnStream(st).size();
+
+            // Both inputs to the decision, per stream. The two conditions
+            // fail for completely different reasons -- an unbound slice
+            // versus a codec that had nothing to say -- and the symptom is
+            // identical either way: an empty m_hwToLogical and every packet
+            // dropped in feedIqData. Logging only the outcome sent the first
+            // pass at the connect-time drop after the wrong one.
+            qCDebug(lcConnection).nospace()
+                << "publishDdcAssignment: stream " << st
+                << " slices=" << sliceCount
+                << " streamDdc=" << (st < 5 ? assignment.streamDdc[st] : -1)
+                << " -> " << ((sliceCount == 0 || !radioIsStreamingIt)
+                                  ? "deactivate" : "activate");
+
+            if (sliceCount == 0 || !radioIsStreamingIt) {
                 m_receiverManager->deactivateReceiver(st);
             } else {
                 m_receiverManager->activateReceiver(st);
@@ -14378,7 +14440,43 @@ void RadioModel::refreshDdcAssignmentForRadioState()
 
 void RadioModel::invokeCodecDdcAssignment()
 {
-    const NereusSDR::DdcAssignment assignment = computeDdcAssignment();
+    const std::optional<NereusSDR::DdcAssignment> computed =
+        computeDdcAssignment();
+
+    // No codec, so no assignment, so nothing to publish. Everything below
+    // this point states what the codec decided, and there is no codec to have
+    // decided it: the wire push has nothing to send, and every client-side
+    // consequence of publishing (the receiver activation reconcile, the
+    // per-slice DDC and psPaused stamps, the suspended-stream toast) would be
+    // asserting a wire state that was never computed.
+    //
+    // Returning rather than publishing a default leaves the state
+    // connectToRadio seeded intact, which is the correct answer for the
+    // window this closes: receiver 0 is already created, mapped to the
+    // board's primary DDC, and activated before the pool is bound. The codec
+    // arriving is itself a trigger to re-run this (ReceiverManager::
+    // ddcCodecChanged, wired in the constructor), so the codec's own answer
+    // still lands before the first frame rather than at the first VFO tick.
+    if (!computed.has_value()) {
+        // One piece of publishDdcAssignment's work is not a claim about the
+        // codec's answer and still has to happen.
+        //
+        // reconcileWidebandForAllChains takes no assignment and reads none: it
+        // recomputes each filter chain's wideband state from the live slices'
+        // chainIndex and widebandExtensionRequested. It sits inside the
+        // publish because the slice restamp immediately above it can move a
+        // slice between chains, so the reconcile has to follow it -- not
+        // because it depends on the assignment.
+        //
+        // requestDdcAssignment is also the coalescing point for slice removal,
+        // and removeSlice changes the answer without any codec being involved.
+        // Skipping it here left the radio streaming a wideband chain whose
+        // last requester was gone (tst_wideband_chain_state,
+        // removing_the_last_requester_clears_the_chain).
+        reconcileWidebandForAllChains();
+        return;
+    }
+    const NereusSDR::DdcAssignment assignment = *computed;
 
     // Wire push. P2 only: the P1 codec's DdcAssignment is computed above but
     // the existing applyPsDdcConfig flow handles P1 wire writes, and full P1

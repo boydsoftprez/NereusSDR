@@ -5721,6 +5721,16 @@ nereus_add_test(tst_new_pan_is_its_own_receiver)
 # path to a panadapter and the speakers.
 nereus_add_test(tst_suspended_stream_has_no_receiver)
 
+# Bench report 2026-07-31: connecting produced no waterfall and no audio until
+# the operator nudged the VFO. connectToRadio activates receiver 0 and then
+# binds the slice pool, and that bind's requestDdcAssignment tail runs before
+# the connection object exists and before the codec is installed. With no
+# codec to ask, computeDdcAssignment returned the default assignment, whose
+# streamDdc is all -1, and the activation loop read the sentinel as "the radio
+# is not streaming this" and deactivated the receiver it had just activated.
+# Every ep6 frame was then dropped for want of a hardware mapping.
+nereus_add_test(tst_connect_routes_first_iq)
+
 # Bench report 2026-07-30, second half: pans past the first did not honour the
 # display settings. A pan opening for the first time has no per-pan keys, so
 # every read fell through to the ship defaults instead of looking like the pan

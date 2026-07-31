@@ -420,6 +420,7 @@ void ReceiverManager::setP1Codec(IP1Codec* codec)
     m_p1Codec = codec;
     qCDebug(lcReceiver) << "ReceiverManager: P1 codec" << (codec ? "set" : "cleared");
     updateDdcAssignment();
+    emit ddcCodecChanged();
 }
 
 void ReceiverManager::setP2Codec(IP2Codec* codec)
@@ -430,6 +431,7 @@ void ReceiverManager::setP2Codec(IP2Codec* codec)
     m_p2Codec = codec;
     qCDebug(lcReceiver) << "ReceiverManager: P2 codec" << (codec ? "set" : "cleared");
     updateDdcAssignment();
+    emit ddcCodecChanged();
 }
 
 void ReceiverManager::setHpsdrModel(HPSDRModel model)

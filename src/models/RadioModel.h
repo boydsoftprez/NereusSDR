@@ -2670,15 +2670,25 @@ public:
 
     // Phase 3F Sub-Epic I Task 7b: run the per-board codec over the current
     // stream set and return its DdcAssignment. Pure: no wire I/O, no model
-    // mutation, safe to call while disconnected (returns an all-idle
-    // assignment when no codec has been selected yet). Split out of
+    // mutation, safe to call while disconnected. Split out of
     // invokeCodecDdcAssignment so the mapping is testable without a socket.
     //
     // Codec source: the RadioConnection owns the codec and is authoritative
     // whenever a connection object exists; ReceiverManager holds the same
     // non-owning pointer (wired at connect, cleared in reset()) and is the
     // fallback when it does not.
-    NereusSDR::DdcAssignment computeDdcAssignment() const;
+    //
+    // std::nullopt when no codec has been selected yet, which is NOT the same
+    // fact as an assignment whose streamDdc entries are all -1 and must not be
+    // spelled the same way. Bench report 2026-07-31 (JJ, KG4VCF): this used to
+    // return an all-idle assignment for "nobody has been asked", and
+    // publishDdcAssignment cannot tell that apart from a codec answering that
+    // the radio has stopped every stream. connectToRadio binds the slice pool
+    // before it installs the codec, so every connect published a fabricated
+    // "no DDCs anywhere", deactivated the receiver it had activated forty
+    // lines earlier, and dropped every I/Q packet until the operator moved the
+    // VFO. See tst_connect_routes_first_iq.
+    std::optional<NereusSDR::DdcAssignment> computeDdcAssignment() const;
 
     /// Phase 3F Sub-Epic I closeout, defect F3: single read of the radio-state
     /// codec inputs (MOX / PureSignal / diversity), so computeDdcAssignment and

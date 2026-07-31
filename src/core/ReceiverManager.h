@@ -266,6 +266,23 @@ signals:
     // (per Thetis console.cs:8527-8534 [v2.10.3.13]).
     void ddcConfigChanged(const NereusSDR::PsDdcConfig& config);
 
+    // A per-board codec was installed or replaced. Distinct from
+    // ddcConfigChanged, which carries the PureSignal wire-byte map and is not
+    // emitted at all when the codec is being cleared.
+    //
+    // RadioModel::computeDdcAssignment reads the codec from here whenever
+    // there is no RadioConnection to ask, so the codec arriving is the moment
+    // a previously unanswerable assignment becomes answerable. connectToRadio
+    // binds the slice pool before wireConnectionSignals installs the codec, so
+    // without this the codec's first real answer waited for whatever moved a
+    // slice next -- in practice the operator's first VFO nudge, which is
+    // exactly the bench symptom in tst_connect_routes_first_iq.
+    //
+    // Deliberately not emitted from reset(), which clears both pointers by
+    // direct field write during teardown: a disconnecting radio has no use
+    // for a fresh assignment, and reset() has already dropped every receiver.
+    void ddcCodecChanged();
+
 private:
     // Rebuild hardware DDC mapping after receiver changes.
     void rebuildHardwareMapping();
