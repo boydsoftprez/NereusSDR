@@ -2274,16 +2274,34 @@ bool MainWindow::restoreMainWindowGeometry()
 
 void MainWindow::buildUI()
 {
-    // Issue #100: suffix the title with the active profile so users
-    // running two instances against different radios can tell the
-    // windows apart.
-    const QString profile = AppSettings::profileOverride();
-    if (profile.isEmpty()) {
-        setWindowTitle(QStringLiteral("NereusSDR %1").arg(NEREUSSDR_VERSION));
-    } else {
-        setWindowTitle(QStringLiteral("NereusSDR %1 [%2]")
-                           .arg(NEREUSSDR_VERSION, profile));
+    // Title: name, version, then whatever else the operator needs to tell
+    // this window apart from another one.
+    //
+    // Issue #100 added the active profile, so two instances against
+    // different radios are distinguishable. The build tag is the same idea
+    // for the same reason: a smoke build under test has to be
+    // distinguishable from a release and from another worktree's build.
+    // Standing rule (JJ, KG4VCF, 2026-07-30), earned when a session spent
+    // real time proving by pgrep which binary was on screen.
+    //
+    // NEREUSSDR_BUILD_TAG is empty on release artifacts, which are built
+    // from a tag ref, so their title stays exactly as it was.
+    QString title = QStringLiteral("NereusSDR %1").arg(NEREUSSDR_VERSION);
+
+    const QString buildTag = QString::fromUtf8(NEREUSSDR_BUILD_TAG);
+    if (!buildTag.isEmpty()) {
+        title += QStringLiteral(" · %1").arg(buildTag);
     }
+
+    // Profile stays last: it is per-run operator state, whereas the build
+    // tag is a property of the binary, and the binary identity reads better
+    // next to the version it belongs to.
+    const QString profile = AppSettings::profileOverride();
+    if (!profile.isEmpty()) {
+        title += QStringLiteral(" [%1]").arg(profile);
+    }
+
+    setWindowTitle(title);
     setMinimumSize(800, 600);
     resize(1280, 800);
 

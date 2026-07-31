@@ -1339,10 +1339,87 @@ if(NEREUS_GPU_SPECTRUM)
 endif()
 
 # --------------------------------------------------------------------------
+# Build tag — identifies a smoke build in the window title
+# --------------------------------------------------------------------------
+# Every non-release build stamps its branch and short SHA into the title bar,
+# so a build under test can be told apart from a release, from another
+# worktree's build, and from whatever was already running.
+#
+# Standing rule (JJ, KG4VCF, 2026-07-30). Earned: this session had a build
+# running from one worktree while another was being tested, and settling which
+# binary was on screen took a `pgrep` against the executable path. The title
+# bar should have answered it.
+#
+# Release artifacts get an empty tag and keep the clean "NereusSDR 0.5.2"
+# title. Detection needs no CI change: release.yml checks out `ref: <tag>`
+# (.github/workflows/release.yml), so HEAD sits exactly on a tag there and
+# nowhere else.
+set(NEREUSSDR_BUILD_TAG "" CACHE STRING
+    "Text appended to the window title identifying a non-release build. Auto-derived from git when empty; set to a single space to force it off.")
+
+if(NOT NEREUSSDR_BUILD_TAG)
+    find_package(Git QUIET)
+    if(GIT_FOUND)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" describe --exact-match --tags HEAD
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            RESULT_VARIABLE _nereus_head_is_tagged
+            OUTPUT_QUIET ERROR_QUIET)
+
+        if(NOT _nereus_head_is_tagged EQUAL 0)
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" rev-parse --abbrev-ref HEAD
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE _nereus_branch
+                OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE _nereus_sha
+                OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+
+            if(_nereus_branch AND _nereus_sha)
+                set(NEREUSSDR_BUILD_TAG "${_nereus_branch}@${_nereus_sha}")
+            elseif(_nereus_sha)
+                # Detached HEAD that is not on a tag.
+                set(NEREUSSDR_BUILD_TAG "detached@${_nereus_sha}")
+            endif()
+        endif()
+
+        # Re-run configure when the checked-out ref changes, or the title
+        # would keep naming the branch that was current when the build tree
+        # was first configured. A confidently wrong build name is worse than
+        # none: it is the exact mistake this stamp exists to prevent. The
+        # path is resolved through git rather than assumed to be .git/HEAD,
+        # because in a worktree .git is a file and HEAD lives elsewhere.
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" rev-parse --absolute-git-dir
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            OUTPUT_VARIABLE _nereus_git_dir
+            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        if(_nereus_git_dir AND EXISTS "${_nereus_git_dir}/HEAD")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                         "${_nereus_git_dir}/HEAD")
+        endif()
+    endif()
+endif()
+
+if(NEREUSSDR_BUILD_TAG MATCHES "^[ \t]*$")
+    set(NEREUSSDR_BUILD_TAG "")
+endif()
+
+if(NEREUSSDR_BUILD_TAG)
+    message(STATUS "NereusSDR: smoke build, title tagged '${NEREUSSDR_BUILD_TAG}'")
+else()
+    message(STATUS "NereusSDR: release build, title untagged")
+endif()
+
+# --------------------------------------------------------------------------
 # Version define
 # --------------------------------------------------------------------------
 target_compile_definitions(NereusSDRObjs PUBLIC
     NEREUSSDR_VERSION="${PROJECT_VERSION}"
+    NEREUSSDR_BUILD_TAG="${NEREUSSDR_BUILD_TAG}"
 )
 
 # --------------------------------------------------------------------------
