@@ -1534,6 +1534,17 @@ nereus_add_test(tst_alex_tx_lpf_source)
 # NereusSDR-original: no Thetis port.
 nereus_add_test(tst_p1_alex_lpf_word_source)
 
+# ── A band change must retune the DDC even while CTUN holds it ───────────────
+# CTUN pins the DDC via ReceiverManager::m_ddcFreqLocked so a VFO nudge inside
+# the pinned window moves the slice shift instead of retuning hardware. A band
+# change is a different act: the allocator returns NewStream / RetunedStream,
+# meaning the stream CENTRE moves, and bindSliceToStream pushed that through
+# setReceiverFrequency, where the same lock swallowed it. Confirmed on a live
+# HL2 2026-07-31: a 40 m to 60 m press gave outcome=NewStream then a dropped
+# emit with ddcLocked=true, leaving the Alex high-pass and the receive
+# low-pass on the previous band. NereusSDR-original: no Thetis port.
+nereus_add_test(tst_band_change_retunes_ddc_in_ctun)
+
 # ── RF-safety companion: the transmit frequency comes from the TX-bound slice ─
 # Splitting the LPF masks only holds if the transmit frequency itself is taken
 # from the slice bound to the transmitter, not from whichever slice happens to

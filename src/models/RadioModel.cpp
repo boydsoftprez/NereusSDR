@@ -3913,7 +3913,30 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
             placement.streamIndex, placement.newStreamCentreHz, rateForStream);
 
         if (m_receiverManager) {
-            m_receiverManager->setReceiverFrequency(
+            // forceHardwareFrequency, not setReceiverFrequency: this arm only
+            // runs when the stream CENTRE moved, and moving the centre is the
+            // operator asking for a retune, not a VFO nudge inside a pinned
+            // window. setReceiverFrequency respects m_ddcFreqLocked, so in
+            // CTUN it silently swallowed the push and the DDC never followed
+            // a band change. Confirmed on a live HL2 2026-07-31: the
+            // allocator returned NewStream for a 40 m to 60 m band press and
+            // the hardware emit was dropped with ddcLocked=true, leaving both
+            // the Alex high-pass and the receive low-pass on the old band
+            // until the operator nudged the VFO far enough to re-place.
+            //
+            // ReceiverManager draws exactly this distinction in its own
+            // comment on forceHardwareFrequency: the lock exists so a VFO
+            // move inside a pinned CTUN window does not retune the DDC,
+            // "while the pan drag itself is exactly the operator asking for a
+            // retune". A band button is the same act as a pan drag.
+            //
+            // The signal forceHardwareFrequency suppresses,
+            // receiverFrequencyChanged, has no consumer outside
+            // ReceiverManager, so nothing downstream loses an update. The
+            // JoinedExisting arm is deliberately untouched: that one really
+            // is a nudge inside the window, and it must keep respecting the
+            // lock.
+            m_receiverManager->forceHardwareFrequency(
                 placement.streamIndex,
                 static_cast<quint64>(placement.newStreamCentreHz));
         }

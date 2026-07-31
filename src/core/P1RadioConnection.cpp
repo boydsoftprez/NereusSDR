@@ -924,10 +924,22 @@ void P1RadioConnection::setReceiverFrequency(int receiverIndex, quint64 frequenc
         const double rx2Mhz = double(m_rxFreqHz[1]) / 1e6;
         const bool rx2Live  = (m_rxFreqHz[1] != 0);
 
-        m_alexLpfBitsRx = codec::alex::computeLpf(
+        const quint8 newRxLpf = codec::alex::computeLpf(
             codec::alex::receiveLpfFrequencyMhz(
                 rx1Mhz, rx2Mhz, rx2Live,
                 fcaps ? fcaps->rx2PreampPresent : false));
+        if (newRxLpf != m_alexLpfBitsRx) {
+            // Receive-side counterpart of the setTxFrequency line. Logged on
+            // change so a bench can see whether a band button actually
+            // reaches the receive filter path at all.
+            qCDebug(lcConnection) << "P1::setReceiverFrequency rx" << receiverIndex
+                                  << "rxLpf=" << Qt::hex << newRxLpf << Qt::dec
+                                  << "hpf=" << Qt::hex << m_alexHpfBits << Qt::dec
+                                  << "for" << bandLabel(bandFromFrequency(
+                                         double(frequencyHz)))
+                                  << "rx=" << frequencyHz << "Hz";
+        }
+        m_alexLpfBitsRx = newRxLpf;
     }
 }
 
