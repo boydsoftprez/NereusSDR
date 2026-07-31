@@ -32,26 +32,54 @@ not extrapolated.
 
 | Metric | OBJECT | SHARED | Change |
 | --- | --- | --- | --- |
-| Touch one `src/core` file, rebuild all tests | 34 s | **25 s** | 1.4x |
+| Touch one `src/core` file, rebuild all tests | 30 s | **22 s** | 1.4x |
 | Relink 20 deleted binaries | 1 s | 1 s | none |
-| Build `all_tests`, warm tree | 454 s | **271 s** | 1.7x |
-| `build/tests` on disk | 12 GB | **1.6 GB** | 7.5x |
+| Build `all_tests` from scratch | 479 s | **271 s** | 1.8x |
+| `build/tests` on disk | 13 GB | **1.2 GB** | 10x |
 | `tst_smoke` | 22,804,600 B | **88,728 B** | 257x |
-| Full suite, cold | 273 s | **121 s** | 2.3x |
-| Full suite, warm | 34 s | **50 to 56 s** | **0.6x, worse** |
+| Full suite, cold | 362 s | **109 s** | **3.3x** |
+| Full suite, warm | 42 to 44 s | 43 to 44 s | **none** |
+| XProtect CPU burned during cold run | 189 s | **62 s** | 3x less |
 | App RSS | 512 to 562 MB | 473 to 564 MB | within noise |
 | Tests passing | 514/514 | **514/514** | none |
 
-Cold, warm and RSS were measured three times each on both sides. Warm was
-34 s on all three OBJECT runs and 50, 56, 56 s on the SHARED runs, so the
-warm regression is real and larger than a single sample first suggested.
+**Measurement hygiene, learned the hard way.** Earlier passes at this table
+reported a 60% warm-suite regression that does not exist. The machine had
+a `clangd` indexing run at 500% CPU and a second worktree running its own
+suite, and neither was noticed because nothing recorded machine state
+alongside the timings. The numbers above come from a scripted run that
+samples load average and XProtect's cumulative CPU before and after every
+single timing, so a contaminated sample is visible in the output instead
+of silently becoming a data point. **Do not trust a timing on this
+codebase that does not carry its load average.**
 
-RSS is the opposite case: single samples suggested a 15% regression, but
-three samples per side gave 512.5 / 561.6 / 547.0 MB for OBJECT against
-473.1 / 563.7 / 533.3 MB for SHARED. The run-to-run spread is about
-50 MB, the distributions overlap completely, and SHARED's mean is
-marginally lower. §8's "within 10%" acceptance criterion is met, and
-**any single-sample RSS comparison of this application is meaningless.**
+Two conclusions changed once measured properly:
+
+- **There is no warm regression.** 42/43/44 s for OBJECT against
+  43/43/44 s for SHARED. The dyld symbol-binding cost is real in principle
+  but is lost in the noise at this scale.
+- **The cold gap is larger than first reported**, 3.3x rather than 2.3x.
+
+RSS behaved the opposite way: single samples suggested a 15% regression,
+which would have failed §8's "within 10%" criterion. Three samples per
+side gave 512.5 / 561.6 / 547.0 MB for OBJECT against 473.1 / 563.7 /
+533.3 MB for SHARED. The spread is about 50 MB, the distributions overlap
+completely, and SHARED's mean is marginally lower. The criterion is met,
+and **any single-sample RSS comparison of this application is
+meaningless.**
+
+**The Developer Tools exemption did not remove the scan.** Phase 0 item 0b
+predicts that exempting the build's parent app under System Settings ->
+Privacy & Security -> Developer Tools removes the first-run scan. It was
+enabled on the measuring machine and the parent app restarted, and
+XProtect still burned 189 CPU-s during the OBJECT cold run and 62 s during
+the SHARED one. Either the exemption was not applied to the right app, or
+Gatekeeper assessment exemption does not cover XProtect's malware scan of
+locally built Mach-Os. Worth resolving, because if 0b ever does work it
+recovers most of the same cold-run time for free. It does not change this
+decision either way: the shared library shrinks what there is to scan from
+13 GB to 1.2 GB, which helps whether or not the exemption lands, and helps
+every contributor without requiring per-machine configuration.
 
 **The link-time case in §2 does not hold.** §2 reports 20 binaries
 relinking in 73.5 s wall / 762 CPU-s, and extrapolates 31.4 min for the
@@ -63,22 +91,24 @@ a differently configured tree. Every size figure in §2 reproduced exactly,
 so the discrepancy is specific to the link-time measurement.
 
 **What the change actually buys.** Not link time. The win is macOS
-Gatekeeper: it malware-scans every freshly linked Mach-O on first
-execution, and it was scanning 12 GB of test binaries on every cold run.
-Collapsing each test from 22 MB to 90 KB is what takes the cold suite from
-273 s to 121 s. Since any library edit relinks all 514 tests, the next run
-is always cold, so the realistic edit-and-verify loop (rebuild, then run)
-goes from about 307 s to about 146 s, a 2.1x improvement. Disk drops 7.5x.
+XProtect: it malware-scans every freshly linked Mach-O on first execution,
+and it was scanning 13 GB of test binaries on every cold run. The
+instrumented figures put a number on it directly: 189 CPU-s of XProtect
+during the OBJECT cold run against 62 s for SHARED. Collapsing each test
+from 22 MB to 90 KB is what takes the cold suite from 362 s to 109 s.
+Since any library edit relinks all 514 tests, the next run is always cold,
+so the realistic edit-and-verify loop (rebuild, then run) goes from about
+392 s to about 131 s, a 3x improvement. Disk drops 10x.
 
-**The one regression.** The warm suite is roughly 60% *slower*, 34 s to
-50-56 s: each of 514 short-lived processes now pays dyld symbol binding
-against a 22 MB library, and at these run times that per-process cost is a
-large fraction of the total. Warm runs matter only when the suite is
-re-run with nothing rebuilt, which is not the common case, but this is a
-genuine cost and not a rounding error. If warm re-runs ever become the
-dominant workflow, `-fvisibility=hidden` on the library would cut the
-export table and with it most of the binding cost; §7 currently lists that
-as a non-goal.
+**No regression was found.** An earlier pass reported a 60% warm-suite
+regression from dyld symbol binding. It was a measurement artifact; see
+the hygiene note above. Properly instrumented, warm runs are 42-44 s on
+both sides. The per-process binding cost is real in principle, so if warm
+re-runs ever became the dominant workflow `-fvisibility=hidden` would be
+the lever, but note that is not the cheap knob it sounds like here: the
+514 test binaries link against this library's symbols, so hiding them by
+default would require an export macro across the whole public surface.
+§7 lists it as a non-goal and it should stay there.
 
 **Windows verification is not available.** §5 mitigates the
 `WINDOWS_EXPORT_ALL_SYMBOLS` risk with "verify the Windows CI row links all

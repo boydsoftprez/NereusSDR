@@ -50,16 +50,13 @@
   Each of the 514 test executables previously embedded a private 22.8 MB copy
   of the whole app, which put 12 GB in `build/tests` and meant macOS
   Gatekeeper malware-scanned all of it on every cold suite run. A test binary
-  is now about 90 KB, `build/tests` is 1.6 GB, and a cold `ctest -j4` goes
-  from 273 s to 121 s. Touching one `src/core` file and rebuilding every test
-  goes from 34 s to 25 s. 514/514 tests pass on both link modes, and app
-  resident memory is unchanged (the difference is inside a ±50 MB
-  run-to-run spread).
-  One tradeoff: a *warm* suite re-run is about 60% slower (34 s to 50-56 s)
-  because each of 514 short-lived test processes now pays dyld symbol
-  binding against the library. Cold is the case that matters for the
-  edit-verify loop, since any library edit relinks everything and makes the
-  next run cold, and there the shared library wins by more than it loses.
+  is now about 90 KB, `build/tests` is 1.2 GB (was 13 GB), and a cold
+  `ctest -j4` goes from 362 s to 109 s. Touching one `src/core` file and
+  rebuilding every test goes from 30 s to 22 s. Measured directly: XProtect
+  burns 62 CPU-seconds during a cold run, down from 189.
+  514/514 tests pass on both link modes, warm suite runs are unchanged at
+  43 s either way, and app resident memory is unchanged (the difference sits
+  inside a ±50 MB run-to-run spread).
   No application behaviour changes. The renamed target (was `NereusSDRObjs`)
   ships as `libNereusSDRLib.dylib` inside `NereusSDR.app/Contents/Frameworks`,
   `libNereusSDRLib.so` in the AppImage's `usr/lib`, and `NereusSDRLib.dll`

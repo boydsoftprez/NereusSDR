@@ -8,13 +8,13 @@ every test links dynamically, so a test executable is about **90 KB**, not a
 private 22 MB copy of the whole app. Measured on an Apple Silicon dev
 machine, `RelWithDebInfo`, ninja, ccache warm, `-j8` / `ctest -j4`:
 
-| | Value |
-| --- | --- |
-| Touch one `src/core` file, rebuild `all_tests` | **25 s** |
-| Build `all_tests` from a warm tree | **271 s** |
-| `build/tests` on disk | **1.6 GB** |
-| Full suite, cold | **121 s** (was 273 s) |
-| Full suite, warm | **50 to 56 s** (was 34 s) |
+| | Value | Before the shared library |
+| --- | --- | --- |
+| Touch one `src/core` file, rebuild `all_tests` | **22 s** | 30 s |
+| Build `all_tests` from scratch | **271 s** | 479 s |
+| `build/tests` on disk | **1.2 GB** | 13 GB |
+| Full suite, cold | **109 s** | 362 s |
+| Full suite, warm | **43 s** | 43 s |
 
 "Cold" means the binaries were just relinked, which is the normal case after
 any edit. It is slower than warm because macOS malware-scans every freshly
@@ -187,20 +187,25 @@ the graph narrower. A subsystem split would, but 83% of tests include a
 `core/` header, so even a perfect split leaves a `src/core` edit relinking
 most of the suite. That is why the split was rejected.
 
-**macOS rescans every freshly linked binary.** Gatekeeper malware-scans each
-new Mach-O on first execution, which is most of the gap between the cold
-(121 s) and warm (50 to 56 s) suite figures above. It used to cost far more:
-while each test embedded a private 22 MB copy of the application, the same
-scan ran over 12 GB of binaries and a cold run took 273 s. Exempting your
-terminal under Developer Tools removes most of what remains.
+**macOS rescans every freshly linked binary.** XProtect malware-scans each
+new Mach-O on first execution, which is the entire gap between the cold
+(109 s) and warm (43 s) figures above. Measured directly: XProtect burns
+62 CPU-seconds during a cold run today, and burned 189 before the app
+became a shared library, when the scan had 13 GB of test binaries to chew
+through instead of 1.2 GB.
 
-One tradeoff worth knowing: the warm suite got **slower** when the app
-became a shared library, 34 s to 50-56 s, because each of 514 short-lived
-test processes now pays dyld symbol binding against a 22 MB library. Cold is
-the case that matters for the edit-verify loop, since any library edit
-relinks everything and makes the next run cold, and there the shared library
-wins by more than it loses here. But if you are re-running an unchanged
-suite repeatedly, that is the one thing that got worse.
+The Developer Tools exemption under System Settings -> Privacy & Security
+is supposed to remove this. On the machine these figures came from it did
+not: XProtect kept scanning after the exemption was enabled and the parent
+app restarted. If you get it working, cold runs should approach warm ones.
+
+### Measuring anything here
+
+Record the load average next to every timing. An earlier version of this
+page carried a warm-suite regression that turned out not to exist: the
+machine had a `clangd` indexing run at 500% CPU and a second worktree
+running its own suite, and nothing in the measurement recorded that. A
+timing without its machine state is not evidence.
 
 Measurements and the phased fix are in
 [docs/architecture/2026-07-25-test-execution-speed-design.md](../architecture/2026-07-25-test-execution-speed-design.md)
