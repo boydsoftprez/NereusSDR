@@ -454,6 +454,20 @@ a stopping point.
 | 24 | **TCI, if you have a client handy.** Connect a TCI client, change `rx_volume` on Slice B, and toggle APF and BIN on Slice B. | The client sees a per-slice volume broadcast, and APF / BIN reach that slice rather than being swallowed. Skip if no client is at hand; this is the lowest-consequence row. |
 | 25 | **RX audio after TX or TUNE.** Key TUNE briefly, unkey. | RX audio returns on every slice. There is an open chip for a report that it does not; this row is to confirm whether that reproduces on current HEAD. |
 
+### Bench checklist, session 8
+
+Two reports from the 2026-07-30 smoke build, both fixed on
+`claude/phase3f-pan-independence`. Rows 26-27 are the operator-visible half
+of fixes whose model-level half is covered by
+`tst_new_pan_is_its_own_receiver` and `tst_pan_display_settings_inherit`.
+
+| # | Action | Expect |
+|---|---|---|
+| 26 | **Pan independence.** `+PAN` -> `2v`, then add a slice to pan-1 so both pans are live. Without retuning either one, drag the waterfall on pan-0 up and down the band. Then drag pan-1's. | Each pan moves alone. The other's centre frequency, waterfall and flag stay put. Previously both moved together, because the new pan's slice was seeded onto the active slice's frequency and so shared its DDC, making the two pans two views of one receiver. Check the bottom bar reports **two** active DDCs, not one. |
+| 27 | **Per-pan display settings.** With two pans open, click pan-1 to select it, open Setup -> Display and change something obvious (grid max, waterfall low level, colour scheme). | The change lands on **pan-1**, the one selected, and pan-0 is untouched. Then select pan-0 and change it there: pan-1 keeps its own value. Previously every display control acted on whichever pan was active when the app started and did nothing for the rest. |
+| 28 | **A new pan looks like the first.** With pan-0 tuned to your taste, open a brand-new pan (`+PAN` -> `12h`, or shrink to `1` and back out to `2v`). | The new pan opens looking like pan-0 rather than reverting to ship defaults. It inherits until you give it a setting of its own, after which it is independent (row 27). |
+| 29 | **DDC exhaustion is graceful.** On a 5-DDC radio, open pans until you run out. | The last pan still opens and still renders. It shares a DDC and is therefore coupled to another pan, which is the documented fallback: a coupled pan beats no pan. It must not fail to open or come up blank. |
+
 ### What the bench cannot settle
 
 - Row 17's antenna defect is diagnosed and NOT fixed on this branch, by
