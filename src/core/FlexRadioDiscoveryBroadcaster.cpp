@@ -15,6 +15,7 @@
 // =================================================================
 
 #include "FlexRadioDiscoveryBroadcaster.h"
+#include "RouteProbe.h"
 
 #include <QDateTime>
 #include <QHostAddress>
@@ -479,20 +480,18 @@ QString FlexRadioDiscoveryBroadcaster::detectLanIpv4() const
     // packet is ever sent so its identity is irrelevant. A peer hint can be
     // set via setPeerHint() if we need to scope to a specific subnet (e.g. when
     // PGXL is on a different routing domain than the default gateway).
+    //
+    // 2026-05-26 KG4VCF: hoisted the route-probe body into the shared
+    // probeLocalAddressFor() helper in RouteProbe.{h,cpp}; PgxlConnection
+    // and TgxlConnection now use the same helper to source-bind their
+    // TCP sockets per connect.
     {
-        QUdpSocket probe;
         const QHostAddress target = m_peerHint.isNull()
             ? QHostAddress(QStringLiteral("8.8.8.8"))
             : m_peerHint;
-        probe.connectToHost(target, /*port=*/9 /* discard */);
-        if (probe.waitForConnected(/*ms=*/50)) {
-            const QHostAddress local = probe.localAddress();
-            if (local.protocol() == QAbstractSocket::IPv4Protocol
-                    && local != QHostAddress::LocalHost
-                    && local != QHostAddress::AnyIPv4
-                    && !local.isNull()) {
-                return local.toString();
-            }
+        const QHostAddress local = probeLocalAddressFor(target);
+        if (!local.isNull()) {
+            return local.toString();
         }
     }
 

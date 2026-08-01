@@ -342,15 +342,42 @@ public:
     void setNbMode(NereusSDR::NbMode mode);
     NereusSDR::NbMode nbMode() const;
 
-    // Per-slice NB tuning (setNbTuning, setNbThreshold, etc.) removed
-    // 2026-04-22 for strict Thetis parity. NB tuning is global per-channel
-    // now; Setup → DSP → NB/SNB calls SetEXTANB* directly on channel 0.
+    // Per-slice NB / SNB detailed tuning. Removed 2026-04-22 in favour of
+    // Setup → DSP → NB/SNB calling SetEXTANB* / SetRXASNBA* directly, but
+    // those calls hardcoded channel 0, so tuning the blanker always landed on
+    // receiver A whichever receiver the operator was working. Restored by the
+    // Sub-Epic J follow-up: SliceModel owns the state and RadioModel pushes it
+    // to rxChannel(slice->sliceIndex()) like every other per-slice setting.
+    //
+    // NB1 / NB2 are per-receiver in WDSP (panb[id] / pnob[id], Thetis
+    // cmaster.h:74-82 [v2.10.3.15]), so RadioModel additionally mirrors those
+    // five across co-hosted slices. SNB is per WDSP channel
+    // (rxa[channel].snba) and stays independent.
+    void setNbThreshold(double threshold);
+    void setNbTransitionMs(double ms);
+    void setNbLeadMs(double ms);
+    void setNbLagMs(double ms);
+    void setNb2Mode(int mode);
+    void setSnbK1(double k1);
+    void setSnbK2(double k2);
+    void setSnbOutputBandwidthHz(int bandwidthHz);
 
     // Non-owning handle to the NbFamily facade. Used by WdspEngine to
     // call seedSnbFromSettings() after OpenChannel succeeds — see
     // WdspEngine::createRxChannel. Returns nullptr if built without
     // HAVE_WDSP.
     NereusSDR::NbFamily* nb() { return m_nb.get(); }
+
+    /// Phase 3F Sub-Epic I Task 4b: when true, processIq skips its internal
+    /// noise-blanker pass because the caller has already blanked the shared
+    /// chunk for this DDC stream. Set on every slice EXCEPT the one that
+    /// owns the stream's blanker.
+    ///
+    /// Upstream keeps one ANB / NOB per receiver, not per sub-receiver
+    /// (ChannelMaster cmaster.h:79-81 [v2.10.3.15]), so blanking belongs to
+    /// the stream. Without this, each co-hosted slice would re-blank the
+    /// same in-place buffer, which is order-dependent and wrong.
+    void setNoiseBlankerBypassed(bool bypassed);
 
     // --- Noise reduction ---
 
@@ -779,6 +806,12 @@ private:
     std::atomic<int> m_mode{static_cast<int>(DSPMode::LSB)};  // Must match WdspEngine::createRxChannel init
     std::atomic<int> m_agcMode{static_cast<int>(AGCMode::Med)};
     std::unique_ptr<NereusSDR::NbFamily> m_nb;
+    // Phase 3F Sub-Epic I Task 4b: NB bypass for co-hosted slices. Atomic
+    // because processIq reads it on the DSP thread; matches the convention
+    // of every other flag this hot path reads (m_active, m_dfnrActive,
+    // m_bnrActive, m_mnrActive). The carry-only plain bools further down
+    // (m_nbEnabled, m_eqEnabled) are never read here, hence not atomic.
+    std::atomic<bool> m_nbBypassed{false};
     std::atomic<bool> m_nrEnabled{false};
     std::atomic<bool> m_anfEnabled{false};
     // emnr: From Thetis radio.cs:2216 — rx_nr2_run default = 0

@@ -83,6 +83,16 @@ FourO3APage::FourO3APage(RadioModel* model, QWidget* parent)
     const bool initialEnabled = m_model && m_model->fourO3AEnabled();
     applyMasterGateToTabs(initialEnabled);
 
+    // Per-radio peripherals refactor (2026-05-26): repaint the banner
+    // and refresh the master toggle each time the connection state
+    // changes, so the page always reflects the connected radio's
+    // per-MAC scope.
+    if (m_model) {
+        connect(m_model, &RadioModel::connectionStateChanged,
+                this, &FourO3APage::refreshConnectionBanner);
+    }
+    refreshConnectionBanner();  // initial paint
+
     // Periodic FlexAPI status refresh (1 Hz).  Captures live state
     // changes including post-toggle start/stop and any external
     // listener errors.
@@ -100,6 +110,15 @@ QWidget* FourO3APage::buildGeneralTab()
     auto* layout = new QVBoxLayout(tab);
     layout->setContentsMargins(0, 8, 0, 0);
     layout->setSpacing(12);
+
+    // Per-radio peripherals refactor (2026-05-26): banner row at the top
+    // announces whose peripheral scope is being edited.  Filled by
+    // refreshConnectionBanner().
+    m_connectionBanner = new QLabel(tab);
+    m_connectionBanner->setWordWrap(true);
+    m_connectionBanner->setStyleSheet(
+        QStringLiteral("color:#ffcc66; font-size:11px; font-weight:bold;"));
+    layout->addWidget(m_connectionBanner);
 
     // ── Master Switch ─────────────────────────────────────────────
     auto* masterBox = new QGroupBox(tr("Master Switch"), tab);
@@ -184,6 +203,53 @@ void FourO3APage::applyMasterGateToTabs(bool enabled)
     // grid + interlock controls grey out (kept visible for context).
     if (m_peripheralsPage) { m_peripheralsPage->setEnabled(enabled); }
     if (m_pgxlInterlockPage) { m_pgxlInterlockPage->setEnabled(enabled); }
+}
+
+void FourO3APage::refreshConnectionBanner()
+{
+    if (!m_connectionBanner) {
+        return;
+    }
+    // Use the per-MAC scope as the "connected" gate so unit tests that
+    // pin a MAC via setLastRadioInfoForTest + setConnectionStateForTest
+    // (without a live RadioConnection object) still drive the right
+    // banner state.
+    const QString mac     = m_model ? m_model->currentRadioMac() : QString{};
+    const bool    haveMac = !mac.isEmpty();
+    if (haveMac) {
+        const QString name = m_model->name();
+        m_connectionBanner->setText(
+            tr("Editing peripherals for %1 (%2)").arg(name, mac));
+        m_connectionBanner->setStyleSheet(
+            QStringLiteral("color:#7ec850; font-size:11px; font-weight:bold;"));
+    } else {
+        m_connectionBanner->setText(
+            tr("Connect to a radio to edit its peripherals."));
+        m_connectionBanner->setStyleSheet(
+            QStringLiteral("color:#ffcc66; font-size:11px; font-weight:bold;"));
+    }
+    // Master toggle reflects the per-MAC FourO3A_Enabled flag.  Block
+    // signals during the refresh so the in-progress assignment doesn't
+    // re-enter setFourO3AEnabled and inadvertently flip the listener
+    // state.  Also gate enabled-state on the per-MAC scope availability.
+    if (m_masterToggle) {
+        m_masterToggle->setEnabled(haveMac);
+        m_masterToggle->blockSignals(true);
+        m_masterToggle->setChecked(m_model && m_model->fourO3AEnabled());
+        m_masterToggle->blockSignals(false);
+    }
+    // Detail tabs follow the (now possibly-changed) master flag, but
+    // also grey out when no radio is connected so the operator can't
+    // edit a per-MAC scope that doesn't exist yet.
+    applyMasterGateToTabs(m_model && m_model->fourO3AEnabled());
+    if (m_peripheralsPage) {
+        m_peripheralsPage->setEnabled(haveMac
+                                      && m_model->fourO3AEnabled());
+    }
+    if (m_pgxlInterlockPage) {
+        m_pgxlInterlockPage->setEnabled(haveMac
+                                        && m_model->fourO3AEnabled());
+    }
 }
 
 void FourO3APage::refreshFlexApiStatus()

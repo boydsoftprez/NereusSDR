@@ -259,7 +259,7 @@ constexpr float rxMeterCalOffsetDefaultFor(HPSDRModel m) noexcept {
         case HPSDRModel::ANAN8000D:
         case HPSDRModel::ORIONMKII:
         case HPSDRModel::ANVELINAPRO3:
-        case HPSDRModel::REDPITAYA:    return  4.841644f;
+        case HPSDRModel::REDPITAYA:    return  4.841644f;  //DH1KLM
         case HPSDRModel::ANAN_G2:
         case HPSDRModel::ANAN_G2_1K:   return -4.476f;
         // From clsHardwareSpecific.cs:409 [v2.10.3.13] default branch.
@@ -273,6 +273,18 @@ constexpr float rxMeterCalOffsetDefaultFor(HPSDRModel m) noexcept {
         case HPSDRModel::ANAN100D:
         case HPSDRModel::ANAN200D:
         case HPSDRModel::HERMESLITE:
+        // From Thetis clsHardwareSpecific.cs:408-423 [v2.10.3.15]
+        // RXMeterCalbrationOffsetDefaults enumerates ANAN7000D, ANAN8000D,
+        // ORIONMKII, ANVELINAPRO3, REDPITAYA (//DH1KLM), ANAN_G2 and
+        // ANAN_G2_1K only.  It carries no `case HPSDRModel.ANAN_G2E`, so the
+        // G2E SKU takes `default: return 0.98f` upstream and is listed in the
+        // default group here rather than given a number of its own.  The N1GP
+        // G2E port added `case HPSDRModel.ANAN_G2E: //N1GP G2E added` at seven
+        // other sites in that same file (:129, :250, :260, :358, :385, :699,
+        // :794) and deliberately left this switch alone, so the omission is
+        // upstream intent rather than an upstream oversight.
+        // Do NOT graft the ANAN_G2 value onto G2E: -4.476f is G2 / G2-1K only.
+        case HPSDRModel::ANAN_G2E:
         case HPSDRModel::FIRST:
         case HPSDRModel::LAST:         return  0.98f;
     }

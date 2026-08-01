@@ -299,7 +299,7 @@ private slots:
         RadioModel model;
 
         const int sliceId = model.addSlice();
-        SliceModel* slice = model.sliceAt(sliceId);
+        SliceModel* slice = model.sliceById(sliceId);
         QVERIFY(slice != nullptr);
 
         model.injectConnectionForTest(&mockConn);

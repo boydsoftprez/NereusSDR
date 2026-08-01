@@ -1,0 +1,147 @@
+<style>
+.sk-bg { background:#0f0f1a; color:#c8d8e8; font-family:-apple-system,"Segoe UI","Helvetica Neue",sans-serif; padding:22px; border-radius:6px; }
+.sk-h1 { color:#00b4d8; font-size:16px; font-weight:bold; margin:0 0 4px 0; }
+.sk-sub { color:#8090a0; font-size:11px; font-style:italic; margin-bottom:20px; line-height:1.55; }
+.sk-hdr { color:#00b4d8; font-size:13px; font-weight:bold; margin:26px 0 6px 0; border-bottom:1px solid #205070; padding-bottom:4px; }
+.sk-note { color:#8090a0; font-size:11px; margin:4px 0 12px 0; line-height:1.55; }
+.sk-frame { background:#0a0a18; border:1px solid #205070; border-radius:4px; padding:13px; margin-bottom:15px; }
+.pill { display:inline-flex; align-items:center; justify-content:center; height:15px; padding:0 6px; border-radius:2px; font-size:9px; font-weight:bold; letter-spacing:.3px; }
+.pill-wide { background:#604000; color:#ffb800; border:1px solid #906000; }
+.pill-ch { background:#1a2a3a; color:#8aa8c0; border:1px solid #304050; }
+.pill-ok { background:#12331f; color:#5ad07a; border:1px solid #1f6034; }
+.sb { display:inline-flex; align-items:center; justify-content:center; width:17px; height:17px; border-radius:3px; font-size:10px; font-weight:bold; }
+.sA{background:#00d4ff;color:#001020}.sB{background:#ff40ff;color:#200020}.sC{background:#40ff40;color:#002010}.sD{background:#ffff00;color:#201000}
+table.sk { border-collapse:collapse; width:100%; font-size:11px; }
+table.sk th { text-align:left; color:#8aa8c0; font-weight:bold; padding:5px 8px; border-bottom:1px solid #205070; font-size:10px; text-transform:uppercase; letter-spacing:.4px;}
+table.sk td { padding:5px 8px; border-bottom:1px solid #182838; vertical-align:middle;}
+.mono { font-family:ui-monospace,Menlo,Consolas,monospace; }
+.chain { border:1px solid #304050; border-radius:4px; padding:8px 11px; margin:6px 0; background:#0d1522; }
+.chain-hd { font-size:11px; font-weight:bold; color:#8aa8c0; margin-bottom:4px; display:flex; justify-content:space-between; gap:10px;}
+.flow { font-size:11px; }
+.arrow { color:#40607a; margin:0 5px; }
+.ok { color:#5ad07a; font-weight:bold; }
+.byp { color:#ffb800; font-weight:bold; }
+.verdict { margin-top:8px; padding:7px 10px; border-radius:3px; font-size:11px; line-height:1.5;}
+.v-ok { background:#0f2417; border:1px solid #1f6034; color:#9fe0b4; }
+.v-wide { background:#2a1d00; border:1px solid #906000; color:#f0c987; }
+.v-warn { background:#2a1212; border:1px solid #7a2a2a; color:#f0a9a9; }
+.sku-tag { display:inline-block; background:#123; border:1px solid #2a4a6a; color:#7fd4f0; font-size:10px; font-weight:bold; padding:2px 8px; border-radius:3px; margin-right:8px;}
+.src { color:#54687c; font-size:10px; font-family:ui-monospace,Menlo,monospace; }
+</style>
+
+<div class="sk-bg">
+
+<div class="sk-h1">ADC / DDC routing: what to expect per radio</div>
+<div class="sk-sub">
+Every number below is read from <span class="mono">BoardCapabilities.cpp</span>, cross-checked against Thetis <span class="mono">clsHardwareSpecific.cs</span>. Filter ranges from deskhpsdr <span class="mono">alex.h</span>. Nothing here is inferred from the product name.
+</div>
+
+<div class="sk-hdr">The three radios, by the numbers</div>
+<div class="sk-frame">
+  <table class="sk">
+    <tr><th>Radio</th><th>Internal</th><th>ADCs =<br>filter chains</th><th>User DDCs</th><th>Max slices</th><th>Filter style</th></tr>
+    <tr>
+      <td><b>ANAN-G2</b></td><td class="mono">kSaturn</td>
+      <td class="ok" style="font-size:13px">2</td><td class="mono">5 &nbsp;<span class="src">DDC2-6</span></td><td class="mono">5</td><td>MkII BPF</td>
+    </tr>
+    <tr>
+      <td><b>ANAN-G2E</b></td><td class="mono">kHermesC10</td>
+      <td class="byp" style="font-size:13px">1</td><td class="mono">4 &nbsp;<span class="src">DDC0-3</span></td><td class="mono">5</td><td>MkII BPF</td>
+    </tr>
+    <tr>
+      <td><b>Anvelina Pro 3</b></td><td class="mono">kOrionMKII</td>
+      <td class="ok" style="font-size:13px">2</td><td class="mono">5 &nbsp;<span class="src">DDC2-6</span></td><td class="mono">5</td><td>MkII BPF</td>
+    </tr>
+  </table>
+  <div class="sk-note" style="margin-top:11px;margin-bottom:0">
+    <b>The G2E is the odd one.</b> Thetis calls it <span class="mono">SetRxADC(1) + SetMKIIBPF(1)</span>: one ADC, but the modern band-pass filter style. It is a HERMES-class 1-ADC radio wearing a G2 badge, and it behaves like an HL2 for routing purposes, not like its bigger sibling.
+    <br><br>
+    Anvelina Pro 3 shares the <span class="mono">kOrionMKII</span> row with the 7000DLE / 8000DLE / RedPitaya, so it routes identically to a G2.
+  </div>
+</div>
+
+<div class="sk-hdr">Scenario 1 &nbsp;<span style="font-weight:normal;color:#8090a0;font-size:11px">Two slices, 20m + 15m, one antenna</span></div>
+<div class="sk-note">Both inside 11.0-22.0 MHz, so one filter covers them on any radio. Nothing to decide.</div>
+<div class="sk-frame">
+  <table class="sk">
+    <tr><th>Radio</th><th>Routing</th><th>Filtering</th><th>Badge</th></tr>
+    <tr><td><span class="sku-tag">G2</span></td><td class="mono">A,B &rarr; DDC2,3 &rarr; ADC0</td><td class="ok">20/15 BPF</td><td><span class="pill pill-ok">none</span></td></tr>
+    <tr><td><span class="sku-tag">G2E</span></td><td class="mono">A,B &rarr; DDC0,1 &rarr; ADC0</td><td class="ok">20/15 BPF</td><td><span class="pill pill-ok">none</span></td></tr>
+    <tr><td><span class="sku-tag">Anvelina</span></td><td class="mono">A,B &rarr; DDC2,3 &rarr; ADC0</td><td class="ok">20/15 BPF</td><td><span class="pill pill-ok">none</span></td></tr>
+  </table>
+  <div class="verdict v-ok">Identical everywhere, and the second chain on the 2-ADC radios stays idle because nothing needs it. Today we would wrongly bypass all three, because we compare band names instead of filter ranges.</div>
+</div>
+
+<div class="sk-hdr">Scenario 2 &nbsp;<span style="font-weight:normal;color:#8090a0;font-size:11px">Two slices, 20m + 40m, one antenna</span></div>
+<div class="sk-note">Different ranges (20/15 vs 40/30). This is where the radios diverge, and it is the case that started the conversation.</div>
+<div class="sk-frame">
+  <div class="chain-hd" style="margin-bottom:7px"><span><span class="sku-tag">G2</span> <span class="sku-tag">Anvelina</span> two chains</span><span class="pill pill-ok">NO WIDE</span></div>
+  <div class="chain">
+    <div class="chain-hd"><span>CHAIN 0</span><span class="pill pill-ch">ADC0</span></div>
+    <div class="flow">ANT1 <span class="arrow">&rarr;</span> Alex0 <span class="ok">20/15 BPF</span> <span class="arrow">&rarr;</span> DDC2 <span class="sb sA">A</span> 14.225</div>
+  </div>
+  <div class="chain">
+    <div class="chain-hd"><span>CHAIN 1</span><span class="pill pill-ch">ADC1</span></div>
+    <div class="flow">ANT1 <span class="arrow">&rarr;</span> Alex1 <span class="ok">40/30 BPF</span> <span class="arrow">&rarr;</span> DDC3 <span class="sb sB">B</span> 7.150</div>
+  </div>
+  <div class="verdict v-ok">The router splits them across chains. Both slices keep a real filter, same antenna feeds both. <b>No compromise, no badge.</b></div>
+</div>
+<div class="sk-frame">
+  <div class="chain-hd" style="margin-bottom:7px"><span><span class="sku-tag">G2E</span> one chain</span><span class="pill pill-wide">WIDE</span></div>
+  <div class="chain">
+    <div class="chain-hd"><span>CHAIN 0</span><span class="pill pill-ch">ADC0</span></div>
+    <div class="flow">ANT1 <span class="arrow">&rarr;</span> Alex0 <span class="byp">BYPASS</span> <span class="arrow">&rarr;</span> DDC0 <span class="sb sA">A</span> 14.225 &nbsp; DDC1 <span class="sb sB">B</span> 7.150</div>
+  </div>
+  <div class="verdict v-wide">One ADC means one filter chain. Two ranges cannot both be served, so the chain bypasses and <b>both</b> pans show WIDE. This is correct behaviour, not a defect. The only ways out are closing a slice or moving one to a range the other shares.</div>
+</div>
+
+<div class="sk-hdr">Scenario 3 &nbsp;<span style="font-weight:normal;color:#8090a0;font-size:11px">Three slices, 20m + 40m + 6m</span></div>
+<div class="sk-note">Three distinct ranges. Now even the 2-ADC radios run out.</div>
+<div class="sk-frame">
+  <div class="chain-hd" style="margin-bottom:7px"><span><span class="sku-tag">G2</span> <span class="sku-tag">Anvelina</span></span><span class="pill pill-wide">WIDE on CH 0 only</span></div>
+  <div class="chain">
+    <div class="chain-hd"><span>CHAIN 0</span><span class="pill pill-ch">ADC0</span></div>
+    <div class="flow">ANT1 <span class="arrow">&rarr;</span> Alex0 <span class="byp">BYPASS</span> <span class="arrow">&rarr;</span> DDC2 <span class="sb sA">A</span> 14.225 &nbsp; DDC4 <span class="sb sC">C</span> 50.150</div>
+  </div>
+  <div class="chain">
+    <div class="chain-hd"><span>CHAIN 1</span><span class="pill pill-ch">ADC1</span></div>
+    <div class="flow">ANT1 <span class="arrow">&rarr;</span> Alex1 <span class="ok">40/30 BPF</span> <span class="arrow">&rarr;</span> DDC3 <span class="sb sB">B</span> 7.150</div>
+  </div>
+  <div class="verdict v-wide">Only the overloaded chain bypasses. <span class="sb sA">A</span> and <span class="sb sC">C</span> pans show WIDE; <span class="sb sB">B</span> stays filtered and clean. Partial degradation, not all-or-nothing.</div>
+</div>
+<div class="sk-frame">
+  <div class="chain-hd" style="margin-bottom:7px"><span><span class="sku-tag">G2E</span></span><span class="pill pill-wide">WIDE on all</span></div>
+  <div class="chain">
+    <div class="chain-hd"><span>CHAIN 0</span><span class="pill pill-ch">ADC0</span></div>
+    <div class="flow">ANT1 <span class="arrow">&rarr;</span> Alex0 <span class="byp">BYPASS</span> <span class="arrow">&rarr;</span> DDC0 <span class="sb sA">A</span> &nbsp; DDC1 <span class="sb sB">B</span> &nbsp; DDC2 <span class="sb sC">C</span></div>
+  </div>
+  <div class="verdict v-wide">Same as scenario 2 for this radio. Once a G2E is cross-range it is bypassed regardless of how many more slices you add.</div>
+</div>
+
+<div class="sk-hdr">Scenario 4 &nbsp;<span style="font-weight:normal;color:#8090a0;font-size:11px">Two slices, 20m + 40m, different antennas</span></div>
+<div class="sk-note">Antenna is the hard constraint: a chain serves one antenna at a time. Here it agrees with the band split rather than fighting it.</div>
+<div class="sk-frame">
+  <table class="sk">
+    <tr><th>Radio</th><th>Routing</th><th>Filtering</th><th>Badge</th></tr>
+    <tr><td><span class="sku-tag">G2</span> <span class="sku-tag">Anvelina</span></td><td class="mono">A/ANT1 &rarr; ADC0 &nbsp; B/ANT2 &rarr; ADC1</td><td class="ok">20/15 + 40/30</td><td><span class="pill pill-ok">none</span></td></tr>
+    <tr><td><span class="sku-tag">G2E</span></td><td class="mono">conflict: 1 chain, 2 antennas</td><td class="byp">operator must choose</td><td><span class="pill pill-wide">escalate</span></td></tr>
+  </table>
+  <div class="verdict v-warn"><b>The G2E case is not a filter problem, it is an antenna problem.</b> One chain cannot be on two antennas, so no filter policy rescues it. This is the §5 conflict-resolution escalation, and it should say so plainly rather than silently picking one antenna and leaving a slice deaf.</div>
+</div>
+
+<div class="sk-hdr">What this means for you in practice</div>
+<div class="sk-frame">
+  <table class="sk">
+    <tr><th></th><th>ANAN-G2 / Anvelina Pro 3</th><th>ANAN-G2E</th></tr>
+    <tr><td><b>Same range</b><br><span class="src">20+15, 40+30</span></td><td class="ok">Filtered, 1 chain used</td><td class="ok">Filtered</td></tr>
+    <tr><td><b>Two ranges</b><br><span class="src">20+40</span></td><td class="ok">Filtered, both chains</td><td class="byp">WIDE</td></tr>
+    <tr><td><b>Three ranges</b></td><td class="byp">WIDE on one chain</td><td class="byp">WIDE</td></tr>
+    <tr><td><b>Two antennas</b></td><td class="ok">Fine, one per chain</td><td class="byp">Conflict, escalate</td></tr>
+    <tr><td><b>Slice ceiling</b></td><td class="mono">5 slices / 5 DDCs</td><td class="mono">5 slices / 4 DDCs<br><span class="src">sharing required</span></td></tr>
+  </table>
+  <div class="sk-note" style="margin-top:11px;margin-bottom:0">
+    The honest summary: on a <b>G2 or Anvelina Pro 3</b> you have to reach three distinct filter ranges before anything degrades. On a <b>G2E</b>, any cross-range pair bypasses immediately, because it has one ADC. Worth knowing before you bench them side by side and wonder why they differ.
+  </div>
+</div>
+
+</div>

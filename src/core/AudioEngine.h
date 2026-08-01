@@ -126,6 +126,7 @@ namespace NereusSDR { class PipeWireThreadLoop; }
 
 #include <array>
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 
@@ -204,6 +205,41 @@ public:
     void start();
     void stop();
     bool isRunning() const { return m_running; }
+
+    /// Pre-register slice ids [0, count) with the master mixer.
+    ///
+    /// MasterMixer::accumulate() silently drops any id it has no entry for,
+    /// and its map must stay structurally frozen while audio streams: the
+    /// DSP thread does a lock-free find() on an unordered_map that a
+    /// main-thread insert would rehash underneath it (MasterMixer.h:52-56).
+    /// So every id a slice may ever be given is registered up front, at
+    /// connect, before the DSP thread starts feeding rxBlockReady().
+    ///
+    /// Idempotent and monotonic — repeated calls only top the map up, and
+    /// count is clamped to at least 1 so slice A is always present. An id
+    /// with no slice bound to it never receives an accumulate() call, so a
+    /// spare registration costs one map entry and nothing else.
+    ///
+    /// MUST NOT be called once audio is streaming.
+    void preregisterSlices(int count);
+
+    /// Admit a slice to the mixer's readiness barrier, or withdraw it.
+    ///
+    /// The mixer waits for every member before it releases a block, and it
+    /// has no timeout that will give up on one (a timeout cannot tell a
+    /// slice that is merely late from one that has stopped, and trying
+    /// produced the 2026-07-27 G2E scratchy-audio defect). So a slice that
+    /// stops being fed while its mixer entry lives on MUST be withdrawn
+    /// here, or the barrier waits forever and all audio stops.
+    ///
+    /// Callers are RadioModel's activateSliceChannel / deactivateSliceChannel
+    /// pair, which is the same place the WDSP RX channel starts and stops
+    /// producing. Mirrors Thetis SetAAudioMixState (aamix.c:522
+    /// [v2.10.3.15]).
+    ///
+    /// Safe to call while audio is streaming: it only flips atomics on an
+    /// entry preregisterSlices() already created.
+    void setSliceStreaming(int sliceId, bool streaming);
 
     // Task 1.6 — Sample-rate live-apply coordination hooks.
     //
@@ -289,6 +325,18 @@ public:
     // Plan: 3M-1b E.3.
     MasterMixer& masterMixForTest() { return m_masterMix; }
 
+    // Test seam: expose m_antiVoxMix so tests can assert what the anti-VOX
+    // reference sums, what it refuses to sum, and how often it releases a
+    // block. Phase 3F Sub-Epic J Task 9.
+    MasterMixer& antiVoxMixForTest() { return m_antiVoxMix; }
+
+    // Signals that withdrawal has invalidated both mixers, immediately
+    // before setSliceStreaming(false) waits for admitted mix regions.
+    void setWithdrawalPublishedHookForTest(std::function<void()> hook)
+    {
+        m_withdrawalPublishedHookForTest = std::move(hook);
+    }
+
     /// Test seam — directly set MOX state without going through MoxController.
     /// Bypasses the signal/slot connection that RadioModel wires in Phase L so
     /// unit tests can drive the gate logic without a full radio fixture.
@@ -300,9 +348,12 @@ public:
     // Called by RxDspWorker when a slice produces an RX audio block.
     // samples is interleaved stereo float32, length = frames * 2.
     //
-    // (Anti-VOX shares the same demod block via RxDspWorker::antiVoxSampleReady.
-    //  See RxDspWorker.cpp tap-point note for the future tap-point-move scenario
-    //  when output divergence lands.)
+    // Feeds two mixers: m_masterMix for the speakers and m_antiVoxMix for
+    // the DEXP cancellation reference. Both are drained here, so anti-VOX
+    // hears the same summed audio the operator does. Phase 3F Sub-Epic J
+    // Task 9 moved that tap here from RxDspWorker, where it forked slice
+    // A's demod output alone; see the note at the bottom of RxDspWorker's
+    // drain loop.
     void rxBlockReady(int sliceId, const float* samples, int frames);
 
     /// TX-monitor block consumer. Called via Qt::DirectConnection from
@@ -447,6 +498,10 @@ public:
     void setMoxState(bool active);
     bool moxState() const { return m_moxActive.load(std::memory_order_acquire); }
 
+    /// Active/listening focus does not alter the stable TX-bound identity
+    /// captured at key-down. Retained as the existing signal target; no-op.
+    void onActiveSliceChanged();
+
     /// TX monitor (MON) enable. When true, TXA siphon audio is mixed into
     /// the master output during MOX (the user hears themselves).
     ///
@@ -563,6 +618,29 @@ signals:
     // lands with the segment integration in sub-PR-4 / D.2.
     void flowStateChanged(NereusSDR::AudioEngine::FlowState state);
 
+    /// One mixed anti-VOX reference block, interleaved stereo float32,
+    /// length = frames * 2. Emitted from rxBlockReady on the DSP thread,
+    /// once per audio period, whenever the anti-VOX mixer's readiness
+    /// barrier releases a block.
+    ///
+    /// **DirectConnection ONLY.** `samples` points at a thread_local
+    /// scratch buffer that is valid for the duration of this synchronous
+    /// emit and is overwritten by the next block. A queued connection would
+    /// copy the pointer, not the audio, and hand the consumer a buffer that
+    /// has already moved on. Same contract as txMonitorBlockReady's
+    /// incoming samples.
+    ///
+    /// Phase 3F Sub-Epic J Task 9. The consumer is
+    /// TxWorkerThread::onAntiVoxBlockReady, wired DirectConnection in
+    /// RadioModel::wireConnectionSignals. That slot exists precisely to
+    /// honour the contract above: it copies on the DSP thread while the
+    /// pointer is live, then does its own owned, queued hop to reach WDSP
+    /// DEXP. Any future consumer owes the same discipline. `const float*`
+    /// is not a registered metatype, so a queued connect fails loudly at
+    /// connect time rather than dangling, but do not rely on that as the
+    /// safety net.
+    void antiVoxBlockReady(const float* samples, int frames);
+
     void volumeChanged(float volume);
     void masterMutedChanged(bool muted);
     // Plan: 3M-1b E.2. Pre-code review §4.4.
@@ -676,6 +754,38 @@ private:
     std::array<std::unique_ptr<IAudioBus>, 4> m_vaxBus;
     MasterMixer m_masterMix;
 
+    // Second mixer whose output is the anti-VOX reference, not the speakers.
+    //
+    // Thetis runs exactly this: a per-transmitter aamix instance
+    // (pcm->xmtr[i].pavoxmix, cmaster.c:159-175 [v2.10.3.15]) fed by every
+    // sub-receiver in the same loop that feeds the speakers mix
+    // (cmaster.c:371-372 [v2.10.3.15]), with membership managed explicitly
+    // through SetAAudioMixStates (cmaster.c:584-588 [v2.10.3.15]), the same
+    // call the RX mixer uses. `active = 0` in that create_aamix call is the
+    // pre-power-on default and nothing more: console.cs:27650-27771
+    // [v2.10.3.15] sets the membership mask on every power and MOX
+    // transition. So this instance is barrier-paced exactly like
+    // m_masterMix, and its membership rides the same setSliceStreaming
+    // calls.
+    //
+    // The TX monitor is deliberately never registered here. Upstream draws
+    // this mask from RX1 + RX1S + RX2 while handing the speakers mixer
+    // RX1 + RX1S + RX2 + MON on the line above it (console.cs:27650-27651
+    // [v2.10.3.15]), and monitor audio suppressing the operator's own VOX
+    // would be feedback by definition.
+    MasterMixer m_antiVoxMix;
+
+    // Control-to-audio withdrawal handshake. The audio thread never waits:
+    // it either enters a region or drops a block while admission is closed.
+    // The control thread invalidates both mixers, then waits for already
+    // admitted regions to finish before withdrawal returns.
+    std::atomic<bool> m_mixAdmissionClosed{false};
+    std::atomic<unsigned> m_mixRegionsInFlight{0};
+
+#ifdef NEREUS_BUILD_TESTS
+    std::function<void()> m_withdrawalPublishedHookForTest;
+#endif
+
     // Speakers format last negotiated. frames passed to rxBlockReady may
     // vary per block; the bus handles that internally via its ring. Kept
     // for diagnostics.
@@ -699,9 +809,14 @@ private:
     // Defaults false (MOX off at startup).
     //
     // Matches Thetis IVAC mox state-machine in audio.cs:349-384 [v2.10.3.13]:
-    // when MOX is on, active TX slice's RX audio is silenced; non-active
-    // slices keep playing.
+    // when MOX is on, the TX-bound slice's RX audio is silenced; other
+    // listening slices keep playing.
     std::atomic<bool> m_moxActive{false};
+
+    // Which slice setMoxState() withdrew from the mixer's readiness barrier
+    // on key-down, so key-up re-admits that exact slice. Main thread only.
+    // -1 when nothing is withdrawn.
+    std::atomic<int> m_moxWithdrawnSlice{-1};
 
     // Phase 3M-1c TX pump v3 — PC mic override gate.
     // Written by onMicSourceChanged() on the main thread (slot wired
@@ -755,10 +870,11 @@ private:
     // terminate.
     bool m_paInitialized{false};
     bool m_running{false};
-    // Was sliceId 0 registered with MasterMixer? startup-only invariant
-    // per design-decision D6 (plan); prevents a main-thread insert/rehash
-    // race against the audio thread's lock-free find().
-    bool m_slicePreregistered{false};
+    // High-water mark of slice ids registered with MasterMixer: ids
+    // [0, m_preregisteredSlices) have an entry. Startup-only invariant per
+    // design-decision D6 (plan); prevents a main-thread insert/rehash race
+    // against the audio thread's lock-free find(). See preregisterSlices().
+    int m_preregisteredSlices{0};
 
 #if defined(Q_OS_LINUX)
     // Cached Linux audio backend detected by detectLinuxBackend() in the

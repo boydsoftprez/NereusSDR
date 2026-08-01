@@ -55,7 +55,7 @@ private slots:
         RadioModel radio;
         radio.addSlice();
         radio.setActiveSlice(0);
-        SliceModel* slice = radio.sliceAt(0);
+        SliceModel* slice = radio.sliceById(0);
         QVERIFY(slice);
         // Start on 40m so the 20m click is a genuine cross-band event.
         slice->setFrequency(7100000.0);
@@ -71,7 +71,7 @@ private slots:
         RadioModel radio;
         radio.addSlice();
         radio.setActiveSlice(0);
-        SliceModel* slice = radio.sliceAt(0);
+        SliceModel* slice = radio.sliceById(0);
 
         // Start on 80m — picked specifically so the snapshot-on-exit
         // during the first click does NOT prewrite the 40m slot we
@@ -103,7 +103,7 @@ private slots:
         RadioModel radio;
         radio.addSlice();
         radio.setActiveSlice(0);
-        SliceModel* slice = radio.sliceAt(0);
+        SliceModel* slice = radio.sliceById(0);
         slice->setFrequency(14100000.0);
         slice->setDspMode(DSPMode::USB);
 
@@ -122,7 +122,7 @@ private slots:
         RadioModel radio;
         radio.addSlice();
         radio.setActiveSlice(0);
-        SliceModel* slice = radio.sliceAt(0);
+        SliceModel* slice = radio.sliceById(0);
         slice->setFrequency(14100000.0);   // on 20m
         slice->setDspMode(DSPMode::USB);
 
@@ -145,7 +145,7 @@ private slots:
         RadioModel radio;
         radio.addSlice();
         radio.setActiveSlice(0);
-        SliceModel* slice = radio.sliceAt(0);
+        SliceModel* slice = radio.sliceById(0);
         slice->setFrequency(7100000.0);
         slice->setDspMode(DSPMode::LSB);
 
@@ -160,7 +160,7 @@ private slots:
         RadioModel radio;
         radio.addSlice();
         radio.setActiveSlice(0);
-        SliceModel* slice = radio.sliceAt(0);
+        SliceModel* slice = radio.sliceById(0);
         slice->setFrequency(14100000.0);   // on 20m
         slice->setDspMode(DSPMode::USB);
 
@@ -188,7 +188,7 @@ private slots:
         RadioModel radio;
         radio.addSlice();
         radio.setActiveSlice(0);
-        SliceModel* slice = radio.sliceAt(0);
+        SliceModel* slice = radio.sliceById(0);
         slice->setFrequency(7100000.0);   // on 40m
         slice->setDspMode(DSPMode::LSB);
         slice->setLocked(true);
@@ -212,7 +212,7 @@ private slots:
         RadioModel radio;
         radio.addSlice();
         radio.setActiveSlice(0);
-        SliceModel* slice = radio.sliceAt(0);
+        SliceModel* slice = radio.sliceById(0);
         slice->setFrequency(14100000.0);   // 20m
         slice->setDspMode(DSPMode::CWU);
 

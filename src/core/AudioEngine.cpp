@@ -197,6 +197,36 @@ AudioEngine::AudioEngine(QObject* parent)
     // Plan: 3M-1b E.3. Pre-code review §4.3.
     m_masterMix.setSliceGain(kTxMonitorSlotId, m_txMonitorVolume.load(std::memory_order_relaxed), 0.0f);
 
+    // The monitor only feeds during MOX, so it must never join the
+    // mixer's readiness barrier: an intermittent member would stall the
+    // drain for kStallTolerance periods on every TX transition.
+    m_masterMix.setSliceOpportunistic(kTxMonitorSlotId, true);
+
+    // kTxMonitorSlotId is registered with m_masterMix and ONLY with
+    // m_masterMix. Upstream hands the speakers mixer RX1 + RX1S + RX2 + MON
+    // and the anti-VOX mixer RX1 + RX1S + RX2 on the very next line
+    // (console.cs:27650-27651 [v2.10.3.15]). Monitor audio suppressing the
+    // operator's own VOX would be feedback by definition, and an
+    // unregistered id is dropped by MasterMixer::accumulate, so leaving it
+    // out here is the whole enforcement.
+
+    // No fade on the anti-VOX reference. Thetis creates this mixer with
+    // 0.000 on all four slew parameters (cmaster.c:159-175 [v2.10.3.15]),
+    // unlike the RX mixer's 0.010 (cmaster.c:297-313 [v2.10.3.15]), because
+    // DEXP needs an amplitude-faithful reference from the first sample
+    // after a transition. A faded reference under-reports the audio the
+    // operator is actually hearing for the length of the fade, and
+    //   asig = avsig - antivox_gain * antivox_level   (dexp.c:313-316)
+    // then cancels too little: a false VOX trigger, meaning unintended
+    // transmit, in exactly the window a transition opens.
+    //
+    // The per-slice anti-click ramp (kDefaultRampFrames, 5 ms) is left
+    // alone. It is ours rather than upstream's, it only bites on a slice's
+    // very first block after a join, and DEXP's hang time keeps the state
+    // machine out of DEXP_LOW, where antivox_level is recomputed
+    // (dexp.c:288 [v2.10.3.15]), for far longer than 5 ms after an unkey.
+    m_antiVoxMix.setSlewUpFrames(0);
+
     // (Phase 3M-1c bench-fix-A added an m_micPumpTimer here that drove
     //  pullTxMic at 5 ms cadence to keep the D.1 720-sample accumulator
     //  ticking after the E.1 push-slot refactor dropped TxChannel's
@@ -261,21 +291,101 @@ void AudioEngine::rescanLinuxBackend()
 }
 #endif
 
+void AudioEngine::preregisterSlices(int count)
+{
+    // Slice A always exists, so a caller that has no radio (unit tests, a
+    // disconnected engine) still gets id 0 — this is the behaviour the
+    // former slice-0-only pre-registration had.
+    const int wanted = std::max(1, count);
+    for (int id = m_preregisteredSlices; id < wanted; ++id) {
+        // Unity gain, centre pan: identical to the slice-0 registration
+        // this generalises, so slice A behaviour is unchanged and the
+        // extra ids are inert until a slice actually binds to them.
+        m_masterMix.setSliceGain(id, 1.0f, 0.0f);
+
+        // Same slots on the anti-VOX instance, registered here for the same
+        // reason: accumulate() drops ids it has no entry for, and the map
+        // must not be mutated once the DSP thread is reading it lock-free.
+        // Unity gain rather than the operator's per-slice volume, because
+        // the reference is the receiver audio itself: upstream feeds
+        // pcm->rcvr[rx].audio[j] to both mixers unmodified and lets each
+        // apply its own (cmaster.c:370-372 [v2.10.3.15]).
+        m_antiVoxMix.setSliceGain(id, 1.0f, 0.0f);
+    }
+    if (wanted > m_preregisteredSlices) {
+        m_preregisteredSlices = wanted;
+    }
+}
+
+void AudioEngine::setSliceStreaming(int sliceId, bool streaming)
+{
+    if (!streaming) {
+        // Close first so no new audio callback can enter behind the
+        // invalidation and escape the acknowledgment wait below.
+        m_mixAdmissionClosed.store(true, std::memory_order_release);
+    }
+
+    m_masterMix.setSliceStreaming(sliceId, streaming);
+
+    // Membership mirrors the speakers mixer, and every membership change in
+    // the engine funnels through here so the two cannot drift apart.
+    //
+    // Mandatory rather than stylistic. setMoxState withdraws the gated slice
+    // for the length of a transmission, and neither barrier has a timeout
+    // that would give up on a member (MasterMixer.h, divergence 3). A slice
+    // left enrolled here would wedge the anti-VOX mix for the whole over,
+    // leaving DEXP with a stale antivox_level exactly when the operator is
+    // keyed up.
+    //
+    // Upstream keeps the pair in step the same way: the two mixers are
+    // driven by adjacent SetAAudioMixStates / SetAntiVOXSourceStates calls
+    // on every transition (console.cs:27650-27651 [v2.10.3.15]).
+    m_antiVoxMix.setSliceStreaming(sliceId, streaming);
+
+#ifdef NEREUS_BUILD_TESTS
+    if (!streaming && m_withdrawalPublishedHookForTest) {
+        m_withdrawalPublishedHookForTest();
+    }
+#endif
+
+    if (!streaming) {
+        unsigned inFlight =
+            m_mixRegionsInFlight.load(std::memory_order_acquire);
+        while (inFlight != 0) {
+            m_mixRegionsInFlight.wait(inFlight,
+                                      std::memory_order_acquire);
+            inFlight =
+                m_mixRegionsInFlight.load(std::memory_order_acquire);
+        }
+        m_mixAdmissionClosed.store(false, std::memory_order_release);
+    }
+}
+
 void AudioEngine::start()
 {
     if (m_running) {
         return;
     }
 
-    // Pre-register sliceId 0 with MasterMixer at startup, before any
-    // audio-thread accumulate() can race against a main-thread
+    // Pre-register every slice id this radio can host with MasterMixer,
+    // before any audio-thread accumulate() can race against a main-thread
     // unordered_map insert+rehash on first-block (design-decision D6,
-    // plan §Sub-Phase 4 Task 4.1). Multi-slice enrollment is a
-    // Sub-Phase 9+ concern; slice-0 covers the single-RX live path.
-    if (!m_slicePreregistered) {
-        m_masterMix.setSliceGain(0, 1.0f, 0.0f);
-        m_slicePreregistered = true;
-    }
+    // plan §Sub-Phase 4 Task 4.1).
+    //
+    // Only slice 0 was registered until Sub-Epic I connected the
+    // multi-slice data plane. MasterMixer::accumulate drops any id it has
+    // no entry for, so slices B-E were demodulated by RxDspWorker and then
+    // silently discarded here — the "secondary slices produce no audio"
+    // bench symptom. Enrolling a slice lazily on its first block is not an
+    // option: that is a main-thread insert into a map the DSP thread is
+    // already reading lock-free.
+    //
+    // boardCapabilities() rather than RadioModel::maxSlices(): start() runs
+    // from the WDSP-init lambda in connectToRadio, before m_connection is
+    // assigned, so the accessor would still report the disconnected default
+    // of 1. Same reason the WDSP RX channel pool is sized off caps directly
+    // (RadioModel.cpp §"open the WDSP channel pool").
+    preregisterSlices(m_radio ? m_radio->boardCapabilities().maxSlices : 1);
 
     ensureSpeakersOpen();
     ensureTxInputOpen();
@@ -927,6 +1037,25 @@ void AudioEngine::setVaxTxBusForTest(std::unique_ptr<IAudioBus> bus)
 
 void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
 {
+    if (m_mixAdmissionClosed.load(std::memory_order_acquire)) {
+        return;
+    }
+    m_mixRegionsInFlight.fetch_add(1, std::memory_order_acq_rel);
+    struct MixRegionGuard {
+        std::atomic<unsigned>& count;
+        ~MixRegionGuard()
+        {
+            if (count.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                count.notify_all();
+            }
+        }
+    } mixRegion{m_mixRegionsInFlight};
+    // Pairs with the control thread's close-before-invalidate sequence. If
+    // close raced the first check, acknowledge without touching either mix.
+    if (m_mixAdmissionClosed.load(std::memory_order_acquire)) {
+        return;
+    }
+
     if (!m_radio || samples == nullptr || frames <= 0) {
         return;
     }
@@ -936,26 +1065,73 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // the alias is intentionally not introduced here (design-decision D5,
     // plan §Sub-Phase 4 Task 4.1). A formal rename (if chosen) happens in
     // Sub-Phase 9 alongside per-slice volume / pan control surfaces.
-    SliceModel* slice = m_radio->sliceAt(sliceId);
+    SliceModel* slice = m_radio->sliceById(sliceId);
     if (slice == nullptr) {
         return;
     }
 
-    // 3M-1b E.4 fold: silence the active TX slice's RX audio during MOX.
-    // Non-active slices (e.g. RX2 when TX is on VFO-A, or a second slice in
-    // a future multi-RX configuration) keep playing — matching Thetis IVAC
-    // mox state-machine in audio.cs:349-384 [v2.10.3.13].
+    // 3M-1b E.4 fold: silence the TX-bound slice's RX audio during MOX.
+    // Listening focus can move independently, so the gate follows the stable
+    // ID captured at key-down rather than SliceModel::isActiveSlice().
     //
-    // m_moxActive acquire load provides the ordering barrier before the
-    // non-atomic isActiveSlice() read on slice. A stale read of isActiveSlice
-    // is harmless: worst case one ~10 ms block leaks before the next barrier.
-    if (m_moxActive.load(std::memory_order_acquire) && slice->isActiveSlice()) {
-        return;  // silenced — active TX slice's RX audio gated during MOX
+    // The acquire loads pair with setMoxState's releases so the gate observes
+    // the captured ID before it observes MOX active.
+    //
+    // This queues silence rather than returning outright, and the slice
+    // keeps its place in the mixer's readiness barrier. The barrier has no
+    // timeout that would give up on a member, so withholding the feed
+    // would hold the drain for the whole transmission and silence every
+    // other slice along with it.
+    //
+    // Thetis takes the stream out of the mix instead, on every MOX
+    // transition (console.cs:27650-27771 [v2.10.3.15], via
+    // SetAAudioMixStates). We cannot call the equivalent from here: this
+    // is the audio thread and setSliceStreaming() takes the slice-map
+    // mutex. Same audible result, since the slice contributes nothing.
+    //
+    // Nothing is queued and nothing is pushed: a gated slice must not put
+    // anything on the speakers bus, which is the PR #144 regression where RX
+    // audio leaked during TUN/MOX, pinned by
+    // tst_audio_engine_rx_leak_during_mox.
+    //
+    // Dropping out of the mix without wedging it is handled on the main
+    // thread in setMoxState(), which withdraws this slice from the readiness
+    // barrier for the duration of the transmission. So this really is just a
+    // return, and the slice's ring is left exactly as the transmission found
+    // it.
+    if (m_moxActive.load(std::memory_order_acquire)
+        && sliceId == m_moxWithdrawnSlice.load(std::memory_order_acquire)) {
+        return;  // silenced — TX-bound slice's RX audio gated during MOX
     }
 
-    if (!slice->muted()) {
-        m_masterMix.accumulate(sliceId, samples, frames);
-    }
+    // Always queue, even when muted. MasterMixer treats mute as a ramp
+    // TARGET rather than a gate, so the slice fades out over ~5 ms
+    // instead of clicking. Withholding the feed here would defeat that
+    // and also drop the slice out of the readiness barrier, which is
+    // what the mute path used to do.
+    // Mute rides in as an argument rather than through setSliceMuted(),
+    // which takes the slice-map mutex: this is the audio thread, and
+    // CLAUDE.md's rule is that it never holds a lock.
+    m_masterMix.accumulate(sliceId, samples, frames, slice->muted());
+
+    // Anti-VOX hears exactly what the speakers hear. From Thetis
+    // cmaster.c:370-372 [v2.10.3.15], every sub-receiver's audio is handed
+    // to the transmitter's anti-VOX mixer in the same loop, and from the
+    // same buffer, that feeds the speakers mix:
+    //   xMixAudio (0, 0, chid (stream, j), pcm->rcvr[rx].audio[j]);
+    //   for (k = 0; k < pcm->cmXMTR; k++)
+    //       xMixAudio (pcm->xmtr[k].pavoxmix, -1, chid (stream, j), ...);
+    //
+    // Mute rides in for the same reason it does above, with one deliberate
+    // difference from upstream. Thetis reflects an RX mute in the speakers
+    // mixer's `what` mask only (audio.cs:1291-1309 [v2.10.3.15]) and leaves
+    // the anti-VOX mask alone, yet describes that mask's source as "use
+    // audio going to hardware minus MON" (cmaster.cs:946 [v2.10.3.15]). A
+    // muted slice contributes nothing to the speakers, so nothing of it is
+    // in the room for the microphone to pick up, and counting it would have
+    // DEXP subtract audio that was never there. Following the stated intent
+    // rather than the mask.
+    m_antiVoxMix.accumulate(sliceId, samples, frames, slice->muted());
 
     // VAX tap receives raw demodulated audio — pre-MasterMixer gain/pan,
     // pre-master-volume — matching Thetis VAC behavior and the spec §3.4
@@ -1047,11 +1223,67 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // per thread. Channel count = 2 is intentionally hard-coded here:
     // the MasterMixer contract and the DSP pipeline both emit stereo.
     static thread_local std::vector<float> mix;
-    const int stereoFloats = frames * 2;
-    if (static_cast<int>(mix.size()) < stereoFloats) {
-        mix.resize(static_cast<size_t>(stereoFloats));
+    if (static_cast<int>(mix.size()) < frames * 2) {
+        mix.resize(static_cast<size_t>(frames) * 2);
     }
-    m_masterMix.mixInto(mix.data(), frames);
+
+    // Phase 3F: the mixer decides whether a block leaves, not us. It
+    // returns 0 until every slice feeding the mix this period has
+    // delivered, so N slices produce ONE push instead of N. Draining
+    // unconditionally here is what handed the sink two blocks per period
+    // on the 2026-07-26 G2E bench and distorted the audio.
+    //
+    // With a single slice the barrier is satisfied by this very call, so
+    // the push happens in the same call stack at the same instant it
+    // always did: no added latency on the common path.
+    const int mixed = m_masterMix.tryDrain(mix.data(), frames);
+
+    // Drain the anti-VOX reference in the same call stack, so both mixes are
+    // paced by their own barrier over the same period.
+    //
+    // Cadence is the whole point. The slice-0 gate this replaces guaranteed
+    // exactly one block per outSize/outRate seconds, which is what DEXP was
+    // configured for: SetAntiVOXSize / SetAntiVOXRate describe a block, and
+    // xdexp walks antivox_size samples through a single-pole IIR calibrated
+    // in sample steps at antivox_rate on each pass (dexp.c:288-297
+    // [v2.10.3.15]). Delivery is destructive, not accumulating
+    // (dexp.c:708-715 [v2.10.3.15]), so a second block inside one period
+    // silently replaces the first. Barrier pacing supplies that cadence now:
+    // one drained block per period whatever the stream width.
+    //
+    // Deliberately AHEAD of the `mixed <= 0` return below rather than after
+    // the speakers push. The two barriers are congruent today (same ids,
+    // same membership funnel, same feed), so the return would only ever skip
+    // a drain that was going to yield nothing anyway; sitting ahead of it
+    // means the anti-VOX reference does not silently inherit a future
+    // divergence in the speakers path. Nothing else separates the two: the
+    // master volume and master-mute gates below apply to `mix`, never to
+    // `avMix`, matching upstream, where each mixer carries its own volume
+    // and the anti-VOX instance is created at 1.0 (cmaster.c:167
+    // [v2.10.3.15]).
+    static thread_local std::vector<float> avMix;
+    if (static_cast<int>(avMix.size()) < frames * 2) {
+        avMix.resize(static_cast<size_t>(frames) * 2);
+    }
+    const int avFrames = m_antiVoxMix.tryDrain(avMix.data(), frames);
+    if (avFrames > 0) {
+        // DirectConnection only: avMix is thread_local scratch and the next
+        // block overwrites it. See the signal's contract in AudioEngine.h.
+        //
+        // The consumer, TxWorkerThread::onAntiVoxBlockReady, therefore runs
+        // synchronously on this thread inside this emit. It returns on an
+        // atomic load while the operator has anti-VOX off, which is the
+        // default; with anti-VOX on it copies the block, which is one
+        // allocation per period on this thread. That is what the retired
+        // slice-0 fork did too, one frame up the stack in
+        // RxDspWorker::processIqBatch, except unconditionally.
+        emit antiVoxBlockReady(avMix.data(), avFrames);
+    }
+
+    if (mixed <= 0) {
+        return;
+    }
+    const int stereoFloats = mixed * 2;
 
     const float vol = m_masterVolume.load(std::memory_order_acquire);
     if (vol != 1.0f) {
@@ -1308,15 +1540,64 @@ void AudioEngine::setMasterMuted(bool muted)
 // Plan: 3M-1b E.4. Pre-code review §10.3 + §10.4.
 void AudioEngine::setMoxState(bool active)
 {
-    // Same acq_rel / acquire pairing as setMasterMuted above — the
-    // DSP-thread read in rxBlockReady uses acquire; a plain release
-    // would not synchronize the read-side observation order on weak
-    // memory models (ARM / Apple Silicon).
+    // Take the gated slice out of the mixer's readiness barrier for the
+    // duration of the transmission, and put it back afterwards.
     //
-    // Wired by RadioModel (Phase L) to MoxController::moxStateChanged.
-    // No change-signal emitted — MOX state is authoritative in MoxController;
-    // this is a cross-thread mirror only.
-    m_moxActive.store(active, std::memory_order_release);
+    // This is where Thetis does it too: console.cs:27650-27771 [v2.10.3.15]
+    // calls SetAAudioMixStates on every MOX transition, dropping RX1 / RX1S /
+    // RX2 from the mix and restoring them on unkey. Doing it here rather than
+    // on the audio thread is what makes that possible for us: setSliceStreaming
+    // takes the slice-map mutex, and CLAUDE.md forbids locking in rxBlockReady.
+    //
+    // Without this, rxBlockReady's MOX gate would stop feeding a slice that is
+    // still a barrier member, and the drain would wait on it for the whole
+    // transmission, silencing every other slice. The earlier fix for that fed
+    // the gated slice silence from the audio thread instead, which worked but
+    // churned the slice's ring on every transition (ensureRing, drop-oldest,
+    // and up to kRingBlocks of stale silence queued ahead of the real audio on
+    // unkey). Withdrawing membership leaves the ring completely untouched.
+    // Remember exactly which slice was withdrawn and re-admit that same one,
+    // rather than consulting mutable listening focus on the way out. The
+    // active slice can change during a transmission, and
+    // withdrawing X then re-admitting Y would strand X out of the mix with
+    // nothing to put it back: it would stay silent until something else
+    // re-admitted it, which is what "does not restore until the flag is
+    // retuned" looks like from the operator's seat.
+    //
+    // Routed through AudioEngine::setSliceStreaming rather than straight at
+    // m_masterMix, so the anti-VOX mixer is withdrawn and re-admitted in the
+    // same breath. Poking one mixer directly is how the two would drift
+    // apart, and a slice left enrolled in the anti-VOX barrier alone would
+    // wedge that mix for the whole transmission.
+    if (active) {
+        // Duplicate true edges are possible when a release walk is cancelled
+        // by an immediate re-key. Keep the original key-down identity rather
+        // than releasing and re-sampling mutable UI focus.
+        if (m_moxWithdrawnSlice.load(std::memory_order_acquire) < 0
+            && m_radio != nullptr) {
+            if (SliceModel* const slice = m_radio->txBoundSlice()) {
+                const int sliceId = slice->sliceIndex();
+                setSliceStreaming(sliceId, false);
+                m_moxWithdrawnSlice.store(sliceId, std::memory_order_release);
+            }
+        }
+        m_moxActive.store(true, std::memory_order_release);
+        return;
+    }
+
+    m_moxActive.store(false, std::memory_order_release);
+    const int withdrawn =
+        m_moxWithdrawnSlice.exchange(-1, std::memory_order_acq_rel);
+    if (withdrawn >= 0) {
+        setSliceStreaming(withdrawn, true);
+    }
+}
+
+void AudioEngine::onActiveSliceChanged()
+{
+    // Listening focus is independent of transmit authority. The bound slice
+    // captured at key-down remains gated until key-up, so an active-slice
+    // change requires no mixer membership update.
 }
 
 // Plan: 3M-1b E.2. Pre-code review §4.4.

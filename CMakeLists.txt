@@ -68,6 +68,64 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # --------------------------------------------------------------------------
+# Performance build flags (2026-05-26 KG4VCF jitter investigation)
+# --------------------------------------------------------------------------
+# Bench finding: spectrum + DSP hot paths benefit measurably from -O3 over
+# the default -O2 (RelWithDebInfo).  Apple Silicon also benefits from LTO
+# (link-time optimization) because cross-TU inlining unlocks NEON
+# vectorisation that O3-per-TU misses.  Both opt-in via CMake options so
+# operators or CI can disable if a specific build hits an optimizer bug.
+#
+# These apply only to Release / RelWithDebInfo; Debug builds stay
+# unoptimised so single-step debugging still works.
+option(NEREUSSDR_AGGRESSIVE_OPT "Use -O3 (instead of -O2) for release builds" ON)
+# 2026-05-26 KG4VCF: LTO default flipped to OFF.  With LTO enabled on
+# the shared NereusSDRObjs object library, every test binary (526 of
+# them) inherits the LTO bitcode and triggers a multi-minute LTO link
+# of its own.  Net effect on a clean build: 1+ hour, load avg 250+,
+# unusable while building.  Per-target IPO=FALSE on tests doesn't
+# undo the bitcode embed.  Default LTO off makes dev builds fast;
+# release artifacts can opt in via `cmake -DNEREUSSDR_ENABLE_LTO=ON`.
+option(NEREUSSDR_ENABLE_LTO     "Enable link-time optimization (slow build; release artifacts only)" OFF)
+
+if(NEREUSSDR_AGGRESSIVE_OPT)
+    if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+        # Replace any pre-existing -O2 with -O3 so RelWithDebInfo gets
+        # the upgrade (CMake's default for RelWithDebInfo on most
+        # platforms is "-O2 -g").
+        string(REGEX REPLACE "-O[0-9s]" "-O3" CMAKE_CXX_FLAGS_RELWITHDEBINFO
+               "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+        string(REGEX REPLACE "-O[0-9s]" "-O3" CMAKE_C_FLAGS_RELWITHDEBINFO
+               "${CMAKE_C_FLAGS_RELWITHDEBINFO}")
+        string(REGEX REPLACE "-O[0-9s]" "-O3" CMAKE_CXX_FLAGS_RELEASE
+               "${CMAKE_CXX_FLAGS_RELEASE}")
+        string(REGEX REPLACE "-O[0-9s]" "-O3" CMAKE_C_FLAGS_RELEASE
+               "${CMAKE_C_FLAGS_RELEASE}")
+        message(STATUS "NereusSDR: -O3 enabled for ${CMAKE_BUILD_TYPE}")
+    endif()
+endif()
+
+if(NEREUSSDR_ENABLE_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT _lto_ok OUTPUT _lto_err)
+    if(_lto_ok)
+        # 2026-05-26 KG4VCF: LTO is applied PER-TARGET below (only the
+        # main NereusSDR executable + the parallel NereusSDRObjs_LTO
+        # object library it links).  We deliberately do NOT set the
+        # global CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO
+        # flag, because that would make the shared NereusSDRObjs (used
+        # by 526 test executables) produce LTO bitcode, and every test
+        # link would then trigger a multi-minute LTO pass.  Net effect
+        # of the old global setting on a clean build: ~1 hour, load
+        # avg 250+, dev-loop unusable while building.
+        set(NEREUSSDR_LTO_AVAILABLE TRUE)
+        message(STATUS "NereusSDR: link-time optimization enabled (main app only)")
+    else()
+        message(WARNING "NereusSDR: LTO requested but unsupported -- ${_lto_err}")
+    endif()
+endif()
+
+# --------------------------------------------------------------------------
 # Qt6 components
 # --------------------------------------------------------------------------
 find_package(Qt6 REQUIRED COMPONENTS
@@ -436,6 +494,10 @@ set(CORE_SOURCES
     src/core/AntennaLabels.cpp
     src/core/AppSettings.cpp
     src/core/BoardCapabilities.cpp
+    src/core/FFTRouter.cpp
+    src/core/SliceStreamAllocator.cpp
+    src/core/WidebandFrameAccumulator.cpp
+    src/core/WidebandFftEngine.cpp
     src/core/AudioDeviceConfig.cpp
     src/core/SampleRateCatalog.cpp
     src/core/SkuUiProfile.cpp
@@ -454,6 +516,7 @@ set(CORE_SOURCES
     src/core/codec/P1CodecAnvelinaPro3.cpp
     src/core/codec/P1CodecRedPitaya.cpp
     src/core/codec/P1CodecHl2.cpp
+    src/core/codec/P2CodecHermes.cpp
     src/core/codec/P2CodecOrionMkII.cpp
     src/core/codec/P2CodecSaturn.cpp
     src/core/P1RadioConnection.cpp
@@ -479,6 +542,8 @@ set(CORE_SOURCES
     src/core/MicProfileManager.cpp
     src/core/ParaEqEnvelope.cpp
     src/core/TwoToneController.cpp
+    src/core/TxSliceArbiter.cpp
+    src/core/TxSliceArbiter.h
     src/core/FFTEngine.cpp
     src/core/NoiseFloorEstimator.cpp
     src/core/NoiseFloorTracker.cpp
@@ -511,6 +576,7 @@ set(CORE_SOURCES
     src/core/audio/CompositeTxMicRouter.cpp
     src/core/audio/PortAudioBus.cpp
     src/core/audio/QAudioSinkAdapter.cpp
+    src/core/audio/RealtimeAudioPriority.cpp
     src/core/audio/TxMicSource.cpp
     src/core/audio/VirtualCableDetector.cpp
     src/core/safety/BandPlanGuard.cpp
@@ -544,6 +610,17 @@ set(CORE_SOURCES
     src/core/TxInterlockPolicy.cpp
     # FlexRadio UDP 4992 discovery beacon (PGXL/TGXL auto-detect)
     src/core/FlexRadioDiscoveryBroadcaster.cpp
+    # Multi-homed-host source-IP picker (PGXL/TGXL/broadcaster per-peer
+    # route probe + socket source bind)
+    src/core/RouteProbe.cpp
+    # Perf instrumentation (toggleable in-spectrum overlay + 1 Hz
+    # memory-pressure poll; used to ground-truth jitter investigations)
+    src/core/PerfMonitor.cpp
+    src/core/MemoryPressure.cpp
+    # mlock() helper -- pins hot buffers (waterfall, overlay, FFT
+    # scratch, audio ring) so the kernel can not compress / page them
+    # under heavy memory pressure (parallel builds, Spotlight, etc.).
+    src/core/MemoryLock.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the
@@ -615,10 +692,16 @@ set(GUI_SOURCES
     src/gui/spectrum/SpectrumDetector.cpp
     src/gui/spectrum/SpectrumAvenger.cpp
     src/gui/SpectrumWidget.cpp
+    src/gui/PanadapterApplet.cpp
+    src/gui/PanadapterStack.cpp
+    src/gui/PanFloatingWindow.cpp
+    src/gui/PanLayoutDialog.cpp
     src/gui/ImdOverlay.h
     src/gui/ImdOverlay.cpp
     src/gui/dbm_strip_math.cpp
+    src/gui/popup_placement.cpp
     src/gui/SpectrumOverlayMenu.cpp
+    src/gui/spectrum/WaterfallTicker.cpp
     src/gui/widgets/CenterMarkSlider.h
     src/gui/widgets/DexpPeakMeter.h
     src/gui/widgets/DexpPeakMeter.cpp
@@ -657,8 +740,24 @@ set(GUI_SOURCES
     src/gui/widgets/RxDashboard.h
     src/gui/widgets/StationBlock.cpp
     src/gui/widgets/StationBlock.h
+    src/gui/widgets/SpectrumStatusOverlay.cpp
+    src/gui/widgets/SpectrumStatusOverlay.h
+    src/gui/widgets/FilterPolicyDialog.cpp
+    src/gui/widgets/FilterPolicyDialog.h
+    src/gui/widgets/AntennaPickerMenu.cpp
+    src/gui/widgets/AntennaPickerMenu.h
+    src/gui/widgets/AntennaSwitchToast.cpp
+    src/gui/widgets/AntennaSwitchToast.h
+    src/gui/widgets/StatusToast.cpp
+    src/gui/widgets/StatusToast.h
+    src/gui/widgets/DiversityRadarWidget.cpp
+    src/gui/widgets/DiversityRadarWidget.h
+    src/gui/widgets/TxBoundConfirmDialog.cpp
+    src/gui/widgets/TxBoundConfirmDialog.h
     src/gui/NetworkDiagnosticsDialog.cpp
     src/gui/NetworkDiagnosticsDialog.h
+    src/gui/DiversityDialog.cpp
+    src/gui/DiversityDialog.h
     src/gui/SpotHubDialog.cpp
     src/gui/SpotHubDialog.h
     src/gui/FreeDVReporterDialog.cpp
@@ -751,6 +850,7 @@ set(GUI_SOURCES
     src/gui/setup/GeneralSetupPages.cpp
     src/gui/setup/GeneralOptionsPage.cpp
     src/gui/setup/HardwarePage.cpp
+    src/gui/setup/HardwareDdcRoutingPage.cpp
     src/gui/setup/PaSetupPages.cpp
     src/gui/setup/hardware/RadioInfoTab.cpp
     src/gui/setup/hardware/AntennaAlexTab.cpp
@@ -790,6 +890,7 @@ set(GUI_SOURCES
     src/gui/setup/TgxlAdvancedPage.cpp
     src/gui/setup/PgxlInterlockPage.cpp
     src/gui/setup/FourO3APage.cpp
+    src/gui/setup/RfKitPage.cpp
     src/gui/setup/TciLogWindow.cpp
     src/gui/setup/KeyboardSetupPages.cpp
     src/gui/setup/DiagnosticsSetupPages.cpp
@@ -816,6 +917,7 @@ set(GUI_SOURCES
     src/gui/applets/CatApplet.cpp
     src/gui/applets/TunerApplet.cpp
     src/gui/applets/AmpApplet.cpp
+    src/gui/applets/Rf2ksApplet.cpp
     src/gui/applets/TciApplet.cpp
     src/gui/applets/ClientChainApplet.cpp
 )
@@ -868,8 +970,46 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(NereusSDRObjs PRIVATE src/gui/VaxLinuxFirstRunDialog.cpp)
 endif()
 
+# 2026-05-26 KG4VCF: parallel LTO-enabled object library, ONLY built
+# when NEREUSSDR_ENABLE_LTO=ON.  Same sources as NereusSDRObjs above,
+# but compiled with LTO bitcode so the main NereusSDR app's link can
+# do cross-translation-unit optimization.  Tests continue to link the
+# plain NereusSDRObjs (no bitcode), so test link times stay fast.
+#
+# This is more work to build a release artifact (sources compile
+# twice) but it keeps the dev loop fast while preserving the LTO perf
+# benefit for shipped binaries.
+if(NEREUSSDR_LTO_AVAILABLE)
+    add_library(NereusSDRObjs_LTO OBJECT
+        ${CORE_SOURCES}
+        ${MODEL_SOURCES}
+        ${GUI_SOURCES}
+        ${RESOURCES}
+    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_sources(NereusSDRObjs_LTO PRIVATE src/gui/VaxLinuxFirstRunDialog.cpp)
+    endif()
+    set_target_properties(NereusSDRObjs_LTO PROPERTIES
+        INTERPROCEDURAL_OPTIMIZATION TRUE
+        INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+        INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
+endif()
+
 add_executable(NereusSDR src/main.cpp ${APP_ICON_SOURCES})
-target_link_libraries(NereusSDR PRIVATE NereusSDRObjs)
+if(NEREUSSDR_LTO_AVAILABLE)
+    # Main app + its OBJECT-lib link both get LTO when enabled.  The
+    # IPO property on the executable arranges -flto on the link line;
+    # the IPO property on NereusSDRObjs_LTO above puts -flto on every
+    # compile.  Together: full cross-TU optimization for the shipped
+    # binary.
+    target_link_libraries(NereusSDR PRIVATE NereusSDRObjs_LTO)
+    set_target_properties(NereusSDR PROPERTIES
+        INTERPROCEDURAL_OPTIMIZATION TRUE
+        INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+        INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
+else()
+    target_link_libraries(NereusSDR PRIVATE NereusSDRObjs)
+endif()
 
 set_target_properties(NereusSDR PROPERTIES
     WIN32_EXECUTABLE TRUE
@@ -926,6 +1066,20 @@ if(APPLE)
     # AVFoundation provides AVCaptureDevice for the launch-time mic-permission
     # prompt (src/core/MacMicPermission.mm, issue #203).
     target_link_libraries(NereusSDRObjs PUBLIC "-framework AVFoundation")
+
+    # CoreAudio framework for AudioObjectGetPropertyData +
+    # kAudioDevicePropertyIOThreadOSWorkgroup used by
+    # src/core/audio/RealtimeAudioPriority.cpp.  The os_workgroup_*
+    # APIs themselves come from libSystem (already linked) but the
+    # property-query helpers and AudioDeviceID type live in CoreAudio.
+    target_link_libraries(NereusSDRObjs PUBLIC "-framework CoreAudio")
+endif()
+
+if(WIN32)
+    # avrt provides AvSetMmThreadCharacteristicsW + AvRevertMmThreadCharacteristics
+    # used by src/core/audio/RealtimeAudioPriority.cpp to join the
+    # "Pro Audio" MMCSS task class.
+    target_link_libraries(NereusSDRObjs PUBLIC avrt)
 endif()
 
 if(Qt6SerialPort_FOUND)
@@ -1185,10 +1339,155 @@ if(NEREUS_GPU_SPECTRUM)
 endif()
 
 # --------------------------------------------------------------------------
+# Build tag — identifies a smoke build in the window title
+# --------------------------------------------------------------------------
+# Every non-release build stamps its branch and short SHA into the title bar,
+# so a build under test can be told apart from a release, from another
+# worktree's build, and from whatever was already running.
+#
+# Standing rule (JJ, KG4VCF, 2026-07-30). Earned: this session had a build
+# running from one worktree while another was being tested, and settling which
+# binary was on screen took a `pgrep` against the executable path. The title
+# bar should have answered it.
+#
+# Release artifacts get an empty tag and keep the clean "NereusSDR 0.5.2"
+# title. Detection needs no CI change: release.yml checks out `ref: <tag>`
+# (.github/workflows/release.yml), so HEAD sits exactly on a tag there and
+# nowhere else.
+set(NEREUSSDR_BUILD_TAG "" CACHE STRING
+    "Text appended to the window title identifying a non-release build. Auto-derived from git when empty; set to a single space to force it off.")
+
+if(NOT NEREUSSDR_BUILD_TAG)
+    find_package(Git QUIET)
+    if(GIT_FOUND)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" describe --exact-match --tags HEAD
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            RESULT_VARIABLE _nereus_head_is_tagged
+            OUTPUT_QUIET ERROR_QUIET)
+
+        if(NOT _nereus_head_is_tagged EQUAL 0)
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" rev-parse --abbrev-ref HEAD
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE _nereus_branch
+                OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE _nereus_sha
+                OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+
+            # Uncommitted changes get said out loud. Without this the title
+            # names a commit that does not contain what is actually running,
+            # which is how a smoke build gets tested and reported against the
+            # wrong SHA. Caught on the bench 2026-07-31: a fix was built and
+            # handed over while the title still named the commit before it.
+            #
+            # READ THIS BEFORE TRUSTING IT. The check runs at CONFIGURE time,
+            # so "+local" present is reliable and "+local" absent is NOT
+            # proof of a clean tree: edits made after the last configure
+            # produce a binary that differs from HEAD with no marker. Making
+            # it exact would mean generating the tag at build time through a
+            # custom command, which has not been done.
+            #
+            # The actual discipline is to COMMIT before handing a build to
+            # someone. This marker catches the case where that was forgotten
+            # and configure happened to re-run; it does not replace it.
+            #
+            # Only tracked, modified files count. Untracked scratch files are
+            # not part of the binary and would leave most working trees
+            # permanently marked, which would make the marker meaningless.
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" status --porcelain --untracked-files=no
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE _nereus_dirty
+                OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            set(_nereus_dirty_suffix "")
+            if(_nereus_dirty)
+                set(_nereus_dirty_suffix "+local")
+            endif()
+
+            if(_nereus_branch AND _nereus_sha)
+                set(NEREUSSDR_BUILD_TAG
+                    "${_nereus_branch}@${_nereus_sha}${_nereus_dirty_suffix}")
+            elseif(_nereus_sha)
+                # Detached HEAD that is not on a tag.
+                set(NEREUSSDR_BUILD_TAG
+                    "detached@${_nereus_sha}${_nereus_dirty_suffix}")
+            endif()
+        endif()
+
+        # Re-run configure when the checked-out commit changes, or the title
+        # keeps naming whatever was current when the build tree was first
+        # configured. A confidently wrong build name is worse than none: it
+        # is the exact mistake this stamp exists to prevent.
+        #
+        # TWO files, because they change on different events:
+        #
+        #   HEAD                    changes when the checked-out ref changes
+        #                           (branch switch, detach)
+        #   refs/heads/<branch>     changes when a commit lands on the branch
+        #                           already checked out
+        #
+        # Watching only HEAD leaves the branch name right and the SHA aging
+        # silently, which is what shipped and was caught on the very next
+        # commit.
+        #
+        # Both paths come from `git rev-parse --git-path`, never from joining
+        # the git dir by hand. In a worktree those are different places:
+        # --absolute-git-dir gives .git/worktrees/<name>, HEAD does live
+        # there, and refs/heads/* live in the MAIN repo's .git. Hand-joining
+        # produced a path that simply did not exist, so the dependency was
+        # never registered and the fix silently did nothing. --git-path
+        # answers correctly for both, in a worktree and in a plain clone.
+        #
+        # Loose refs only. A packed ref has no file to watch; a branch being
+        # actively committed to is loose by construction, and if one is ever
+        # packed the SHA can age again while the branch name still cannot.
+        set(_nereus_ref_paths "HEAD")
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" symbolic-ref --quiet HEAD
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            OUTPUT_VARIABLE _nereus_head_ref
+            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        if(_nereus_head_ref)
+            list(APPEND _nereus_ref_paths "${_nereus_head_ref}")
+        endif()
+
+        foreach(_nereus_ref IN LISTS _nereus_ref_paths)
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" rev-parse --git-path "${_nereus_ref}"
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE _nereus_ref_file
+                OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            if(_nereus_ref_file AND EXISTS "${_nereus_ref_file}")
+                get_filename_component(_nereus_ref_file
+                                       "${_nereus_ref_file}" ABSOLUTE
+                                       BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+                set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                             "${_nereus_ref_file}")
+            endif()
+        endforeach()
+    endif()
+endif()
+
+if(NEREUSSDR_BUILD_TAG MATCHES "^[ \t]*$")
+    set(NEREUSSDR_BUILD_TAG "")
+endif()
+
+if(NEREUSSDR_BUILD_TAG)
+    message(STATUS "NereusSDR: smoke build, title tagged '${NEREUSSDR_BUILD_TAG}'")
+else()
+    message(STATUS "NereusSDR: release build, title untagged")
+endif()
+
+# --------------------------------------------------------------------------
 # Version define
 # --------------------------------------------------------------------------
 target_compile_definitions(NereusSDRObjs PUBLIC
     NEREUSSDR_VERSION="${PROJECT_VERSION}"
+    NEREUSSDR_BUILD_TAG="${NEREUSSDR_BUILD_TAG}"
 )
 
 # --------------------------------------------------------------------------

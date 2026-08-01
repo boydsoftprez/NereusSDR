@@ -115,25 +115,35 @@
 #include "SpectrumWidget.h"
 #include "SpectrumOverlayMenu.h"
 #include "ImdOverlay.h"
+#include "spectrum/WaterfallTicker.h"
 #include "widgets/VfoWidget.h"
 #include "ColorSwatchButton.h"
 #include "core/AppSettings.h"
+#include "core/audio/RealtimeAudioPriority.h"
 #include "core/LogCategories.h"   // Phase 3M-4 bench-fix Round 2: lcSpectrum
 #include "dbm_strip_math.h"
+#include "popup_placement.h"
 #include "models/BandPlanManager.h"
 #include "spectrum/SpectrumDetector.h"
 
 #include <QApplication>
 #include <QClipboard>
 #include <QDesktopServices>
+#include <QGuiApplication>
 #include <QHoverEvent>
 #include <QLabel>
 #include <QPropertyAnimation>
+#include <QScreen>
 #include <QToolTip>
 #include <QUrl>
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QTimeZone>
+
+#include "core/MemoryLock.h"
+#include "core/MemoryPressure.h"
+#include "core/PerfMonitor.h"
 #include <QMap>
 #include <QMenu>
 #include <QPainter>
@@ -345,6 +355,13 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     setApi(QRhiWidget::Api::Direct3D11);
     setAttribute(Qt::WA_NativeWindow);
 #endif
+    // 2026-05-26 KG4VCF perf polish: SpectrumWidget paints every pixel
+    // of its rect every frame (GPU clears + draws spectrum + waterfall
+    // + overlay + dynamic overlay; CPU fallback also paints full area).
+    // Tell Qt to skip its default pre-paint alpha-channel clear --
+    // small per-paint win, no visual difference.
+    setAttribute(Qt::WA_OpaquePaintEvent);
+    setAttribute(Qt::WA_NoSystemBackground);
 #else
     // CPU fallback: dark background
     setAutoFillBackground(true);
@@ -375,14 +392,86 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // restores it across launches.
     static constexpr int kDefaultDisplayFps = 30;
     m_displayTimer.setInterval(1000 / kDefaultDisplayFps); // 33 ms
+    m_displayTimer.setTimerType(Qt::PreciseTimer);  // sub-ms accuracy
     m_displayTimer.setSingleShot(false);
     connect(&m_displayTimer, &QTimer::timeout, this, [this]() {
+        // 2026-05-25 KG4VCF Option B revisit: the original Option B drop
+        // of this gate ("always repaint at display cadence") looked great
+        // on a healthy system but pegged a CPU core under macOS low-power
+        // mode + high system load (load average ~8, 99% on one core)
+        // because every display tick unconditionally pumped the GPU
+        // pipeline.  Restore the gate; the sub-row interpolation still
+        // helps because paint timing within a push period varies, so
+        // effectiveRow varies sample-to-sample even with the gate in.
+        // Trade-off: animation cadence is tied to FFT-arrival cadence
+        // (not display cadence), but FFT arrival drives push too, so the
+        // two stay locked in steady state.
         if (m_hasNewSpectrum) {
             m_hasNewSpectrum = false;
             update();
         }
     });
     m_displayTimer.start();
+
+    // 2026-05-25 KG4VCF bench fix: timer-driven waterfall row push.
+    // Bench symptom: "waterfall scroll still appears to jitter,
+    // occasional stutter".  Root cause: pushWaterfallRow was called
+    // directly from updateSpectrumLinear at FFT-arrival timing.
+    // Network-burst UDP delivery clusters multiple FFTs into a few ms
+    // followed by a gap; the previous rate-limit-by-drop in
+    // pushWaterfallRow coalesced the burst into one push, then left
+    // a visible gap until the next FFT arrived.  Move the push to a
+    // dedicated QTimer so the texture write happens at strictly
+    // m_wfUpdatePeriodMs cadence regardless of FFT arrival pattern.
+    // 2026-05-25 KG4VCF bench fix #3: PreciseTimer (vs Qt's default
+    // CoarseTimer with 5% drift) keeps the push cadence within ~1 ms
+    // of nominal.  CoarseTimer's ~5% slop on a 33 ms interval
+    // accumulates ~50 ms = one missed frame per second, which matches
+    // the operator's report of a ~1 Hz scroll hitch.
+    // 2026-05-25 KG4VCF bench fix #4 (Option A): WaterfallTicker on a
+    // dedicated worker thread.  The QTimer used to live here on the
+    // main thread (PreciseTimer + always-push + correctly-synced cadence
+    // were already in place from fixes #1-#3), but any momentary main-
+    // thread block (focus event, layout pass, system notification)
+    // could still delay the tick firing.  Move the timer onto its own
+    // QThread so the tick fires regardless of main-thread state; the
+    // queued signal then lands in the main thread's event loop and the
+    // pushWaterfallRow callback runs ASAP -- if main is busy, the queued
+    // ticks accumulate and drain in a burst, which the eye reads as
+    // continuous scroll instead of the long-pause-then-jump pattern.
+    m_waterfallTickerThread = new QThread(this);
+    m_waterfallTickerThread->setObjectName(QStringLiteral("WaterfallTickerThread"));
+    m_waterfallTicker = new WaterfallTicker();  // no parent -- moved to thread
+    // moveToWorkerThread() moves m_timer (a value member, hence not a
+    // QObject child) along with *this. moveToThread() alone strands
+    // m_timer on main, which then refuses start() from the worker.
+    m_waterfallTicker->moveToWorkerThread(m_waterfallTickerThread);
+    connect(m_waterfallTickerThread, &QThread::finished,
+            m_waterfallTicker, &QObject::deleteLater);
+    // Elevate the ticker thread to USER_INTERACTIVE QoS so its event
+    // loop (which carries the PreciseTimer) sits in the same scheduling
+    // class as the GUI + DSP threads and is consistently preferred over
+    // compile workers (DEFAULT QoS) under heavy build load.  Earlier
+    // revisions used USER_INITIATED here; 2026-05-26 KG4VCF bench
+    // showed that tier still let the ticker get preempted by ninja
+    // workers, producing visible waterfall stutter on build kickoff.
+    connect(m_waterfallTickerThread, &QThread::started,
+            m_waterfallTicker,
+            []() { NereusSDR::elevateLatencyCriticalThreadPriority(); });
+    // Queued connection (default for cross-thread): tick fires on the
+    // ticker thread, slot runs on the main thread when the event loop
+    // is free.  See WaterfallTicker.h for the cadence-isolation rationale.
+    connect(m_waterfallTicker, &WaterfallTicker::tick, this, [this]() {
+        // ALWAYS push on tick.  Empty-cache guard so we do nothing
+        // before the very first FFT.
+        m_pendingWfPixelsDbmDirty = false;
+        if (!m_pendingWfPixelsDbm.isEmpty()) {
+            pushWaterfallRow(m_pendingWfPixelsDbm);
+        }
+    }, Qt::QueuedConnection);
+    m_waterfallTickerThread->start();
+    m_waterfallTicker->setUpdatePeriodMs(m_wfUpdatePeriodMs);
+    m_waterfallTicker->start();
 
     // Sub-epic E: debounce timer for waterfall history re-allocation
     // From AetherSDR SpectrumWidget.cpp:158-168 [@2bb3b5c]
@@ -396,6 +485,60 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
             rebuildWaterfallViewport();
         }
     });
+
+    // 2026-05-26 KG4VCF perf instrumentation: 1 Hz poll that updates
+    // PerfMonitor's memory-pressure sample and forces the overlay
+    // texture to rebuild so the perf overlay (drawn into m_overlayStatic)
+    // refreshes with the current stats.  Started only when the perf
+    // overlay is toggled on (setShowPerfOverlay).
+    m_perfPollTimer = new QTimer(this);
+    m_perfPollTimer->setInterval(1000);
+    connect(m_perfPollTimer, &QTimer::timeout, this, [this]() {
+        const auto sample = pollMemoryPressure();
+        PerfMonitor::instance().setMemoryStats(
+            sample.compressing, sample.footprintMb);
+        // 2026-05-26 KG4VCF: snapshot + cache + log a single line per
+        // second so the operator (and anyone reading the launch log)
+        // can grep "perf:" for ground-truth numbers without staring at
+        // the overlay.  snapshotAndClearDeltas consumes the deltas
+        // here; the overlay paint reads via lastSnapshot() to avoid
+        // double-clearing.
+        const auto s = PerfMonitor::instance().snapshotAndClearDeltas();
+        const auto ml = memoryLockStats();
+        qInfo().noquote() << QString(
+            "perf: paint %1/%2 ms gap %3/%4 ms fft %5/%6 ms ovly %7/%8 ms"
+            " audio_fill %9/%10 ms underruns %11 (+%12/s) udp %13 (+%14/s)"
+            " tx_iq_under %15 (+%16/s)"
+            " mem %17 MB%18 mlock %19 regions / %20 MB")
+            .arg(s.paintMsAvg, 0, 'f', 1).arg(s.paintMsMax, 0, 'f', 1)
+            .arg(s.gapMsAvg,   0, 'f', 1).arg(s.gapMsMax,   0, 'f', 1)
+            .arg(s.fftMsAvg,   0, 'f', 1).arg(s.fftMsMax,   0, 'f', 1)
+            .arg(s.ovlyMsAvg,  0, 'f', 1).arg(s.ovlyMsMax,  0, 'f', 1)
+            .arg(s.audioFillAvgMs, 0, 'f', 1)
+            .arg(s.audioFillMinMs, 0, 'f', 1)
+            .arg(s.audioUnderrunsTotal).arg(s.audioUnderrunsDelta)
+            .arg(s.udpDropsTotal).arg(s.udpDropsDelta)
+            .arg(s.txIqUnderrunsTotal).arg(s.txIqUnderrunsDelta)
+            .arg(s.memFootprintMb, 0, 'f', 0)
+            .arg(s.memCompressing ? QStringLiteral(" COMPRESSING")
+                                  : QString{})
+            .arg(ml.regionsLocked)
+            .arg(ml.bytesLocked / (1024.0 * 1024.0), 0, 'f', 1);
+        markOverlayDirty();
+        update();
+    });
+    // Restore persisted toggle (default off).  setShowPerfOverlay
+    // handles the timer-start side effect.
+    {
+        const bool persisted =
+            AppSettings::instance()
+                .value(QStringLiteral("ShowPerfOverlay"),
+                       QStringLiteral("False")).toString()
+            == QStringLiteral("True");
+        if (persisted) {
+            setShowPerfOverlay(true);
+        }
+    }
 
     // Phase 3Q-8: child label for the disconnect overlay. Composites in both
     // CPU and GPU paint paths (QRhi early-returns from paintEvent so a QPainter
@@ -414,7 +557,20 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     m_imdOverlay = new ImdOverlay(this);
 }
 
-SpectrumWidget::~SpectrumWidget() = default;
+SpectrumWidget::~SpectrumWidget()
+{
+    // 2026-05-25 KG4VCF bench fix #4: shut down the waterfall ticker
+    // thread cleanly so its QTimer + event loop are torn down before
+    // m_waterfallTicker is deleted (which happens via the finished ->
+    // deleteLater wire).
+    if (m_waterfallTicker) {
+        m_waterfallTicker->stop();
+    }
+    if (m_waterfallTickerThread != nullptr) {
+        m_waterfallTickerThread->quit();
+        m_waterfallTickerThread->wait(2000);
+    }
+}
 
 // ---- Settings persistence ----
 // Per-pan keys use AetherSDR pattern: "DisplayFftSize" for pan 0, "DisplayFftSize_1" for pan 1
@@ -430,20 +586,61 @@ void SpectrumWidget::loadSettings()
 {
     auto& s = AppSettings::instance();
 
+    // A pan that has never been configured looks like pan 0.
+    //
+    // Bench report 2026-07-30 (JJ, KG4VCF): the second and later pans did
+    // not honour the display settings. Two separate causes; this is the
+    // second. Setup was pushing to one widget (fixed in MainWindow), and
+    // separately a pan opening for the first time had no keys of its own, so
+    // every read fell through to the hardcoded ship defaults and the new pan
+    // came up looking nothing like the one beside it.
+    //
+    // Inheriting is done at read time rather than by copying pan 0's keys
+    // into the new pan's namespace. Copying would make the new pan's
+    // settings independent immediately, freezing whatever pan 0 happened to
+    // look like at that instant; the fallback instead means an untouched pan
+    // keeps following pan 0, and stops the moment the operator gives it a
+    // value of its own, because that write creates the per-pan key which
+    // then wins. "Follow pan 1 until you say otherwise", which is the model
+    // chosen on 2026-07-30, expressed in one place.
+    //
+    // Pan 0 has no fallback to take, and must not: settingsKey(base, 0)
+    // returns `base` itself, so recursing would just re-read the same key.
+    auto rawValue = [&](const QString& key) -> QString {
+        const QString own = s.value(settingsKey(key, m_panIndex)).toString();
+        if (!own.isEmpty() || m_panIndex == 0) { return own; }
+        return s.value(settingsKey(key, 0)).toString();
+    };
+
     auto readFloat = [&](const QString& key, float def) -> float {
-        QString val = s.value(settingsKey(key, m_panIndex)).toString();
+        QString val = rawValue(key);
         if (val.isEmpty()) { return def; }
         bool ok = false;
         float v = val.toFloat(&ok);
         return ok ? v : def;
     };
     auto readInt = [&](const QString& key, int def) -> int {
-        QString val = s.value(settingsKey(key, m_panIndex)).toString();
+        QString val = rawValue(key);
         if (val.isEmpty()) { return def; }
         bool ok = false;
         int v = val.toInt(&ok);
         return ok ? v : def;
     };
+    auto readBool = [&](const QString& key, bool def) -> bool {
+        const QString val = rawValue(key);
+        if (val.isEmpty()) { return def; }
+        return val == QStringLiteral("True");
+    };
+
+    // Note for anyone adding a setting here: keys wrapped in settingsKey()
+    // are per pan and inherit pan 0 through rawValue above. Keys read
+    // straight off AppSettings (Active Peak Hold, Peak Blobs) are global and
+    // every pan already sees the same value, which is deliberate and matches
+    // Thetis keeping some display settings global while splitting others
+    // per receiver (SpectrumGridMax vs RX2SpectrumGridMax, display.cs:1750
+    // and :1855 [v2.10.3.15]). Pick which one a new setting is; do not read
+    // a per-pan key without going through rawValue, or that setting will
+    // silently stop inheriting.
 
     // Ship defaults — calibrated 2026-04-30 against a live ANAN-G2 with
     // a typical residential noise floor (-115 to -120 dBm in the
@@ -476,11 +673,9 @@ void SpectrumWidget::loadSettings()
     m_wfActiveHighThreshold = m_wfHighThreshold;
     m_wfActiveLowThreshold  = m_wfLowThreshold;
     m_fillAlpha      = readFloat(QStringLiteral("DisplayFftFillAlpha"), 0.70f);
-    m_panFill        = s.value(settingsKey(QStringLiteral("DisplayPanFill"), m_panIndex),
-                               QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_panFill        = readBool(QStringLiteral("DisplayPanFill"), true);
 
-    m_ctunEnabled    = s.value(settingsKey(QStringLiteral("DisplayCtunEnabled"), m_panIndex),
-                               QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_ctunEnabled    = readBool(QStringLiteral("DisplayCtunEnabled"), true);
 
     int scheme = readInt(QStringLiteral("DisplayWfColorScheme"), 0);
     m_wfColorScheme = static_cast<WfColorScheme>(qBound(0, scheme,
@@ -536,10 +731,8 @@ void SpectrumWidget::loadSettings()
     m_peakHoldDelayMs  = readInt(QStringLiteral("DisplayPeakHoldResetMs"), 2000);
     m_lineWidth        = readFloat(QStringLiteral("DisplayLineWidth"), 1.5f);
     m_dbmCalOffset     = readFloat(QStringLiteral("DisplayCalOffset"), 0.0f);
-    const bool peakOn = s.value(settingsKey(QStringLiteral("DisplayPeakHoldEnabled"), m_panIndex),
-                                QStringLiteral("False")).toString() == QStringLiteral("True");
-    const bool gradOn = s.value(settingsKey(QStringLiteral("DisplayGradientEnabled"), m_panIndex),
-                                QStringLiteral("False")).toString() == QStringLiteral("True");
+    const bool peakOn = readBool(QStringLiteral("DisplayPeakHoldEnabled"), false);
+    const bool gradOn = readBool(QStringLiteral("DisplayGradientEnabled"), false);
     m_gradientEnabled = gradOn;
     // Delay the peak hold enable path until the timer infra is ready.
     if (peakOn) {
@@ -614,15 +807,12 @@ void SpectrumWidget::loadSettings()
     }
 
     // Phase 3G-8 commit 4: waterfall renderer state.
-    m_wfAgcEnabled = s.value(settingsKey(QStringLiteral("DisplayWfAgc"), m_panIndex),
-                             QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_wfAgcEnabled = readBool(QStringLiteral("DisplayWfAgc"), true);
     // Task 2.8: NF-AGC settings (DisplayWfReverseScroll key intentionally not
     // read here — W5 removed; key migration handled in Task 5.1).
-    m_wfNfAgcEnabled = s.value(settingsKey(QStringLiteral("WaterfallNFAGCEnabled"), m_panIndex),
-                               QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_wfNfAgcEnabled = readBool(QStringLiteral("WaterfallNFAGCEnabled"), false);
     m_wfNfAgcOffsetDb = readInt(QStringLiteral("WaterfallAGCOffsetDb"), 0);
-    m_wfStopOnTx = s.value(settingsKey(QStringLiteral("WaterfallStopOnTx"), m_panIndex),
-                           QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_wfStopOnTx = readBool(QStringLiteral("WaterfallStopOnTx"), false);
     m_wfOpacity          = readInt(QStringLiteral("DisplayWfOpacity"), 100);
     m_wfUpdatePeriodMs   = readInt(QStringLiteral("DisplayWfUpdatePeriodMs"), 30);
 
@@ -631,8 +821,7 @@ void SpectrumWidget::loadSettings()
         settingsKey(QStringLiteral("DisplayWaterfallHistoryMs"), m_panIndex),
         QString::number(static_cast<qint64>(kDefaultWaterfallHistoryMs))
     ).toLongLong();
-    m_wfUseSpectrumMinMax = s.value(settingsKey(QStringLiteral("DisplayWfUseSpectrumMinMax"), m_panIndex),
-                                    QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_wfUseSpectrumMinMax = readBool(QStringLiteral("DisplayWfUseSpectrumMinMax"), false);
     const int wfAvgRaw = readInt(QStringLiteral("DisplayWfAverageMode"),
                                  static_cast<int>(AverageMode::None));
     m_wfAverageMode = static_cast<AverageMode>(qBound(0, wfAvgRaw,
@@ -645,13 +834,11 @@ void SpectrumWidget::loadSettings()
                                   static_cast<int>(TimestampMode::UTC));
     m_wfTimestampMode = static_cast<TimestampMode>(qBound(0, tsModeRaw,
                             static_cast<int>(TimestampMode::Count) - 1));
-    m_showRxFilterOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowRxFilterOnWaterfall"), m_panIndex),
-                                        QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_showRxFilterOnWaterfall = readBool(QStringLiteral("DisplayShowRxFilterOnWaterfall"), false);
     // Default True — same rationale as DisplayDrawTxFilter above: the TX
     // overlay should be visible during MOX out of the box.  The waterfall
     // column is independently MOX-gated at the call site.
-    m_showTxFilterOnRxWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowTxFilterOnRxWaterfall"), m_panIndex),
-                                          QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_showTxFilterOnRxWaterfall = readBool(QStringLiteral("DisplayShowTxFilterOnRxWaterfall"), true);
     // Plan 4 D9 (Cluster E): persist DrawTXFilter flag.
     // From Thetis display.cs:2481 [v2.10.3.13]: DrawTXFilter property.
     // Until the Setup → Display TX Display page has a wired checkbox,
@@ -660,25 +847,17 @@ void SpectrumWidget::loadSettings()
     // sites (m_txFilterVisible && m_moxOverlay).  Without this, MOX flips
     // m_moxOverlay true, the RX cyan correctly hides, but the TX orange
     // never paints — the panadapter goes "clear" during TX/TUNE.
-    m_txFilterVisible = s.value(settingsKey(QStringLiteral("DisplayDrawTxFilter"), m_panIndex),
-                                QStringLiteral("True")).toString() == QStringLiteral("True");
-    m_showRxZeroLineOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowRxZeroLine"), m_panIndex),
-                                          QStringLiteral("False")).toString() == QStringLiteral("True");
-    m_showTxZeroLineOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowTxZeroLine"), m_panIndex),
-                                          QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_txFilterVisible = readBool(QStringLiteral("DisplayDrawTxFilter"), true);
+    m_showRxZeroLineOnWaterfall = readBool(QStringLiteral("DisplayShowRxZeroLine"), false);
+    m_showTxZeroLineOnWaterfall = readBool(QStringLiteral("DisplayShowTxZeroLine"), false);
 
     // Phase 3G-8 commit 5: grid / scales state.
-    m_gridEnabled = s.value(settingsKey(QStringLiteral("DisplayGridEnabled"), m_panIndex),
-                            QStringLiteral("True")).toString() == QStringLiteral("True");
-    m_showZeroLine = s.value(settingsKey(QStringLiteral("DisplayShowZeroLine"), m_panIndex),
-                             QStringLiteral("False")).toString() == QStringLiteral("True");
-    m_showFps = s.value(settingsKey(QStringLiteral("DisplayShowFps"), m_panIndex),
-                        QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_gridEnabled = readBool(QStringLiteral("DisplayGridEnabled"), true);
+    m_showZeroLine = readBool(QStringLiteral("DisplayShowZeroLine"), false);
+    m_showFps = readBool(QStringLiteral("DisplayShowFps"), false);
     // B8 Task 21: cursor frequency readout persists across restarts.
-    m_showCursorFreq = s.value(settingsKey(QStringLiteral("DisplayShowCursorFreq"), m_panIndex),
-                               QStringLiteral("True")).toString() == QStringLiteral("True");
-    m_dbmScaleVisible = s.value(settingsKey(QStringLiteral("DisplayDbmScaleVisible"), m_panIndex),
-                                QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_showCursorFreq = readBool(QStringLiteral("DisplayShowCursorFreq"), true);
+    m_dbmScaleVisible = readBool(QStringLiteral("DisplayDbmScaleVisible"), true);
     m_bandPlanFontSize = s.value(QStringLiteral("BandPlanFontSize"),
                                  QStringLiteral("6")).toInt();
     const int alignRaw = readInt(QStringLiteral("DisplayFreqLabelAlign"),
@@ -798,6 +977,7 @@ void SpectrumWidget::loadSettings()
     m_nfOffsetGridFollow = qBound(-60, m_nfOffsetGridFollow, 60);
     m_maintainNFAdjustDelta = s.value(QStringLiteral("DisplayMaintainNFAdjustDelta"),
                                       QStringLiteral("False")).toString() == QStringLiteral("True");
+    recomputeExtendedMode();
 }
 
 void SpectrumWidget::saveSettings()
@@ -1019,6 +1199,14 @@ void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
     if (bwChanged) {
         scheduleSettingsSave();
     }
+
+    // Phase 3F Sub-Epic F Tasks 7-10: auto-derive extendedMode from zoom.
+    // When the visible bandwidth exceeds the DDC sample rate (operator
+    // zoomed a 192 kHz DDC out to e.g. 5 MHz visible), set extended mode
+    // so the wideband ADC stream can fill the wings via the Task 11
+    // chain. The "off" direction also fires here when the operator
+    // zooms back inside the listenable island.
+    recomputeExtendedMode();
 }
 
 void SpectrumWidget::setCenterFrequency(double centerHz)
@@ -1048,6 +1236,10 @@ void SpectrumWidget::setSampleRate(double hz)
     if (!qFuzzyCompare(m_sampleRateHz, hz)) {
         m_sampleRateHz = hz;
         update();
+        // Phase 3F Sub-Epic F Tasks 7-10: sample-rate change rebases the
+        // extended-mode derivation (operator may have e.g. switched a
+        // radio from 192 kHz to 384 kHz, shrinking the wing).
+        recomputeExtendedMode();
     }
 }
 
@@ -1441,7 +1633,41 @@ void SpectrumWidget::setPeakBlobsFallDbPerSec(double r)
 void SpectrumWidget::setPeakBlobColor(const QColor& c)
 {
     m_peakBlobColor = c;
+    rebuildBlobMarkerPixmap();
     update();
+}
+
+void SpectrumWidget::rebuildBlobMarkerPixmap()
+{
+    // 2026-05-26 KG4VCF perf polish: bake the blob marker (a small
+    // unfilled ellipse, 1 px stroke, radius 3 in logical pixels)
+    // into a QPixmap once.  paintPeakBlobs drawPixmap()'s this at
+    // each blob position instead of calling QPainter::drawEllipse.
+    //
+    // Why: drawEllipse routes through QRasterPaintEnginePrivate::
+    // rasterize -> blend_color_generic -> QLatch::waitInternal, which
+    // dispatches span-blend work to QThreadPool::globalInstance()
+    // and waits.  Under build-load contention those pool workers
+    // (DEFAULT QoS) get starved and the main thread sits in
+    // __ulock_wait2.  Profile showed 88 samples / 8 s of main-thread
+    // time stuck there from just our blob ellipses.  A pixmap blit
+    // is a tight memcpy + alpha-blend that doesn't enter the parallel
+    // raster path at all.
+    //
+    // Size: 8x8 logical pixels (radius 3 + 1 px stroke margin + 1 px
+    // safety).  Drawn with the current device pixel ratio so we get
+    // crisp rendering on Retina without aliasing.
+    const qreal dpr = devicePixelRatioF();
+    const int side = 8;  // logical pixels
+    m_blobMarkerPixmap = QPixmap(side * dpr, side * dpr);
+    m_blobMarkerPixmap.setDevicePixelRatio(dpr);
+    m_blobMarkerPixmap.fill(Qt::transparent);
+    QPainter pm(&m_blobMarkerPixmap);
+    pm.setRenderHint(QPainter::Antialiasing, true);
+    pm.setPen(QPen(m_peakBlobColor, 1));
+    pm.setBrush(Qt::NoBrush);
+    // Center at (side/2, side/2), radius 3.
+    pm.drawEllipse(QPointF(side / 2.0, side / 2.0), 3.0, 3.0);
 }
 
 void SpectrumWidget::setPeakBlobTextColor(const QColor& c)
@@ -2032,6 +2258,13 @@ void SpectrumWidget::setWfUpdatePeriodMs(int ms)
     m_wfUpdatePeriodMs = ms;
     scheduleSettingsSave();
 
+    // 2026-05-25 KG4VCF bench fix: retune the timer-driven waterfall
+    // push to the new period so a slider drag actually changes scroll
+    // rate immediately (rather than waiting for the next ctor).
+    if (m_waterfallTicker) {
+        m_waterfallTicker->setUpdatePeriodMs(m_wfUpdatePeriodMs);
+    }
+
     // Sub-epic E: capacity may have changed — debounce history rebuild
     // so slider drag doesn't trash history mid-drag.
     if (m_historyResizeTimer) {
@@ -2173,6 +2406,28 @@ void SpectrumWidget::setShowFps(bool on)
     m_fpsLastUpdateMs = 0;
     m_fpsDisplayValue = 0.0f;
     scheduleSettingsSave();
+    markOverlayDirty();
+}
+
+void SpectrumWidget::setShowPerfOverlay(bool on)
+{
+    if (m_showPerfOverlay == on) { return; }
+    m_showPerfOverlay = on;
+    // Reset the perf counters when toggled on so stats reflect the
+    // operator's current question, not stale residue from before.
+    if (on) {
+        PerfMonitor::instance().resetAll();
+    }
+    if (m_perfPollTimer) {
+        if (on) {
+            m_perfPollTimer->start();
+        } else {
+            m_perfPollTimer->stop();
+        }
+    }
+    AppSettings::instance().setValue(
+        QStringLiteral("ShowPerfOverlay"),
+        on ? QStringLiteral("True") : QStringLiteral("False"));
     markOverlayDirty();
 }
 
@@ -2604,30 +2859,33 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // VFO marker, spots, waterfall chrome, peak hold trace, peak blobs,
     // NF text/line — ~16 paint ops + a full window-size QImage fill
     // and GPU texture upload) to rebuild on EVERY spectrum frame
-    // whenever any of three features were enabled.
+    // whenever any of three features were enabled.  Rate-limited to
+    // 10 Hz to keep CPU sane, which made blob decay / peak-hold drop
+    // look chunky.
     //
-    // At 30 fps with default DisplayPeakBlobsEnabled=True /
-    // DisplayShowNoiseFloor=True that was:
-    //   * 30 × ~16 paint ops/sec = ~480 paint ops/sec for the overlay
-    //   * 30 × full window QImage fill (memset transparent)
-    //   * 30 × full overlay texture upload to GPU
-    // and defeated the m_overlayStaticDirty cache entirely — instead
-    // of "rebuild on state change" it became "rebuild every frame".
-    // Profile showed the overlay rebuild dominating main-thread CPU
-    // and saturating the 6-core raster thread pool at ~120% total.
-    //
-    // Rate-limit to ~10 Hz instead of 30 Hz.  Active peak hold trace,
-    // peak blobs and noise floor all have visible motion much slower
-    // than 30 Hz; 10 Hz overlay refresh is indistinguishable to the
-    // operator's eye but cuts the overlay rebuild work by ~67%.
-    // Other dirty-triggering setters (bandwidth, refLevel, etc.) still
-    // mark dirty immediately, so user interaction stays snappy.
+    // 2026-05-26 KG4VCF first attempt: bumped 10 Hz -> 30 Hz to fix
+    // chunky blob decay.  Bench: under heavy build load (parallel
+    // ninja) the system became unusable -- the 30 Hz full-overlay
+    // rebuild saturated the raster pool exactly as the earlier
+    // measurement warned.  Reverted to 10 Hz here; the next commit
+    // does the proper fix (static/dynamic layer split: chrome cached
+    // on state change, dynamic overlays in a smaller spectrum-area
+    // texture rebuilt every frame).
 #ifdef NEREUS_GPU_SPECTRUM
     if (m_activePeakHold.enabled() || m_peakBlobs.enabled()
         || m_showNoiseFloor) {
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-        if (nowMs - m_overlayDynamicDirtyMs >= 100) {  // 10 Hz cap
-            m_overlayStaticDirty = true;
+        // 2026-05-26 KG4VCF dual-layer overlay split: peak-hold trace
+        // + peak blobs + noise-floor line/text live in their own GPU
+        // texture (m_overlayDynamic).  We only mark *that* layer
+        // dirty here -- chrome stays cached in m_overlayStatic and is
+        // invalidated separately by setters that actually change
+        // chrome state (band change, zoom, theme, etc.).  Rate-limit
+        // raised to 30 Hz because the dynamic layer is dramatically
+        // cheaper than the previous full-overlay rebuild (no chrome
+        // paint ops, smaller GPU upload bandwidth).
+        if (nowMs - m_overlayDynamicDirtyMs >= 33) {  // 30 Hz cap
+            m_overlayDynamicDirty = true;
             m_overlayDynamicDirtyMs = nowMs;
         }
     }
@@ -2637,7 +2895,13 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // threshold compute now operate on display pixels per Thetis
     // Display.cs:6713-6738 [v2.10.3.13] (waterfall_data[i] indexed by
     // pixel).
-    pushWaterfallRow(m_wfRenderedPixels);
+    //
+    // 2026-05-25 KG4VCF bench fix: cache the latest row instead of
+    // pushing immediately.  m_wfPushTimer (started in the ctor) drains
+    // the cache at strictly m_wfUpdatePeriodMs cadence so network-burst
+    // FFT delivery does not produce visible scroll stutter.
+    m_pendingWfPixelsDbm = m_wfRenderedPixels;
+    m_pendingWfPixelsDbmDirty = true;
     m_hasNewSpectrum = true;
 
     // 2026-05-22 bench fix: signal that a fresh m_renderedPixels frame is
@@ -2727,8 +2991,22 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
     int wfH = static_cast<int>(h * (1.0f - m_spectrumFrac)) - kFreqScaleH - kDividerH;
     if (wfW > 0 && wfH > 0 && (m_waterfall.isNull() ||
         m_waterfall.width() != wfW || m_waterfall.height() != wfH)) {
+        // 2026-05-26 KG4VCF: unlock the previous waterfall before
+        // QImage replacement frees it.  Aligned no-op when m_waterfall
+        // was null.
+        if (!m_waterfall.isNull()) {
+            unlockMemory(m_waterfall.constBits(),
+                         m_waterfall.sizeInBytes());
+        }
         m_waterfall = QImage(wfW, wfH, QImage::Format_RGB32);
         m_waterfall.fill(QColor(0x0f, 0x0f, 0x1a));
+        // Pin the new waterfall buffer.  Touched every push (write
+        // one row's worth of pixels) and every paint (full incremental
+        // texture upload to GPU); compression stalls here cause the
+        // visible waterfall stutter under build load.
+        lockMemory(m_waterfall.constBits(),
+                   m_waterfall.sizeInBytes(),
+                   "SpectrumWidget::m_waterfall");
         m_wfWriteRow = 0;
 #ifdef NEREUS_GPU_SPECTRUM
         m_wfTexFullUpload = true;
@@ -2978,7 +3256,13 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
                       / static_cast<float>(n - 1);
 
     // Build polyline across display pixels.
-    QVector<QPointF> points(n);
+    // 2026-05-26 KG4VCF perf polish: use member scratch vectors
+    // (m_specPointsScratch / m_specPeakPointsScratch / m_specFillPathScratch
+    // / m_specPeakPathScratch) so the per-paint allocations don't
+    // churn the heap.  QVector::resize is a no-op when n hasn't
+    // changed; QPainterPath::clear keeps the internal element buffer.
+    QVector<QPointF>& points = m_specPointsScratch;
+    points.resize(n);
     for (int j = 0; j < n; ++j) {
         const float x = specRect.left() + static_cast<float>(j) * xStep;
         const float y = dbmToYf(m_renderedPixels[j], specRect);
@@ -2988,7 +3272,8 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
     // Fill under the trace (if enabled).
     // From AetherSDR: fill alpha 0.70, cyan color.
     if (m_panFill) {
-        QPainterPath fillPath;
+        QPainterPath& fillPath = m_specFillPathScratch;
+        fillPath.clear();
         fillPath.moveTo(points.first().x(), specRect.bottom());
         for (const QPointF& pt : points) {
             fillPath.lineTo(pt);
@@ -3015,7 +3300,8 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
 
     // Legacy per-pixel peak hold trace, drawn underneath the live trace.
     if (m_peakHoldEnabled && m_pxPeakHold.size() == n) {
-        QVector<QPointF> peakPoints(n);
+        QVector<QPointF>& peakPoints = m_specPeakPointsScratch;
+        peakPoints.resize(n);
         for (int j = 0; j < n; ++j) {
             const float x = specRect.left() + static_cast<float>(j) * xStep;
             const float y = dbmToYf(m_pxPeakHold[j], specRect);
@@ -3091,7 +3377,9 @@ void SpectrumWidget::paintActivePeakHoldTrace(QPainter& p, const QRect& specRect
                       / static_cast<float>(n - 1);
 
     // Build polyline for the peak trace (same x mapping as main trace).
-    QVector<QPointF> peakPoints(n);
+    // 2026-05-26 KG4VCF perf polish: reuse member-cached scratch.
+    QVector<QPointF>& peakPoints = m_specPeakPointsScratch;
+    peakPoints.resize(n);
     for (int j = 0; j < n; ++j) {
         const float x = specRect.left() + static_cast<float>(j) * xStep;
         float peakDbm = m_activePeakHold.peak(j);
@@ -3105,7 +3393,8 @@ void SpectrumWidget::paintActivePeakHoldTrace(QPainter& p, const QRect& specRect
 
     // Optional fill between peak trace and current live trace.
     if (m_activePeakHold.fill()) {
-        QPainterPath fillPath;
+        QPainterPath& fillPath = m_specPeakPathScratch;
+        fillPath.clear();
         fillPath.moveTo(peakPoints.first());
         for (int j = 1; j < n; ++j) {
             fillPath.lineTo(peakPoints[j]);
@@ -3149,6 +3438,18 @@ void SpectrumWidget::paintPeakBlobs(QPainter& p, const QRect& specRect)
 
     p.setRenderHint(QPainter::Antialiasing, true);
 
+    // 2026-05-25 KG4VCF bench fix: PR #286's QStaticText cache for the
+    // dBm and frequency scale labels stopped calling QPainter::setFont
+    // (drawStaticText carries its own font); the painter is left at
+    // whatever the previous section set, which under the old code was
+    // 11 px from paintDbmScale's drawText calls.  Post-cache the
+    // painter inherits Qt's default ~9 pt fallback, so the blob dBm
+    // labels rendered visibly smaller than they used to.  Set the
+    // canonical 11 px explicitly here.
+    QFont blobFont = p.font();
+    blobFont.setPixelSize(11);
+    p.setFont(blobFont);
+
     for (const auto& blob : m_peakBlobs.blobs()) {
         // Skip disabled slots in the persistent blob array (post-Phase 2
         // PeakBlobDetector rewrite mirrors Thetis's fixed-size m_RX1Maximums
@@ -3179,9 +3480,19 @@ void SpectrumWidget::paintPeakBlobs(QPainter& p, const QRect& specRect)
         // on Thetis's typical Windows 1x-DPI display does not. Radius 3 in
         // logical pixels yields a visual size matching Thetis's 5-radius
         // physical-pixel render on a 1x display.
-        p.setPen(QPen(m_peakBlobColor, 1));
-        p.setBrush(Qt::NoBrush);
-        p.drawEllipse(QPoint(x, y), 3, 3);
+        //
+        // 2026-05-26 KG4VCF perf polish: drawEllipse replaced with
+        // drawPixmap(pre-rendered blob marker) to skip Qt's parallel
+        // raster span-blend path.  Lazy first-build: rebuild the
+        // pixmap if it's null (e.g. when peakBlobs gets enabled
+        // before any color setter fires).  Subsequent calls hit the
+        // cached pixmap.
+        if (m_blobMarkerPixmap.isNull()) {
+            rebuildBlobMarkerPixmap();
+        }
+        // Pixmap is 8x8 logical; center is (4,4).  Draw at top-left so
+        // the center lands at (x, y).
+        p.drawPixmap(x - 4, y - 4, m_blobMarkerPixmap);
 
         // Draw dBm text label — From Thetis display.cs:5508 [v2.10.3.13]
         //   _d2dRenderTarget.DrawText(..., new RectangleF(
@@ -4052,6 +4363,58 @@ void SpectrumWidget::clearWaterfallHistory()
     markOverlayDirty();
 }
 
+// Phase 3F Sub-Epic F Task 6: store the latest per-ADC wideband bins.
+// Sub-Epic F polish (T7-T10) will paint these as a background layer when
+// m_extendedMode is true and the pan's visible frequency range exceeds
+// the active DDC bandwidth.  For now this is silent storage so the
+// FFT pipeline stays warm and bench operators can confirm data is
+// flowing without UI churn.
+void SpectrumWidget::setWidebandBins(int adcIndex, const QVector<float>& dbmBins)
+{
+    if (adcIndex == 0) {
+        m_widebandBinsAdc0 = dbmBins;
+    } else if (adcIndex == 1) {
+        m_widebandBinsAdc1 = dbmBins;
+    }
+    // No update() call: paint is gated behind m_extendedMode (wired in
+    // F polish).  Triggering a repaint here would cost a GPU pass per
+    // wideband frame on hardware that isn't yet rendering the bins.
+}
+
+// Phase 3F Sub-Epic F Tasks 7-10: extended-view policy + derived state.
+// The operator toggle controls permission; zoom and DDC rate decide whether
+// wideband wings are actually needed. State changes notify consumers so they
+// can flip SliceModel::widebandExtensionRequested, which triggers the Task 11
+// chain (Alex BPF bypass + P2 CmdGeneral byte 23 wideband-enable +
+// radio starts streaming wideband packets). The actual paint hook
+// for rendering the stored wideband bins as a background fill is
+// deferred to a post-bench polish iteration; for now the flag drives
+// the data-flow side only.
+void SpectrumWidget::setExtendedViewAllowed(bool allowed)
+{
+    if (m_extendedViewAllowed == allowed) {
+        recomputeExtendedMode();
+        return;
+    }
+    m_extendedViewAllowed = allowed;
+    recomputeExtendedMode();
+}
+
+void SpectrumWidget::recomputeExtendedMode()
+{
+    const bool actual =
+        m_extendedViewAllowed
+        && m_sampleRateHz > 0.0
+        && m_bandwidthHz > m_sampleRateHz;
+    if (m_extendedMode == actual) { return; }
+    m_extendedMode = actual;
+    emit widebandExtensionStateChanged(actual);
+    // Schedule a repaint so the future paint impl picks up the state
+    // change. Today this is a no-op in the visual pipeline beyond the
+    // stored bool — cheap.
+    update();
+}
+
 // From AetherSDR SpectrumWidget.cpp:951-1000 [@0cd4559]
 //   adapter: NereusSDR uses Hz throughout (upstream uses MHz). Both the
 //   live waterfall ring buffer and the long-history ring buffer are
@@ -4208,12 +4571,14 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
         return;
     }
 
-    // Rate-limit per configured update period.
+    // 2026-05-25 KG4VCF bench fix: cadence is now driven by
+    // m_wfPushTimer (set up in the ctor) at strictly m_wfUpdatePeriodMs
+    // intervals, decoupled from FFT arrival.  The legacy inline rate-
+    // limit ("drop if too soon since last push") is removed because it
+    // could clip an occasional timer tick due to QTimer / wall-clock
+    // drift, leaving a visible gap in the waterfall scroll.  m_wfLastPushMs
+    // is still updated for any observability (paint debug, telemetry).
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (m_wfUpdatePeriodMs > 0 && m_wfLastPushMs != 0 &&
-        now - m_wfLastPushMs < m_wfUpdatePeriodMs) {
-        return;
-    }
     m_wfLastPushMs = now;
 
     // Issue #230 fix: threshold composition moved out — writes go to
@@ -4305,23 +4670,89 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
 }
 
 // ---- VFO marker + filter passband overlay ----
-// Ported from AetherSDR SpectrumWidget.cpp:3211-3294
-// Uses per-slice colors with exact alpha values from AetherSDR.
-void SpectrumWidget::drawVfoMarker(QPainter& p, const QRect& specRect, const QRect& wfRect)
+//
+// One marker per hosted slice, each from ITS OWN centre and ITS OWN filter
+// edges.
+//
+// This used to be one marker per pan, derived from m_vfoHz plus the pan's
+// single m_filterLowHz/m_filterHighHz pair. Both of those track whichever
+// slice most recently reached the pan -- MainWindow pushes setVfoFrequency on
+// every slice's frequencyChanged and setFilterOffset on every slice's
+// filterChanged, and activating a slice re-pushes both -- so a pan hosting two
+// slices shaded exactly one passband and it belonged to the last slice
+// touched. Bench-reported 2026-07-28: "The pass band of the second flag
+// disappears when not active. Let's keep it."
+//
+// Filter edges come from the flag, not the pan, because filter width is per
+// slice: reusing the pan's pair would draw a 2.7 kHz SSB band around a 500 Hz
+// CW slice. VfoWidget already receives both values from its SliceModel
+// (MainWindow::createSliceFlag seeds setFilter and re-pushes it on
+// filterChanged); it just discarded them before.
+//
+// Two behaviours are deliberately preserved:
+//   - A pan with no flag yet still marks its own VFO. wireSliceToSpectrum
+//     seeds setVfoFrequency BEFORE it builds the flag, and a paint can land in
+//     that window; dropping the fallback would blank the marker there.
+//   - A single-slice pan is unchanged. Its one flag carries the same frequency
+//     and the same filter the pan does, so the marker is identical to the
+//     pre-split one.
+//
+// Overlap between two slices' bands is left to whatever QPainter's default
+// compositing does with the translucent fill, exactly as a single band is
+// composited today. No blend rule, colour or opacity is introduced here.
+QVector<SpectrumWidget::SliceMarkerGeometry>
+SpectrumWidget::sliceMarkerGeometry() const
 {
-    if (m_vfoHz <= 0.0) {
-        return;
+    QVector<SliceMarkerGeometry> out;
+
+    if (m_vfoWidgets.isEmpty()) {
+        if (m_vfoHz > 0.0) {
+            out.append(SliceMarkerGeometry{m_vfoHz, m_filterLowHz,
+                                           m_filterHighHz, nullptr});
+        }
+        return out;
     }
 
-    int vfoX = hzToX(m_vfoHz, specRect);
+    // QMap, so this walks slices in index order and the paint order is stable
+    // frame to frame rather than hash-dependent.
+    out.reserve(m_vfoWidgets.size());
+    for (auto it = m_vfoWidgets.constBegin(); it != m_vfoWidgets.constEnd(); ++it) {
+        const VfoWidget* flag = it.value();
+        if (!flag || flag->frequency() <= 0.0) {
+            continue;
+        }
+        out.append(SliceMarkerGeometry{flag->frequency(), flag->filterLow(),
+                                       flag->filterHigh(), flag});
+    }
+    return out;
+}
+
+void SpectrumWidget::drawVfoMarker(QPainter& p, const QRect& specRect, const QRect& wfRect)
+{
+    for (const SliceMarkerGeometry& g : sliceMarkerGeometry()) {
+        drawSliceMarker(p, specRect, wfRect, g);
+    }
+}
+
+// Ported from AetherSDR SpectrumWidget.cpp:3211-3294
+// Uses per-slice colors with exact alpha values from AetherSDR.
+//
+// Body unchanged by the Phase 3F split; it reads its centre and filter edges
+// off the passed-in marker instead of the pan's m_vfoHz / m_filterLowHz /
+// m_filterHighHz, so the same paint runs once per hosted slice.
+void SpectrumWidget::drawSliceMarker(QPainter& p, const QRect& specRect,
+                                     const QRect& wfRect,
+                                     const SliceMarkerGeometry& g)
+{
+    int vfoX = hzToX(g.centreHz, specRect);
 
     // Per-slice color — from AetherSDR SliceColors.h:15-20
     // Slice 0 (A) = cyan, active
     static constexpr int kSliceR = 0x00, kSliceG = 0xd4, kSliceB = 0xff;
 
     // Filter passband rectangle
-    double loHz = m_vfoHz + m_filterLowHz;
-    double hiHz = m_vfoHz + m_filterHighHz;
+    double loHz = g.centreHz + g.filterLowHz;
+    double hiHz = g.centreHz + g.filterHighHz;
     int xLo = hzToX(loHz, specRect);
     int xHi = hzToX(hiHz, specRect);
     if (xLo > xHi) {
@@ -4378,10 +4809,14 @@ void SpectrumWidget::drawVfoMarker(QPainter& p, const QRect& specRect, const QRe
         static constexpr int kTriH = 10;
 
         int triTop = specRect.top();
-        // If VFO flag is present, position triangle below it
-        auto it = m_vfoWidgets.constFind(0);
-        if (it != m_vfoWidgets.constEnd() && it.value()->isVisible()) {
-            triTop = it.value()->y() + it.value()->height();
+        // If VFO flag is present, position triangle below it.
+        //
+        // THIS marker's flag, not m_vfoWidgets[0]. The slice-0 lookup was
+        // harmless while one marker was drawn per pan; with one per slice it
+        // would hang every triangle off slice A's flag height, which is only
+        // ever right by coincidence.
+        if (g.flag && g.flag->isVisible()) {
+            triTop = g.flag->y() + g.flag->height();
         }
         // Clamp to spectrum area
         triTop = std::max(triTop, specRect.top());
@@ -4538,15 +4973,22 @@ void SpectrumWidget::setDisplayFps(int fps)
     const int clamped = qBound(1, fps, 60);
     const int periodMs = 1000 / clamped;
     m_displayTimer.setInterval(periodMs);
-    // Lock the waterfall-row throttle to the same period so a burst of
-    // FFT results arriving within one paint frame coalesces to exactly
-    // one new row.  Without this sync, paint cadence and waterfall
-    // cadence drift relative to each other (e.g. paint=33 ms but
-    // m_wfUpdatePeriodMs=30 ms left over from a prior setting), so
-    // some paints see 1 new row and others see 2 — perceived by the
-    // operator as stuttery scroll.  Matching the periods makes the
-    // ratio exactly 1:1 regardless of upstream packet bursts.
-    m_wfUpdatePeriodMs = periodMs;
+    // 2026-05-26 KG4VCF bench fix: DO NOT overwrite m_wfUpdatePeriodMs
+    // here.  Earlier revisions tried to "lock the waterfall throttle to
+    // the same period as paint" by force-writing m_wfUpdatePeriodMs =
+    // periodMs on every setDisplayFps call.  Problem: setDisplayFps
+    // runs once at startup from MainWindow's persistence-restore (with
+    // the persisted DisplaySpectrumFps), so the loaded
+    // DisplayWfUpdatePeriodMs got clobbered to 1000/fps every launch.
+    // Operator's saved waterfall period (e.g. 33 ms when FPS=20 forces
+    // 50 ms) was silently lost.
+    //
+    // Waterfall update period now lives independently in AppSettings
+    // under DisplayWfUpdatePeriodMs and is mutated only by an explicit
+    // setWfUpdatePeriodMs() call (Setup -> Display slider).  If the
+    // operator wants them locked, both controls expose the value and
+    // either can be set to match the other.
+    //
     // Averaging alphas depend on fps via Thetis α = exp(-1/(fps×τ)).
     // Recompute so the smoothing time constants stay correct after a rate change.
     recomputeAverageAlphas();
@@ -5672,7 +6114,30 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                                   static_cast<int>(m_wfColorScheme),
                                   m_fillAlpha, m_panFill, false,
                                   m_refLevel, m_dynamicRange, m_ctunEnabled);
-        m_overlayMenu->move(event->globalPosition().toPoint());
+
+        // Clamp onto the screen before showing.
+        //
+        // Qt constrains a QMenu to the screen on its own but does NOT do the
+        // same for a plain QWidget carrying Qt::Popup, which is what
+        // SpectrumOverlayMenu is: asked for a y near the bottom edge it is
+        // placed there verbatim and its body hangs off the screen. That never
+        // showed while there was one full-height pan whose top sat high on the
+        // display; on the LOWER pan of a 2v layout -- right-clicking its
+        // waterfall, which is exactly what an operator does when they want the
+        // waterfall controls -- the panel opened below the visible area.
+        // Bench-reported 2026-07-28: "I have now lost the ability to adjust the
+        // second RX waterfall via the right click menu."
+        //
+        // adjustSize() first: on the very first right-click the popup has never
+        // been laid out, so size() would still be the default and the clamp
+        // would be computed against the wrong height.
+        const QPoint desired = event->globalPosition().toPoint();
+        m_overlayMenu->adjustSize();
+        const QScreen* screen = QGuiApplication::screenAt(desired);
+        if (!screen) { screen = QGuiApplication::primaryScreen(); }
+        m_overlayMenu->move(PopupPlacement::clampToAvailable(
+            desired, m_overlayMenu->size(),
+            screen ? screen->availableGeometry() : QRect()));
         m_overlayMenu->show();
         return;
     }
@@ -6189,7 +6654,29 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
                 QRect specRect(0, 0, w - effectiveStripW(), specH);
                 double hz = xToHz(static_cast<int>(event->position().x()), specRect);
                 hz = std::round(hz / m_stepHz) * m_stepHz;
-                emit frequencyClicked(hz);
+
+                // Phase 3F Sub-Epic F Task 12: click-in-wing vs click-in-island
+                // disambiguation. Only engages when extended-mode is on
+                // (operator zoomed past the DDC's listenable range). When
+                // off, this falls through to the existing single-path
+                // frequencyClicked behavior — no regression to non-extended
+                // pan tuning.
+                if (m_extendedMode && m_sampleRateHz > 0.0) {
+                    const double halfBwHz = m_sampleRateHz * 0.5;
+                    if (std::abs(hz - m_ddcCenterHz) <= halfBwHz) {
+                        // Click landed inside the listenable island —
+                        // standard slice retune.
+                        emit frequencyClicked(hz);
+                    } else {
+                        // Click landed in a wing — operator wants the
+                        // clicked Hz to become the new DDC center.
+                        // MainWindow forwards this to slice frequency,
+                        // which propagates to the codec / DDC NCO retune.
+                        emit ddcRetuneRequested(hz);
+                    }
+                } else {
+                    emit frequencyClicked(hz);
+                }
             }
         }
 
@@ -6443,6 +6930,35 @@ void SpectrumWidget::initOverlayPipeline()
 
     m_overlayStatic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);
     m_overlayStatic.setDevicePixelRatio(dpr);
+    // 2026-05-26 KG4VCF: pin the overlay texture so the per-paint
+    // QImage::fill + 16 paint ops + GPU upload don't touch a
+    // compressed page when the system is under memory pressure.
+    // This is the biggest single buffer in the render path (~1.6 MB
+    // at default window size) and is hit on every overlay-rebuild
+    // tick (10 Hz when blob / peak-hold / NF are enabled).
+    lockMemory(m_overlayStatic.constBits(),
+               m_overlayStatic.sizeInBytes(),
+               "SpectrumWidget::m_overlayStatic (init)");
+
+    // 2026-05-26 KG4VCF dual-layer split: dynamic overlay texture.
+    // Same dimensions, format, sampler, pipeline as the static
+    // layer -- only the texture handle + SRB binding differ.  This
+    // is the layer that carries peak-hold trace / peak blobs /
+    // noise-floor overlays.  Chrome stays in the static layer.
+    m_ovDynGpuTex = r->newTexture(QRhiTexture::RGBA8, QSize(pw, ph));
+    m_ovDynGpuTex->create();
+    m_ovDynSrb = r->newShaderResourceBindings();
+    m_ovDynSrb->setBindings({
+        QRhiShaderResourceBinding::sampledTexture(1,
+            QRhiShaderResourceBinding::FragmentStage,
+            m_ovDynGpuTex, m_ovSampler),
+    });
+    m_ovDynSrb->create();
+    m_overlayDynamic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);
+    m_overlayDynamic.setDevicePixelRatio(dpr);
+    lockMemory(m_overlayDynamic.constBits(),
+               m_overlayDynamic.sizeInBytes(),
+               "SpectrumWidget::m_overlayDynamic (init)");
 }
 
 void SpectrumWidget::initSpectrumPipeline()
@@ -6541,6 +7057,22 @@ void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
 
 void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
 {
+    // 2026-05-26 KG4VCF perf instrumentation: time the whole GPU
+    // render path (texture uploads + draw-call submission) so the
+    // in-spectrum overlay can show avg/max paint cost and the gap
+    // between consecutive paints (proxy for main-thread starvation).
+    // ns/1e6 -> ms; perf snapshot averages over the last ~1 s.
+    QElapsedTimer paintTimer;
+    paintTimer.start();
+    {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (m_lastPaintWallMs > 0) {
+            PerfMonitor::instance().recordInterFrameGap(
+                static_cast<double>(nowMs - m_lastPaintWallMs));
+        }
+        m_lastPaintWallMs = nowMs;
+    }
+
     QRhi* r = rhi();
     const int w = width();
     const int h = height();
@@ -6607,8 +7139,42 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     }
 
     // ---- Waterfall UBO (ring buffer offset) ----
+    //
+    // 2026-05-25 KG4VCF Option B: GPU sub-row scroll interpolation.
+    //
+    // The waterfall is a ring-buffer texture: each row push decrements
+    // m_wfWriteRow and writes new dBm data at that index.  Sampling the
+    // texture at v_uv.y = 0 with rowOffset = m_wfWriteRow/H places the
+    // newest row at the top of the viewport.
+    //
+    // Before Option B, rowOffset jumped by 1/H on every push.  Even with
+    // PreciseTimer + WaterfallTicker on its own thread, small drift
+    // between the push cadence and the display cadence let the eye see a
+    // ~1 Hz hitch in the scroll.
+    //
+    // Option B turns rowOffset into a CONTINUOUS function of time by
+    // having the displayed top row LAG the most recent push by exactly
+    // one push period.  At each display frame between push N and push
+    // N+1, we blend texel m_wfWriteRow (newest, just pushed at N) with
+    // texel (m_wfWriteRow + 1) mod H (the previously-newest, pushed at
+    // N-1).  Both texels hold valid data, so the bilinear sampler
+    // produces a clean gradient with no garbage-row artifacts.  At the
+    // push moment, frac saturates to 1.0 and effectiveRow reaches
+    // m_wfWriteRow exactly; immediately after the push m_wfWriteRow has
+    // decremented by one and frac has reset to 0, so the formula
+    // effectiveRow = m_wfWriteRow + (1 - frac) holds continuous across
+    // the boundary (no visible step on push).
+    //
+    // The visual lag is one push period (~33 ms at the default 30 Hz
+    // cadence) -- imperceptible to the operator and the price for not
+    // having to invent data that doesn't exist yet.
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const float pushPeriodMs = static_cast<float>(qMax(1, m_wfUpdatePeriodMs));
+    const float elapsedMs = static_cast<float>(qMax<qint64>(0, nowMs - m_wfLastPushMs));
+    const float pushFrac = qBound(0.0f, elapsedMs / pushPeriodMs, 1.0f);
+    const float effectiveRow = static_cast<float>(m_wfWriteRow) + (1.0f - pushFrac);
     float rowOffset = (m_wfGpuTexH > 0)
-        ? static_cast<float>(m_wfWriteRow) / m_wfGpuTexH : 0.0f;
+        ? effectiveRow / static_cast<float>(m_wfGpuTexH) : 0.0f;
     float uniforms[] = {rowOffset, 0.0f, 0.0f, 0.0f};
     batch->updateDynamicBuffer(m_wfUbo, 0, sizeof(uniforms), uniforms);
 
@@ -6618,8 +7184,19 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         const int pw = static_cast<int>(w * dpr);
         const int ph = static_cast<int>(h * dpr);
         if (m_overlayStatic.size() != QSize(pw, ph)) {
+            // 2026-05-26 KG4VCF: unlock the previous overlay before
+            // replacement frees it.  Aligned no-op when null.
+            if (!m_overlayStatic.isNull()) {
+                unlockMemory(m_overlayStatic.constBits(),
+                             m_overlayStatic.sizeInBytes());
+            }
             m_overlayStatic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);
             m_overlayStatic.setDevicePixelRatio(dpr);
+            // Pin the resized overlay (resize trigger fires on
+            // window-size change; tag for log clarity).
+            lockMemory(m_overlayStatic.constBits(),
+                       m_overlayStatic.sizeInBytes(),
+                       "SpectrumWidget::m_overlayStatic (resize)");
             m_ovGpuTex->setPixelSize(QSize(pw, ph));
             m_ovGpuTex->create();
             m_ovSrb->setBindings({
@@ -6639,6 +7216,15 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             m_overlayStaticDirty = true;
         }
 
+        // 2026-05-26 KG4VCF perf instrumentation: time the overlay-
+        // rebuild block (QImage fill + ~16 paint ops + GPU texture
+        // upload) so the perf overlay can show avg/max cost and
+        // confirm whether this is the dominant per-paint expense.
+        QElapsedTimer ovlyTimer;
+        const bool needsOverlayRebuild = m_overlayStaticDirty;
+        if (needsOverlayRebuild) {
+            ovlyTimer.start();
+        }
         if (m_overlayStaticDirty) {
             m_overlayStatic.fill(Qt::transparent);
             QPainter p(&m_overlayStatic);
@@ -6698,22 +7284,14 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             // VFO/filter changes via setVfoFrequency/setFilterOffset.
             drawWaterfallChrome(p, wfRect);
 
-            // Per-frame dynamic overlays — Active Peak Hold trace + Peak
-            // Blobs (Tasks 2.5/2.6) + Noise-floor line/text. The CPU
-            // paintEvent path calls these from drawSpectrum() every frame;
-            // the GPU path needs them baked into the overlay texture.
-            // updateSpectrumLinear() forces m_overlayStaticDirty=true when
-            // any of them is enabled so this block runs every frame.
-            if ((m_activePeakHold.enabled() || m_peakBlobs.enabled()) &&
-                !m_renderedPixels.isEmpty()) {
-                if (m_activePeakHold.enabled() && m_activePeakHold.size() > 0) {
-                    paintActivePeakHoldTrace(p, specRect);
-                }
-                if (m_peakBlobs.enabled() && !m_peakBlobs.blobs().isEmpty()) {
-                    paintPeakBlobs(p, specRect);
-                }
-            }
-            paintNoiseFloorOverlay(p, specRect);
+            // 2026-05-26 KG4VCF dual-layer overlay split: peak-hold
+            // trace + peak blobs + noise floor are NO LONGER painted
+            // here.  They live in m_overlayDynamic which rebuilds at
+            // 30 Hz (cheap) -- this static texture only rebuilds on
+            // state change, so the expensive chrome work (grid,
+            // scales, bandplan, freq/time scale, VFO marker, spot
+            // markers, waterfall chrome) amortises to ~zero per
+            // frame.
 
             // Bin width corner readout — Thetis lblDisplayBinWidth
             // (setup.cs:7061 [v2.10.3.13]).  Mirrors the CPU drawSpectrum
@@ -6770,6 +7348,122 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                 drawCursorInfo(p, specRect);
             }
 
+            // 2026-05-26 KG4VCF perf instrumentation overlay.  Painted
+            // into the static cache so the cost is only paid when the
+            // 1 Hz perf-poll timer invalidates the overlay (see
+            // SpectrumWidget ctor).  Operator toggles via View ->
+            // Performance Overlay; persisted under "ShowPerfOverlay".
+            if (m_showPerfOverlay) {
+                // Read the cached snapshot (the 1 Hz poll timer is the
+                // sole snapshotAndClearDeltas() consumer; reading
+                // here non-destructively avoids double-clearing the
+                // delta counters).
+                const auto stats =
+                    PerfMonitor::instance().lastSnapshot();
+                QStringList lines;
+                lines << QStringLiteral("paint  avg %1 max %2 ms")
+                            .arg(stats.paintMsAvg, 0, 'f', 1)
+                            .arg(stats.paintMsMax, 0, 'f', 1)
+                      << QStringLiteral("gap    avg %1 max %2 ms")
+                            .arg(stats.gapMsAvg, 0, 'f', 1)
+                            .arg(stats.gapMsMax, 0, 'f', 1)
+                      << QStringLiteral("fft    avg %1 max %2 ms")
+                            .arg(stats.fftMsAvg, 0, 'f', 1)
+                            .arg(stats.fftMsMax, 0, 'f', 1)
+                      << QStringLiteral("ovly   avg %1 max %2 ms")
+                            .arg(stats.ovlyMsAvg, 0, 'f', 1)
+                            .arg(stats.ovlyMsMax, 0, 'f', 1)
+                      << QStringLiteral("audio  fill avg %1 min %2 ms (%3 samp)")
+                            .arg(stats.audioFillAvgMs, 0, 'f', 1)
+                            .arg(stats.audioFillMinMs, 0, 'f', 1)
+                            .arg(stats.audioFillSamples)
+                      << QStringLiteral("audio  underruns %1 (+%2/s)")
+                            .arg(stats.audioUnderrunsTotal)
+                            .arg(stats.audioUnderrunsDelta)
+                      << QStringLiteral("udp    drops %1 (+%2/s)")
+                            .arg(stats.udpDropsTotal)
+                            .arg(stats.udpDropsDelta)
+                      << QStringLiteral("tx iq  underruns %1 (+%2/s)")
+                            .arg(stats.txIqUnderrunsTotal)
+                            .arg(stats.txIqUnderrunsDelta)
+                      << QStringLiteral("tx iq  produced  %1 (+%2/s)")
+                            .arg(stats.txIqProducedTotal)
+                            .arg(stats.txIqProducedDelta)
+                      << QStringLiteral("mem    %1 MB%2")
+                            .arg(stats.memFootprintMb, 0, 'f', 0)
+                            .arg(stats.memCompressing
+                                 ? QStringLiteral(" COMPRESSING")
+                                 : QString{})
+                      << QStringLiteral("mlock  %1 regions / %2 MB pinned")
+                            .arg(memoryLockStats().regionsLocked)
+                            .arg(memoryLockStats().bytesLocked
+                                 / (1024.0 * 1024.0), 0, 'f', 1);
+                QFont pf = p.font();
+                pf.setPixelSize(11);
+                pf.setFamily(QStringLiteral("Menlo"));
+                p.setFont(pf);
+                const QFontMetrics fm(pf);
+                const int lineH = fm.height();
+                int maxW = 0;
+                for (const QString& s : lines) {
+                    maxW = qMax(maxW, fm.horizontalAdvance(s));
+                }
+                const int padX = 8;
+                const int padY = 4;
+                const int boxW = maxW + 2 * padX;
+                const int boxH = lines.size() * lineH + 2 * padY;
+                // 2026-05-26 KG4VCF: top-right of the spectrum region.
+                // The SpectrumOverlayPanel (10-button panel) lives in
+                // the top-left of the spectrum, so a left-anchored
+                // box slips behind those controls.  Top-right is
+                // shared with the FPS counter (single line); push the
+                // perf overlay down by ~22 px when FPS is on so they
+                // do not collide.  specRect already excludes the
+                // dBm strip column so we do not need to subtract
+                // effectiveStripW() again.
+                const int boxX = specRect.right() - boxW - 8;
+                const int fpsOffset = m_showFps ? 22 : 0;
+                const int boxY = specRect.top() + 8 + fpsOffset;
+                // Health-coloured background: red if underruns/drops/
+                // compressing OR paint/gap exceeds 33 ms; amber if any
+                // metric is hot but functional; green when clean.
+                // 2026-05-26 KG4VCF: factor audio ring-fill into the
+                // health colour.  audioFillMinMs < 5 ms means the
+                // plugin only had 5 ms of audio left at the worst
+                // point in the last window -- a hair away from
+                // underrun even if the underrun counter is still 0.
+                const bool audioTight = stats.audioFillSamples > 0
+                                     && stats.audioFillMinMs < 5.0;
+                const bool audioWarn  = stats.audioFillSamples > 0
+                                     && stats.audioFillMinMs < 15.0;
+                bool red   = stats.audioUnderrunsDelta > 0
+                          || stats.udpDropsDelta > 0
+                          || stats.txIqUnderrunsDelta > 0
+                          || stats.memCompressing
+                          || stats.paintMsMax > 33.0
+                          || stats.gapMsMax   > 50.0
+                          || audioTight;
+                bool amber = !red && (stats.paintMsMax > 20.0
+                                   || stats.gapMsMax   > 40.0
+                                   || stats.ovlyMsMax  > 15.0
+                                   || audioWarn);
+                const QColor bg = red   ? QColor(80, 20, 20, 220)
+                                : amber ? QColor(80, 60, 20, 220)
+                                        : QColor(20, 40, 20, 220);
+                const QColor border = red   ? QColor(200, 80, 80)
+                                    : amber ? QColor(200, 160, 60)
+                                            : QColor(80, 200, 80);
+                p.setPen(QPen(border, 1));
+                p.setBrush(bg);
+                p.drawRect(boxX, boxY, boxW, boxH);
+                p.setPen(QColor(220, 220, 220));
+                for (int i = 0; i < lines.size(); ++i) {
+                    p.drawText(boxX + padX,
+                               boxY + padY + fm.ascent() + i * lineH,
+                               lines.at(i));
+                }
+            }
+
             // HIGH SWR / PA safety overlay — painted last so it sits on top
             // of all other chrome. From Thetis display.cs:4183-4201 [v2.10.3.13].
             paintHighSwrOverlay(p);
@@ -6777,11 +7471,113 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             m_overlayStaticDirty = false;
             m_overlayNeedsUpload = true;
         }
+        if (needsOverlayRebuild) {
+            PerfMonitor::instance().recordOverlayRebuild(
+                static_cast<double>(ovlyTimer.nsecsElapsed()) / 1e6);
+        }
 
         if (m_overlayNeedsUpload) {
             batch->uploadTexture(m_ovGpuTex, QRhiTextureUploadEntry(0, 0,
                 QRhiTextureSubresourceUploadDescription(m_overlayStatic)));
             m_overlayNeedsUpload = false;
+        }
+
+        // ---- Dynamic overlay (peak-hold trace + peak blobs + NF) ----
+        // 2026-05-26 KG4VCF dual-layer split: rebuild ONLY this small
+        // set of per-frame features.  Chrome stays cached in
+        // m_overlayStatic.  No chrome paint ops here = cheap rebuild
+        // even under heavy system load.
+        //
+        // Sizing follows the static layer (full window) so the GPU
+        // composite can use the same quad geometry + UBO.  Bytes
+        // touched per rebuild are dominated by the QImage::fill -- a
+        // memset over ~1.6 MB pinned memory, which under our mlock
+        // pass is deterministic-latency regardless of system memory
+        // pressure.  The per-frame paint ops themselves (3 ellipses
+        // + 3 small text labels + 1 polyline + 1 dashed line) are
+        // < 1 ms even under contention.
+        if (m_overlayDynamic.size() != QSize(pw, ph)) {
+            if (!m_overlayDynamic.isNull()) {
+                unlockMemory(m_overlayDynamic.constBits(),
+                             m_overlayDynamic.sizeInBytes());
+            }
+            m_overlayDynamic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);
+            m_overlayDynamic.setDevicePixelRatio(dpr);
+            lockMemory(m_overlayDynamic.constBits(),
+                       m_overlayDynamic.sizeInBytes(),
+                       "SpectrumWidget::m_overlayDynamic (resize)");
+            m_ovDynGpuTex->setPixelSize(QSize(pw, ph));
+            m_ovDynGpuTex->create();
+            m_ovDynSrb->setBindings({
+                QRhiShaderResourceBinding::sampledTexture(1,
+                    QRhiShaderResourceBinding::FragmentStage,
+                    m_ovDynGpuTex, m_ovSampler),
+            });
+            m_ovDynSrb->create();
+            m_overlayDynamicDirty = true;
+        }
+
+        if (m_overlayDynamicDirty) {
+            QElapsedTimer dynTimer;
+            dynTimer.start();
+
+            // 2026-05-26 KG4VCF perf polish: partial-region rebuild.
+            // The dynamic-overlay features (peak hold trace, peak blobs,
+            // noise floor) ONLY paint into the spectrum portion of the
+            // widget; the waterfall portion below is always transparent.
+            // Bench under load 279 showed 75 / 82 samples of paint cost
+            // were stuck in QRhiMetal::enqueueResourceUpdates -- the
+            // Metal command queue was contended.  Halving the texture
+            // upload bandwidth (only spectrum area, not full window)
+            // proportionally reduces Metal queue pressure.
+            //
+            // Clear + upload only the spectrum region in device pixels.
+            // CompositionMode_Source replaces the existing pixels with
+            // transparent (vs Alpha-blend which would leave them).
+            // The waterfall portion of the texture stays transparent
+            // from the first full-window init -- the partial upload
+            // never touches it.
+            const QRect dynRectDevPx(0, 0, pw,
+                qMax(1, static_cast<int>(specH * dpr)));
+
+            {
+                QPainter clearP(&m_overlayDynamic);
+                clearP.setCompositionMode(QPainter::CompositionMode_Source);
+                clearP.fillRect(dynRectDevPx, Qt::transparent);
+            }
+
+            QPainter pd(&m_overlayDynamic);
+            pd.setRenderHint(QPainter::Antialiasing, false);
+
+            if ((m_activePeakHold.enabled() || m_peakBlobs.enabled()) &&
+                !m_renderedPixels.isEmpty()) {
+                if (m_activePeakHold.enabled() && m_activePeakHold.size() > 0) {
+                    paintActivePeakHoldTrace(pd, specRect);
+                }
+                if (m_peakBlobs.enabled() && !m_peakBlobs.blobs().isEmpty()) {
+                    paintPeakBlobs(pd, specRect);
+                }
+            }
+            paintNoiseFloorOverlay(pd, specRect);
+
+            // Reuse PerfMonitor's ovly metric for the *dynamic* rebuild
+            // cost since that's now the per-frame variable; chrome
+            // rebuilds are rare and their cost amortises out of the
+            // 1 s perf window.
+            PerfMonitor::instance().recordOverlayRebuild(
+                static_cast<double>(dynTimer.nsecsElapsed()) / 1e6);
+
+            // Partial-region upload.  setSourceTopLeft / setSourceSize
+            // tell QRhi to copy only the spectrum portion of the QImage
+            // into the matching region of the texture; the rest of the
+            // texture is untouched.  Cuts Metal command-buffer payload
+            // by 30-50% depending on spectrum / waterfall split.
+            QRhiTextureSubresourceUploadDescription desc(m_overlayDynamic);
+            desc.setSourceTopLeft(QPoint(0, 0));
+            desc.setSourceSize(dynRectDevPx.size());
+            desc.setDestinationTopLeft(QPoint(0, 0));
+            batch->uploadTexture(m_ovDynGpuTex, QRhiTextureUploadEntry(0, 0, desc));
+            m_overlayDynamicDirty = false;
         }
     }
 
@@ -6957,19 +7753,39 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         cb->draw(m_visibleBinCount);
     }
 
-    // Draw overlay
+    // Draw overlay -- static chrome layer first, then dynamic
+    // overlays on top.  Same pipeline + VBO; only the SRB / texture
+    // binding differs.  Order matters: chrome includes the
+    // freq/dBm/time scales which need to read clean from the
+    // spectrum; dynamic overlays (peak blobs / peak hold / NF) sit
+    // on top of chrome.
     if (m_ovPipeline) {
         cb->setGraphicsPipeline(m_ovPipeline);
-        cb->setShaderResources(m_ovSrb);
         cb->setViewport({0, 0,
             static_cast<float>(outputSize.width()),
             static_cast<float>(outputSize.height())});
         const QRhiCommandBuffer::VertexInput vbuf(m_ovVbo, 0);
         cb->setVertexInput(0, 1, &vbuf);
+        // Chrome layer.
+        cb->setShaderResources(m_ovSrb);
         cb->draw(4);
+        // Dynamic layer (peak hold / peak blobs / noise floor).
+        // 2026-05-26 KG4VCF dual-layer overlay split.
+        if (m_ovDynSrb) {
+            cb->setShaderResources(m_ovDynSrb);
+            cb->draw(4);
+        }
     }
 
     cb->endPass();
+
+    // 2026-05-26 KG4VCF perf instrumentation: record total render
+    // cost (texture uploads + draw-call submission, both main-thread).
+    // Excludes GPU-side execution because that completes asynchronously
+    // after this function returns -- this is purely the CPU-side
+    // command-build cost the main thread paid.
+    PerfMonitor::instance().recordPaintFrame(
+        static_cast<double>(paintTimer.nsecsElapsed()) / 1e6);
 }
 
 void SpectrumWidget::render(QRhiCommandBuffer* cb)
@@ -6992,6 +7808,16 @@ void SpectrumWidget::releaseResources()
     delete m_ovVbo;           m_ovVbo = nullptr;
     delete m_ovGpuTex;        m_ovGpuTex = nullptr;
     delete m_ovSampler;       m_ovSampler = nullptr;
+    // 2026-05-26 KG4VCF dual-layer overlay split: tear down the
+    // dynamic-overlay resources.  Pipeline + VBO + sampler are
+    // shared with the static layer; only SRB + texture are
+    // separate.
+    delete m_ovDynSrb;        m_ovDynSrb = nullptr;
+    delete m_ovDynGpuTex;     m_ovDynGpuTex = nullptr;
+    if (!m_overlayDynamic.isNull()) {
+        unlockMemory(m_overlayDynamic.constBits(),
+                     m_overlayDynamic.sizeInBytes());
+    }
 
     delete m_fftLinePipeline;  m_fftLinePipeline = nullptr;
     delete m_fftFillPipeline;  m_fftFillPipeline = nullptr;
@@ -7103,13 +7929,43 @@ VfoWidget* SpectrumWidget::addVfoWidget(int sliceIndex)
 void SpectrumWidget::removeVfoWidget(int sliceIndex)
 {
     if (auto* w = m_vfoWidgets.take(sliceIndex)) {
+        // The flag's close / lock / record / play buttons are parented to THIS
+        // widget, not to the flag, so deleting the flag alone orphans them and
+        // they stay painted on the pan. Bench-caught 2026-07-26: creating and
+        // removing slices left a stack of dead button columns behind. Cleared
+        // here rather than in ~VfoWidget because doing it while both objects
+        // are alive keeps the destruction order ours (issue #113).
+        w->destroyFloatingButtons();
         delete w;
+        update();
     }
 }
 
 VfoWidget* SpectrumWidget::vfoWidget(int sliceIndex) const
 {
     return m_vfoWidgets.value(sliceIndex, nullptr);
+}
+
+// See the header for the bench defect this closes (Sub-Epic J,
+// 2026-07-28). Immediate effect here is only half the fix -- see
+// raiseFrontVfoWidget(), which updateVfoPositions() also calls every frame
+// so the pin survives past the next position pass.
+void SpectrumWidget::setFrontSliceIndex(int sliceIndex)
+{
+    m_frontSliceIndex = sliceIndex;
+    raiseFrontVfoWidget();
+}
+
+void SpectrumWidget::raiseFrontVfoWidget()
+{
+    VfoWidget* w = m_vfoWidgets.value(m_frontSliceIndex, nullptr);
+    if (!w) {
+        // No pin, or the pinned slice has no flag on THIS pan (a different
+        // pan hosts it, or this pan's flag has not been built yet) -- leave
+        // this pan's own order alone.
+        return;
+    }
+    w->raiseAboveSiblings();
 }
 
 void SpectrumWidget::updateVfoPositions()
@@ -7131,24 +7987,56 @@ void SpectrumWidget::updateVfoPositions()
 
     int specH = static_cast<int>(height() * m_spectrumFrac);
     QRect specRect(0, 0, width() - effectiveStripW(), specH);
-    int vfoX = hzToX(m_vfoHz, specRect);
 
+    // Each flag is placed from ITS OWN slice frequency, not from the pan's
+    // m_vfoHz.
+    //
+    // m_vfoHz is a single per-pan value that tracks whichever slice most
+    // recently called setVfoFrequency, so deriving one vfoX from it and moving
+    // every flag there stacked all the co-hosted flags on one x and made them
+    // move together. The models were never wrong -- tst_radio_model_slice_
+    // lifecycle pins that two slices sharing a DDC window hold independent
+    // frequencies and independent shift offsets -- this was placement alone.
+    // Bench-reported 2026-07-28: "If I add B flag to panadapter 1, A and B are
+    // still overlaid and stuck on top of each other."
+    //
+    // A single-slice pan is unchanged: its one flag carries the same frequency
+    // the pan does, so the x it lands on is identical to the pre-fix one.
     for (auto it = m_vfoWidgets.begin(); it != m_vfoWidgets.end(); ++it) {
         VfoWidget* vfo = it.value();
         if (vfo->width() <= 0) {
             vfo->adjustSize();
         }
-        // Hide VFO flag when off-screen (SmartSDR pattern)
-        if (m_vfoOffScreen != VfoOffScreen::None) {
+        // Hide VFO flag when off-screen (SmartSDR pattern).
+        //
+        // Per flag, for the same reason as the placement above: the pan-level
+        // m_vfoOffScreen answers "is the PAN's VFO outside the window", which
+        // hid a perfectly on-window flag whenever some other slice on the same
+        // pan was tuned away. m_vfoOffScreen still drives the pan's own
+        // off-screen chevron (drawOffScreenIndicator) and is left alone.
+        const double flagHz = vfo->frequency();
+        if (flagHz < leftEdge || flagHz > rightEdge) {
             vfo->hide();
         } else {
-            if (!vfo->isVisible()) {
+            // isHidden(), not isVisible(): a flag on a pan that has not been
+            // shown yet reads !isVisible() forever, which turned this into an
+            // unconditional show() on every pass.
+            if (vfo->isHidden()) {
                 vfo->show();
             }
-            vfo->updatePosition(vfoX, 0);
+            vfo->updatePosition(hzToX(flagHz, specRect), 0);
             vfo->raise();
         }
     }
+
+    // The loop above just raised every visible flag once, in m_vfoWidgets'
+    // ascending slice-index order -- so without this, whichever slice has
+    // the HIGHEST index would land on top after every single frame,
+    // regardless of which one is active. Bench-reported 2026-07-28
+    // (Sub-Epic J): "slice A selected, slice B's flag covered A's, clipping
+    // A's frequency readout." Re-asserting the pin here, after the loop, is
+    // what makes it survive this pass instead of only the one it was set on.
+    raiseFrontVfoWidget();
 }
 
 // ---- Phase 3Q-8: disconnect overlay ----------------------------------------

@@ -244,6 +244,21 @@ void ReceiverManager::forceHardwareFrequency(int receiverIndex, quint64 frequenc
     if (!m_receivers.contains(receiverIndex)) {
         return;
     }
+
+    // Store as well as emit. ReceiverConfig::frequencyHz is the frequency
+    // last commanded to this receiver's DDC, and rebuildHardwareMapping's
+    // re-emit loop is its only consumer -- nothing else in the tree reads
+    // it. Leaving it behind on the forced path meant a later rebuild
+    // resurrected the pre-drag centre and yanked the CTUN pan back.
+    //
+    // The lock bypass is untouched and deliberate: m_ddcFreqLocked gates
+    // setReceiverFrequency's hardware emit so a VFO move inside a pinned
+    // CTUN window does not retune the DDC, while the pan drag itself is
+    // exactly the operator asking for a retune. receiverFrequencyChanged
+    // is likewise still NOT emitted here -- the DDC moved, the receiver's
+    // logical tuning did not, and that signal belongs to the latter.
+    m_receivers[receiverIndex].frequencyHz = frequencyHz;
+
     if (m_receivers[receiverIndex].active && m_receivers[receiverIndex].hardwareRx >= 0) {
         emit hardwareFrequencyChanged(m_receivers[receiverIndex].hardwareRx, frequencyHz);
     }
@@ -262,6 +277,25 @@ void ReceiverManager::setDdcMapping(int receiverIndex, int ddcIndex)
     if (!m_receivers.contains(receiverIndex)) {
         return;
     }
+
+    // Change gate. Before Phase 3F Sub-Epic I this ran once per connect, so
+    // an unconditional rebuild cost nothing. It is now called by
+    // RadioModel::publishDdcAssignment for every active stream on every
+    // requestDdcAssignment, which fires on every slice frequencyChanged --
+    // so on every VFO tick, with the mapping unchanged in steady state.
+    //
+    // rebuildHardwareMapping re-emits every active receiver's STORED
+    // frequency, and that is what makes a redundant rebuild harmful rather
+    // than merely wasteful: on a non-CTUN pan it is a stream of duplicate
+    // P2 command frames on a spun encoder, and under CTUN it retunes the
+    // DDC away from where the operator dragged the pan (the drag goes
+    // through forceHardwareFrequency, which deliberately bypasses
+    // m_ddcFreqLocked). The spectrum jumped out from under the operator on
+    // the next VFO click.
+    if (m_receivers[receiverIndex].ddcIndex == ddcIndex) {
+        return;
+    }
+
     m_receivers[receiverIndex].ddcIndex = ddcIndex;
     if (m_receivers[receiverIndex].active) {
         rebuildHardwareMapping();
@@ -386,6 +420,7 @@ void ReceiverManager::setP1Codec(IP1Codec* codec)
     m_p1Codec = codec;
     qCDebug(lcReceiver) << "ReceiverManager: P1 codec" << (codec ? "set" : "cleared");
     updateDdcAssignment();
+    emit ddcCodecChanged();
 }
 
 void ReceiverManager::setP2Codec(IP2Codec* codec)
@@ -396,6 +431,7 @@ void ReceiverManager::setP2Codec(IP2Codec* codec)
     m_p2Codec = codec;
     qCDebug(lcReceiver) << "ReceiverManager: P2 codec" << (codec ? "set" : "cleared");
     updateDdcAssignment();
+    emit ddcCodecChanged();
 }
 
 void ReceiverManager::setHpsdrModel(HPSDRModel model)

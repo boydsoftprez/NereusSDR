@@ -201,7 +201,7 @@ void TestTciServerLifecycle::slice_added_hook_survives_stop_start_cycle()
     QSignalSpy sliceAddedSpy(&model, &RadioModel::sliceAdded);
     const int slice2Index = model.addSlice();
     QCOMPARE(sliceAddedSpy.count(), 1);
-    SliceModel* slice2 = model.sliceAt(slice2Index);
+    SliceModel* slice2 = model.sliceById(slice2Index);
     QVERIFY(slice2);
     QVERIFY(slice2 != slice1);
 

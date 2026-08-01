@@ -813,4 +813,172 @@ PsDdcConfig P1CodecStandard::psDdcConfigHermesIIClass(
     return cfg;
 }
 
+// =================================================================
+// P1CodecStandard::applyDdcAssignment - Hermes-class (1 ADC, 4 DDCs)
+// =================================================================
+//
+// Porting from Thetis console.cs:8387-8455 [v2.10.3.15] UpdateDDCs()
+// Hermes-class branch:
+//
+//   case HPSDRModel.HERMES:
+//   case HPSDRModel.ANAN_G2E: //N1GP G2E added
+//   case HPSDRModel.ANAN10:
+//   case HPSDRModel.ANAN100:
+//       P1_rxcount = 4;  // RX4 used for puresignal feedback
+//       nddc = 4;
+//       if (!_mox) {
+//           if (!diversity_enabled) {
+//               P1_DDCConfig = 4; DDCEnable = DDC0; SyncEnable = 0;
+//               Rate[0] = rx1_rate; cntrl1 = 0; cntrl2 = 0;
+//               if (rx2_enabled) { DDCEnable += DDC1; Rate[1] = rx2_rate; }
+//           } else {
+//               P1_DDCConfig = 5; DDCEnable = DDC0; SyncEnable = DDC1;
+//               Rate[0] = rx1_rate; Rate[1] = rx1_rate;
+//               cntrl1 = 0; cntrl2 = 0;
+//           }
+//       } else {
+//           if (!diversity_enabled && !puresignal_enabled) {
+//               P1_DDCConfig = 4; DDCEnable = DDC0; SyncEnable = 0;
+//               Rate[0] = rx1_rate; cntrl1 = 0; cntrl2 = 0;
+//               if (rx2_enabled) { DDCEnable += DDC1; Rate[1] = rx2_rate; }
+//           } else if (diversity_enabled && !puresignal_enabled) {
+//               P1_DDCConfig = 5; DDCEnable = DDC0; SyncEnable = DDC1;
+//               Rate[0] = rx1_rate; Rate[1] = rx1_rate;
+//               cntrl1 = 0; cntrl2 = 0;
+//           } else { // transmitting and PS is ON
+//               P1_DDCConfig = 6; DDCEnable = DDC0; SyncEnable = DDC1;
+//               Rate[0] = ps_rate; Rate[1] = ps_rate; cntrl1 = 4; cntrl2 = 0;
+//           }
+//       }
+//
+// DDC0=1, DDC1=2 bitmask from Thetis console.cs:8196-8197 [v2.10.3.15].
+// ps_rate = cmaster.PSrate = 192000 from cmaster.cs:425 [v2.10.3.15].
+//
+// Phase 3F multi-slice extension: Thetis's Hermes branch maps Slice A →
+// DDC0 and Slice B → DDC1 (rx2_enabled). Slices C+D (indices 2,3) extend
+// to DDC2+DDC3 additively in the plain-RX path. Slices C/D are suppressed
+// during PS-active or diversity-active because those modes reclaim DDC0+DDC1
+// as a sync pair; the firmware has no room for extra receivers in those states.
+// Slice E (index 4) is always ignored on Hermes-class (maxSlices=4 cap,
+// from BoardCapabilities based on Thetis P1_rxcount=4 for this family).
+//
+// //N1GP G2E added  [original inline tag from console.cs:8388 - ANAN_G2E case label]
+DdcAssignment P1CodecStandard::applyDdcAssignment(
+    const CodecContext& ctx,
+    const std::array<SliceConfig, 5>& slices) const
+{
+    // DDC0=1, DDC1=2 from Thetis console.cs:8196-8197 [v2.10.3.15]
+    static constexpr int kDDC0 = 1;
+    static constexpr int kDDC1 = 2;
+
+    // ps_rate = cmaster.PSrate default from Thetis cmaster.cs:425 [v2.10.3.15]
+    static constexpr int kPsRate = 192000;
+
+    DdcAssignment a{};
+
+    // From Thetis console.cs:8388-8391 [v2.10.3.15]:
+    //   case HPSDRModel.ANAN_G2E: //N1GP G2E added
+    //   ...
+    //   P1_rxcount = 4;  // RX4 used for puresignal feedback
+    //   nddc = 4;
+    //N1GP G2E added  [original inline tag from console.cs:8388 - ANAN_G2E case label]
+    a.p1RxCount = 4;
+    a.nDdc      = 4;
+
+    // Stream 0 = DDC0; stream 1 = DDC1. Phase 3F Sub-Epic I Task 7b: the
+    // input array is indexed by DDC STREAM, not by slice, so co-hosted
+    // slices share one entry (and therefore one DDC) instead of each
+    // claiming their own.
+    // (Thetis uses rx1_rate for stream 0, rx2_rate for stream 1.)
+    const int rx1Rate = slices[0].live ? slices[0].sampleRateHz : 0;
+    const int rx2Rate = slices[1].live ? slices[1].sampleRateHz : 0;
+    const bool rx2Live = slices[1].live;
+
+    // Phase 3F Sub-Epic I Task 7b: stream 0 always demodulates from DDC0 on
+    // this Hermes-class codec, in every branch below (PS/diversity/plain
+    // all set DDCEnable = kDDC0); only DDC1's role changes. Set once here
+    // rather than duplicated per branch.
+    if (slices[0].live) { a.streamDdc[0] = 0; }
+
+    if (ctx.puresignalRun && ctx.mox) {
+        // From Thetis console.cs:8440-8449 [v2.10.3.15]:
+        //   else // transmitting and PS is ON
+        //   {
+        //       P1_DDCConfig = 6; DDCEnable = DDC0; SyncEnable = DDC1;
+        //       Rate[0] = ps_rate; Rate[1] = ps_rate;
+        //       cntrl1 = 4; cntrl2 = 0;
+        //   }
+        // //N1GP G2E added  [original inline tag from console.cs:8388 - ANAN_G2E case label]
+        a.p1DdcConfig = 6;
+        a.ddcEnable   = kDDC0;
+        a.syncEnable  = kDDC1;
+        a.rate[0]     = kPsRate;
+        a.rate[1]     = kPsRate;
+        a.adcCtrl1    = 4;
+        a.adcCtrl2    = 0;
+        a.psFwdDdc    = 2;  // mi0bot: twist(spr,2,3,1) → DDC2 = PS feedback
+        a.psRevDdc    = 3;  // mi0bot: DDC3 = TX monitor (same as psDdcConfigHermesClass)
+        // PS reclaims DDC0+1; no room for extra user slices.
+        a.nDdc = 4;
+    } else if (ctx.diversity) {
+        // From Thetis console.cs:8428-8437 [v2.10.3.15]:
+        //   else if (diversity_enabled && !puresignal_enabled) {
+        //       P1_DDCConfig = 5; DDCEnable = DDC0; SyncEnable = DDC1;
+        //       Rate[0] = rx1_rate; Rate[1] = rx1_rate;
+        //       cntrl1 = 0; cntrl2 = 0; }
+        a.p1DdcConfig = 5;
+        a.ddcEnable   = kDDC0;
+        a.syncEnable  = kDDC1;
+        a.rate[0]     = rx1Rate;
+        a.rate[1]     = rx1Rate;
+        a.adcCtrl1    = 0;
+        a.adcCtrl2    = 0;
+        a.p1Diversity = 1;
+        a.nDdc = 4;
+    } else {
+        // From Thetis console.cs:8393-8407 [v2.10.3.15]:
+        //   case HPSDRModel.ANAN_G2E: //N1GP G2E added  [original from console.cs:8388]
+        //   P1_DDCConfig = 4; DDCEnable = DDC0; SyncEnable = 0;
+        //   Rate[0] = rx1_rate; cntrl1 = 0; cntrl2 = 0;
+        //   if (rx2_enabled) { DDCEnable += DDC1; Rate[1] = rx2_rate; }
+        //N1GP G2E added  [original inline tag from console.cs:8388 - ANAN_G2E case label]
+        a.p1DdcConfig = 4;
+        a.ddcEnable   = kDDC0;
+        a.syncEnable  = 0;
+        a.rate[0]     = rx1Rate;
+        a.adcCtrl1    = 0;
+        a.adcCtrl2    = 0;
+        a.nDdc        = 1;
+
+        if (rx2Live) {
+            a.ddcEnable += kDDC1;
+            a.rate[1]    = rx2Rate;
+            a.nDdc       = 2;
+            // Phase 3F Sub-Epic I Task 7b: stream 1 -> DDC1, plain-RX path
+            // only (PS/diversity branches reclaim DDC1 as a sync partner
+            // with no independent stream 1 rate, so streamDdc[1] stays -1
+            // there).
+            a.streamDdc[1] = 1;
+        }
+
+        // Phase 3F extension: streams 2+3 → DDC2+DDC3 additively (plain-RX path only).
+        // Thetis Hermes branch caps at nddc=4 (P1_rxcount=4, console.cs:8390 [v2.10.3.15]).
+        if (slices[2].live) {
+            a.ddcEnable |= (1 << 2);  // DDC2
+            a.rate[2]    = slices[2].sampleRateHz;
+            ++a.nDdc;
+            a.streamDdc[2] = 2;  // Phase 3F Sub-Epic I Task 7b
+        }
+        if (slices[3].live) {
+            a.ddcEnable |= (1 << 3);  // DDC3
+            a.rate[3]    = slices[3].sampleRateHz;
+            ++a.nDdc;
+            a.streamDdc[3] = 3;  // Phase 3F Sub-Epic I Task 7b
+        }
+        // Stream 4 always ignored on Hermes-class (4 DDCs).
+    }
+
+    return a;
+}
+
 } // namespace NereusSDR

@@ -94,6 +94,83 @@ private slots:
         baseCodec.composeCmdTx(ctx, baseBuf);
         for (int i = 0; i < 60; ++i) { QCOMPARE(int(satBuf[i]), int(baseBuf[i])); }
     }
+
+    // ── Anti-drift guard for the DDC assignment (defect D3) ───────────────
+    //
+    // Thetis groups HPSDRModel.ANAN_G2 and ANAN_G2_1K into the SAME
+    // UpdateDDCs switch case as the OrionMkII family (console.cs:8220-8303
+    // [v2.10.3.15]), so there is no Saturn-specific DDC assignment to have.
+    // NereusSDR nonetheless carried a hand-copied Saturn override for three
+    // months; when antenna-driven ADC routing was added to the parent on
+    // 2026-07-26 the copy silently kept the old behaviour, and the feature
+    // was dead on the one radio it was written for.
+    //
+    // The fix deleted the override. This test is what stops it coming back:
+    // it sweeps the state matrix the two codecs branch on and demands the
+    // two produce identical assignments. Add a Saturn-only DDC rule and this
+    // fails, which is the point -- a genuine divergence should have to be
+    // argued for here, not arrive by omission.
+    void ddcAssignment_inherits_orionmkii_behavior() {
+        P2CodecSaturn satCodec;
+        P2CodecOrionMkII baseCodec;
+
+        // Antennas worth sweeping: ANT1 (main chain), EXT1 and EXT2 (the
+        // RX-only jacks that select chain 1), BYPS (deliberately chain 0).
+        const int antennas[] = {1, 4, 5, 6};
+
+        for (int mox = 0; mox < 2; ++mox) {
+        for (int ps = 0; ps < 2; ++ps) {
+        for (int div = 0; div < 2; ++div) {
+        for (int liveCount = 1; liveCount <= 5; ++liveCount) {
+        for (int ant : antennas) {
+            CodecContext ctx{};
+            ctx.mox           = (mox != 0);
+            ctx.puresignalRun = (ps != 0);
+            ctx.diversity     = (div != 0);
+            // Seed the Thetis default so the diversity branch is exercised
+            // with a non-zero incoming word rather than an all-zero one.
+            ctx.adcCtrl = NereusSDR::defaultRxAdcCtrl(2);
+
+            std::array<SliceConfig, 5> slices{};
+            for (int i = 0; i < liveCount; ++i) {
+                slices[i].live         = true;
+                slices[i].frequencyHz  = 7000000 + i * 3000000;
+                slices[i].sampleRateHz = 192000;
+                slices[i].antennaIndex = ant;
+            }
+            slices[0].txBound = true;
+
+            const DdcAssignment s = satCodec.applyDdcAssignment(ctx, slices);
+            const DdcAssignment b = baseCodec.applyDdcAssignment(ctx, slices);
+
+            QCOMPARE(s.ddcEnable,  b.ddcEnable);
+            QCOMPARE(s.syncEnable, b.syncEnable);
+            QCOMPARE(s.adcCtrl1,   b.adcCtrl1);
+            QCOMPARE(s.adcCtrl2,   b.adcCtrl2);
+            QCOMPARE(s.nDdc,       b.nDdc);
+            QCOMPARE(s.psFwdDdc,   b.psFwdDdc);
+            QCOMPARE(s.psRevDdc,   b.psRevDdc);
+            for (int i = 0; i < 8; ++i) { QCOMPARE(s.rate[i], b.rate[i]); }
+            for (int i = 0; i < 5; ++i) { QCOMPARE(s.streamDdc[i], b.streamDdc[i]); }
+        }}}}}
+    }
+
+    // The defect in one assertion: on Saturn, a slice on an RX-only jack
+    // must land on the second chain. Stated separately from the parity
+    // sweep so a reader sees the behaviour, not just the equality.
+    void ddcAssignment_saturn_routes_ext1_to_adc1() {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].sampleRateHz = 192000;
+        slices[0].antennaIndex = 4;   // EXT1
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        // Stream 0 -> DDC2, whose ADC selector is adcCtrl1 bits 5&4.
+        QCOMPARE(a.adcCtrl1 & 0x30, 1 << 4);
+    }
 };
 
 QTEST_APPLESS_MAIN(TestP2CodecSaturn)

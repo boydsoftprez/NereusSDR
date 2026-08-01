@@ -52,6 +52,8 @@ class QMenu;
 
 namespace NereusSDR {
 
+class RadioModel;
+
 // Analog S-Meter gauge widget matching the SmartSDR look.
 //
 // S-unit scale:
@@ -67,6 +69,12 @@ class SMeterWidget : public QWidget {
 
 public:
     explicit SMeterWidget(QWidget* parent = nullptr);
+
+    // Overload that subscribes to RadioModel::externalAmpOperateChanged so
+    // the 2 kW power scale flips for both PGXL and RF-Kit without the caller
+    // having to wire each brand-specific signal.
+    // NereusSDR-native; no upstream equivalent. Task 13.
+    explicit SMeterWidget(RadioModel* model, QWidget* parent = nullptr);
 
     QSize sizeHint() const override { return {280, 140}; }
     QSize minimumSizeHint() const override { return {200, 100}; }
@@ -96,6 +104,12 @@ public:
     // Test-only accessors. Production code uses paintEvent's internal logic.
     float testPowerScaleMax()  const { return m_powerScaleMax; }
     float testPowerRedStart()  const { return m_powerRedStart; }
+
+    // Test-only: returns true when the power scale is at the 2 kW (external amp)
+    // setting (m_powerScaleMax >= 2000.0f). Used by tst_smeter_widget_external_amp
+    // to verify that externalAmpOperateChanged(true) triggers setPowerScale.
+    // NereusSDR-native test seam; no upstream equivalent. Task 13.
+    bool txScaleIs2kWForTesting() const { return m_powerScaleMax >= 2000.0f; }
 
     // Test-only: build and return the context menu without exec()-ing it.
     // Allows tests to inspect menu structure without a live event loop.
@@ -165,6 +179,11 @@ private:
     void updateNeedleTarget();
     void animateNeedle();
     void updatePeakHoldValue();
+
+    // Connect to RadioModel's cross-vendor external-amp aggregator signals.
+    // Called from the RadioModel* constructor overload only.
+    // NereusSDR-native. Task 13.
+    void connectToRadioModel(RadioModel* model);
 
     // Build the right-click context menu (TX Mode / RX Mode / Peak Hold).
     // Returns a heap-allocated QMenu* parented to `parent`.

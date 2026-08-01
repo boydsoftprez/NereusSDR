@@ -73,6 +73,20 @@
 //                 and a radeChannelForTest accessor.  J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-07-28 : Phase 3F Sub-Epic J Task 9. The anti-VOX sample feed
+//                 moved off RxDspWorker's slice-0 fork and onto
+//                 AudioEngine's mixed anti-VOX reference, which sums
+//                 every audible slice the way Thetis feeds every
+//                 sub-receiver to pavoxmix (cmaster.c:371-372
+//                 [v2.10.3.15]).  Added onAntiVoxBlockReady, the
+//                 DirectConnection entry point that copies the block
+//                 while AudioEngine's thread_local pointer is still
+//                 live, plus the antiVoxReferenceCopied signal that
+//                 carries the copy back onto this object's thread.
+//                 onAntiVoxSamplesReady lost its sliceId argument and
+//                 the `sliceId != 0` single-RX gate along with it.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation
+//                 via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file.  The Thetis cmbuffs.c /
@@ -85,6 +99,7 @@
 #include "AudioEngine.h"
 #include "RadeChannel.h"
 #include "TxChannel.h"
+#include "audio/RealtimeAudioPriority.h"
 #include "audio/TxMicSource.h"
 
 #include <QCoreApplication>
@@ -115,6 +130,19 @@ TxWorkerThread::TxWorkerThread(QObject* parent)
     m_radeMicFloat.assign(static_cast<size_t>(kBlockFrames), 0.0f);
     m_radeMic16k.assign(static_cast<size_t>(kBlockFrames), 0.0f);
     m_radeMicInt16.assign(static_cast<size_t>(kBlockFrames), 0);
+
+    // Phase 3F Sub-Epic J Task 9: the anti-VOX thread boundary.
+    //
+    // onAntiVoxBlockReady runs on the DSP thread (DirectConnection from
+    // AudioEngine) and emits this with an owned copy; the queued delivery
+    // lands onAntiVoxSamplesReady back on this object's own thread, which is
+    // where it has always run and where TxChannel::sendAntiVoxData's
+    // documented thread affinity expects to be called from.  Self-connected
+    // here rather than wired in RadioModel so the copy and the hop cannot be
+    // separated by a future refactor of the wiring.
+    connect(this, &TxWorkerThread::antiVoxReferenceCopied,
+            this, &TxWorkerThread::onAntiVoxSamplesReady,
+            Qt::QueuedConnection);
 }
 
 TxWorkerThread::~TxWorkerThread()
@@ -312,9 +340,19 @@ void TxWorkerThread::run()
     //       onAntiVoxSamplesReady — release/acquire ordering correctly
     //       handles the cross-thread visibility.  No mutex is held in
     //       any audio-thread path:
-    //         RxDspWorker::antiVoxSampleReady          → onAntiVoxSamplesReady
     //         RxDspWorker::bufferSizesChanged          → setAntiVoxBlockGeometry
     //         MoxController::antiVoxDetectorTauRequested → setAntiVoxDetectorTau
+    //
+    //       The anti-VOX SAMPLE feed is the exception to the queued rule.
+    //       Phase 3F Sub-Epic J Task 9 re-pointed it off RxDspWorker's
+    //       slice-0 fork and onto AudioEngine::antiVoxBlockReady, which is
+    //       DirectConnection-only because it hands out thread_local
+    //       scratch.  onAntiVoxBlockReady therefore runs on the DSP thread,
+    //       copies, and re-enters this object's own thread through
+    //       antiVoxReferenceCopied → onAntiVoxSamplesReady.  Same
+    //       destination as before, one owned hop earlier:
+    //         AudioEngine::antiVoxBlockReady (Direct) → onAntiVoxBlockReady
+    //           → antiVoxReferenceCopied (Queued)     → onAntiVoxSamplesReady
     //
     // Once moveToThread runs for m_txChannel, AutoConnection auto-resolves
     // to QueuedConnection for group (a) because the receiver lives on
@@ -338,6 +376,20 @@ void TxWorkerThread::run()
     // P/Invoke regardless of which managed thread is calling.
     // NereusSDR's setters are Qt slots dispatched via signals, so we
     // have to give the worker an event pump.
+    // 2026-05-25 KG4VCF bench fix: elevate the TX DSP thread to real-time
+    // audio scheduling, parity with RxDspWorker::onThreadStarted.  Runs on
+    // the worker thread, which is what pthread_set_qos_class_self_np and
+    // os_workgroup_join require (macOS).  Token lifetime matches run()'s
+    // stack frame; leaveAudioThreadPriority just below the loop releases
+    // before the QThread exits, satisfying os_workgroup_leave's "on the
+    // joining thread" requirement.
+    //
+    // Without this elevation, a heavy compile / Spotlight / Time Machine
+    // pass during active TX can preempt the mic-feeder loop and produce
+    // audible glitches on the air -- the same failure mode RX-side
+    // elevation fixed for the receiver path.
+    AudioPriorityToken* txAudioPrio = elevateAudioThreadPriority();
+
     while (m_micSource && m_micSource->isRunning()) {
         // INFINITE wait — mirrors `WaitForSingleObject(..., INFINITE)`.
         // Returns false when stop() releases the poison semaphore AND
@@ -403,6 +455,12 @@ void TxWorkerThread::run()
     if (m_txChannel) {
         m_txChannel->moveToThread(this->thread());
     }
+
+    // Release the TX audio-priority token from the same thread that
+    // joined the workgroup (the worker thread we are about to exit).
+    // Mirrors RxDspWorker::onThreadFinished's leaveAudioThreadPriority.
+    leaveAudioThreadPriority(txAudioPrio);
+    txAudioPrio = nullptr;
 
     qCInfo(lcTxWorker) << "run: worker thread loop exited";
 }
@@ -877,13 +935,57 @@ void TxWorkerThread::setAntiVoxRun(bool run)
 }
 
 // ---------------------------------------------------------------------------
+// onAntiVoxBlockReady()  (Phase 3F Sub-Epic J Task 9)
+//
+// DirectConnection slot from AudioEngine::antiVoxBlockReady, so this runs
+// on the DSP thread inside AudioEngine::rxBlockReady, in the same call
+// stack as the mixer drain that produced the block.
+//
+// THE ONE THING THIS FUNCTION EXISTS TO DO: take ownership of the audio.
+// `samples` points into a thread_local std::vector inside rxBlockReady
+// that the next audio period overwrites.  onAntiVoxSamplesReady is
+// delivered QUEUED onto this object's thread and therefore reads its
+// argument after this call has long returned, so forwarding the pointer
+// would be a use-after-free read on another thread, in the audio path,
+// feeding a detector whose output can key the transmitter.  Qt would not
+// stop it: a Direct-to-Queued hop is a legal connect and the compiler sees
+// two matching signatures.  The copy below is the whole defence, and
+// antiVoxReferenceCopied carries it across by value.
+//
+// The gate is checked BEFORE the copy so the common case (anti-VOX off, the
+// default) costs the DSP thread one acquire-load per period and nothing
+// else.  onAntiVoxSamplesReady checks it again on the far side, both for
+// direct callers and because the operator may have keyed off in between.
+//
+// From Thetis cmaster.c:371-372 [v2.10.3.15]: every sub-receiver's audio is
+// pushed into the transmitter's anti-VOX mixer, and that mixer's
+// SendAntiVOXData callback (create_aamix argument, cmaster.c:171
+// [v2.10.3.15]) delivers one mixed block per period.  This is that
+// callback; AudioEngine::m_antiVoxMix is that mixer.
+// ---------------------------------------------------------------------------
+void TxWorkerThread::onAntiVoxBlockReady(const float* samples, int frames)
+{
+    if (!m_antiVoxRun.load(std::memory_order_acquire)) { return; }
+    if (samples == nullptr || frames <= 0) { return; }
+
+    // Interleaved stereo: DEXP reads antivox_data as complex pairs
+    // (dexp.c:293 [v2.10.3.15] indexes 2*i+0 and 2*i+1), which is the same
+    // layout AudioEngine's mixer drains.
+    const qsizetype floats = static_cast<qsizetype>(frames) * 2;
+    QVector<float> owned(floats);
+    std::copy(samples, samples + floats, owned.begin());
+
+    emit antiVoxReferenceCopied(owned, frames);
+}
+
+// ---------------------------------------------------------------------------
 // onAntiVoxSamplesReady()  — Phase 3M-3a-iv Task 6
 //
-// Queued slot from RxDspWorker::antiVoxSampleReady.  Single-RX
-// equivalent of Thetis cmaster.c:171 [v2.10.3.13]: aamix's
-// SendAntiVOXData callback.  Skipped when anti-VOX is off (acquire-load
-// of m_antiVoxRun) to avoid the float→double conversion cost in
-// TxChannel::sendAntiVoxData.
+// Queued slot, fed by antiVoxReferenceCopied from onAntiVoxBlockReady
+// above.  Thetis equivalent: aamix's SendAntiVOXData callback
+// (cmaster.c:171 [v2.10.3.15]).  Skipped when anti-VOX is off
+// (acquire-load of m_antiVoxRun) to avoid the float→double conversion cost
+// in TxChannel::sendAntiVoxData.
 //
 // Thread affinity: this slot runs on the MAIN thread because the
 // TxWorkerThread QObject lives on main thread (only m_txChannel is
@@ -894,17 +996,17 @@ void TxWorkerThread::setAntiVoxRun(bool run)
 // resident scratch buffer) and pdexp[] is null-guarded.  No mic-input
 // audio callback is involved at any point in this path.
 //
-// The sliceId == 0 gate scopes 3M-3a-iv to a single RX feeding the
-// single TX; multi-RX mux (where N RXs combine into one anti-VOX
-// stream via aamix) is a 3F multi-pan concern.
+// Phase 3F Sub-Epic J Task 9 removed the `sliceId != 0` gate along with the
+// argument.  It scoped 3M-3a-iv to a single RX feeding the single TX; the
+// multi-RX mux it was waiting for now exists upstream in
+// AudioEngine::m_antiVoxMix, so the block arriving here is already the sum
+// of every audible slice and has no per-slice identity to gate on.
 // ---------------------------------------------------------------------------
-void TxWorkerThread::onAntiVoxSamplesReady(int sliceId,
-                                           const QVector<float>& interleaved,
+void TxWorkerThread::onAntiVoxSamplesReady(const QVector<float>& interleaved,
                                            int sampleCount)
 {
     if (!m_antiVoxRun.load(std::memory_order_acquire)) { return; }
     if (m_txChannel == nullptr) { return; }
-    if (sliceId != 0) { return; }  // single-RX gate; multi-RX mux is 3F
     m_txChannel->sendAntiVoxData(interleaved.constData(), sampleCount);
 }
 

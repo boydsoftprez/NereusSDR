@@ -147,6 +147,12 @@ public:
         quint8 adcCtrl2
     ) const override;
 
+    // Phase 3F Sub-Epic B Task 2: stub. Real implementation in Task 7
+    // per Thetis UpdateDDCs OrionMkII/G2-class branch.
+    DdcAssignment applyDdcAssignment(
+        const CodecContext& ctx,
+        const std::array<SliceConfig, 5>& slices) const override;
+
 protected:
     // Build Alex0 (bytes 1432-1435) and Alex1 (bytes 1428-1431) 32-bit registers.
     // Protected so P2CodecSaturn can override Alex1 with Saturn BPF1 band-edge bits.

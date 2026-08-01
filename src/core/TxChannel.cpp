@@ -1948,9 +1948,15 @@ void TxChannel::setAntiVoxDetectorTau(double seconds)
 // stable antivox_data buffer because cs_update inside dexp.c serialises
 // the memcpy from antivox_data into the detector path.
 //
-// In NereusSDR the equivalent of Thetis ChannelMaster aamix is the direct
-// RxDspWorker -> TxWorkerThread queued connection.  See
-// docs/architecture/phase3m-3a-iv-antivox-feed-design.md §4.2.
+// In NereusSDR the equivalent of Thetis ChannelMaster aamix is
+// AudioEngine::m_antiVoxMix, a second MasterMixer instance fed by every
+// audible slice (Phase 3F Sub-Epic J Task 9, mirroring cmaster.c:371-372
+// [v2.10.3.15]).  Its drained block reaches this method through
+// TxWorkerThread::onAntiVoxBlockReady -> onAntiVoxSamplesReady.  Before
+// Task 9 the feed was a direct RxDspWorker -> TxWorkerThread queued
+// connection carrying slice A's audio alone; see
+// docs/architecture/phase3m-3a-iv-antivox-feed-design.md §4.2 for the
+// original shape.
 // ---------------------------------------------------------------------------
 void TxChannel::sendAntiVoxData(const float* interleaved, int nsamples)
 {

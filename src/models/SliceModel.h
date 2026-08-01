@@ -118,6 +118,7 @@
 
 #include "Band.h"
 #include "core/NbFamily.h"
+#include "core/SampleRateCatalog.h"
 #include "core/WdspTypes.h"
 
 #include <QList>
@@ -172,6 +173,78 @@ class SliceModel : public QObject {
     Q_PROPERTY(QString    txAntenna    READ txAntenna    WRITE setTxAntenna    NOTIFY txAntennaChanged)
     Q_PROPERTY(bool       active       READ isActive     NOTIFY activeChanged)
     Q_PROPERTY(bool       txSlice      READ isTxSlice    NOTIFY txSliceChanged)
+
+    // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
+    // Phase 3F: per-slice letter identifier A-E. Drives badge color via VfoWidget::sliceColor().
+    // Read-only: derived from sliceIndex, so there is nothing to write and
+    // nothing that can change independently of the slice's identity.
+    Q_PROPERTY(QChar sliceLetter READ sliceLetter CONSTANT)
+    // Phase 3F: which Alex chain (ADC) hosts this slice's DDC. 0 or 1 on 2-ADC boards, always 0 on 1-ADC.
+    Q_PROPERTY(int chainIndex READ chainIndex WRITE setChainIndex NOTIFY chainIndexChanged)
+    // Phase 3F: codec-assigned DDC index. -1 = unassigned. Read-only from operator perspective.
+    Q_PROPERTY(int ddcIndex READ ddcIndex WRITE setDdcIndex NOTIFY ddcIndexChanged)
+
+    // Phase 3F Sub-Epic I: which DDC stream hosts this slice. Many slices
+    // may share one stream when their frequencies fall inside its window
+    // (ChannelMaster cmaster.h:75-82 [v2.10.3.15], where one `_rcvr` drives
+    // N sub-receiver channels off one I/Q input). -1 = unbound, feeds nothing.
+    //
+    // Distinct from ddcIndex, which is the hardware DDC number the codec
+    // picked for this stream. streamIndex is the logical index shared by
+    // ReceiverManager, FFTEngine, and the FFTRouter topology.
+    Q_PROPERTY(int streamIndex READ streamIndex WRITE setStreamIndex
+               NOTIFY streamIndexChanged)
+
+    // Phase 3F Sub-Epic I: this slice's offset from its stream's centre,
+    // pushed into WDSP via RxChannel::setShiftFrequency (the Thetis RXOsc
+    // port, radio.cs:1409-1420 [v2.10.3.15]). Zero when the slice sits on
+    // the DDC centre. Always within +-sampleRate/2 by construction; the
+    // allocator never produces an out-of-window offset.
+    Q_PROPERTY(double shiftOffsetHz READ shiftOffsetHz WRITE setShiftOffsetHz
+               NOTIFY shiftOffsetHzChanged)
+
+    // Phase 3F: owning pan id ("pan-N"). Authoritative slice-to-pan binding.
+    Q_PROPERTY(QString panKey READ panKey WRITE setPanKey NOTIFY panKeyChanged)
+    // Phase 3F Sub-Epic I closeout, defect G2: the RESOLVED sample rate of the
+    // DDC stream currently hosting this slice. NOT a private per-slice width
+    // and NOT a request.
+    //
+    // The rate is a property of the stream (it IS the window width the DDC
+    // delivers), and slices bind to streams many-to-one, so co-hosted slices
+    // necessarily share it. RadioModel owns the value and mirrors it here from
+    // two places: setStreamSampleRate pushes a change to every slice on the
+    // stream, and bindSliceToStream re-mirrors a slice that migrates so it
+    // stops reporting the width it just left.
+    //
+    // Read it to display the rate (the VFO flag's rate menu checks against
+    // it). To CHANGE it, call RadioModel::requestSliceSampleRate, which routes
+    // to the stream. Writing the property directly moves the display only, and
+    // the next bind or rate change overwrites it.
+    //
+    // Default = SampleRateCatalog::kDefaultSampleRate (192 kHz). Persisted
+    // per-band per-slice; on reload the persisted value is a display seed that
+    // the first bind replaces with the stream's actual rate.
+    Q_PROPERTY(int sampleRateHz READ sampleRateHz WRITE setSampleRateHz NOTIFY sampleRateHzChanged)
+    // Phase 3F: diversity mode flag. Slice-A-only, gated on BoardCapabilities.hasDiversityReceiver.
+    // When true, DDC migration to DDC0+DDC1 sync pair handled by codec on next applyDdcAssignment.
+    Q_PROPERTY(bool diversityEnabled READ diversityEnabled WRITE setDiversityEnabled NOTIFY diversityEnabledChanged)
+    // Phase 3F Sub-Epic G Task 2: per-band diversity controls. Persisted via
+    // saveToSettings/restoreFromSettings under Slice<N>/Band<key>/Diversity*.
+    //   phaseDeg          0..360 (default 0)
+    //   gainDb           -20..+20 (default 0)
+    //   fineNullEnabled  bool (default false)
+    // The 8-memory slots (T3) + direction-finding fields (T11) land in those
+    // tasks. The DSP path publishes these rotations through WdspEngine's
+    // process-wide external-diversity slot.
+    Q_PROPERTY(double diversityPhaseDeg READ diversityPhaseDeg WRITE setDiversityPhaseDeg NOTIFY diversityPhaseDegChanged)
+    Q_PROPERTY(double diversityGainDb READ diversityGainDb WRITE setDiversityGainDb NOTIFY diversityGainDbChanged)
+    Q_PROPERTY(bool diversityFineNullEnabled READ diversityFineNullEnabled WRITE setDiversityFineNullEnabled NOTIFY diversityFineNullEnabledChanged)
+    // Phase 3F: derived from pan zoom state. When true, this slice's pan is zoomed beyond DDC bandwidth
+    // and needs wideband wing data. Triggers Alex BPF bypass on this slice's chain.
+    Q_PROPERTY(bool widebandExtensionRequested READ widebandExtensionRequested WRITE setWidebandExtensionRequested NOTIFY widebandExtensionRequestedChanged)
+    // Phase 3F: true when this slice's DDC is reclaimed by PureSignal during MOX.
+    // Driven by PureSignal coordinator + MoxController. UI greys the pan + shows "PS HOLD" pill.
+    Q_PROPERTY(bool psPaused READ psPaused WRITE setPsPaused NOTIFY psPausedChanged)
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     Q_PROPERTY(bool   locked          READ locked          WRITE setLocked          NOTIFY lockedChanged)
@@ -256,6 +329,30 @@ class SliceModel : public QObject {
     Q_PROPERTY(double mnrBias      READ mnrBias      WRITE setMnrBias      NOTIFY mnrBiasChanged)
     Q_PROPERTY(double mnrGsmooth   READ mnrGsmooth   WRITE setMnrGsmooth   NOTIFY mnrGsmoothChanged)
     Q_PROPERTY(bool   snbEnabled      READ snbEnabled      WRITE setSnbEnabled      NOTIFY snbEnabledChanged)
+    Q_PROPERTY(bool   anfEnabled      READ anfEnabled      WRITE setAnfEnabled      NOTIFY anfEnabledChanged)
+    // ── NB1 / NB2 / SNB detailed tuning (Setup -> DSP -> NB/SNB) ────────────
+    // These eight used to be radio-global AppSettings keys that the setup page
+    // pushed straight to WDSP with a hardcoded channel 0, so tuning the
+    // blanker always hit receiver A.
+    //
+    // The NB1 and NB2 five are per-slice PROPERTIES but stream-shared
+    // BEHAVIOUR: RadioModel mirrors them across every slice on the same DDC,
+    // because SetEXTANB* writes panb[id] and SetEXTNOBMode writes pnob[id]
+    // (Thetis wdsp/nob.c:376-423 + wdsp/nobII.c:658-663 [v2.10.3.15]), the
+    // single per-receiver blankers of struct _rcvr (cmaster.h:74-82). Same
+    // reasoning as nbMode; see the mirror in RadioModel::addSlice.
+    //
+    // The SNB three are genuinely independent per slice: SetRXASNBA* writes
+    // rxa[channel].snba (wdsp/snb.c:621-670 [v2.10.3.15]), one per WDSP
+    // channel, and NereusSDR gives every slice its own channel.
+    Q_PROPERTY(int    nb1Threshold    READ nb1Threshold    WRITE setNb1Threshold    NOTIFY nb1ThresholdChanged)
+    Q_PROPERTY(double nb1TransitionMs READ nb1TransitionMs WRITE setNb1TransitionMs NOTIFY nb1TransitionMsChanged)
+    Q_PROPERTY(double nb1LeadMs       READ nb1LeadMs       WRITE setNb1LeadMs       NOTIFY nb1LeadMsChanged)
+    Q_PROPERTY(double nb1LagMs        READ nb1LagMs        WRITE setNb1LagMs        NOTIFY nb1LagMsChanged)
+    Q_PROPERTY(int    nb2Mode         READ nb2Mode         WRITE setNb2Mode         NOTIFY nb2ModeChanged)
+    Q_PROPERTY(double snbK1           READ snbK1           WRITE setSnbK1           NOTIFY snbK1Changed)
+    Q_PROPERTY(double snbK2           READ snbK2           WRITE setSnbK2           NOTIFY snbK2Changed)
+    Q_PROPERTY(int    snbOutputBandwidthHz READ snbOutputBandwidthHz WRITE setSnbOutputBandwidthHz NOTIFY snbOutputBandwidthHzChanged)
     Q_PROPERTY(bool   apfEnabled      READ apfEnabled      WRITE setApfEnabled      NOTIFY apfEnabledChanged)
     Q_PROPERTY(int    apfTuneHz       READ apfTuneHz       WRITE setApfTuneHz       NOTIFY apfTuneHzChanged)
     Q_PROPERTY(bool   binauralEnabled READ binauralEnabled WRITE setBinauralEnabled NOTIFY binauralEnabledChanged)
@@ -380,16 +477,80 @@ public:
     int sliceIndex() const { return m_sliceIndex; }
     void setSliceIndex(int idx) { m_sliceIndex = idx; }
 
-    // Panadapter assignment (-1 = unassigned)
+    // Panadapter assignment (-1 = unassigned).
+    // Legacy int handle. Retained for any pre-3F callers; the authoritative
+    // pan association is panKey() below (a "pan-N" string addressable in
+    // PanadapterStack). Phase 3F multi-pan routing uses panKey exclusively.
     int panId() const { return m_panId; }
     void setPanId(int id) { m_panId = id; }
 
+    // Phase 3F multi-pan: the owning pan's string id ("pan-0", "pan-1", ...).
+    // This is the real source of truth for which SpectrumWidget hosts this
+    // slice's VfoWidget. setPanKey emits panKeyChanged so MainWindow can
+    // migrate the flag (remove from the old pan, re-add on the new one),
+    // mirroring AetherSDR's SliceModel::panId() string + panIdChanged.
+    // (AetherSDR uses the name "panId" for its string; NereusSDR keeps its
+    // existing int panId and names the string panKey to avoid the clash.)
+    QString panKey() const { return m_panKey; }
+    void setPanKey(const QString& key);
+
     // Which receiver/DDC this slice feeds (-1 = unassigned)
-    int receiverIndex() const { return m_receiverIndex; }
-    void setReceiverIndex(int idx) { m_receiverIndex = idx; }
 
     int wdspChannelId() const { return m_wdspChannelId; }
     void setWdspChannelId(int id) { m_wdspChannelId = id; }
+
+    // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
+    /// A for slice 0, B for slice 1, and so on -- DERIVED from sliceIndex, not
+    /// stored.
+    ///
+    /// It used to return m_sliceLetter, which defaults to 'A' and had no
+    /// production caller for its setter, so every slice reported 'A'. Readers
+    /// guarded with `sliceLetter().isNull() ? QChar('A' + sliceIndex()) : ...`
+    /// (RxApplet.cpp:1297) never took the fallback, because a defaulted QChar
+    /// is 'A' and not null -- so the slice buttons read A, A, A instead of
+    /// A, B, C. PanadapterApplet.cpp:141 documented the same trap and worked
+    /// around it locally; AntennaPickerMenu.cpp:36 did not and mislabelled
+    /// every slice.
+    ///
+    /// Deriving makes all three correct by construction. Slice ids are stable
+    /// for the life of a slice and are never renumbered, so there is nothing
+    /// for a stored copy to add.
+    QChar sliceLetter() const {
+        return QChar(QLatin1Char(static_cast<char>('A' + m_sliceIndex)));
+    }
+
+    int chainIndex() const { return m_chainIndex; }
+    void setChainIndex(int idx);
+
+    int ddcIndex() const { return m_ddcIndex; }
+    void setDdcIndex(int ddc);
+
+    int  streamIndex() const { return m_streamIndex; }
+    void setStreamIndex(int idx);
+    double shiftOffsetHz() const { return m_shiftOffsetHz; }
+    void setShiftOffsetHz(double hz);
+
+    int sampleRateHz() const { return m_sampleRateHz; }
+    void setSampleRateHz(int hz);
+
+    bool diversityEnabled() const { return m_diversityEnabled; }
+    void setDiversityEnabled(bool on);
+
+    // Phase 3F Sub-Epic G Task 2: per-band diversity tuning.
+    double diversityPhaseDeg() const { return m_diversityPhaseDeg; }
+    void setDiversityPhaseDeg(double deg);
+
+    double diversityGainDb() const { return m_diversityGainDb; }
+    void setDiversityGainDb(double db);
+
+    bool diversityFineNullEnabled() const { return m_diversityFineNullEnabled; }
+    void setDiversityFineNullEnabled(bool on);
+
+    bool widebandExtensionRequested() const { return m_widebandExtensionRequested; }
+    void setWidebandExtensionRequested(bool on);
+
+    bool psPaused() const { return m_psPaused; }
+    void setPsPaused(bool paused);
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
@@ -561,6 +722,29 @@ public:
     bool   snbEnabled()      const { return m_snbEnabled; }
     void   setSnbEnabled(bool v);
 
+    bool   anfEnabled()      const { return m_anfEnabled; }
+    void   setAnfEnabled(bool v);
+
+    // NB1 / NB2 tuning: per-slice storage, stream-shared behaviour (mirrored
+    // by RadioModel across slicesOnStream). SNB tuning: genuinely per slice.
+    // See the Q_PROPERTY block for the WDSP residency that settles the split.
+    int    nb1Threshold()    const { return m_nb1Threshold; }
+    void   setNb1Threshold(int v);
+    double nb1TransitionMs() const { return m_nb1TransitionMs; }
+    void   setNb1TransitionMs(double v);
+    double nb1LeadMs()       const { return m_nb1LeadMs; }
+    void   setNb1LeadMs(double v);
+    double nb1LagMs()        const { return m_nb1LagMs; }
+    void   setNb1LagMs(double v);
+    int    nb2Mode()         const { return m_nb2Mode; }
+    void   setNb2Mode(int v);
+    double snbK1()           const { return m_snbK1; }
+    void   setSnbK1(double v);
+    double snbK2()           const { return m_snbK2; }
+    void   setSnbK2(double v);
+    int    snbOutputBandwidthHz() const { return m_snbOutputBandwidthHz; }
+    void   setSnbOutputBandwidthHz(int v);
+
     bool   apfEnabled()      const { return m_apfEnabled; }
     void   setApfEnabled(bool v);
 
@@ -725,6 +909,20 @@ signals:
     void activeChanged(bool active);
     void txSliceChanged(bool tx);
 
+    // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
+    void chainIndexChanged(int idx);
+    void ddcIndexChanged(int ddc);
+    void streamIndexChanged(int idx);      // Phase 3F Sub-Epic I
+    void shiftOffsetHzChanged(double hz);  // Phase 3F Sub-Epic I
+    void panKeyChanged(const QString& key);  // Phase 3F multi-pan routing
+    void sampleRateHzChanged(int hz);
+    void diversityEnabledChanged(bool on);
+    void diversityPhaseDegChanged(double deg);     // Phase 3F Sub-Epic G T2
+    void diversityGainDbChanged(double db);         // Phase 3F Sub-Epic G T2
+    void diversityFineNullEnabledChanged(bool on);  // Phase 3F Sub-Epic G T2
+    void widebandExtensionRequestedChanged(bool on);
+    void psPausedChanged(bool paused);
+
     // ── Phase 3G-10 Stage 1 stubs ──
     void lockedChanged(bool v);
     void mutedChanged(bool v);
@@ -786,6 +984,15 @@ signals:
     void mnrBiasChanged(double v);
     void mnrGsmoothChanged(double v);
     void snbEnabledChanged(bool v);
+    void anfEnabledChanged(bool v);
+    void nb1ThresholdChanged(int v);
+    void nb1TransitionMsChanged(double v);
+    void nb1LeadMsChanged(double v);
+    void nb1LagMsChanged(double v);
+    void nb2ModeChanged(int v);
+    void snbK1Changed(double v);
+    void snbK2Changed(double v);
+    void snbOutputBandwidthHzChanged(int v);
     void apfEnabledChanged(bool v);
     void apfTuneHzChanged(int hz);
     void binauralEnabledChanged(bool v);
@@ -836,8 +1043,23 @@ private:
     bool    m_txSlice{false};
     int     m_sliceIndex{0};
     int     m_panId{-1};
-    int     m_receiverIndex{-1};
+    QString m_panKey;                    // Phase 3F: owning pan id ("pan-N")
     int     m_wdspChannelId{-1};
+
+    // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
+    int     m_chainIndex{0};     // Phase 3F: 0 or 1 on 2-ADC boards; always 0 on 1-ADC
+    int     m_ddcIndex{-1};      // Phase 3F: codec-assigned DDC; -1 = unassigned sentinel
+    int    m_streamIndex{-1};     // Phase 3F Sub-Epic I: -1 = unbound
+    double m_shiftOffsetHz{0.0};  // offset from stream centre
+    int     m_sampleRateHz{kDefaultSampleRate};  // Phase 3F: per-slice DDC sample rate; default 192 kHz (NereusSDR::kDefaultSampleRate)
+    bool    m_diversityEnabled{false};  // Phase 3F: Slice-A-only diversity mode; gated on BoardCapabilities.hasDiversityReceiver
+    // Phase 3F Sub-Epic G Task 2: per-band diversity tuning. Defaults match
+    // a passive reference-receiver setup (no rotation, no gain bias).
+    double  m_diversityPhaseDeg{0.0};       // 0..360 deg
+    double  m_diversityGainDb{0.0};         // -20..+20 dB
+    bool    m_diversityFineNullEnabled{false};
+    bool    m_widebandExtensionRequested{false};  // Phase 3F: true when pan zoom exceeds DDC bandwidth; triggers Alex BPF bypass
+    bool    m_psPaused{false};  // Phase 3F: true when DDC reclaimed by PureSignal during MOX; UI shows "PS HOLD" pill
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     bool   m_locked{false};           // Neutral default — no Thetis citation needed
@@ -920,6 +1142,23 @@ private:
     double m_mnrGsmooth  = 0.70;   // MacNRFilter::DEF_GSMOOTH; range 0.0-1.0
 
     bool   m_snbEnabled{false};       // Neutral default — feature off at start
+    bool   m_anfEnabled{false};       // Neutral default, feature off at start
+    // NB1 / NB2 / SNB detailed tuning. Defaults are Thetis's own widget
+    // defaults, carried over verbatim from the radio-global AppSettings keys
+    // the NB/SNB setup page used to write: udDSPNB=30, udDSPNBTransition /
+    // Lead / Lag = 0.01 ms, comboDSPNOBmode=0, udDSPSNBThresh1=8.0,
+    // udDSPSNBThresh2=20.0 (setup.designer.cs grpDSPNB:44399-44604 +
+    // grpDSPSNB:44280-44398 [v2.10.3.13]). SNB output bandwidth has no Thetis
+    // Setup control (Thetis sets it per mode at rxa.cs:112-124); 6000 Hz is
+    // NereusSDR's existing native default for that override.
+    int    m_nb1Threshold{30};
+    double m_nb1TransitionMs{0.01};
+    double m_nb1LeadMs{0.01};
+    double m_nb1LagMs{0.01};
+    int    m_nb2Mode{0};
+    double m_snbK1{8.0};
+    double m_snbK2{20.0};
+    int    m_snbOutputBandwidthHz{6000};
     bool   m_apfEnabled{false};       // Neutral default — feature off at start
     int    m_apfTuneHz{0};            // Neutral default — zero tune offset
     bool   m_binauralEnabled{false};  // Neutral default — feature off at start

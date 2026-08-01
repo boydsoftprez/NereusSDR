@@ -146,7 +146,7 @@ function(nereus_add_test name)
     # runs can (and have — see v0.1.1 alpha) silently wipe the
     # developer's NereusSDR.settings via P1FakeRadio-keyed test writes.
     # 2026-05-26 KG4VCF: EXCLUDE_FROM_ALL makes test executables NOT
-    # part of the default `cmake --build build` target.  513 test
+    # part of the default `cmake --build build` target.  526 test
     # binaries × non-trivial link time = real dev-loop pain when a
     # single source change forces all of them to relink.  Devs who
     # want to run tests use:
@@ -406,6 +406,8 @@ nereus_add_test(tst_applet_ps_wiring)
 # Source: pre-code review §11.3 per-board table.
 nereus_add_test(tst_board_capabilities_mic_jack)
 
+nereus_add_test(tst_board_capabilities_phase3f)
+
 nereus_add_test(tst_radio_discovery_parse)
 # TEST_DATA_DIR lets the fixture loader resolve paths relative to the tests/
 # source directory regardless of where the build tree lives.
@@ -646,6 +648,11 @@ nereus_add_test(tst_p2_codec_orionmkii)
 # ── Phase 3P-B Task 5: P2CodecSaturn — Saturn BPF1 band-edge override ──
 nereus_add_test(tst_p2_codec_saturn)
 
+# Codex review, PR #293: PureSignal reclaims DDC0 on a 1-ADC Hermes-class
+# board while transmitting, so no user stream may still be mapped onto it
+# (Thetis console.cs:8449-8456 [v2.10.3.15]).
+nereus_add_test(tst_p2_codec_hermes)
+
 # ── Phase 3M-4 Task 5: per-board PsDdcConfig codec dispatch ──
 # Verifies every codec subclass (P1CodecStandard / P1CodecHl2 /
 # P1CodecAnvelinaPro3 / P1CodecRedPitaya / P2CodecOrionMkII /
@@ -718,6 +725,14 @@ nereus_add_test(tst_rx_dsp_worker_thread)
 # only for 768 kHz and produced fexchange2 size mismatches at every
 # other rate after PR #44 changed the default to 192 kHz.
 nereus_add_test(tst_rx_dsp_worker_buffer_sizing)
+
+# Phase 3F Sub-Epic I Task 4: RxDspWorker per-stream accumulation and
+# per-slice fan-out.  processIqBatch used to accept a receiverIndex and
+# ignore it, so a second DDC's samples landed in Slice A's accumulator and
+# corrupted its audio.  Pins: streams accumulate independently, each drains
+# at its own threshold, every slice bound to a stream is offered the drained
+# chunk, and an unbound stream processes nothing.
+nereus_add_test(tst_rx_dsp_worker_multi_slice)
 
 # ── Phase 3G-10 VFO DSP parity + AetherSDR flag port ─────────────────────
 nereus_add_test(tst_vfo_level_bar)
@@ -1104,6 +1119,15 @@ nereus_add_test(tst_vax_channel_selector)
 # ── Phase 3O Sub-Phase 2: MasterMixer ─────────────────────────────────────
 nereus_add_test(tst_master_mixer)
 
+# ── Phase 3F Sub-Epic I closeout C1: multi-slice audio reaches the mixer ──
+nereus_add_test(tst_audio_engine_multi_slice_mix)
+
+# ── Phase 3F Sub-Epic J Task 9: anti-VOX hears every slice, not just A ────
+# Membership mirrors the speakers mixer, TX monitor excluded, zero slew,
+# and one drained block per audio period (the cadence DEXP was configured
+# for, which the retired slice-0 gate used to guarantee).
+nereus_add_test(tst_audio_engine_antivox_mix)
+
 # ── Phase 3O Sub-Phase 3: PortAudioBus ────────────────────────────────────
 nereus_add_test(tst_port_audio_bus)
 
@@ -1459,6 +1483,218 @@ target_compile_definitions(tst_antenna_control_tab PRIVATE NEREUS_BUILD_TESTS)
 # AlexController::antennaChanged fires for the current band.
 nereus_add_test(tst_rxapplet_antenna_buttons)
 target_compile_definitions(tst_rxapplet_antenna_buttons PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3F Sub-Epic B Task 11: AlexController per-ADC BPF nested types ─────
+# Verifies that AlexAdcState struct, BpfMode enum, and BpfEffective enum
+# exist as nested public types on AlexController, with correct default
+# initialization. Tasks 12-13 add the state members and recomputeBpf logic.
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_alex_controller_per_adc_bpf)
+
+# ── Phase 3F: per-ADC BPF decision reaches the wire (CT1IQI, PR #293) ─────────
+# Half 1: RadioModel feeds AlexController::notifySlicesOnAdc from the live
+#         slice set, grouped by the ADC each slice's stream sits on.
+# Half 2: the resulting per-ADC decision composes the Alex0 / Alex1 HPF bytes
+#         instead of the last-retuned receiver's frequency.
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_alex_per_adc_bpf_wire)
+
+# ── Phase 3F: an effective-BPF change pushes on its OWN trigger ───────────────
+# republishAlexAdcSlices is the only producer of AlexRxBpf, and it used to be
+# reachable only from requestDdcAssignment and ConnectionState::Connected.
+# Neither of the two state changes that flip AlexAdcState::effective (operator
+# override via FilterPolicyDialog, and wideband) went through either, so the
+# bottom-bar CH label went amber while the preselector stayed where it was
+# until the next VFO nudge. Thetis pushes from the setter with no deferral
+# (console.cs:18793-18806 AlexHPFBypass [v2.10.3.15]).
+# Also locks the re-entrancy guard: one band-crossing retune, one push.
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_alex_bpf_policy_push)
+
+# ── RF-safety: the Alex TX low-pass is selected from the TRANSMIT frequency ───
+# P2RadioConnection::setReceiverFrequency used to recompute the LPF from the
+# receive frequency it was handed, and both Alex words read that one mask, so
+# the TX low-pass tracked whichever DDC was retuned last. Thetis keeps two
+# masks and routes writes by intent (ChannelMaster/netInterface.c:682-726
+# SetAlexLPFBits(bits, isTX, isMox) [v2.10.3.15]).
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_alex_tx_lpf_source)
+
+# ── Which frequency selects the Protocol 1 Alex low-pass (bank 10 C4) ────────
+# P1 carries one low-pass field, not P2's Alex0/Alex1 pair, and Thetis fills it
+# from prbpfilter -- the Alex0 struct (networkproto1.c:587-590 [v2.10.3.15];
+# mi0bot's HL2 loop does the same at :1085-1088 [v2.10.3.14-beta1]). Alex0 is
+# written by the `isMox || !isTX` arm of SetAlexLPFBits, so the byte carries the
+# transmit selection while keyed and the RECEIVE selection while not. NereusSDR
+# wrote it only from setTxFrequency and emitted it in both states, so with the
+# transmitter bound to one slice and the operator listening on another the
+# receiver sat behind the transmit band's low-pass. Also locks which receive
+# frequency wins: UpdateAlexTXFilter takes the higher of the two on a board
+# whose RX2 shares the Alex chain (console.cs:15487-15498 [v2.10.3.15]).
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_p1_alex_lpf_word_source)
+
+# ── A band change must retune the DDC even while CTUN holds it ───────────────
+# CTUN pins the DDC via ReceiverManager::m_ddcFreqLocked so a VFO nudge inside
+# the pinned window moves the slice shift instead of retuning hardware. A band
+# change is a different act: the allocator returns NewStream / RetunedStream,
+# meaning the stream CENTRE moves, and bindSliceToStream pushed that through
+# setReceiverFrequency, where the same lock swallowed it. Confirmed on a live
+# HL2 2026-07-31: a 40 m to 60 m press gave outcome=NewStream then a dropped
+# emit with ddcLocked=true, leaving the Alex high-pass and the receive
+# low-pass on the previous band. NereusSDR-original: no Thetis port.
+nereus_add_test(tst_band_change_retunes_ddc_in_ctun)
+
+# ── RF-safety companion: the transmit frequency comes from the TX-bound slice ─
+# Splitting the LPF masks only holds if the transmit frequency itself is taken
+# from the slice bound to the transmitter, not from whichever slice happens to
+# be active. Thetis guards its VFO A arm with !chkVFOBTX.Checked for the same
+# reason (console.cs:31889-31893 [v2.10.3.15]).
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_tx_frequency_follows_tx_slice)
+
+# ── Phase 3F Sub-Epic B Task 17: AlexController event-matrix coverage ─────────
+# Verifies the 16-row event trigger matrix from design §10:
+#   - cross-band retune emits bpfStateChanged
+#   - same-band retune is idempotent (no spurious emit)
+#   - wideband active overrides operator ForceBand mode
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_alex_controller_event_matrix)
+
+# ── Phase 3F Sub-Epic C Task 1: TxSliceArbiter skeleton ─────────────────────
+# Skeleton smoke test: default stable binding is unbound. Full handoff coverage
+# lands in Task 3. NereusSDR-original: no Thetis port.
+nereus_add_test(tst_tx_slice_arbiter)
+
+# ── The single-TX invariant, end to end through RadioModel ──────────────────
+# requestHandoff was the only writer of SliceModel::txSlice and it early-
+# returns on a no-op, so a session that never handed TX to another slice left
+# every slice unflagged and silently disabled every consumer that asks which
+# slice transmits. Pins: exactly one slice flagged from the first addSlice,
+# across add / remove / handoff, and SliceConfig::txBound reaching the codec.
+# NereusSDR-original: no Thetis port (Thetis has a fixed VFO A/B TX model).
+nereus_add_test(tst_tx_slice_binding_invariant)
+
+# ── Phase 3F Sub-Epic D Task 1+2: PanadapterApplet skeleton + slice assoc ──
+# Skeleton + slice association API coverage for the per-pan container that
+# hosts SpectrumWidget. Structurally ported from AetherSDR
+# src/gui/PanadapterApplet.{h,cpp} [@0cd4559]; see
+# docs/attribution/aethersdr-reconciliation.md Bucket A.
+nereus_add_test(tst_panadapter_applet_slice_assoc)
+
+# ── Phase 3F Sub-Epic D Task 3: PanadapterStack skeleton ────────────────────
+# Default-state contract (layout='1', count=1) for the pan layout manager.
+# Structurally ported from AetherSDR src/gui/PanadapterStack.{h,cpp}
+# [@0cd4559]; applyLayout / floatPanadapter / rebuildSplitters stubbed for
+# Tasks 4-8.  See docs/attribution/aethersdr-reconciliation.md Bucket A.
+nereus_add_test(tst_panadapter_stack_layouts)
+
+# ── Phase 3F Sub-Epic E Task 1: SpectrumStatusOverlay widget ────────────────
+# Top-right per-pan overlay widget for the Phase 3F multi-slice UI atlas.
+# NereusSDR-original (no upstream port). See
+# docs/architecture/2026-05-26-phase3f-sub-epic-e-ui-atlas-plan.md Task 1.
+nereus_add_test(tst_spectrum_status_overlay)
+
+# ── Phase 3F: the WIDE badge lights per bypassed chain, and only there ──────
+# SpectrumStatusOverlay::setWideBpf was painted but had zero callers, so an
+# operator whose RX preselector had gone wide (multi-range auto-bypass,
+# extended view, or their own Filter Policy override) had no per-pan
+# indication of it. The bottom-bar CH label was the only surface and it
+# cannot say WHICH pan is exposed on a multi-pan layout.
+# Locks the routing (pan -> slices -> stream -> ADC -> BpfEffective), the
+# per-chain contract (a filtered chain's pan stays dark while another chain
+# is wide), the single-slice no-regression case, and the per-cause reason
+# strings fixed by design doc §16.4.4.
+# NereusSDR-original: no upstream port.
+nereus_add_test(tst_pan_wide_badge)
+
+# ── Phase 3F: the per-pan status overlay paints its own slice's state ───────
+# PanadapterApplet::updateStatusOverlay shipped with zero production callers
+# (Sub-Epic E plan Task 2 Step 4 was written and never executed), so every
+# pan painted the widget's construction-time placeholders -- slice "A",
+# "0.000", "USB", "CH 0" -- regardless of what it was tuned to, right next
+# to the WIDE pill that went live in 00ab9522.
+# Locks: the per-pan routing (a pan shows its own activeSliceIndex, so two
+# pans differ), the retune trigger, the slice-letter derivation shared with
+# every other display site, and above all that the CH tag resolves the ADC
+# chain through the SAME RadioModel::sliceChainIndex the WIDE badge uses --
+# including the stable-slice-id case a positional lookup gets wrong after a
+# mid-list removal.
+# NereusSDR-original: no upstream port.
+nereus_add_test(tst_pan_status_overlay)
+
+# ── Phase 3F Sub-Epic E Task 3: per-pan status-overlay badge clicks ─────────
+# The badges paint on every pan (00ab9522 lit WIDE, 0896b4f3 drove the whole
+# overlay from live state) but MainWindow connected txBadgeClicked /
+# wideBadgeClicked / chainTagClicked for pan-0 alone, so on a multi-pan
+# layout they displayed correctly everywhere and responded nowhere else.
+# Covers reachability (every pan, including ones a layout switch creates),
+# target (the clicked pan's chain, not slice 0's), and the slice-ID to
+# list-POSITION conversion the TX handoff needs.
+# NereusSDR-original: no upstream port.
+nereus_add_test(tst_pan_badge_click_wiring)
+
+# ── 2026-07-28 bench regression: click-to-tune always tuned flag A ──────────
+# Two slices on one pan, and clicking the spectrum retuned the first one added
+# however many times the operator selected the other flag. RadioModel's global
+# active slice and PanadapterApplet's per-pan one were independent, and only
+# the global one had a writer: PanadapterApplet::addSlice seeded the pan once
+# and nothing ever moved it. MainWindow::sliceForPan reads the pan's value, so
+# click-to-tune, the filter-edge drag, the CH tag and the pan TX pill all
+# latched onto whichever slice reached the pan first.
+# Locks: the pan that hosts the selected slice follows it, pans that do not
+# host it are left alone (per-pan controls act on their own pan), the slice-ID
+# to list-POSITION conversion the activation wires need after a mid-list
+# removal, and the migration invariant that no pan keeps pointing at a slice
+# it no longer hosts.
+# NereusSDR-original: no upstream port.
+nereus_add_test(tst_pan_active_slice_sync)
+
+# ── Phase 3F Sub-Epic D Task 7: FFTRouter receiver-to-pan fan-out ───────────
+# NereusSDR-original core class. One receiver (DDC) fans out to N pans
+# (different zoom levels of the same I/Q data) per AetherSDR overlay model.
+# Test covers basic subscription topology (single, multi-pan-per-receiver,
+# remove).
+nereus_add_test(tst_fft_router_fanout)
+
+# ── Phase 3F Sub-Epic I Task 2: SliceStreamAllocator placement policy ──────
+# NereusSDR-original pure-policy class. Decides whether a slice shares an
+# active DDC stream's window (shift offset only) or claims a free DDC.
+# Window-fit rule ports the strict inequality from Thetis
+# console.cs:31913-31925 [v2.10.3.15]; promoting to a free DDC instead of
+# disabling Multi-RX is a documented divergence (design doc §3).
+nereus_add_test(tst_slice_stream_allocator)
+
+# ── Phase 3F Sub-Epic I Tasks 5-6: DDC stream pool + slice binding ─────────
+# RadioModel-level coverage of the pool the allocator sizes: pool sizing per
+# SKU, first-slice activation, same-band sharing (shift offset only),
+# cross-band promotion to a second DDC, four slices on one DDC, and the
+# hardware-exhaustion rejection path.
+nereus_add_test(tst_stream_pool_binding)
+
+# ── Phase 3F: WDSP channel-id allocation table ────────────────────────────
+# WDSP keys every channel off one global array (channel.c:29) and OpenChannel
+# overwrites a slot without closing it, so an id collision silently runs two
+# wdspmain threads on the same channel and leaks the first one's buffers.
+# Pins the upstream numbering (Thetis ChannelMaster/cmsetup.c:176-191 chid()
+# and dsp.cs:926-944 WDSP.id() [v2.10.3.15]): RX slices occupy the low block,
+# TX sits immediately above it, PS feedback above TX. Also pins the ceiling
+# against BoardCapsTable::all() and drives RadioModel::openRxChannelPool to
+# assert which ids it really opens.
+nereus_add_test(tst_wdsp_channel_id_map)
+
+# ── Phase 3F Sub-Epic I Tasks 8-9: per-stream FFT dispatch topology ────────
+# Pins the FFTRouter contract MainWindow's per-stream FFTEngine pool relies
+# on: distinct streams reach distinct pans, co-hosted slices subscribe their
+# shared pan once (not once per slice), one stream can feed several pans at
+# different zooms, and a wholesale rebuild drops stale subscriptions.
+nereus_add_test(tst_fft_engine_pool)
+
+# ── Phase 3F Sub-Epic D Task 8: PanFloatingWindow (multi-monitor detach) ────
+# Top-level QWidget wrapper for detaching a PanadapterApplet to a second
+# monitor. Structurally ported from AetherSDR src/gui/PanFloatingWindow.{h,cpp}
+# [@0cd4559]; see docs/attribution/aethersdr-reconciliation.md Bucket A.
+nereus_add_test(tst_pan_floating_window)
 
 # ── Phase 3P-F Task 5a: ApolloController model ───────────────────────────────
 # Smoke test: defaults all-off (present/filter/tuner = false), individual setter
@@ -2627,15 +2863,16 @@ nereus_add_test(tst_audio_engine_rade)
 # Verifies:
 #   Stage::kStageCount == 31 (authoritative from wdsp/TXA.c:31-479 [v2.10.3.13]);
 #   createTxChannel returns a non-null TxChannel* (C++ wrapper now constructed);
-#   txChannel(1)->channelId() == 1;
+#   txChannel(kTxChannelId)->channelId() == kTxChannelId;
 #   Default Run states match create_txa() first-argument for each of 31 stages:
 #     ON : Panel, MicMeter, EqMeter, LvlrMeter, CfcMeter, Bp0, CompMeter, Alc,
 #          AlcMeter, Sip1, Calcc, OutMeter;
 #     OFF: RsmpIn, Gen0, PhRot, AmSq, Eqp, PreEmph, Leveler, CfComp, Compressor,
 #          Bp1, OsCtrl, Bp2, AmMod, FmMod, Gen1, UsLew (no run param), Iqc, Cfir,
 #          RsmpOut;
-#   destroyTxChannel → txChannel(1) returns nullptr;
-#   RX channel 0 + TX channel 1 co-exist without aliasing.
+#   destroyTxChannel → txChannel(kTxChannelId) returns nullptr;
+#   RX channel 0 + the TX channel co-exist without aliasing (Phase 3F moved
+#   the TX id above the RX slice block; see tst_wdsp_channel_id_map).
 #   Stage count correction: pre-code review §8.1 said 25; actual source has 31
 #   (PreEmph, Leveler, LvlrMeter, CfComp, CfcMeter between EqMeter and Bp0).
 #   Tests run against stub path (no HAVE_WDSP in unit-test builds); stub returns
@@ -3324,6 +3561,15 @@ target_compile_definitions(tst_audio_engine_tx_monitor_block PRIVATE NEREUS_BUIL
 # Pre-code review §10.3 + §10.4.
 nereus_add_test(tst_audio_engine_rx_leak_during_mox)
 target_compile_definitions(tst_audio_engine_rx_leak_during_mox PRIVATE NEREUS_BUILD_TESTS)
+
+# ── 2026-07-28 ANAN-G2E bench regression: the MOX gate never released ────────
+# Drives the real MoxController -> AudioEngine::setMoxState wire that
+# RadioModel's constructor makes, across the walk-interruption and
+# active-slice-move sequences an operator can produce with MOX and TUNE.
+# Asserts on both halves of the gate: m_moxActive returning to false, and
+# the withdrawn slice getting back into the mixer's readiness barrier.
+nereus_add_test(tst_audio_engine_mox_gate_release)
+target_compile_definitions(tst_audio_engine_mox_gate_release PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-1b Task F.1: PcMicSource ────────────────────────────────────────
 # Verifies that PcMicSource::pullSamples correctly dispatches to
@@ -4383,6 +4629,14 @@ if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_tci_server_lifecycle)
     target_link_libraries(tst_tci_server_lifecycle PRIVATE Qt6::WebSockets)
 
+    # Phase 3F Sub-Epic J follow-up: the LIVE broadcast path is per-slice.
+    # Task 10 fixed only the init burst, so rx_volume collapsed back to one
+    # shared value on the first master-volume change after connect, and
+    # rx_anf_enable stopped broadcasting once ANF was decoupled from the NR
+    # slot enum.  Asserts frame content on the real broadcast queue.
+    nereus_add_test(tst_tci_live_broadcast_per_slice)
+    target_link_libraries(tst_tci_live_broadcast_per_slice PRIVATE Qt6::WebSockets)
+
     # Phase 3J-1 Task 2.2: server-driven 20s ping with payload "Thetis"
     nereus_add_test(tst_tci_server_ping)
     target_link_libraries(tst_tci_server_ping PRIVATE Qt6::WebSockets)
@@ -5287,10 +5541,31 @@ nereus_add_test(tst_pgxl_connection_save)
 #   totalSizeIsMultipleOf4 (packet size and size-words field consistent).
 nereus_add_test(tst_flex_radio_discovery_broadcaster)
 
+# ── Per-radio peripherals refactor (2026-05-26) ──────────────────────────
+# Verifies the RadioModel::peripheralValue / setPeripheralValue helpers
+# and the one-shot migration that folds legacy globals (RfKit_* /
+# FourO3A_Enabled / PGXL_Manual* / TGXL_Manual*) into the connected
+# radio's hardware/<mac>/peripherals/ scope.
+# Tests: peripheralValueReturnsDefaultWhenNotConnected; peripheralValueReturnsStoredValueWhenConnected;
+#   setPeripheralValueRoundTrips; setPeripheralValueIsNoOpWhenNotConnected;
+#   migrationFoldsGlobalsToPerMacAndSetsSentinel; migrationRunsOnlyOnce;
+#   macSwitchIsolatesScope.
+nereus_add_test(tst_peripherals_settings)
+
+# ── Multi-homed-host source-IP picker (route probe) ───────────────────────
+# Tests for src/core/RouteProbe.cpp -- the shared helper PgxlConnection,
+# TgxlConnection, and FlexRadioDiscoveryBroadcaster use to ask the kernel
+# which local source IP it would pick to reach a given peer.  Tests are
+# host-portable: they assert the API contract (null input -> null result;
+# loopback / AnyIPv4 input -> null result for the "real LAN" guard) rather
+# than any specific local IP.
+nereus_add_test(tst_route_probe)
+
 # ── Phase 3P-III RF-Kit RF2K-S amplifier applet ───────────────────────────
-# Task 1: RadioModel rfKitEnabled Q_PROPERTY + AppSettings persistence.
+# Task 1: RadioModel rfKitEnabled Q_PROPERTY + per-MAC persistence.
 # Tests: defaultsFalse (no key -> false); setterPersistsAndEmits (setter
-#   writes RfKit_Enabled="True" + emits rfKitEnabledChanged(true));
+#   writes peripherals/RfKit_Enabled="True" under hardware/<mac>/ +
+#   emits rfKitEnabledChanged(true));
 #   getterReadsFromAppSettings (pre-seeded key -> getter returns true).
 nereus_add_test(tst_rfkit_radiomodel_enabled)
 
@@ -5323,8 +5598,283 @@ target_link_libraries(tst_rf2ks_connection_poll PRIVATE Qt6::Network)
 #   successResetsBackoff (testForceBackoffReset resets to 1s).
 nereus_add_test(tst_rf2ks_connection_reconnect)
 
+# Task 5: REST control verbs (4 PUT/POST endpoints).
+# RecordingAmpServer (QTcpServer, ephemeral port 0) captures raw request bytes
+# so we can assert verb + path + JSON body.
+# Poll interval set to 5000 ms so the control verb is the only request in
+# the 200 ms wait window.
+# Tests: putAntennasActive, putOperateMode, putOperationalInterface,
+#   postErrorReset.
+nereus_add_test(tst_rf2ks_connection_control)
+target_link_libraries(tst_rf2ks_connection_control PRIVATE Qt6::Network)
+
+# Task 7: Rf2ksApplet header section (Section A).
+# Tests: appletIdAndTitle (appletId=RfKit, appletTitle=RF-Kit RF2K-S);
+#   headerShowsDeviceName (device label constant, nickname+version composed);
+#   operateButtonReflectsModelState (STANDBY/OPERATE text via setOperateMode);
+#   operateButtonClickEmitsRequest (operateToggled emitted with correct bool).
+nereus_add_test(tst_rf2ks_applet_layout)
+nereus_add_test(tst_rf2ks_applet_context_menu)
+nereus_add_test(tst_rfkit_page_master_gate)
+
+# Task 13: SMeterWidget subscribes to RadioModel::externalAmpOperateChanged
+# (cross-vendor aggregator) instead of the PGXL-specific statusUpdated signal.
+# Both PGXL and RF-Kit OPERATE states flip the meter to 2 kW scale; all-STANDBY
+# reverts to barefoot.  Test seam: txScaleIs2kWForTesting() reads m_powerScaleMax.
+nereus_add_test(tst_smeter_widget_external_amp)
+
+# Phase 3F Sub-Epic A Tasks 4-6: SliceModel new Q_PROPERTYs
+# Verifies three new Q_PROPERTYs added for multi-panadapter/multi-slice support:
+#   Task 4: sliceLetter (QChar, default 'A') - per-slice letter ID for badge color
+#   Task 5: chainIndex  (int,   default 0)   - which Alex chain (ADC) hosts slice DDC
+#   Task 6: ddcIndex    (int,   default -1)  - codec-assigned DDC index; -1=unassigned
+# Source: NereusSDR-original (no Thetis upstream).
+# Design: docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §3.
+nereus_add_test(tst_slice_model_phase3f_properties)
+
+# Phase 3F Sub-Epic A Task 11: RadioModel::maxSlices() accessor.
+# Returns 1 when disconnected (safe single-slice default); returns
+# BoardCapabilities.maxSlices for the current SKU when connected.
+# Design: docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
+# Source: NereusSDR-original (no Thetis upstream).
+nereus_add_test(tst_radio_model_max_slices)
+
+# Phase 3F Sub-Epic A Task 12: SettingsSchemaVersion v5 -> v6 migration.
+# v6 is additive only (no key renames). Migration block is intentionally empty;
+# the version bump itself is the only observable change.
+# 2 tests: v5_to_v6_bumps_version_key, v6_to_v6_is_noop.
+# Source: NereusSDR-original (no Thetis upstream).
+# Design: docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §12.
+nereus_add_test(tst_settings_schema_v6_migration)
+
+# Phase 3F Sub-Epic B Task 1: SliceConfig + DdcAssignment shared structs.
+# 2 tests: slice_config_struct_has_required_fields,
+#          ddc_assignment_struct_has_required_fields.
+# Source: NereusSDR-original (structs derived from Thetis UpdateDDCs output shape).
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-b-codec-chain-plan.md Task 1.
+nereus_add_test(tst_codec_5_slice_assignment)
+
+# Phase 3F Sub-Epic B Task 15: P2RadioConnection::applyDdcAssignment slot.
+# 1 test: apply_ddc_assignment_populates_rx_state.
+# Verifies the CmdRx per-DDC region is non-zero after a DdcAssignment is applied.
+# Source: NereusSDR-original (bridge slot, no Thetis upstream).
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-b-codec-chain-plan.md Task 15.
+nereus_add_test(tst_p2_radio_connection_apply_ddc_assignment)
+
+# ── Phase 3F Sub-Epic I closeout: who owns the P2 DDC enable mask ──────────
+# 7 tests. Section 1 pins the ownership invariant at the connection boundary
+# (codec mask survives a count-derived push, single-slice case, repeated
+# pushes, and the pre-codec seed that tests/data/p2_baseline_bytes.json is
+# frozen against). Section 2 runs the reported two-slice ANAN-G2 scenario end
+# to end through RadioModel, plus an unrelated rebuildHardwareMapping and a
+# single-slice regression guard.
+# Source: NereusSDR-original. Ownership established from Thetis
+# console.cs:8537 + ChannelMaster/netInterface.c:1229-1236 [v2.10.3.15];
+# no upstream logic ported.
+nereus_add_test(tst_p2_ddc_mask_ownership)
+
+# ── Phase 3F Sub-Epic I closeout: DDC assignment crosses to the conn thread ─
+# 1 test: the_assignment_reaches_the_connection_through_its_own_thread.
+# RadioModel::invokeCodecDdcAssignment called applyDdcAssignment directly
+# from the GUI thread, tearing m_rx[] and writing the UDP socket off-thread
+# on every VFO tick. The connection is parked on a stopped QThread so a
+# direct call is distinguishable from a queued QMetaCallEvent.
+# Source: NereusSDR-original (marshalling glue, no Thetis upstream).
+nereus_add_test(tst_p2_ddc_assignment_marshalling)
+
+# ── Phase 3F Sub-Epic I closeout: wideband enable crosses to the conn thread ─
+# 2 tests: the_wideband_enable_reaches_the_connection_through_its_own_thread,
+#          the_wideband_disable_travels_the_same_route.
+# The widebandExtensionRequestedChanged handler wired by addSlice called
+# P2RadioConnection::setWidebandEnabled directly from the GUI thread, tearing
+# m_wbEnableMask (CmdGeneral byte 23, Thetis ChannelMaster/network.c:879
+# [v2.10.3.15]) against the connection thread's frame composition and writing
+# the UDP socket off-thread. Third instance of the pattern fixed for
+# applyDdcAssignment in tst_p2_ddc_assignment_marshalling; same technique, the
+# connection is parked on a stopped QThread so a direct call is
+# distinguishable from a queued QMetaCallEvent.
+# Source: NereusSDR-original (marshalling glue, no Thetis upstream).
+nereus_add_test(tst_p2_wideband_marshalling)
+
+# Codex review, PR #293: the wideband state of a chain is an OR across the
+# live slices on it, gated on BoardCapabilities::widebandAdcs, not the edge
+# from whichever slice happened to change last.
+nereus_add_test(tst_wideband_chain_state)
+
+# Codex review, PR #293: shrinking the pan layout must rehome the slices whose
+# panes were deleted, not orphan them holding a DDC.
+nereus_add_test(tst_slice_rehome_on_layout_shrink)
+
+# Bench report 2026-07-30: two pans panned and tuned together. Not a wiring
+# fault; addSlice seeds a new pan's slice on the active slice's frequency, so
+# the allocator shared the DDC and the two pans became two views of one
+# receiver. A new pan is a new receiver; +RX on an existing pan still shares.
+nereus_add_test(tst_new_pan_is_its_own_receiver)
+
+# Bench report 2026-07-31: tuning up on slice B put the TUNE tone on pan 0's
+# waterfall and in the speakers. publishDdcAssignment decided receiver
+# activation from "does this stream host slices" while the suspension block
+# twenty lines above decided from "did the codec give this stream a DDC".
+# During PureSignal transmit those disagree, so receivers the radio had
+# stopped stayed active, kept their DDC mapping, and PS feedback (the
+# transmitted signal, on DDC0, the DDC slice A held) took the ordinary RX
+# path to a panadapter and the speakers.
+nereus_add_test(tst_suspended_stream_has_no_receiver)
+
+# Bench report 2026-07-31: connecting produced no waterfall and no audio until
+# the operator nudged the VFO. connectToRadio activates receiver 0 and then
+# binds the slice pool, and that bind's requestDdcAssignment tail runs before
+# the connection object exists and before the codec is installed. With no
+# codec to ask, computeDdcAssignment returned the default assignment, whose
+# streamDdc is all -1, and the activation loop read the sentinel as "the radio
+# is not streaming this" and deactivated the receiver it had just activated.
+# Every ep6 frame was then dropped for want of a hardware mapping.
+nereus_add_test(tst_connect_routes_first_iq)
+
+# Bench report 2026-07-30, second half: pans past the first did not honour the
+# display settings. A pan opening for the first time has no per-pan keys, so
+# every read fell through to the ship defaults instead of looking like the pan
+# beside it. It now inherits pan 0 until given a value of its own.
+# Touches real display keys (AppSettings has no test-path override); every key
+# is snapshotted and restored so running the suite cannot change how the
+# operator's panadapters look.
+nereus_add_test(tst_pan_display_settings_inherit)
+
+# Codex review round 7, PR #293: a restored per-band sample rate has to reach
+# the DDC. SliceModel::restoreFromSettings called setSampleRateHz, a plain
+# property setter, so the VFO menu reported the saved rate while the receiver,
+# codec and wire stayed on the previous band's.
+nereus_add_test(tst_restored_sample_rate_reaches_the_ddc)
+
+# Codex review round 6, PR #293: Phase 3F gave TCI more slices than TCI ever
+# agreed to talk about. tx_frequency must come from the slice TxSliceArbiter
+# bound TX to rather than from receiver 0, and tagged frames must stop at the
+# advertised trx_count. Both at once, because the fixes interact: tx_frequency
+# carries no receiver index and vfo:N does.
+nereus_add_test(tst_tci_multislice_surface)
+
+# Codex review round 7, PR #293: the untagged rawIqData tap is stream zero only.
+# Its sole subscriber (TciServer) labels every frame it receives as receiver 0,
+# so once Sub-Epic I gave ReceiverManager more than one stream, a TCI client on
+# iq_start:0 was fed consecutive blocks from unrelated DDCs under one header.
+nereus_add_test(tst_legacy_iq_tap_is_stream_zero)
+
+# Bench report 2026-07-30: TUNE with PureSignal active blanked the whole bottom
+# bar for six seconds. QStatusBar::showMessage hides every non-permanent widget
+# while a message is up, and MainWindow::buildStatusBar adds the entire bar as
+# one such widget, so any notice took the CH pill, PureSignal indicator, radio
+# name, CAT/TCI state, PA/TX badges and clock with it. All twelve notices moved
+# to StatusToast. Case 1 pins the Qt behaviour that caused it, so the rest of
+# the file has a stated reason to exist.
+nereus_add_test(tst_status_toast_preserves_bottom_bar)
+
+# Phase 3F Sub-Epic C Task 7: RadioModel slice lifecycle.
+# 2 tests: addSliceOnPan_exists_and_is_callable (cap enforcement after
+# the first successful add), removeSlice_refuses_to_remove_last_slice
+# (last-slice guard).  Pattern adapted from AetherSDR MainWindow.cpp:6849-6859
+# (+RX button handler) to NereusSDR's RadioModel + SliceModel hub.
+# Source: NereusSDR-original (AetherSDR-pattern port, no Thetis upstream).
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md Task 7.
+nereus_add_test(tst_radio_model_slice_lifecycle)
+
+# Phase 3F Sub-Epic C Task 9: VfoWidget TX badge click emits
+# txHandoffRequested(sliceIndex). MainWindow forwards this signal to
+# RadioModel::txSliceArbiter()->requestHandoff() which performs the
+# MOX-safe TX-slice flip.
+# Source: NereusSDR-original (VfoWidget itself is NereusSDR-original).
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md Task 9.
+nereus_add_test(tst_vfo_widget_tx_badge_click)
+
+# Phase 3F Sub-Epic F Task 1: P2 composeCmdGeneral writes packetbuf[23]
+# wideband per-ADC enable mask per Thetis network.c:879 [v2.10.3.15].
+# 3 tests: bit0 set when ADC0 enabled, default 0 when none, per-ADC
+# bits independent. Validates both P2RadioConnection::setWidebandEnabled
+# plumbing and the buf[23] write in composeCmdGeneralLegacy +
+# P2CodecOrionMkII::composeCmdGeneral (via CodecContext::p2WbEnableMask).
+# Source: NereusSDR-original test driving a Thetis-cited port.
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-f-wideband-plan.md Task 1.
+nereus_add_test(tst_p2_wideband_enable_byte)
+
+# Phase 3F Sub-Epic F Task 2: WidebandFrameAccumulator assembles 32-packet
+# (32 x 512 samples = 16384 floats) wideband ADC frames. Test 1 covers the
+# happy path (32 in-order packets -> one frameReady). Test 2 covers Thetis's
+# sequence-error recovery: zero-pad the remainder of the partial frame,
+# emit it, then reset to wait for the next seq=0 packet
+# (network.c:591-597 [v2.10.3.15]).
+# Source: NereusSDR-original test for a NereusSDR-original class with
+# Thetis-equivalent behaviour.
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-f-wideband-plan.md Task 2.
+nereus_add_test(tst_wideband_frame_accumulator)
+
+# Phase 3F Sub-Epic F Task 4: WidebandFftEngine wraps an FFTW3 16384-pt
+# real-to-complex plan. Output is 8192 dBm-style bins (N/2+1 less DC).
+# Source: NereusSDR-original test for a NereusSDR-original class.
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-f-wideband-plan.md Task 4.
+nereus_add_test(tst_wideband_fft_engine)
+
+# Phase 3F: WdspEngine-owned external-diversity lifecycle/order/process tests
+# for create/destroy/xdiv plus SetEXTDIVRun / Nr / Output / Rotate. Ported
+# from Thetis dsp.cs:609-619 [v2.10.3.15] P/Invoke declarations.
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-g-diversity-plan.md Task 1.
+nereus_add_test(tst_rx_channel_ext_div_wrappers)
+
+# Phase 3F Sub-Epic G Task 2: per-band diversity persistence on SliceModel.
+# Round-trip phase/gain/fine-null through saveToSettings/restoreFromSettings
+# under the existing Slice<N>/Band<key>/ prefix.
+# Source: NereusSDR-original test infrastructure.
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-g-diversity-plan.md Task 2.
+nereus_add_test(tst_diversity_dialog_persistence)
+# ── PR #291 Codex review fixes ────────────────────────────────────────────
+# Capture-path helpers behind the native-rate mic resampling path.  The
+# defects only appear on a device whose native rate differs from the
+# requested 48 kHz, which no CI runner has (tst_port_audio_bus QSKIPs
+# past every device-dependent case), so the logic is exercised through
+# the two pure static helpers instead.
+# Tests: reportsStreamChannelsWhenNotResampling / reportsMonoWhenResampling
+#   (negotiatedFormat must say mono while the callback downmixes, or
+#   pullTxMic strides a mono ring as stereo and halves the rate);
+#   downmixHandlesBufferSizesAbove1024 (the old fixed 1024-float stack
+#   array dropped every frame past 1024 at the 2048 buffer size the UI
+#   offers); downmixClampsToOutputCapacity (never writes past the
+#   caller's preallocated real-time scratch).
+nereus_add_test(tst_port_audio_capture_resample)
+
+# MemoryLock stat accounting.  Callers unlock unconditionally even when
+# the lock failed (routine once RLIMIT_MEMLOCK is exhausted) and POSIX
+# munlock() succeeds on a mapped-but-unlocked range, so the counters
+# underflowed and the perf overlay showed nonsense.
+# Tests: unlockOfNeverLockedRegionLeavesStatsUnchanged;
+#   regionCountNeverGoesNegative; lockThenUnlockIsBalanced;
+#   doubleUnlockDecrementsOnlyOnce; unlockWithMismatchedLengthStillBalances.
+nereus_add_test(tst_memory_lock_accounting)
+
+# PerfMonitor rolling-stats ring.  Rewritten from a QMutex-guarded array
+# to a lock-free one because recordAudioFillMs() runs on the PortAudio
+# real-time callback; PerfMonitor shipped with no tests, so the rewrite
+# touched avg/max/min arithmetic with nothing guarding it.
+# Tests: avgMaxMinOverAFullWindow; oldSamplesFallOutOfTheWindow;
+#   concurrentPushesStayInRange (two writers is a supported case --
+#   speakers + VAX can both be live); txIqCountersAccumulateAndDeltasReset;
+#   txIqUnderrunIgnoresNonPositive.
+nereus_add_test(tst_perf_monitor_ring)
+
+# Phase 3F Sub-Epic J Task 3: a control attached to no slice targets the
+# active slice. The DSP menu used to write rxChannel(0) unconditionally.
+nereus_add_test(tst_dsp_menu_active_slice)
+
+# Phase 3F: a pan hosting several slices places each flag at its OWN slice
+# frequency. updateVfoPositions() derived one x from the pan's single m_vfoHz
+# and moved every flag to it, so co-hosted flags stacked on top of each other
+# and tracked whichever slice moved last. Bench-reported 2026-07-28.
+nereus_add_test(tst_pan_flag_positions)
+
+# Phase 3F: Qt does not constrain a plain Qt::Popup to the screen the way it
+# constrains QMenu, so the right-click waterfall panel opened below the bottom
+# edge on the lower pan of a 2v layout. Bench-reported 2026-07-28.
+nereus_add_test(tst_popup_placement)
+
 # --------------------------------------------------------------------------
-# Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix)
+# Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
 # All individual tst_* executables are EXCLUDE_FROM_ALL so a routine
 # `cmake --build build` builds only the main NereusSDR app (seconds,

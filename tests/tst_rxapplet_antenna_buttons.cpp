@@ -5,7 +5,8 @@
 //
 //  Scenarios covered:
 //   1. Construction with Ant 2 on 20m → RX button shows "ANT2" on 20m.
-//   2. Construction with Ant 3 on 20m → TX button shows "ANT3" on 20m.
+//   2. Construction with bound-slice TX intent Ant 3 on 20m → TX button
+//      shows "ANT3" on 20m.
 //   3. Band change from 20m (Ant 2) to 40m (Ant 1) → button label switches.
 //   4. AlexController::antennaChanged for current band → button repopulates.
 //   5. No panadapter (nullptr) → no crash; buttons default to "ANT1".
@@ -48,24 +49,28 @@ private slots:
 
         // Add a slice so RxApplet has a non-null slice.
         model.addSlice();
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
 
         RxApplet applet(slice, &model);
         QCOMPARE(applet.activeRxAntennaForTest(), 2);
     }
 
-    // Scenario 2: TX Ant 3 on 20m → TX button shows "ANT3" after construction.
+    // Scenario 2: bound-slice TX Ant 3 intent on 20m → TX button shows
+    // "ANT3" after construction.
     void tx_ant3_on_20m_shows_ant3_label()
     {
         RadioModel model;
         model.setBoardForTest(HPSDRHW::Hermes);
-        model.alexControllerMutable().setTxAnt(Band::Band20m, 3);
 
         model.addPanadapter();
         model.panadapters().first()->setBand(Band::Band20m);
 
         model.addSlice();
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
+        slice->setFrequency(14'200'000.0);
+        slice->setTxAntenna(QStringLiteral("ANT3"));
+        QVERIFY(slice->isTxSlice());
+        QCOMPARE(slice->txAntenna(), QStringLiteral("ANT3"));
 
         RxApplet applet(slice, &model);
         QCOMPARE(applet.activeTxAntennaForTest(), 3);
@@ -85,7 +90,7 @@ private slots:
         pan->setBand(Band::Band20m);
 
         model.addSlice();
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
 
         RxApplet applet(slice, &model);
         QCOMPARE(applet.activeRxAntennaForTest(), 2);   // on 20m → Ant 2
@@ -108,7 +113,7 @@ private slots:
         model.panadapters().first()->setBand(Band::Band20m);
 
         model.addSlice();
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
 
         RxApplet applet(slice, &model);
         QCOMPARE(applet.activeRxAntennaForTest(), 1);
@@ -128,7 +133,7 @@ private slots:
         // No addPanadapter() call — model.panadapters() is empty.
 
         model.addSlice();
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
 
         RxApplet applet(slice, &model);
         // Buttons default to whatever SliceModel initialises them to ("ANT1").

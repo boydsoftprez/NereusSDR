@@ -350,6 +350,17 @@ void RxChannel::setSampleRate(int newRateHz)
 
     m_sampleRate = newRateHz;
     m_bufferSize = bufferSizeForRate(newRateHz);
+
+    // Propagate to NB1/NB2 so initBlanker()/init_nob() recompute time
+    // constants for the new rate. Mirrors cmaster.c:464-470 [v2.10.3.13]
+    // SetXcmInrate case 0 (receiver):
+    //   SetRCVRANBBuffsize/Samplerate + SetRCVRNOBBuffsize/Samplerate.
+    // Without this, NB stays configured for the original rate and the
+    // blanker's slewtime/hangtime/advtime envelope is wrong after a
+    // setSampleRateLive — manifests as metallic ringing at higher rates.
+    if (m_nb) {
+        m_nb->setSampleRate(m_sampleRate, m_bufferSize);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -650,6 +661,14 @@ void RxChannel::setNbMode(NereusSDR::NbMode mode)
 NereusSDR::NbMode RxChannel::nbMode() const
 {
     return m_nb ? m_nb->mode() : NereusSDR::NbMode::Off;
+}
+
+// Phase 3F Sub-Epic I Task 4b. Written by RxDspWorker's drain loop before
+// each slice's processIq; read inside processIq. Release/acquire matches the
+// pairing setActiveNr() uses for the other hot-path flags.
+void RxChannel::setNoiseBlankerBypassed(bool bypassed)
+{
+    m_nbBypassed.store(bypassed, std::memory_order_release);
 }
 
 // Per-slice NB tuning pass-through (setNbTuning / nbTuning / setNbThreshold
@@ -1105,6 +1124,53 @@ void RxChannel::setSnbEnabled(bool enabled)
     if (m_nb) m_nb->setSnbEnabled(enabled);
 }
 
+// ── NB1 / NB2 / SNB detailed tuning ─────────────────────────────────────────
+// Re-added per slice after the Sub-Epic J follow-up. These were removed
+// 2026-04-22 in favour of the NB/SNB setup page calling WDSP directly, but
+// that page hardcoded channel 0, so tuning the blanker always hit receiver A
+// whichever receiver the operator was working. SliceModel owns the state now
+// and RadioModel pushes it here for the addressed slice, the same route every
+// other per-slice DSP setting takes.
+void RxChannel::setNbThreshold(double threshold)
+{
+    if (m_nb) m_nb->setNbThreshold(threshold);
+}
+
+void RxChannel::setNbTransitionMs(double ms)
+{
+    if (m_nb) m_nb->setNbTauMs(ms);
+}
+
+void RxChannel::setNbLeadMs(double ms)
+{
+    if (m_nb) m_nb->setNbLeadMs(ms);
+}
+
+void RxChannel::setNbLagMs(double ms)
+{
+    if (m_nb) m_nb->setNbLagMs(ms);
+}
+
+void RxChannel::setNb2Mode(int mode)
+{
+    if (m_nb) m_nb->setNb2Mode(mode);
+}
+
+void RxChannel::setSnbK1(double k1)
+{
+    if (m_nb) m_nb->setSnbK1(k1);
+}
+
+void RxChannel::setSnbK2(double k2)
+{
+    if (m_nb) m_nb->setSnbK2(k2);
+}
+
+void RxChannel::setSnbOutputBandwidthHz(int bandwidthHz)
+{
+    if (m_nb) m_nb->setSnbOutputBandwidthHz(bandwidthHz);
+}
+
 // ---------------------------------------------------------------------------
 // APF — Audio Peak Filter
 // ---------------------------------------------------------------------------
@@ -1461,10 +1527,19 @@ void RxChannel::processIq(float* inI, float* inQ,
     // They operate in-place on separate I and Q buffers.
     // From Thetis wdsp-integration.md section 4.3
     // From design doc §sub-epic B — mutually exclusive NB/NB2 via one atomic.
-    switch (m_nb ? m_nb->mode() : NereusSDR::NbMode::Off) {
-        case NereusSDR::NbMode::NB:  xanbEXTF(m_channelId, inI, inQ); break;
-        case NereusSDR::NbMode::NB2: xnobEXTF(m_channelId, inI, inQ); break;
-        case NereusSDR::NbMode::Off: /* no-op */                      break;
+    //
+    // Phase 3F Sub-Epic I Task 4b: skipped on co-hosted slices. Because the
+    // blanker runs IN PLACE on the caller's legs, and every slice bound to a
+    // DDC stream is handed the same chunk, only the stream-owning slice may
+    // blank it; the rest would re-blank an already-blanked buffer. Upstream
+    // holds one ANB / NOB per receiver rather than per sub-receiver
+    // (ChannelMaster cmaster.h:79-81 [v2.10.3.15]).
+    if (!m_nbBypassed.load(std::memory_order_acquire)) {
+        switch (m_nb ? m_nb->mode() : NereusSDR::NbMode::Off) {
+            case NereusSDR::NbMode::NB:  xanbEXTF(m_channelId, inI, inQ); break;
+            case NereusSDR::NbMode::NB2: xnobEXTF(m_channelId, inI, inQ); break;
+            case NereusSDR::NbMode::Off: /* no-op */                      break;
+        }
     }
 
     // Main WDSP processing: demod, AGC, NR, ANF, filter, EQ, audio panel.

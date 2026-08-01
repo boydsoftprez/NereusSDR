@@ -59,6 +59,7 @@
 #include "setup/GeneralOptionsPage.h"
 // Hardware
 #include "setup/HardwarePage.h"
+#include "setup/HardwareDdcRoutingPage.h"
 // PA (Setup IA reshape Phase 2 — placeholder pages, content lands in Phase 3+)
 #include "setup/PaSetupPages.h"
 // Phase 8 of #167: per-SKU PA visibility wiring needs RadioInfo
@@ -93,6 +94,8 @@
 // Advanced / PGXL Interlock entries into a single tree node under a
 // master toggle.  PgxlInterlockPage's include lives inside FourO3APage.cpp.
 #include "setup/FourO3APage.h"
+// RF-Kit RF2K-S integration page (Settings -> CAT & Network -> RF-Kit).
+#include "setup/RfKitPage.h"
 // Keyboard
 #include "setup/KeyboardSetupPages.h"
 // Diagnostics
@@ -470,6 +473,13 @@ void SetupDialog::buildTree()
         return hwPage;
     });
 
+    // Phase 3F Sub-Epic E Tasks 8-10: DDC Routing power-user override page.
+    // Skeleton-only landing; per-DDC table + override schema follow once
+    // codec layer (Sub-Epic B) is in place.
+    registerPage(hardware, "DDC Routing", [this]() -> QWidget* {
+        return new HardwareDdcRoutingPage(m_model);
+    });
+
     // ── PA ────────────────────────────────────────────────────────────────────
     // Top-level PA category mirrors Thetis tpPowerAmplifier
     // (setup.designer.cs:47366-47371 [v2.10.3.13]). Three sub-pages:
@@ -763,6 +773,7 @@ void SetupDialog::buildTree()
         }
         return fourO3A;
     });
+    registerPage(cat, "RF-Kit",       [this] { return new RfKitPage(m_model); });
     registerPage(cat, "TCP/IP CAT",   [] { return new CatTcpIpPage;       });
     registerPage(cat, "MIDI Control", [] { return new CatMidiControlPage;  });
 

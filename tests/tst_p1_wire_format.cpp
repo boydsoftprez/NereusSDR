@@ -368,15 +368,36 @@ private slots:
 
     // Phase 3P-A Task 13: setTxFrequency must update Alex LPF bits.
     // Source: console.cs:7168-7234 [@501e3f5]
+    //
+    // Amended 2026-07-31: this used to read C4 unkeyed and expect the
+    // transmit selection, on the belief that C4 is transmit-only. It is not.
+    // C4 is the Alex0 word (networkproto1.c:587-590 [v2.10.3.15]), and Alex0
+    // takes the transmit selection only while keyed:
+    //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+    //     if (isMox || !isTX) -> AlexLPFMask (this byte)
+    // so unkeyed it carries the RECEIVE selection instead. The assertion the
+    // test was actually making, that setTxFrequency drives the transmit
+    // low-pass, is kept and now checks the state where that byte is the
+    // transmit low-pass. Full coverage of both states is in
+    // tst_p1_alex_lpf_word_source.
     void setTxFrequency_updates_alex_lpf_bits() {
         P1RadioConnection conn(nullptr);
         conn.init();
         conn.setBoardForTest(HPSDRHW::Hermes);
-        conn.setTxFrequency(14'100'000ULL);  // 30/20m LPF (0x01)
+        conn.setReceiverFrequency(0, 3'700'000ULL);  // 80m LPF (0x04)
+        conn.setTxFrequency(14'100'000ULL);          // 30/20m LPF (0x01)
         quint8 out[5] = {};
+
+        // Keyed: C4 is the transmit low-pass.
+        conn.setMox(true);
         conn.composeCcForBankForTest(10, out);
-        // C4 = LPF select
         QCOMPARE(int(out[4]), 0x01);
+
+        // Unkeyed: C4 hands back to the receive low-pass, and the transmit
+        // selection is emphatically not what a receive retune put there.
+        conn.setMox(false);
+        conn.composeCcForBankForTest(10, out);
+        QCOMPARE(int(out[4]), 0x04);
     }
 };
 

@@ -431,6 +431,69 @@ private slots:
         QCOMPARE(P2RadioConnection::primaryRxDdcForBoard(HPSDRHW::Saturn),    2);
         QCOMPARE(P2RadioConnection::primaryRxDdcForBoard(HPSDRHW::OrionMKII), 2);
     }
+
+    // ── Codex PR #293 P1: the synchronized DDC belongs only in syncEnable ────
+    //
+    // Upstream puts DDC1 in SyncEnable and NEVER in DDCEnable when it is the
+    // synchronized leg of a pair. From Thetis console.cs:8266-8268
+    // [v2.10.3.15], transmitting with PureSignal on:
+    //     DDCEnable  = DDC0 + DDC2;
+    //     SyncEnable = DDC1;
+    // and console.cs:8289-8291 [v2.10.3.15], transmitting with diversity and
+    // no PureSignal:
+    //     DDCEnable  = DDC0;
+    //     SyncEnable = DDC1;
+    //
+    // Setting bit 1 in ddcEnable additionally asks the radio to run DDC1 as
+    // an independent stream, so the second leg arrives both on its own and
+    // folded into DDC0's synchronized packet. P2RadioConnection::processIqPacket
+    // assumes the synchronized leg only ever arrives folded in.
+    void ddcAssignment_puresignal_keeps_ddc1_out_of_the_enable_mask() {
+        P2CodecOrionMkII codec;
+        CodecContext ctx{};
+        ctx.puresignalRun = true;
+        ctx.mox           = true;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live         = true;
+        slices[0].frequencyHz  = 7100000;
+        slices[0].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QVERIFY2((a.ddcEnable & 0x02) == 0,
+            qPrintable(QStringLiteral("DDC1 is the synchronized leg and must not "
+                "be in ddcEnable (Thetis console.cs:8267 [v2.10.3.15]: "
+                "DDCEnable = DDC0 + DDC2). ddcEnable=0x%1")
+                .arg(a.ddcEnable, 0, 16)));
+        QVERIFY2((a.syncEnable & 0x02) != 0,
+            "DDC1 must be in syncEnable (console.cs:8268 [v2.10.3.15])");
+        // DDC0 (PS forward) + DDC2 (Slice A), exactly as upstream.
+        QCOMPARE(a.ddcEnable, 0x05);
+    }
+
+    void ddcAssignment_diversity_keeps_ddc1_out_of_the_enable_mask() {
+        P2CodecOrionMkII codec;
+        CodecContext ctx{};
+        ctx.diversity = true;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live         = true;
+        slices[0].frequencyHz  = 7100000;
+        slices[0].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QVERIFY2((a.ddcEnable & 0x02) == 0,
+            qPrintable(QStringLiteral("DDC1 is the synchronized leg and must not "
+                "be in ddcEnable (Thetis console.cs:8290 [v2.10.3.15]: "
+                "DDCEnable = DDC0). ddcEnable=0x%1")
+                .arg(a.ddcEnable, 0, 16)));
+        QVERIFY2((a.syncEnable & 0x02) != 0,
+            "DDC1 must be in syncEnable (console.cs:8291 [v2.10.3.15])");
+        // DDC0 alone: the diversity branch migrates stream 0 off DDC2.
+        QCOMPARE(a.ddcEnable, 0x01);
+    }
 };
 
 QTEST_APPLESS_MAIN(TestP2CodecOrionMkII)

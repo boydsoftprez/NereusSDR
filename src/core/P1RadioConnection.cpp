@@ -264,6 +264,7 @@ mw0lge@grange-lane.co.uk
 #include "OcMatrix.h"
 #include "IoBoardHl2.h"
 #include "HermesLiteBandwidthMonitor.h"
+#include "PerfMonitor.h"
 #include "audio/TxMicSource.h"
 #include "codec/P1CodecStandard.h"
 #include "codec/P1CodecAnvelinaPro3.h"
@@ -273,6 +274,7 @@ mw0lge@grange-lane.co.uk
 #include "models/Band.h"
 
 #include <array>
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>    // memset
 #include <vector>
@@ -599,10 +601,17 @@ void P1RadioConnection::init()
         return;
     }
 
+    // 2026-05-26 KG4VCF bench fix: bumped recv buffer from Thetis's
+    // 1000 KB (0xfa000) to 4 MB.  See the matching block in
+    // P2RadioConnection::init() for the full rationale -- short
+    // summary: even with the ConnectionThread elevated to
+    // USER_INTERACTIVE QoS, brief preemption windows under heavy
+    // build load can stall the kernel-to-userspace handoff long
+    // enough to drop I/Q frames at the smaller buffer size.
     m_socket->setSocketOption(QAbstractSocket::SendBufferSizeSocketOption,
                               QVariant(0xfa000));
     m_socket->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption,
-                              QVariant(0xfa000));
+                              QVariant(0x400000));  // 4 MB requested; kernel may cap
 
     connect(m_socket, &QUdpSocket::readyRead, this, &P1RadioConnection::onReadyRead);
 
@@ -832,16 +841,105 @@ void P1RadioConnection::setReceiverFrequency(int receiverIndex, quint64 frequenc
     //
     // HL2 carve-out: HL2 has hasAlexFilters=false (no Alex card slot) but
     // mi0bot's WriteMainLoop_HL2 still emits these bits at bank 10 C3/C4
-    // (networkproto1.c:1086-1093 [v2.10.3.14-beta1]) — the HL2 firmware
+    // (networkproto1.c:1081-1088 [v2.10.3.14-beta1], C3 then C4; the range
+    // here used to read 1086-1093, which lands in the case-11 preamp block
+    // rather than on these two bytes) the HL2 firmware
     // and the optional N2ADR I/O board read them to engage the band-correct
     // LPF/HPF.  Without them the HL2 PA can't safely engage on TX and the
     // T/R relay flutters.  Compute the bits for HL2 too, gated on the
     // hardware profile so other "no Alex" boards (Atlas, basic Hermes)
     // remain byte-identical to pre-fix behavior.
+    //
+    // Ladder selection is a property of the RF board, not of the protocol:
+    // Thetis's setAlex1HPF dispatches purely on HardwareSpecific.Hardware with
+    // no protocol test anywhere in it, and an ANAN-7000DLE running P1 has the
+    // same band-pass front end it has on P2.  So P1 routes through
+    // computeRxPreselector exactly like P2 does.
+    // From Thetis console.cs:6827-6837 setAlex1HPF [v2.10.3.15]
+    // Upstream inline attribution preserved verbatim (console.cs:6830):
+    //    || (HardwareSpecific.Hardware == HPSDRHW.HermesC10))  //N1GP G2E added (HermesC10) //DK1HLM
+    //
+    // HL2 keeps the legacy ladder: HermesLite is not one of the three boards
+    // Thetis names, and mi0bot's HL2 path drives the N2ADR filter board from
+    // the same high-pass selection it always did.
+    // filterCaps() rather than m_caps: the connect-time push runs before
+    // connectToRadio assigns m_caps. See the declaration for why.
+    const BoardCapabilities* const fcaps = filterCaps();
     if (receiverIndex == 0
-        && (   (m_caps && m_caps->hasAlexFilters)
+        && (   (fcaps && fcaps->hasAlexFilters)
             || m_hardwareProfile.model == HPSDRModel::HERMESLITE)) {
-        m_alexHpfBits = codec::alex::computeHpf(double(frequencyHz) / 1e6);
+        m_alexHpfBits = codec::alex::computeRxPreselector(
+            double(frequencyHz) / 1e6,
+            fcaps ? fcaps->board : HPSDRHW::Unknown);
+    }
+
+    // ── The receive-derived low-pass ────────────────────────────────────
+    //
+    // Bank 10 C4 is the Alex0 word (networkproto1.c:587-590 [v2.10.3.15]),
+    // and while the radio is not keyed Thetis fills it from a RECEIVE
+    // frequency, not the transmit one. See m_alexLpfBitsRx for the full
+    // routing quote. This half did not exist before Phase 3F: a single slice
+    // transmitted and received on the same frequency, so the transmit-derived
+    // mask happened to be right. It stops being right the moment the
+    // transmitter binds to one slice and the operator listens on another.
+    //
+    // Gated on MOX because Thetis cannot reach this write while keyed at all:
+    //   From Thetis console.cs:15487-15498 UpdateAlexTXFilter [v2.10.3.15]
+    //     private void UpdateAlexTXFilter()
+    //     { if (!_mox) { ... setAlexLPF(rx1_dds_freq_mhz, false); } }
+    //
+    // The gate is upstream fidelity rather than the load-bearing RF guard:
+    // effectiveAlexLpfBits() already hands the wire the transmit mask while
+    // keyed, so a retune arriving mid-transmission cannot reach the byte
+    // either way. Both are kept, for the same reason P2 keeps both.
+    //
+    // Which receive frequency wins is receiveLpfFrequencyMhz's job. On a
+    // board whose RX2 shares this filter it is the HIGHER of the two, because
+    // a low-pass passes everything below its corner and the lower receiver's
+    // filter would attenuate the higher one.
+    //
+    // Same hardware carve-out as the high-pass above: the HL2 has no Alex
+    // card, but its firmware and the optional N2ADR I/O board read these bits
+    // (mi0bot networkproto1.c:1085-1088 [v2.10.3.14-beta1]).
+    if (!m_mox
+        && (   (fcaps && fcaps->hasAlexFilters)
+            || m_hardwareProfile.model == HPSDRModel::HERMESLITE)) {
+        // m_rxFreqHz[0] / [1] are Thetis's rx1_dds_freq_mhz / rx2_dds_freq_mhz.
+        // A zero frequency means that receiver has never been tuned, which is
+        // the state chkRX2.Checked reports as unchecked; upstream's rx1 is
+        // always tuned by the time this runs, so the fallback below only
+        // covers the ordering case where a later receiver is tuned first.
+        //
+        // Two receivers only, deliberately: upstream has exactly RX1 and RX2
+        // and no answer for a third, so a slice on receiver 2 or above does
+        // not influence the selection. And m_rxFreqHz[1] is never cleared
+        // when a slice goes away, so a stale value can outlive its receiver.
+        // That is bounded and benign in one direction: the rule takes a
+        // maximum, so a stale entry can only ever hold the corner HIGHER
+        // than needed. Too wide costs some out-of-band rejection; too narrow
+        // would cost the whole band, and cannot happen here.
+        const double rx1Mhz = (m_rxFreqHz[0] != 0)
+            ? double(m_rxFreqHz[0]) / 1e6
+            : double(frequencyHz) / 1e6;
+        const double rx2Mhz = double(m_rxFreqHz[1]) / 1e6;
+        const bool rx2Live  = (m_rxFreqHz[1] != 0);
+
+        const quint8 newRxLpf = codec::alex::computeLpf(
+            codec::alex::receiveLpfFrequencyMhz(
+                rx1Mhz, rx2Mhz, rx2Live,
+                fcaps ? fcaps->rx2PreampPresent : false));
+        if (newRxLpf != m_alexLpfBitsRx) {
+            // Receive-side counterpart of the setTxFrequency line. Logged on
+            // change so a bench can see whether a band button actually
+            // reaches the receive filter path at all.
+            qCDebug(lcConnection) << "P1::setReceiverFrequency rx" << receiverIndex
+                                  << "rxLpf=" << Qt::hex << newRxLpf << Qt::dec
+                                  << "hpf=" << Qt::hex << m_alexHpfBits << Qt::dec
+                                  << "for" << bandLabel(bandFromFrequency(
+                                         double(frequencyHz)))
+                                  << "rx=" << frequencyHz << "Hz";
+        }
+        m_alexLpfBitsRx = newRxLpf;
     }
 }
 
@@ -851,12 +949,42 @@ void P1RadioConnection::setTxFrequency(quint64 frequencyHz)
     // TX freq drives Alex LPF — recompute on every change.
     // Source: console.cs:7168-7234 [@501e3f5]
     //
+    // RF-SAFETY: this is the only writer of the transmit mask, and it is fed
+    // from the TX-bound slice's frequency (plus XIT) by
+    // RadioModel::pushTxFrequencyFromTxSlice, never from the active slice and
+    // never from a receive retune.
+    //   From Thetis console.cs:15464-15468 UpdateTXDDSFreq [v2.10.3.15]
+    //     private void UpdateTXDDSFreq()
+    //     { if (initializing) return;
+    //       setAlexLPF(tx_dds_freq_mhz, true); ... }
+    // Upstream inline attribution preserved verbatim (console.cs:15471):
+    //   if (MOX)//[2.10.3.13]MW0LGE
+    //
+    // Deliberately NOT gated on MOX, unlike the receive-derived write in
+    // setReceiverFrequency: UpdateTXDDSFreq has no MOX guard, so the
+    // transmit selection stays live whether the radio is keyed or not and is
+    // ready the instant it is.
+    //
     // HL2 carve-out: see setReceiverFrequency above.  mi0bot
-    // networkproto1.c:1090-1093 [v2.10.3.14-beta1] emits these bits on HL2
-    // even though it has no Alex card.
-    if (   (m_caps && m_caps->hasAlexFilters)
+    // networkproto1.c:1085-1088 [v2.10.3.14-beta1] emits these bits on HL2
+    // even though it has no Alex card. (Was cited as 1090-1093, which is the
+    // case-11 preamp block, not the C4 low-pass byte.)
+    const BoardCapabilities* const fcaps = filterCaps();
+    if (   (fcaps && fcaps->hasAlexFilters)
         || m_hardwareProfile.model == HPSDRModel::HERMESLITE) {
-        m_alexLpfBits = codec::alex::computeLpf(double(frequencyHz) / 1e6);
+        const quint8 newLpfBitsTx =
+            codec::alex::computeLpf(double(frequencyHz) / 1e6);
+        if (newLpfBitsTx != m_alexLpfBitsTx) {
+            // The one line that makes the transmit low-pass observable on a
+            // bench. Logged on change only, so it marks the event rather than
+            // the C&C round-robin cadence.
+            qCDebug(lcConnection) << "P1::setTxFrequency txLpf="
+                                  << Qt::hex << newLpfBitsTx << Qt::dec
+                                  << "for" << bandLabel(bandFromFrequency(
+                                         double(frequencyHz)))
+                                  << "tx=" << frequencyHz << "Hz";
+        }
+        m_alexLpfBitsTx = newLpfBitsTx;
     }
 }
 void P1RadioConnection::setActiveReceiverCount(int count)    { m_activeRxCount = count; }
@@ -1149,6 +1277,12 @@ void P1RadioConnection::setMox(bool enabled)
     if (m_mox == enabled) {
         return;  // idempotent — state unchanged, flush flag already set above
     }
+    // On MOX engage, arm the TX I/Q ring pre-prime flag.  See P1 header
+    // m_txIqPrimePending declaration + P2RadioConnection.h cushion
+    // rationale.  At P1's 48 kHz wire rate, 20 ms cushion = 960 samples.
+    if (enabled) {
+        m_txIqPrimePending.store(true, std::memory_order_release);
+    }
     m_mox = enabled;
 }
 // ---------------------------------------------------------------------------
@@ -1176,6 +1310,63 @@ void P1RadioConnection::setAntennaRouting(AntennaRouting r)
     m_rxOut     = r.rxOut;
     // P1 has no high-priority packet; the next EP2 frame picks up all
     // antenna fields via buildCodecContext() → P1Codec::bank0.
+}
+
+// ---------------------------------------------------------------------------
+// setAlexRxBpf — Phase 3F. Per-ADC RX band-pass decision.
+//
+// Reported by CT1IQI on PR #293 (2026-05-31). Protocol 1 carries ONE Alex
+// filter word (bank 10 C3) for the whole radio — there is no per-ADC split on
+// the wire, so the single chain has to satisfy every slice that is receiving.
+// Thetis reaches the same conclusion from the other end: its only
+// multi-receiver filter logic runs precisely on the boards that have one
+// filter board, and widens the single HPF rather than picking one receiver.
+//   From Thetis console.cs:15500-15510 UpdateAlexRXFilter [v2.10.3.15]
+//
+// ADC0's decision is the one that applies: it is the chain every slice sits
+// behind. hpfBitsAdc1 is accepted and ignored, because a P1 board cannot
+// address a second filter chain even when it has a second ADC.
+//
+// The prior behaviour was not last-tune-wins on P1 (setReceiverFrequency
+// gates on receiverIndex == 0, matching Thetis's setAlex1HPF(_rx1_dds_freq)),
+// but it has the same defect: a slice on receiver 1 in another band was
+// filtered out by receiver 0's HPF with nothing anywhere saying so.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setAlexRxBpf(AlexRxBpf b)
+{
+    m_alexRxHpfOverride = b.hpfBitsAdc0;
+    // Same as setAntennaRouting: the next EP2 frame picks this up through
+    // buildCodecContext() → P1Codec::bank10.
+}
+
+// The effective bank-10 C3 HPF bits: AlexController's decision for the chain
+// when there is one, otherwise the RX0-frequency-derived value.
+quint8 P1RadioConnection::effectiveAlexHpfBits() const
+{
+    return m_alexRxHpfOverride >= 0 ? static_cast<quint8>(m_alexRxHpfOverride)
+                                    : m_alexHpfBits;
+}
+
+// ---------------------------------------------------------------------------
+// effectiveAlexLpfBits: which low-pass mask bank 10 C4 carries.
+//
+// Protocol 1 has one low-pass field where Protocol 2 has two words, and
+// Thetis fills it from prbpfilter, the Alex0 struct
+// (networkproto1.c:587-590 [v2.10.3.15]). Alex0 takes the transmit selection
+// while keyed and the receive selection while not:
+//   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+//     if (isMox || !isTX) -> AlexLPFMask = bits
+// with the transmit caller passing isTX = true and the receive caller
+// unreachable while keyed (`if (!_mox)` around UpdateAlexTXFilter,
+// console.cs:15487-15498 [v2.10.3.15]).
+//
+// Selecting here rather than re-driving on the MOX edges produces identical
+// wire bytes in every state and cannot drift if an edge is ever missed. Same
+// approach as P2RadioConnection::effectiveLpfBitsAlex0.
+// ---------------------------------------------------------------------------
+quint8 P1RadioConnection::effectiveAlexLpfBits() const
+{
+    return m_mox ? m_alexLpfBitsTx : m_alexLpfBitsRx;
 }
 
 // ---------------------------------------------------------------------------
@@ -1256,6 +1447,49 @@ void P1RadioConnection::sendTxIq(const float* iq, int n)
     static constexpr float kGain = 32767.0f;
 
     static constexpr int kBufBytes = kTxIqBufSamples * kTxIqBytesPerSample;
+
+    // First call after MOX engage: push a 20 ms cushion of zero samples
+    // into the ring (960 samples at the P1 48 kHz wire rate, each sample
+    // is a pre-zeroed 8-byte slot: mic L/R + I/Q all zero).  Gives
+    // fillTxZone's 63-sample-per-zone drain headroom while the producer
+    // settles.  Single-writer safety: only sendTxIq mutates the ring;
+    // setMox sets the flag.  See header m_txIqPrimePending declaration.
+    if (m_txIqPrimePending.exchange(false, std::memory_order_acq_rel)) {
+        constexpr int kPrimeSamples = 960;  // 20 ms at 48 kHz wire rate
+        // Clamp the cushion to what the ring can actually take.  The loop
+        // below is the only write in this function that did not check the
+        // count first: toggle MOX off and back on before the consumer has
+        // drained the previous transmission and the unconditional
+        // fetch_add pushed m_txIqCount past kTxIqBufSamples.  The write
+        // pointer wraps and overwrites unread samples while fillTxZone()
+        // trusts the inflated count and transmits the clobbered slots as
+        // valid I/Q.  Codex review, PR #291; same clamp as the P2 path.
+        const int used = m_txIqCount.load(std::memory_order_acquire);
+        const int primeSamples =
+            std::min(kPrimeSamples, std::max(0, kTxIqBufSamples - used));
+        if (primeSamples > 0) {
+            int wp = m_txIqWritePos.load(std::memory_order_relaxed);
+            for (int i = 0; i < primeSamples; ++i) {
+                // Zero all 8 bytes of this slot: mic_L hi/lo, mic_R hi/lo, I hi/lo, Q hi/lo.
+                m_txIqBuf[wp++] = 0;
+                m_txIqBuf[wp++] = 0;
+                m_txIqBuf[wp++] = 0;
+                m_txIqBuf[wp++] = 0;
+                m_txIqBuf[wp++] = 0;
+                m_txIqBuf[wp++] = 0;
+                m_txIqBuf[wp++] = 0;
+                m_txIqBuf[wp++] = 0;
+                if (wp >= kBufBytes) { wp = 0; }
+            }
+            m_txIqWritePos.store(wp, std::memory_order_relaxed);
+            m_txIqCount.fetch_add(primeSamples, std::memory_order_release);
+        }
+        if (primeSamples < kPrimeSamples) {
+            qCDebug(lcConnection)
+                << "P1 TX I/Q pre-prime truncated to" << primeSamples
+                << "samples (ring already held" << used << ")";
+        }
+    }
 
     // HL2 CWX firmware workaround: clear LSB of I/Q low bytes to avoid
     // the CWX activation-while-key-asserted misbehavior. Per
@@ -1341,6 +1575,16 @@ bool P1RadioConnection::fillTxZone(quint8* zone63) noexcept
     if (m_txIqCount.load(std::memory_order_acquire) < kSamplesPerZone) {
         // Underrun — zero-fill the zone (silence).  zone63 is already zeroed
         // by sendCommandFrame()'s memset, so no explicit fill is needed.
+        // Count the 63 sample slots that would have carried mic-derived I/Q
+        // but ended up zero-padded on the wire, but ONLY while MOX is
+        // engaged.  P1 EP2 emits TX zones continuously alongside command
+        // banks even when not transmitting; the radio ignores those zones
+        // when PA is off, so idle underrun is expected and not the bug
+        // we're chasing.  Counting only during MOX makes the metric
+        // directly answer "how much silence leaked into the transmission".
+        if (m_mox) {
+            PerfMonitor::instance().incTxIqUnderrun(kSamplesPerZone);
+        }
         return false;
     }
 
@@ -2009,13 +2253,21 @@ void P1RadioConnection::setBandwidthMonitor(HermesLiteBandwidthMonitor* monitor)
 void P1RadioConnection::setTxMicSource(TxMicSource* src)
 {
     // Caller contract: invoked on this connection's affinity thread.
-    // Today that is the main thread, because RadioModel::connectToRadio
-    // calls setTxMicSource at line 1764-1767 BEFORE the connection is
-    // moved to its worker thread at line 1842.  The assignment + the
-    // m_lastMicAt arming below therefore race-free with the connection-
-    // thread reads in onWatchdogTick / parseEp6Frame mic16 extraction.
-    // If a future refactor reorders these RadioModel calls, this
-    // function will need atomic / mutex protection.
+    // Both callers now satisfy that by construction rather than by
+    // ordering: RadioModel::connectToRadio marshals the attach through
+    // QMetaObject::invokeMethod and RadioModel::teardownConnection
+    // marshals the detach.  The assignment and the m_lastMicAt arming
+    // below are therefore race-free with the connection-thread reads in
+    // onWatchdogTick / parseEp6Frame mic16 extraction whether or not the
+    // connection has already been moved to its worker thread.
+    //
+    // This used to rest on ordering alone (the attach ran before the
+    // moveToThread in connectToRadio).  That held on the hot path only.
+    // The issue #153 sub-bug 1 cold-start retry re-runs the same attach
+    // from a WdspEngine::initializedChanged handler on the main thread,
+    // long after the move, which is what made marshalling necessary.
+    // A future caller that reaches this setter without marshalling will
+    // need atomic / mutex protection.
     m_txMicSource = src;
 
     // Stage-2 review fix I3: arm the LOS timer at attach time so the
@@ -2120,8 +2372,14 @@ CodecContext P1RadioConnection::buildCodecContext() const
     }
     ctx.adcCtrl        = m_adcCtrl;
     ctx.p1AdcCntrl     = m_p1AdcCntrl;
-    ctx.alexHpfBits    = m_alexHpfBits;
-    ctx.alexLpfBits    = m_alexLpfBits;
+    // Phase 3F: the RX band-pass follows AlexController's decision over every
+    // slice on the chain when one exists (see setAlexRxBpf), else the
+    // RX0-frequency-derived value.
+    ctx.alexHpfBits    = effectiveAlexHpfBits();
+    // The low-pass is NOT transmit-only, which is what the comment here used
+    // to claim. Bank 10 C4 is the Alex0 word, and Alex0 carries the receive
+    // selection while unkeyed (netInterface.c:705-717 [v2.10.3.15]).
+    ctx.alexLpfBits    = effectiveAlexLpfBits();
     ctx.txFreqHz       = m_txFreqHz;
     for (int i = 0; i < 7; ++i) { ctx.rxFreqHz[i]   = m_rxFreqHz[i]; }
     for (int i = 0; i < 3; ++i) { ctx.rxStepAttn[i] = m_stepAttn[i]; }
@@ -3113,8 +3371,11 @@ void P1RadioConnection::composeCcForBankLegacy(int bankIdx, quint8 out[5]) const
         // From Thetis ChannelMaster/networkproto1.c:581 [v2.10.3.13]
         //   C2 = ((prn->mic.mic_boost & 1) | ((prn->mic.line_in & 1) << 1) | ... | 0b01000000) & 0x7f;
         out[2] = static_cast<quint8>((m_micBoost ? 0x01 : 0x00) | (m_lineIn ? 0x02 : 0x00) | 0x40); // 3M-1b G.1+G.2
-        out[3] = m_alexHpfBits | (m_trxRelay ? 0x00 : 0x80); // 3M-1a E.4
-        out[4] = m_alexLpfBits;
+        out[3] = effectiveAlexHpfBits() | (m_trxRelay ? 0x00 : 0x80); // 3M-1a E.4
+        // C4 is the Alex0 low-pass word: transmit selection while keyed,
+        // receive selection while not (networkproto1.c:587-590 +
+        // netInterface.c:705-717 [v2.10.3.15]).
+        out[4] = effectiveAlexLpfBits();
         return;
 
     case 11: // Preamp control (networkproto1.c:593-601)

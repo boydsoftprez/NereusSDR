@@ -135,6 +135,7 @@
 #include <optional>
 #include <utility>
 
+class QButtonGroup;
 class QCheckBox;
 class QComboBox;
 class QPaintEvent;
@@ -144,6 +145,8 @@ class QLabel;
 class QSlider;
 class QSpinBox;
 class QStackedWidget;
+class QToolButton;
+class QWidget;
 
 namespace NereusSDR {
 
@@ -187,6 +190,15 @@ public:
 
     // Set the slice letter badge (0=A, 1=B, 2=C, 3=D)
     void setSliceIndex(int idx);
+
+    // Phase 3F (Bug 3): rebuild the per-slice tab row to match the live slice
+    // list and check the active slice. Hidden when <= 1 slice (the static
+    // badge suffices). Clicking a tab emits sliceActivationRequested.
+    // Workflow ported from AetherSDR RxApplet::updateSliceButtons
+    // (RxApplet.cpp:1434 [@6a142807]); the Multi-Flex foreign-slot model is
+    // dropped (NereusSDR owns the radio directly, no shared-client slots).
+    void updateSliceButtons(const QVector<SliceModel*>& slices,
+                            int activeSliceIndex);
 
     // --- Auto AGC-T visual update (Task 7 — matches VfoWidget) ---
     void updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double offset);
@@ -232,6 +244,10 @@ private:
 signals:
     void autoAgcToggled(bool on);
     void openSetupRequested();
+    // Phase 3F (Bug 3): a slice tab was clicked; MainWindow routes this to
+    // RadioModel::setActiveSlice. Mirrors AetherSDR
+    // RxApplet::sliceActivationRequested (RxApplet.h:96 [@6a142807]).
+    void sliceActivationRequested(int sliceIndex);
 
 private:
     void buildUi();
@@ -262,6 +278,14 @@ private:
     // Filter presets for the active mode — (low_hz, high_hz) pairs from SliceModel::presetsForMode().
     // Rebuilt on every dspModeChanged via rebuildFilterButtons(mode).
     QList<std::pair<int, int>> m_filterPresets;
+
+    // ── Phase 3F (Bug 3): per-slice tab row (above Row 1) ─────────────────
+    // One checkable QToolButton per live slice (A/B/C...). Hidden when the
+    // slice count is <= 1. Exclusive group; the active slice is checked.
+    QWidget*               m_sliceTabRow   = nullptr;
+    QHBoxLayout*           m_sliceTabLayout= nullptr;
+    QButtonGroup*          m_sliceGroup    = nullptr;
+    QVector<QToolButton*>  m_sliceBtns;
 
     // ── Row 1: badge | lock | rx ant | tx ant | filter label ──────────────
     QLabel*      m_sliceBadge     = nullptr;   // Control 1

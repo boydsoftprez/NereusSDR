@@ -76,6 +76,8 @@
 #include <QPointer>
 #include <QTimer>
 #include <QHash>
+#include <QMap>
+#include <QVector>
 
 class QProgressDialog;
 class QThread;
@@ -84,12 +86,24 @@ class QMenu;
 
 namespace NereusSDR {
 
+/// Defined in gui/widgets/StatusToast.h. Forward-declared with its fixed
+/// underlying type so this header keeps to Qt includes only.
+enum class ToastSeverity : int;
+
 class RadioModel;
 class ConnectionPanel;
 class SupportDialog;
 class WdspEngine;
 class FFTEngine;
 class SpectrumWidget;
+class SliceModel;
+class VfoWidget;
+// Phase 3F Sub-Epic D: forward declarations for the multi-pan layout
+// manager. Member m_panStack is introduced (nullptr) in Task 10/11 so the
+// +PAN dropdown menu and per-chain status indicators can guard against
+// not-yet-wired state; Task 12 instantiates m_panStack and migrates
+// m_spectrumWidget references.
+class PanadapterStack;
 class ClarityController;
 class ContainerManager;
 class MeterWidget;
@@ -138,6 +152,39 @@ public:
     // Non-null after construction.
     StatusBadge* paStatusBadge() const noexcept { return m_paStatusBadge; }
 
+    /// Phase 3F Sub-Epic D Task 12: backward-compat accessor that returns
+    /// the SpectrumWidget owned by the currently-active pan (via
+    /// m_panStack->panadapter(activePanId())->spectrumWidget()).
+    /// Returns nullptr during early init before m_panStack is constructed,
+    /// or if the active pan has no widget. Long-term migration target:
+    /// callers should thread through per-pan PanadapterApplet rather than
+    /// reaching for the active pan.
+    SpectrumWidget* activeSpectrumWidget() const;
+
+    /// The SpectrumWidget that hosts slice `s`'s panadapter, resolved from
+    /// the slice's panKey(). Falls back to the active pan's widget when the
+    /// slice has no pan key or the pan no longer exists. Phase 3F multi-pan
+    /// flag routing hub; mirrors AetherSDR MainWindow::spectrumForSlice
+    /// (MainWindow.cpp:14856 [@6a142807]).
+    SpectrumWidget* spectrumForSlice(SliceModel* s) const;
+
+    // Narrow composition seams used by deletion-gap regressions. Runtime
+    // call sites use these same helpers so stable-ID lookup cannot diverge
+    // between the test and the UI signal path.
+    static SliceModel* sliceForAddedIdForTest(RadioModel* model, int sliceId);
+    static void applyAntennaChangeForTest(RadioModel* model, int sliceId,
+                                          const QString& antennaName);
+    static void wireRadeFlagForTest(RadioModel* model, VfoWidget* flag,
+                                    int sliceId);
+    static void configureSpectrumForPanForTest(SpectrumWidget* spectrum,
+                                                const QString& panId);
+    static void wireWidebandExtensionForTest(SpectrumWidget* spectrum,
+                                             RadioModel* model,
+                                             PanadapterStack* stack,
+                                             const QString& panId);
+    static void fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
+                                       const QVector<float>& bins);
+
 public slots:
     // ── Phase 3M-0 Task 14 helper slots ──────────────────────────────────
     // Update PA status badge state. Wired by Task 17 to
@@ -164,6 +211,101 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
+    /// Phase 3F: repaint every pan's status overlay from the slice that pan
+    /// is showing (its own activeSliceIndex), with the ADC chain resolved
+    /// through RadioModel::sliceChainIndex so the CH tag agrees with the WIDE
+    /// pill beside it.
+    ///
+    /// A slot rather than a plain method because the per-slice triggers are
+    /// connected through QMetaMethod, driven by
+    /// PanadapterApplet::statusOverlaySliceProperties, so that adding an
+    /// overlay field never means remembering to add a connect here.
+    ///
+    /// Every pan is refreshed on every pass, matching refreshPanWideBadges.
+    /// Cheap: single-digit pans, and each overlay setter drops a no-op write
+    /// before it repaints, so a VFO detent repaints exactly the one pan whose
+    /// frequency actually moved.
+    void refreshPanStatusOverlays();
+
+    /// Phase 3F: connect the status-overlay badge clicks on EVERY pan.
+    ///
+    /// Armed from PanadapterStack::countChanged, the same hook
+    /// wirePanStatusOverlayTriggers uses, so pans created after startup by a
+    /// layout switch or an Add Panadapter action are wired too -- which is
+    /// every pan except pan-0. Before this, MainWindow connected the three
+    /// signals for the single applet it could name at construction, so on a
+    /// multi-pan layout the badges painted correctly everywhere (00ab9522,
+    /// 0896b4f3) and responded nowhere else.
+    ///
+    /// Idempotent, because re-arming on every countChanged would otherwise
+    /// stack duplicate connections and open one dialog per layout switch the
+    /// operator had ever made. The handlers below are SLOTS, not lambdas,
+    /// specifically so Qt::UniqueConnection actually dedups: Qt6 silently
+    /// no-ops UniqueConnection when the target is a lambda (see the notes at
+    /// the SpotModel and applet-visibility connect sites).
+    void wirePanBadgeHandlers();
+
+    /// Give every panadapter its own control strip (+RX / BAND / ANT /
+    /// Display). Idempotent and re-armed from PanadapterStack::countChanged,
+    /// so pans created later get one by construction. Each strip carries its
+    /// own panId and its controls act on that pan.
+    void ensureOverlayPanels();
+
+    /// Push the live slice-id list to MeterPoller so every flag's S-meter bar
+    /// is fed. Must be called on slice add/remove, not just on pan-count
+    /// change: a slice added to an existing pan moves no pan count.
+    void refreshMeterPollerSlices();
+
+    /// Wire one panadapter's spot, connection and MaxBin hooks. Every one of
+    /// these used to be connected once to pan-0's widget, leaving other pans
+    /// inert. The four controls that TARGET A SLICE live in
+    /// wireSpectrumSliceControls below, because pan-0 needs those and does not
+    /// come through here.
+    void wireSpectrumForPan(class SpectrumWidget* sw, const QString& panId);
+
+    /// Wire the four spectrum controls that act on a slice: click-to-tune,
+    /// filter-edge drag, pan drag, CTUN toggle.
+    ///
+    /// Split out of wireSpectrumForPan for the bench defect of 2026-07-28,
+    /// where click-to-tune retuned Slice A however many times the operator
+    /// selected another flag. ensureOverlayPanels deliberately skips
+    /// wireSpectrumForPan for pan-0 (its spot / connection / MaxBin hooks are
+    /// wired elsewhere and would double), so pan-0 was left running an older
+    /// copy of these four in wireSliceToSpectrum whose lambdas captured
+    /// RadioModel::activeSlice() by value at connect time. That pointer is
+    /// Slice A and never moved, so on the one pan almost every operator uses,
+    /// none of the four ever consulted the pan's active slice at all.
+    ///
+    /// Called for EVERY pan, pan-0 included, and the sole home for these four
+    /// signals: verify-no-captured-slice-spectrum-wiring.py fails the build if
+    /// any of them is connected to a sender other than this function's `sw`.
+    /// Each handler resolves its target through sliceForPan(panId) at signal
+    /// time rather than capturing it, which is what makes it follow the
+    /// operator's selection.
+    void wireSpectrumSliceControls(class SpectrumWidget* sw,
+                                   const QString& panId);
+
+    /// Push the live connection state into every pan's spectrum widget.
+    /// SpectrumWidget::mousePressEvent returns early when it believes the
+    /// radio is disconnected, so a widget that never receives this is inert to
+    /// every mouse press.
+    void pushConnectionStateToPans();
+
+    /// The slice a pan hosts -- its own active slice if it has one, else the
+    /// first slice associated with it. nullptr when the pan has no slices.
+    SliceModel* sliceForPan(const QString& panId) const;
+
+    /// Phase 3F: WIDE pill / CH tag both open FilterPolicyDialog on the chain
+    /// feeding the CLICKED pan, and the TX pill asks the arbiter to hand the
+    /// transmitter to that pan's active slice.
+    ///
+    /// Each takes the pan id rather than assuming the active pan: an operator
+    /// looking at a WIDE pill on pan 1 is asking about pan 1's chain whether
+    /// or not pan 1 is the pan with focus.
+    void onPanWideBadgeClicked(const QString& panId);
+    void onPanChainTagClicked(const QString& panId, int chainIdx);
+    void onPanTxBadgeClicked(const QString& panId);
+
     void onConnectionStateChanged();
     void showConnectionPanel();
     void showSupportDialog();
@@ -179,6 +321,30 @@ private slots:
     // both dialogs are single-instance for the lifetime of MainWindow.
     void openSpotHub();
     void openFreeDVReporter();
+    /// Phase 3F Sub-Epic D Task 10: +PAN dropdown handler.
+    /// Builds a context menu with three sections (add slice / pick layout
+    /// template / float active pan), driven by RadioModel::slices() /
+    /// maxSlices() and (when wired by Task 12) m_panStack.
+    void showPanMenu();
+
+    /// Apply a pan layout template and reconcile the slices against it.
+    ///
+    /// Codex review round 3, PR #293. There were three places that applied a
+    /// layout: session restore, the View menu, and the +PAN dropdown. Each
+    /// had its own copy of the pan-count table, the id list and an add-only
+    /// slice loop. Round 2's fix for slices orphaned by a shrinking layout
+    /// went into the View-menu copy only, so the defect stayed live through
+    /// +PAN, which is the one operators actually use.
+    ///
+    /// One function now owns the whole sequence, so a later fix cannot land
+    /// in one path and miss two. The part that carries real logic,
+    /// RadioModel::rehomeSlicesToPans, is tested there; MainWindow is not
+    /// constructible in the harness, so what is left here is plumbing.
+    void applyPanLayout(const QString& layoutId);
+
+    /// The pan-id list a layout template implies. Sole owner of the
+    /// template-to-pan-count table, which previously had three copies.
+    static QStringList panIdsForLayout(const QString& layoutId);
     // Phase 3M-4 bench-fix: gate m_psaIndicator visibility on
     // caps.hasPureSignal && PureSignal::isAutoCalEnabled.  Called from
     // PureSignal::autoCalEnabledChanged + RadioModel::pureSignalCoordinator-
@@ -220,6 +386,14 @@ private slots:
     void onTxInterlockWarning(const QString& reason);
     void onTxInterlockDenial(const QString& reason);
 
+    /// Phase 3F Sub-Epic I Task 8: fan one stream's FFT frame out to every
+    /// pan subscribed to it. Connected to every pooled FFTEngine's
+    /// fftReadyLinear; the streamIndex argument is the engine's receiver id.
+    void dispatchFftFrameToPans(int streamIndex,
+                                const QVector<float>& binsLinear,
+                                double windowEnb,
+                                double dbmOffset);
+
 private:
     void buildUI();
     void buildMenuBar();
@@ -227,6 +401,83 @@ private:
     void applyDarkTheme();
     void tryAutoReconnect();
     void wireSliceToSpectrum();
+
+    /// Stream 0's engine. Back-compat accessor for call sites that still
+    /// address "the" FFT engine (display settings, Max Bin, auto-zoom).
+    FFTEngine* primaryFftEngine() const { return m_fftEngines.value(0, nullptr); }
+
+    /// Build and register one FFTEngine for `streamIndex`, configured as
+    /// the old single-engine path was, moved onto the shared FFT thread.
+    /// Returns the existing engine if one is already registered.
+    ///
+    /// Called on demand rather than once per pool slot: engines subscribe
+    /// to the shared RadioModel::rawIqDataForStream and filter by index, so
+    /// an engine for a stream that is never claimed would still take (and
+    /// discard) a queued event for every packet of every OTHER stream.
+    /// Building one only when the allocator actually claims the DDC keeps
+    /// that cost at zero for the single-stream case. Sizing off
+    /// streamPoolSize() at construction would not work anyway: the pool is
+    /// unsized until RadioModel::configureStreamPool runs at connect.
+    FFTEngine* createFftEngineForStream(int streamIndex);
+
+    /// Push the stream's cached DDC centre + sample rate onto one pan's
+    /// SpectrumWidget so visibleBinRange maps its bins against the right
+    /// window. No-op for a stream we have never seen a centre for.
+    void applyStreamWindowToPan(const QString& panId, int streamIndex);
+
+    /// Re-derive the entire pan-to-stream topology from the current slice
+    /// set. Cheap (one pass) and called on slice add / remove / migration
+    /// / pan change. Chosen over incremental edits because a pan can host
+    /// several slices, so no single change maps onto one subscription.
+    void rebuildFftRouting();
+
+    /// Phase 3F: light the WIDE pill on every pan fed by a bypassed RX
+    /// preselector chain, and clear it on the rest. One
+    /// RadioModel::panBypassState query per pan; the decision (and the
+    /// operator-facing reason) lives there, not here.
+    void refreshPanWideBadges();
+
+    /// Phase 3F: arm the status-overlay triggers that are not per-slice --
+    /// each pan's own activeSliceChanged. Idempotent (Qt::UniqueConnection),
+    /// so it can be re-run whenever the pan set changes; a layout switch
+    /// destroys and rebuilds applets, and a pan created after startup would
+    /// otherwise never be wired.
+    void wirePanStatusOverlayTriggers();
+
+    /// Phase 3F: the ADC chain feeding `panId`, or -1 when it resolves to
+    /// none.
+    ///
+    /// Deliberately the SAME resolution refreshPanStatusOverlays paints with
+    /// -- the pan's own activeSliceIndex through
+    /// RadioModel::sliceChainIndex -- so the dialog a badge opens is on the
+    /// chain the CH tag beside it is showing. The shipped pan-0 handler used
+    /// slices.first()->chainIndex() instead, which was wrong twice over: the
+    /// first slice rather than the clicked pan's, and through a SliceModel
+    /// property with no production writer. Both errors return 0, so every
+    /// click on every pan opened chain 0.
+    int panChainIndex(const QString& panId) const;
+
+    /// Phase 3F: connect one slice's overlay triggers. Drives the connects
+    /// off PanadapterApplet::statusOverlaySliceProperties through the
+    /// metaobject rather than naming signals here, so the trigger set has a
+    /// single definition and cannot silently fall behind the fields
+    /// updateStatusOverlay paints.
+    void wireSliceStatusOverlayTriggers(SliceModel* slice);
+
+    /// Phase 3F: create the VfoWidget for a secondary slice (B+) on the
+    /// given SpectrumWidget, push initial state, wire all intent + bidi
+    /// signals, and register it in m_vfoWidgetsBySlice. Returns the new
+    /// flag (or nullptr). Used both at sliceAdded and on panKeyChanged
+    /// migration so the wiring lives in one place. Slice A keeps its own
+    /// dedicated path in wireSliceToSpectrum(). Mirrors AetherSDR's
+    /// addVfoWidget()+wireVfoWidget() pair (MainWindow.cpp:11583 +
+    /// 13968 [@6a142807]).
+    class VfoWidget* createSliceFlag(SliceModel* slice, SpectrumWidget* sw);
+
+    /// Phase 3F Sub-Epic D Task 16: clean disconnect-before-removal for pans
+    /// (AetherSDR issue #242 pattern - avoids lambda crashes during teardown).
+    /// Caller should immediately follow with m_panStack->removePanadapter(panId).
+    void disconnectPanadapter(const QString& panId);
 
     // Issue #206 — persist the main window's position, size, and
     // maximized/fullscreen state across launches. Stored in AppSettings
@@ -322,11 +573,59 @@ private:
     QProgressDialog* m_wisdomDialog{nullptr};
 
     // Spectrum display
-    SpectrumWidget*     m_spectrumWidget{nullptr};
-    FFTEngine*          m_fftEngine{nullptr};
+    //
+    // Phase 3F Sub-Epic D Task 12: the single m_spectrumWidget has been
+    // removed and replaced by m_panStack (PanadapterStack), which owns
+    // 1..N PanadapterApplet instances, each containing its own
+    // SpectrumWidget. Existing call sites that still need a single
+    // SpectrumWidget* go through activeSpectrumWidget() below, which
+    // resolves to m_panStack->panadapter(activePanId())->spectrumWidget().
+    // The accessor returns nullptr during early init before m_panStack
+    // is constructed, so callers must null-guard.
+    PanadapterStack*    m_panStack{nullptr};
+
+    // Phase 3F Sub-Epic I Task 8: one FFTEngine per DDC stream, keyed by
+    // stream index. Before this there was a single FFTEngine(0) wired at
+    // construction to activeSpectrumWidget(), which resolves to pan 0
+    // permanently, so no secondary pan ever received a frame.
+    //
+    // One engine per STREAM, not per slice: the panadapter belongs to the
+    // DDC (ChannelMaster `_rcvr.run_pan`, cmaster.h:79 [v2.10.3.15]), so
+    // slices sharing a DDC share its spectrum and appear as separate flags
+    // on it.
+    //
+    // All engines share m_fftThread. If a 5-stream 1536 kHz bench shows
+    // the thread saturating, splitting to one thread per engine is a
+    // follow-up needing maintainer sign-off (thread architecture).
+    QMap<int, FFTEngine*> m_fftEngines;
+
+    /// One NoiseFloorTracker per stream, fed by that stream's FFT engine.
+    /// Auto AGC-T needs the noise floor of the band a slice is actually on;
+    /// a single tracker fed from stream 0 would mis-set every other slice.
+    QMap<int, class NoiseFloorTracker*> m_streamNoiseFloors;
     QThread*            m_fftThread{nullptr};
+
+    /// Last centre + sample rate RadioModel published for each stream, kept
+    /// so a pan that subscribes AFTER the stream was centred still learns
+    /// where its bins sit. RadioModel::bindSliceToStream emits
+    /// streamCentreChanged BEFORE SliceModel::streamIndex is updated and
+    /// before sliceAdded (plan discovery item 7), so at emit time the router
+    /// does not yet know which pan shows the stream and the direct push in
+    /// the streamCentreChanged handler reaches nobody. rebuildFftRouting
+    /// replays the cached value onto each pan as it (re)subscribes.
+    /// Without it SpectrumWidget::visibleBinRange maps a second pan's bins
+    /// against its ctor-default 14.225 MHz / 768 kHz window.
+    struct StreamWindow {
+        double centreHz{0.0};
+        int    sampleRateHz{0};
+    };
+    QHash<int, StreamWindow> m_streamWindows;
     ClarityController*  m_clarityController{nullptr};
     class StepAttenuatorController* m_stepAttController{nullptr};
+    /// Phase 3F Sub-Epic D Task 11: CH 1 stacked-indicator widget in the
+    /// bottom status bar. Shown only on 2-ADC SKUs (gated by
+    /// BoardCapabilities::adcCount in the currentRadioChanged handler).
+    QWidget*            m_chain1IndicatorWidget{nullptr};
     // Right-side strip wrapper widget — the inner QWidget hosting the
     // QHBoxLayout that the buildStatusBar() routine populates. Stored
     // as a member so reapplyRightStripDropPriority() can read its
@@ -503,8 +802,7 @@ private:
     // Phase 3Q Sub-PR-6 (F.1): RxDashboard — always-visible RX1 glance surface.
     // Replaces the Phase 3Q-7 m_statusConnInfo / m_statusLiveDot strip (those
     // fields now live in the segment tooltip / NetworkDiagnosticsDialog).
-    // Bound to RadioModel::slices().at(0) in buildStatusBar(); rebinds are not
-    // needed today (single-slice, RX2 is Phase 3F).
+    // Bound to stable slice ID 0 via RadioModel::sliceById() in buildUI.
     RxDashboard* m_rxDashboard{nullptr};
 
     // Phase 3M-4 Task 10: PSA bottom-banner indicator pair (FB + PS labels).
@@ -516,6 +814,16 @@ private:
 
     // VFO flag widget (Phase 3E)
     class VfoWidget* m_vfoWidget{nullptr};
+
+    // Phase 3F hotfix 2026-05-27: per-slice VfoWidget tracking. Slice 0
+    // (Slice A) maps to the existing m_vfoWidget for backward compat;
+    // additional slices created via +PAN / Ctrl+R get their own VfoWidget
+    // via SpectrumWidget::addVfoWidget(N) wired in the sliceAdded handler.
+    // Without this hash, multi-slice was invisible: the slice landed in
+    // the model and the codec recomputed the DDC assignment, but no flag
+    // appeared for the new slice and operators had no way to interact
+    // with it.
+    QHash<int, class VfoWidget*> m_vfoWidgetsBySlice;
 
     // Applets (Phase 3-UI)
     class AmpApplet*   m_ampApplet{nullptr};
@@ -543,6 +851,9 @@ private:
     class CatApplet*        m_catApplet{nullptr};
     class TunerApplet*      m_tunerApplet{nullptr};
 
+    // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
+    class Rf2ksApplet*      m_rfKitApplet{nullptr};
+
     // Phase 23: TCI server + applets.
     // m_tciServer is nullptr in non-WebSocket builds (HAVE_WEBSOCKETS not defined).
     TciServer*         m_tciServer{nullptr};
@@ -568,8 +879,47 @@ private:
     bool m_tciServerRunning{false};
     bool m_tciHasTxClient{false};
 
+    /// Live notification toasts, newest last. Bench report 2026-07-30:
+    /// QStatusBar::showMessage hides every non-permanent widget for the
+    /// life of the message, and the whole bottom bar is one such widget
+    /// (see buildStatusBar), so a TUNE with PureSignal active blanked the
+    /// CH pill, PS indicator, radio name, CAT/TCI state, PA/TX badges and
+    /// the clock for six seconds. Notices moved off the bar to here.
+    ///
+    /// QPointer because each toast deletes itself on close, by timer or
+    /// by click, without telling us first.
+    QList<QPointer<class StatusToast>> m_toasts;
+
+
+
+    /// Show a transient notice without disturbing the bottom bar.
+    /// Repeats of a message already on screen restart that toast's
+    /// countdown instead of stacking a duplicate beneath it.
+    ///
+    /// Returns the toast so a caller whose condition can end early can
+    /// dismiss it rather than leaving a stale notice up for its full
+    /// timeout. Hold it by QPointer: it deletes itself on close.
+    StatusToast* showToast(const QString& message,
+                           ToastSeverity severity,
+                           int timeoutMs);
+
+    /// The suspended-streams notice, kept so it can be taken down the
+    /// moment the streams come back instead of aging out.
+    QPointer<class StatusToast> m_suspendToast;
+
+    /// Re-stack live toasts bottom-right, newest nearest the bar.
+    /// Called on show, on close, and on move/resize.
+    void restackToasts();
+
     // Spectrum overlay panel
+    /// Pan-0's strip. Kept as a stable target for the display-settings and
+    /// clarity wiring, which is still global rather than per-pan.
     class SpectrumOverlayPanel* m_overlayPanel{nullptr};
+
+    /// One control strip per pan, keyed by pan id. QPointer because the widget
+    /// is parented to its pan's SpectrumWidget and dies with it when a layout
+    /// switch retires the pan.
+    QHash<QString, QPointer<class SpectrumOverlayPanel>> m_overlayPanels;
 
     // Applet panel — scrollable content widget inside Container #0
     class AppletPanelWidget* m_appletPanel{nullptr};

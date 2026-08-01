@@ -271,9 +271,12 @@ warren@wpratt.com
 #include "core/BoardCapabilities.h"
 #include "core/SkuUiProfile.h"
 #include "core/HpsdrModel.h"
+#include "core/accessories/AlexController.h"
 #include "gui/StyleConstants.h"
 #include "gui/styles/PopupMenuStyle.h"
+#include "gui/widgets/AntennaPickerMenu.h"
 #include "models/FilterPresetStore.h"
+#include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
 
@@ -281,6 +284,7 @@ warren@wpratt.com
 #include <QEvent>
 #include <QGuiApplication>
 #include <QPainter>
+#include <QContextMenuEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QVBoxLayout>
@@ -443,6 +447,19 @@ VfoWidget::VfoWidget(QWidget* parent)
 // button pointer dangling and SIGSEGV'ing the delete. Same fix as fd03d51;
 // regressed by ff94942.
 VfoWidget::~VfoWidget() = default;
+
+// See the header for why this is a separate call rather than destructor work.
+// Deleting the buttons while both this flag and its SpectrumWidget parent are
+// still alive keeps the ordering ours, so it cannot reproduce issue #113.
+void VfoWidget::destroyFloatingButtons()
+{
+    for (QPushButton** btn : {&m_closeBtn, &m_lockBtn, &m_recBtn, &m_playBtn}) {
+        if (*btn) {
+            delete *btn;
+            *btn = nullptr;
+        }
+    }
+}
 
 void VfoWidget::buildUI()
 {
@@ -622,6 +639,11 @@ void VfoWidget::buildHeaderRow()
     // NereusSDR native — Thetis has no per-slice TX badge (it uses chkMOX for TX state)
     m_txBadge->setToolTip(QStringLiteral("Indicates this slice is the TX slice"));
     hdr->addWidget(m_txBadge);
+
+    // Phase 3F Sub-Epic C Task 9: TX badge click requests handoff to this slice.
+    // The QPushButton stays checkable so it visually echoes setTxSlice() updates
+    // pushed back from TxSliceArbiter::txBoundSliceChanged.
+    connect(m_txBadge, &QPushButton::clicked, this, &VfoWidget::onTxBadgeClicked);
 
     // Split badge — hidden in Stage 1; wired in Stage 2 when split semantics land
     m_splitBadge = new QLabel(QStringLiteral("SPLIT"), this);
@@ -817,6 +839,13 @@ void VfoWidget::setRadeSynced(bool synced)
     m_lastRadeSynced = synced;
     if (!m_radeActive || !m_snrLabel) {
         return;
+    }
+    if (!synced) {
+        // Unlock invalidates the decoder's last SNR snapshot. Painting that
+        // stale value would also call setRadeSnrLabel(), which treats every
+        // fresh SNR callback as proof of sync and would immediately undo this
+        // transition.
+        m_lastRadeSnrDb = std::numeric_limits<float>::quiet_NaN();
     }
     // If we don't have an SNR snapshot yet, paint the "<prefix> ●/○ ---"
     // state.  When SNR is known, setRadeSnrLabel below has the richer
@@ -2098,6 +2127,10 @@ void VfoWidget::setMode(DSPMode mode)
 void VfoWidget::setFilter(int low, int high)
 {
     m_updatingFromModel = true;
+    // Kept, not just rendered as text: SpectrumWidget reads these back through
+    // filterLow()/filterHigh() to shade THIS slice's passband. See the header.
+    m_filterLowHz = low;
+    m_filterHighHz = high;
     m_filterWidthLbl->setText(formatFilterWidth(low, high));
     // Update checked state of filter buttons — match by stored property
     for (auto* btn : m_filterBtnContainer->findChildren<QPushButton*>()) {
@@ -2159,6 +2192,12 @@ void VfoWidget::setStepHz(int hz)
     if (m_stepCycleBtn) {
         m_stepCycleBtn->setText(QStringLiteral("%1 Hz").arg(hz));
     }
+}
+
+// Phase 3F Sub-Epic C Task 9: emit handoff request to MainWindow for forwarding.
+void VfoWidget::onTxBadgeClicked()
+{
+    emit txHandoffRequested(m_sliceIndex);
 }
 
 void VfoWidget::setSliceIndex(int index)
@@ -2558,6 +2597,15 @@ void VfoWidget::buildFloatingButtons()
     connect(m_closeBtn, &QPushButton::clicked, this, [this]() {
         emit closeRequested(m_sliceIndex);
     });
+    // Phase 3F (Bug 2): Slice A (index 0) is the last-slice invariant —
+    // RadioModel::removeSlice refuses to remove the final slice, and its flag
+    // (m_vfoWidget) is referenced by many wireSliceToSpectrum lambdas whose
+    // teardown is deliberately skipped on sliceRemoved. Hiding the close
+    // button on Slice A keeps the affordance honest (a button that does
+    // nothing reads as broken) and avoids the fragile slice-0 removal path.
+    if (m_sliceIndex == 0) {
+        m_closeBtn->hide();
+    }
 
     // Lock button — wired
     m_lockBtn = makeBtn(QStringLiteral("\U0001F513"), kFloatingBtn);
@@ -2672,15 +2720,45 @@ void VfoWidget::positionFloatingButtons()
 
     int btnY = y();
 
+    // Phase 3F (Bug 2): the close button is hidden on Slice A (index 0);
+    // keep it hidden here and let the remaining buttons fill the gap so the
+    // strip has no empty slot at the top.
+    const bool closeShown = (m_sliceIndex != 0);
+
     QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn};
     for (QPushButton* btn : btns) {
+        const bool isCloseBtn = (btn == m_closeBtn);
+        const bool show = isVisible() && (closeShown || !isCloseBtn);
+        if (isCloseBtn && !closeShown) {
+            btn->hide();
+            continue;  // don't advance btnY — next button takes the top slot
+        }
         btn->move(btnX, btnY);
-        btn->setVisible(isVisible());
-        if (isVisible()) {
+        btn->setVisible(show);
+        if (show) {
             btn->raise();
         }
         btnY += 22;
     }
+}
+
+// The active-flag-on-top invariant (Bench 2026-07-28, Sub-Epic J): this
+// flag's own close/lock/record/play buttons are parented to the
+// SpectrumWidget, not to this flag (see destroyFloatingButtons above), so
+// QWidget::raise() on the flag body alone is not enough -- the buttons are
+// separate siblings and stay wherever they were last left, which can be
+// behind a flag that used to sit above this one. Same btns[] order as
+// positionFloatingButtons() above: buttons first, flag body last, so the
+// body also ends up above its own buttons.
+void VfoWidget::raiseAboveSiblings()
+{
+    QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn};
+    for (QPushButton* btn : btns) {
+        if (btn) {
+            btn->raise();
+        }
+    }
+    raise();
 }
 
 // ---- Positioning ----
@@ -2796,6 +2874,117 @@ void VfoWidget::wheelEvent(QWheelEvent* event)
         updateFreqLabel();
         emit frequencyChanged(newFreq);
     }
+}
+
+// Phase 3F Sub-Epic E Task 4: right-click context menu.
+// Per docs/architecture/2026-05-26-phase3f-sub-epic-e-ui-atlas-plan.md
+// Task 4. Antenna submenu is stubbed; AntennaPickerMenu (Task 5) lands
+// the SKU-aware antenna list with chain-consequence hints. Diversity
+// is greyed pending Sub-Epic G enable on Slice A + 2-ADC SKUs. Filter
+// policy currently routes through chainIndex=0; once slice-to-chain
+// mapping is exposed on VfoWidget, switch to the real chainIndex.
+void VfoWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    QMenu menu(this);
+
+    // Make this the TX slice
+    QAction* makeTxAct = menu.addAction(QStringLiteral("Make this the TX slice"));
+    connect(makeTxAct, &QAction::triggered, this, [this]() {
+        emit txHandoffRequested(m_sliceIndex);
+    });
+
+    menu.addSeparator();
+
+    // Phase 3F closeout — AntennaPickerMenu integration (Sub-Epic E Task 5
+    // consumer wire-up). The picker derives the live slice band, lists
+    // ANT1/ANT2/ANT3 limited by BoardCapabilities::antennaInputCount, marks
+    // the current antenna checked, and emits antennaSelected on user pick.
+    // We forward to antennaChangeRequested; MainWindow routes to
+    // SliceModel::setRxAntenna. Falls back to a stub ANT1/ANT2 submenu when
+    // no RadioModel / slice is wired (e.g. test contexts).
+    bool builtPicker = false;
+    if (m_radioModel) {
+        if (SliceModel* slice = contextMenuSliceForTest()) {
+            AlexController* alex = &m_radioModel->alexControllerMutable();
+            const BoardCapabilities& caps = m_radioModel->boardCapabilities();
+            auto* picker = new AntennaPickerMenu(slice, alex, caps, &menu);
+            picker->setTitle(QStringLiteral("Antenna >"));
+            menu.addMenu(picker);
+            connect(picker, &AntennaPickerMenu::antennaSelected, this,
+                    [this](int sliceIdx, const QString& antName) {
+                emit antennaChangeRequested(sliceIdx, antName);
+            });
+            builtPicker = true;
+        }
+    }
+    if (!builtPicker) {
+        QMenu* antMenu = menu.addMenu(QStringLiteral("Antenna >"));
+        antMenu->addAction(QStringLiteral("ANT1"));
+        antMenu->addAction(QStringLiteral("ANT2"));
+    }
+
+    // ── Sample rate submenu ─────────────────────────────────────────────
+    // Phase 3F Sub-Epic I closeout, defect G2. The rate is a property of the
+    // DDC stream this slice is hosted on, not of the slice, so co-hosted
+    // slices share it. On Protocol 1 one rate covers the WHOLE radio (the
+    // rate is srBits in C&C bank 0), so say so in the title rather than let a
+    // per-slice context menu imply a private rate.
+    const bool rateIsRadioWide =
+        m_radioModel != nullptr && m_radioModel->sampleRateIsRadioWide();
+    QMenu* rateMenu = menu.addMenu(
+        rateIsRadioWide ? QStringLiteral("Sample rate (whole radio) >")
+                        : QStringLiteral("Sample rate >"));
+
+    // Offer only what the connected board accepts. P1 saturates srBits at 3
+    // for anything >= 384 kHz, so a P2-only entry picked on a P1 radio would
+    // leave the client configured for a width the radio is not sending.
+    // Disconnected: fall back to the full P2 ladder so the menu is not empty.
+    QVector<int> rates =
+        m_radioModel ? m_radioModel->allowedStreamSampleRates() : QVector<int>{};
+    if (rates.isEmpty()) {
+        rates = {48000, 96000, 192000, 384000, 768000, 1536000};
+    }
+
+    // Check the rate the stream actually resolved to. SliceModel::sampleRateHz
+    // is RadioModel's mirror of that (see its Q_PROPERTY doc), so co-hosted
+    // flags agree and the checkmark cannot show a stale per-slice wish.
+    int resolvedRateHz = 0;
+    if (m_radioModel != nullptr) {
+        if (SliceModel* s = m_radioModel->sliceById(m_sliceIndex)) {
+            resolvedRateHz = s->sampleRateHz();
+        }
+    }
+
+    for (int hz : rates) {
+        QAction* act = rateMenu->addAction(QStringLiteral("%1 kHz").arg(hz / 1000));
+        act->setCheckable(true);
+        act->setChecked(hz == resolvedRateHz);
+        connect(act, &QAction::triggered, this, [this, hz]() {
+            emit sampleRateRequested(m_sliceIndex, hz);
+        });
+    }
+
+    menu.addSeparator();
+
+    // Diversity submenu (placeholder; Sub-Epic G enables on Slice A + 2-ADC SKU).
+    QAction* divAct = menu.addAction(QStringLiteral("Diversity >"));
+    divAct->setEnabled(false);
+
+    // Filter policy (opens FilterPolicyDialog via chainIndex=0 default).
+    QAction* filterAct = menu.addAction(QStringLiteral("Filter policy..."));
+    connect(filterAct, &QAction::triggered, this, [this]() {
+        emit filterPolicyRequested(0);
+    });
+
+    menu.addSeparator();
+
+    QAction* removeAct = menu.addAction(QStringLiteral("Remove slice"));
+    connect(removeAct, &QAction::triggered, this, [this]() {
+        emit removeSliceRequested(m_sliceIndex);
+    });
+
+    menu.setStyleSheet(QString::fromLatin1(kPopupMenu));   // Phase 3P-I-a T15 — issue #98
+    menu.exec(event->globalPos());
 }
 
 // ---- Helpers ----
@@ -2983,6 +3172,20 @@ void VfoWidget::setRxBypassActive(bool on)
     m_updatingFromModel = true;
     m_rxBypassBtn->setChecked(on);
     m_updatingFromModel = prev;
+}
+
+// Phase 3F closeout — AntennaPickerMenu requires live slice + AlexController +
+// BoardCapabilities access. Storing the RadioModel pointer here lets the
+// contextMenuEvent build a real picker instead of the stub fallback. Pointer
+// is non-owning; lifetime is RadioModel-owned and MainWindow-scoped.
+void VfoWidget::setRadioModel(RadioModel* model)
+{
+    m_radioModel = model;
+}
+
+SliceModel* VfoWidget::contextMenuSliceForTest() const
+{
+    return m_radioModel ? m_radioModel->sliceById(m_sliceIndex) : nullptr;
 }
 
 // --- Task 3.4: Small filter display mode (Appearance > Meter Styles) ---

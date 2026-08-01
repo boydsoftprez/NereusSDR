@@ -223,6 +223,7 @@ public slots:
     void setTxDrive(int level) override;
     void setMox(bool enabled) override;
     void setAntennaRouting(AntennaRouting routing) override;
+    void setAlexRxBpf(AlexRxBpf bpf) override;
     void setWatchdogEnabled(bool enabled) override;
     void sendTxIq(const float* iq, int n) override;
     void setTrxRelay(bool enabled) override;
@@ -587,7 +588,84 @@ private:
 
     // Alex filter state — computed from frequency
     quint8  m_alexHpfBits{0};     // Bank 10 C3: HPF select bits
-    quint8  m_alexLpfBits{0};     // Bank 10 C4: LPF select bits
+
+    // Bank 10 C4 carries ONE low-pass field, not Protocol 2's Alex0/Alex1
+    // pair, and Thetis fills it from prbpfilter, the Alex0 struct:
+    //   From Thetis ChannelMaster/networkproto1.c:587-590 [v2.10.3.15]
+    //     C4 = (prbpfilter->_30_20_LPF & 1) | ((prbpfilter->_60_40_LPF & 1) << 1) | ...
+    // and mi0bot's HL2 loop emits the same struct
+    // (networkproto1.c:1085-1088 [v2.10.3.14-beta1]), so the HL2 is not a
+    // carve-out.
+    //
+    // Alex0 is written by the `isMox || !isTX` arm, which makes the single
+    // field carry the TRANSMIT selection while keyed and the RECEIVE
+    // selection while not:
+    //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+    //     void SetAlexLPFBits(int bits, bool isTX, bool isMox)
+    //     if (isMox || isTX)   -> Alex1LPFMask (prbpfilter2, P2 only)
+    //     if (isMox || !isTX)  -> AlexLPFMask  (prbpfilter,  this byte)
+    //   Upstream comment preserved verbatim (netInterface.c:676-680):
+    //     // LPF bits can be used in older radioas as part of RX filtering too.
+    //     // Change to protocol 2 from 4.3 onwards: TX settings are encoded in
+    //     // the Alex1 word to remain comparible with older hardware, the logic
+    //     // will be:
+    //     // if MOX, write settings to alex0 and alex1
+    //     // if not MOX, write to alex1 if a TX setting else write to alex0
+    //
+    // Keeping only the transmit-derived mask was fine while one slice both
+    // transmitted and received on the same frequency. Phase 3F binds the
+    // transmitter to one slice while the operator listens on another, so a
+    // transmitter parked on 80 m put a ~4 MHz low-pass in front of a
+    // receiver listening on 10 m. These are the "older radios" the upstream
+    // comment names, so this is where it bites.
+    //
+    // Both default to 0, not to the 6 m fall-through, and that is upstream
+    // parity rather than an oversight. Thetis's AlexLPFMask is a
+    // zero-initialised C global (ChannelMaster/network.h:392 [v2.10.3.15])
+    // and setAlexLPF only ever writes it under `alexpresent && !initializing`
+    // (console.cs:7186 [v2.10.3.15]), so a board with no Alex card emits a
+    // zero C4 for the life of the session and every board emits zero until
+    // the first selection is computed. Protocol 2's AlexState seeds 0x10
+    // instead, but it seeds the frequencies alongside it in connectToRadio,
+    // so it never ships an uninitialised pair.
+    //
+    // Nothing here relies on the zero as a filter choice: RadioModel pushes
+    // setTxFrequency on Connected and queues setReceiverFrequency before
+    // connectToRadio, so both masks carry a real selection before the
+    // operator can key.
+    quint8  m_alexLpfBitsRx{0};  // from the receive frequency (unkeyed)
+    quint8  m_alexLpfBitsTx{0};  // from the transmit frequency (keyed)
+
+    // Phase 3F: AlexController's decision for the single P1 filter chain.
+    // -1 = no decision yet, use the RX0-frequency-derived m_alexHpfBits.
+    int     m_alexRxHpfOverride{-1};
+
+    // Effective bank-10 C3 HPF bits (override when set, else m_alexHpfBits).
+    quint8  effectiveAlexHpfBits() const;
+
+    // The board capabilities to filter-gate on, valid before connectToRadio.
+    //
+    // m_caps is assigned inside connectToRadio, but RadioModel queues the
+    // first setReceiverFrequency BEFORE dispatching connectToRadio so the
+    // opening C&C frame carries the persisted VFO (RadioModel.cpp, the
+    // "Now dispatch connectToRadio" comment). At that moment m_caps is still
+    // null while m_hardwareProfile has already been handed over, so gating on
+    // m_caps alone silently skipped the connect-time filter selection on
+    // every Alex board that is not the HL2. Harmless while the low-pass was
+    // written from setTxFrequency on Connected; not harmless once the
+    // receive-derived mask is the one the wire reads while unkeyed, because
+    // nothing else would write it until the operator turned the VFO.
+    const BoardCapabilities* filterCaps() const {
+        return m_caps ? m_caps : m_hardwareProfile.caps;
+    }
+
+    // Effective bank-10 C4 LPF bits: the transmit selection while keyed, the
+    // receive selection while not. The compose-time form of SetAlexLPFBits's
+    // `isMox || !isTX` guard on the Alex0 word
+    // (netInterface.c:705-717 [v2.10.3.15]); Thetis reaches the same state by
+    // re-driving on both MOX edges instead
+    // (console.cs:29083-29099 + 29140-29148 HdwMOXChanged [v2.10.3.15]).
+    quint8  effectiveAlexLpfBits() const;
 
     // ── TX I/Q ring buffer (3M-1a E.2) ───────────────────────────────────────
     // Pre-allocated to hold kTxIqBufSamples×8 bytes.  Each slot is one
@@ -624,6 +702,16 @@ private:
     std::atomic<int> m_txIqWritePos{0};  // audio thread writes; relaxed store
     std::atomic<int> m_txIqReadPos{0};   // connection thread writes; relaxed store
     std::atomic<int> m_txIqCount{0};     // both threads: fetch_add (audio, release) / fetch_sub (conn)
+
+    // TX I/Q ring pre-prime flag.  setMox(true) sets it on the connection
+    // thread; sendTxIq consumes it on the TX worker thread (single-writer
+    // invariant preserved).  When consumed, sendTxIq pushes a 20 ms
+    // cushion of zero samples (960 samples = 7680 bytes at the P1 48 kHz
+    // wire rate) into the ring BEFORE the real first-block samples, so
+    // fillTxZone's 63-sample-per-zone drain has headroom while the
+    // producer settles.  Same mechanism as the P2 cushion; see
+    // P2RadioConnection.h for the architectural rationale.
+    std::atomic<bool> m_txIqPrimePending{false};
 
     // Float→int16 + EP2 zone fill helper.
     // Returns true if 63 samples were available and written, false if underrun.

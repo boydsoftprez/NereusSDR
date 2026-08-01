@@ -1,0 +1,215 @@
+<h2>Pan layout picker — what the operator sees</h2>
+<p class="subtitle">Modal dialog, 5 layout preview tiles. Each tile renders a scaled preview of the layout with placeholder spectrum content.</p>
+
+<h3>The dialog (View → Pan Layout)</h3>
+
+<div style="background:#0d1218;border:1px solid #2a3548;border-radius:6px;padding:0;margin:16px auto;max-width:760px;box-shadow:0 8px 32px rgba(0,0,0,0.5)">
+
+  <div style="background:linear-gradient(180deg,#3a4a5a 0%,#2a3a4a 50%,#1a2a38 100%);padding:8px 14px;border-bottom:1px solid #44556a;display:flex;justify-content:space-between;align-items:center">
+    <span style="color:#8aa8c0;font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:0.5px">Pan Layout</span>
+    <span style="color:#666;font-size:12px;cursor:pointer">×</span>
+  </div>
+
+  <div style="padding:18px">
+    <div style="color:#aac;font-size:12px;margin-bottom:14px">Pick a layout. Per-pan source (DDC slice or wideband ADC) is set with right-click on each pan after applying.</div>
+
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px">
+
+      <!-- Layout 1: Single -->
+      <div style="background:#1a2030;border:2px solid #2a3548;border-radius:4px;padding:8px;cursor:pointer;transition:all 0.15s" onmouseover="this.style.borderColor='#5a7a9a'" onmouseout="this.style.borderColor='#2a3548'">
+        <div style="aspect-ratio:1.4/1;background:#0d1218;border:1px solid #334;border-radius:2px;display:flex;flex-direction:column;overflow:hidden">
+          <div style="flex:1;background:linear-gradient(180deg,#1a3548 0%,#0d1f30 30%,#0d1218 100%);position:relative">
+            <div style="position:absolute;bottom:30%;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 0%,#5a8a5a 25%,#fc9 50%,#a55 75%,#5a8a5a 100%);box-shadow:0 0 3px #8c8"></div>
+            <div style="position:absolute;bottom:10px;left:40%;width:1px;height:30px;background:#fc9"></div>
+          </div>
+          <div style="flex:1;background:linear-gradient(180deg,#1a1a3a 0%,#3a2a5a 30%,#5a3a3a 60%,#8a5a3a 100%);opacity:0.7"></div>
+        </div>
+        <div style="color:#8aa8c0;font-size:10px;font-weight:bold;text-align:center;margin-top:6px">Single</div>
+        <div style="color:#666;font-size:9px;text-align:center">1 pan</div>
+      </div>
+
+      <!-- Layout 2v: Stacked -->
+      <div style="background:#1a2030;border:2px solid #2a3548;border-radius:4px;padding:8px;cursor:pointer;transition:all 0.15s" onmouseover="this.style.borderColor='#5a7a9a'" onmouseout="this.style.borderColor='#2a3548'">
+        <div style="aspect-ratio:1.4/1;background:#0d1218;border:1px solid #334;border-radius:2px;display:flex;flex-direction:column;overflow:hidden;gap:1px">
+          <div style="flex:1;background:linear-gradient(180deg,#1a3548 0%,#0d1218 100%);position:relative">
+            <div style="position:absolute;bottom:30%;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 0%,#5a8a5a 30%,#fc9 50%,#5a8a5a 70%,transparent 100%)"></div>
+            <div style="position:absolute;bottom:8px;left:48%;width:1px;height:14px;background:#fc9"></div>
+          </div>
+          <div style="flex:1;background:linear-gradient(180deg,#481a35 0%,#0d1218 100%);position:relative">
+            <div style="position:absolute;bottom:30%;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 0%,#5a8a5a 40%,#fc9 55%,#5a8a5a 70%,transparent 100%)"></div>
+            <div style="position:absolute;bottom:8px;left:53%;width:1px;height:14px;background:#a66"></div>
+          </div>
+        </div>
+        <div style="color:#8aa8c0;font-size:10px;font-weight:bold;text-align:center;margin-top:6px">Stacked</div>
+        <div style="color:#666;font-size:9px;text-align:center">2 pans · 2v</div>
+      </div>
+
+      <!-- Layout 2h: Side-by-side -->
+      <div style="background:#1a2030;border:2px solid #2a3548;border-radius:4px;padding:8px;cursor:pointer;transition:all 0.15s" onmouseover="this.style.borderColor='#5a7a9a'" onmouseout="this.style.borderColor='#2a3548'">
+        <div style="aspect-ratio:1.4/1;background:#0d1218;border:1px solid #334;border-radius:2px;display:flex;overflow:hidden;gap:1px">
+          <div style="flex:1;background:linear-gradient(180deg,#1a3548 0%,#0d1218 60%,#3a1a3a 100%);position:relative">
+            <div style="position:absolute;top:35%;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 0%,#5a8a5a 30%,#fc9 50%,transparent 100%)"></div>
+            <div style="position:absolute;top:35%;left:45%;width:1px;height:18px;background:#fc9"></div>
+          </div>
+          <div style="flex:1;background:linear-gradient(180deg,#481a35 0%,#0d1218 60%,#3a3a1a 100%);position:relative">
+            <div style="position:absolute;top:35%;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 0%,#5a8a5a 25%,#fc9 60%,#5a8a5a 75%,transparent 100%)"></div>
+            <div style="position:absolute;top:35%;left:55%;width:1px;height:18px;background:#a66"></div>
+          </div>
+        </div>
+        <div style="color:#8aa8c0;font-size:10px;font-weight:bold;text-align:center;margin-top:6px">Side-by-Side</div>
+        <div style="color:#666;font-size:9px;text-align:center">2 pans · 2h</div>
+      </div>
+
+      <!-- Layout 12h: Wide top + 2 below (THE WIDEBAND LAYOUT) -->
+      <div style="background:#1a2030;border:2px solid #4a7a4a;border-radius:4px;padding:8px;cursor:pointer;transition:all 0.15s;position:relative" onmouseover="this.style.borderColor='#5aa55a'" onmouseout="this.style.borderColor='#4a7a4a'">
+        <div style="position:absolute;top:-6px;right:-6px;background:#5a8a5a;color:#0d1218;font-size:8px;font-weight:bold;padding:1px 5px;border-radius:8px;text-transform:uppercase">Wideband</div>
+        <div style="aspect-ratio:1.4/1;background:#0d1218;border:1px solid #334;border-radius:2px;display:flex;flex-direction:column;overflow:hidden;gap:1px">
+          <div style="flex:1.6;background:linear-gradient(180deg,#1a2848 0%,#0d1218 100%);position:relative">
+            <div style="position:absolute;bottom:25%;left:0;right:0;height:1px;background:linear-gradient(90deg,#5a8a5a 0%,#fc9 8%,#a55 12%,#5a8a5a 20%,#5a5a8a 25%,#fc9 38%,#a55 42%,#5a8a5a 50%,#fc9 65%,#5a5a8a 75%,#5a8a5a 100%);box-shadow:0 0 2px #6a8"></div>
+            <div style="position:absolute;bottom:0;left:0;right:0;top:0;background:repeating-linear-gradient(90deg,transparent 0%,transparent 9%,rgba(138,168,192,0.15) 9%,rgba(138,168,192,0.15) 9.5%);pointer-events:none"></div>
+            <div style="position:absolute;bottom:6px;left:8%;width:1px;height:12px;background:#fc9"></div>
+            <div style="position:absolute;bottom:6px;left:35%;width:1px;height:12px;background:#a66"></div>
+            <div style="position:absolute;bottom:6px;left:62%;width:1px;height:12px;background:#69b"></div>
+          </div>
+          <div style="flex:1;display:flex;gap:1px">
+            <div style="flex:1;background:linear-gradient(180deg,#1a3548 0%,#0d1218 100%);position:relative">
+              <div style="position:absolute;bottom:35%;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 0%,#fc9 50%,transparent 100%)"></div>
+              <div style="position:absolute;bottom:6px;left:48%;width:1px;height:10px;background:#fc9"></div>
+            </div>
+            <div style="flex:1;background:linear-gradient(180deg,#481a35 0%,#0d1218 100%);position:relative">
+              <div style="position:absolute;bottom:35%;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 0%,#fc9 50%,transparent 100%)"></div>
+              <div style="position:absolute;bottom:6px;left:48%;width:1px;height:10px;background:#a66"></div>
+            </div>
+          </div>
+        </div>
+        <div style="color:#8aa8c0;font-size:10px;font-weight:bold;text-align:center;margin-top:6px">Wide + 2</div>
+        <div style="color:#666;font-size:9px;text-align:center">3 pans · 12h</div>
+      </div>
+
+      <!-- Layout 2x2: Grid -->
+      <div style="background:#1a2030;border:2px solid #2a3548;border-radius:4px;padding:8px;cursor:pointer;transition:all 0.15s" onmouseover="this.style.borderColor='#5a7a9a'" onmouseout="this.style.borderColor='#2a3548'">
+        <div style="aspect-ratio:1.4/1;background:#0d1218;border:1px solid #334;border-radius:2px;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;overflow:hidden;gap:1px">
+          <div style="background:linear-gradient(180deg,#1a3548 0%,#0d1218 100%);position:relative">
+            <div style="position:absolute;top:45%;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 0%,#fc9 50%,transparent 100%)"></div>
+            <div style="position:absolute;top:45%;left:48%;width:1px;height:10px;background:#fc9"></div>
+          </div>
+          <div style="background:linear-gradient(180deg,#481a35 0%,#0d1218 100%);position:relative">
+            <div style="position:absolute;top:45%;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 0%,#fc9 50%,transparent 100%)"></div>
+            <div style="position:absolute;top:45%;left:48%;width:1px;height:10px;background:#a66"></div>
+          </div>
+          <div style="background:linear-gradient(180deg,#1a4848 0%,#0d1218 100%);position:relative">
+            <div style="position:absolute;top:45%;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 0%,#fc9 50%,transparent 100%)"></div>
+            <div style="position:absolute;top:45%;left:48%;width:1px;height:10px;background:#69b"></div>
+          </div>
+          <div style="background:linear-gradient(180deg,#48481a 0%,#0d1218 100%);position:relative">
+            <div style="position:absolute;top:45%;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent 0%,#fc9 50%,transparent 100%)"></div>
+            <div style="position:absolute;top:45%;left:48%;width:1px;height:10px;background:#9b6"></div>
+          </div>
+        </div>
+        <div style="color:#8aa8c0;font-size:10px;font-weight:bold;text-align:center;margin-top:6px">Grid</div>
+        <div style="color:#666;font-size:9px;text-align:center">4 pans · 2x2</div>
+      </div>
+
+    </div>
+
+    <div style="margin-top:16px;color:#888;font-size:11px;line-height:1.5">
+      <strong style="color:#8aa">Tip:</strong> The "Wide + 2" layout is designed for the wideband bandscope workflow — set the top pan source to <em>Wideband ADC0</em> for a 0–61.44 MHz scan, then use the two lower pans as your active and monitor DDCs.
+    </div>
+
+    <div style="margin-top:18px;display:flex;justify-content:flex-end;gap:8px">
+      <button style="background:#2a3548;color:#cde;border:1px solid #44556a;padding:6px 18px;border-radius:3px;font-size:11px;cursor:pointer">Cancel</button>
+      <button style="background:#3a5a7a;color:#fff;border:1px solid #5a7aaa;padding:6px 18px;border-radius:3px;font-size:11px;cursor:pointer;font-weight:bold">Apply</button>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:32px">After applying "Wide + 2" — what the full screen looks like</h3>
+
+<div style="background:#0d1218;border:1px solid #2a3548;border-radius:4px;padding:0;margin:16px auto;max-width:920px;overflow:hidden">
+
+  <!-- Top wideband strip -->
+  <div style="background:linear-gradient(180deg,#1a2848 0%,#0d1f30 60%,#0d1218 100%);height:160px;position:relative;border-bottom:1px solid #2a3548">
+    <!-- Title bar -->
+    <div style="background:linear-gradient(180deg,#3a4a5a 0%,#2a3a4a 50%,#1a2a38 100%);padding:3px 10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #44556a">
+      <span style="color:#8aa8c0;font-size:10px;font-weight:bold">WIDEBAND ADC0 · 0 – 61.44 MHz · 7.5 kHz/bin · 14 fps</span>
+      <span style="color:#888;font-size:9px">Alex0: BYPASS (wideband)</span>
+    </div>
+    <!-- Band markers -->
+    <div style="position:absolute;top:24px;left:0;right:0;display:flex;font-size:8px;color:#669;padding:2px 0">
+      <span style="position:absolute;left:3%">160m</span>
+      <span style="position:absolute;left:13%">80m</span>
+      <span style="position:absolute;left:22%">60m</span>
+      <span style="position:absolute;left:30%">40m</span>
+      <span style="position:absolute;left:38%">30m</span>
+      <span style="position:absolute;left:45%">20m</span>
+      <span style="position:absolute;left:52%">17m</span>
+      <span style="position:absolute;left:58%">15m</span>
+      <span style="position:absolute;left:64%">12m</span>
+      <span style="position:absolute;left:70%">10m</span>
+      <span style="position:absolute;left:92%">6m</span>
+    </div>
+    <!-- Spectrum trace -->
+    <div style="position:absolute;bottom:8px;left:0;right:0;height:60px">
+      <svg viewBox="0 0 920 60" style="width:100%;height:100%;overflow:visible">
+        <path d="M0,55 L20,50 L40,53 L60,40 L80,52 L100,45 L120,48 L130,30 L150,35 L160,48 L180,52 L200,50 L220,40 L240,38 L260,48 L280,28 L290,32 L310,48 L330,50 L350,42 L370,45 L390,52 L400,38 L410,48 L430,55 L450,50 L470,48 L490,40 L510,32 L530,42 L550,50 L570,52 L590,48 L610,42 L630,45 L650,50 L670,38 L680,45 L700,52 L720,50 L740,48 L760,50 L780,52 L800,48 L820,50 L840,52 L850,42 L870,48 L890,52 L920,55" stroke="#6acb6a" stroke-width="1" fill="none" opacity="0.95"/>
+      </svg>
+    </div>
+    <!-- Slice flags -->
+    <div style="position:absolute;bottom:25px;left:45%;width:1px;height:30px;background:#fc9"></div>
+    <div style="position:absolute;bottom:50px;left:43%;background:#fc9;color:#0d1218;font-size:9px;font-weight:bold;padding:1px 4px;border-radius:2px">A·14.225</div>
+    <div style="position:absolute;bottom:25px;left:30%;width:1px;height:30px;background:#a66"></div>
+    <div style="position:absolute;bottom:50px;left:28%;background:#a66;color:#fff;font-size:9px;font-weight:bold;padding:1px 4px;border-radius:2px">B·7.150</div>
+    <div style="position:absolute;bottom:25px;left:13%;width:1px;height:30px;background:#69b"></div>
+    <div style="position:absolute;bottom:50px;left:11%;background:#69b;color:#fff;font-size:9px;font-weight:bold;padding:1px 4px;border-radius:2px">C·3.750</div>
+  </div>
+
+  <!-- Bottom two DDC pans -->
+  <div style="display:flex;gap:1px;background:#0d1218">
+
+    <div style="flex:1;background:linear-gradient(180deg,#1a3548 0%,#0d1218 50%,#1a1a3a 75%,#3a1a3a 100%);height:200px;position:relative">
+      <div style="background:linear-gradient(180deg,#3a4a5a 0%,#2a3a4a 50%,#1a2a38 100%);padding:3px 10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #44556a">
+        <span style="color:#8aa8c0;font-size:10px;font-weight:bold">SLICE A · DDC2 · 14.225 MHz USB · 192 kHz</span>
+        <span style="background:#fc9;color:#0d1218;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:2px">A · TX</span>
+      </div>
+      <!-- Frequency scale -->
+      <div style="position:absolute;top:24px;left:0;right:0;height:12px;display:flex;justify-content:space-between;padding:0 6px;font-size:8px;color:#557">
+        <span>14.130</span><span>14.180</span><span>14.225</span><span>14.270</span><span>14.320</span>
+      </div>
+      <!-- Spectrum -->
+      <div style="position:absolute;top:42px;left:0;right:0;height:60px">
+        <svg viewBox="0 0 460 60" style="width:100%;height:100%">
+          <path d="M0,55 L40,50 L80,52 L120,45 L160,52 L180,30 L200,38 L220,48 L228,18 L240,32 L260,48 L280,50 L320,52 L360,45 L400,50 L440,52 L460,55" stroke="#6acb6a" stroke-width="1.2" fill="none"/>
+        </svg>
+      </div>
+      <!-- VFO indicator + filter -->
+      <div style="position:absolute;top:40px;bottom:70px;left:50%;width:1px;background:#fc9"></div>
+      <div style="position:absolute;top:40px;bottom:70px;left:48%;width:5%;background:rgba(255,200,100,0.15)"></div>
+      <!-- Waterfall -->
+      <div style="position:absolute;bottom:0;left:0;right:0;height:70px;background:repeating-linear-gradient(180deg,#1a1a3a 0%,#3a2a5a 30%,#5a3a3a 60%,#8a5a3a 90%);opacity:0.6"></div>
+      <div style="position:absolute;bottom:0;left:48%;width:5%;height:70px;background:linear-gradient(180deg,#fc9 0%,#a66 30%,transparent 70%);opacity:0.5"></div>
+    </div>
+
+    <div style="flex:1;background:linear-gradient(180deg,#481a35 0%,#0d1218 50%,#1a1a3a 75%,#3a1a3a 100%);height:200px;position:relative">
+      <div style="background:linear-gradient(180deg,#3a4a5a 0%,#2a3a4a 50%,#1a2a38 100%);padding:3px 10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #44556a">
+        <span style="color:#8aa8c0;font-size:10px;font-weight:bold">SLICE B · DDC3 · 7.150 MHz LSB · 96 kHz</span>
+        <span style="background:#a66;color:#fff;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:2px">B</span>
+      </div>
+      <div style="position:absolute;top:24px;left:0;right:0;height:12px;display:flex;justify-content:space-between;padding:0 6px;font-size:8px;color:#557">
+        <span>7.102</span><span>7.126</span><span>7.150</span><span>7.174</span><span>7.198</span>
+      </div>
+      <div style="position:absolute;top:42px;left:0;right:0;height:60px">
+        <svg viewBox="0 0 460 60" style="width:100%;height:100%">
+          <path d="M0,52 L40,48 L80,52 L120,40 L150,28 L170,42 L200,50 L220,48 L240,52 L280,45 L320,50 L340,32 L360,40 L400,52 L440,50 L460,52" stroke="#6acb6a" stroke-width="1.2" fill="none"/>
+        </svg>
+      </div>
+      <div style="position:absolute;top:40px;bottom:70px;left:50%;width:1px;background:#a66"></div>
+      <div style="position:absolute;top:40px;bottom:70px;left:47%;width:6%;background:rgba(170,100,100,0.18)"></div>
+      <div style="position:absolute;bottom:0;left:0;right:0;height:70px;background:repeating-linear-gradient(180deg,#1a1a3a 0%,#3a2a5a 30%,#5a3a3a 60%,#8a5a3a 90%);opacity:0.6"></div>
+      <div style="position:absolute;bottom:0;left:47%;width:6%;height:70px;background:linear-gradient(180deg,#a66 0%,#522 30%,transparent 70%);opacity:0.5"></div>
+    </div>
+
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:18px;text-align:center">Top: Wideband ADC0 with band markers + 3 slice flags (A on 20m, B on 40m, C on 80m). Bottom: two DDC pans showing Slice A and B at filterable detail. Click a wideband flag → that slice becomes active; click anywhere on wideband → active DDC retunes there. Push back on the visual treatment if it's not where you want it.</p>

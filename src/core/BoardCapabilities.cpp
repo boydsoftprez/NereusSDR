@@ -297,6 +297,9 @@ const BoardCapabilities kAtlas = {
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 1,
     .maxReceivers     = 3,
+    .maxSlices        = 3,   // Phase 3F: Atlas/Metis 3-slice cap (1-ADC, 3 DDCs, no PS support)
+    .userDdcCount     = 3,   // Phase 3F Sub-Epic I: Metis user DDCs = DDC0-2 (design doc §2)
+    .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
     .sampleRates      = {48000, 96000, 192000, 0, 0, 0},
     .maxSampleRate    = 192000,
     .attenuator       = {0, 0, 0, false, 0x1F, 0x20, false},
@@ -350,6 +353,9 @@ const BoardCapabilities kHermes = {
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 1,
     .maxReceivers     = 4,
+    .maxSlices        = 4,   // Phase 3F: Hermes 4-slice cap (1-ADC, 4 DDCs; PS reclaims DDC0+1 on TX)
+    .userDdcCount     = 4,   // Phase 3F Sub-Epic I: Hermes user DDCs = DDC0-3 (design doc §2)
+    .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
     .sampleRates      = {48000, 96000, 192000, 0, 0, 0},
     .maxSampleRate    = 192000,
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
@@ -409,6 +415,9 @@ const BoardCapabilities kHermesII = {
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 1,
     .maxReceivers     = 4,
+    .maxSlices        = 2,   // Phase 3F: HermesII 2-slice cap (1-ADC, 2 DDCs)
+    .userDdcCount     = 2,   // Phase 3F Sub-Epic I: HermesII user DDCs = DDC0-1 (design doc §2)
+    .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
     .sampleRates      = {48000, 96000, 192000, 0, 0, 0},
     .maxSampleRate    = 192000,
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
@@ -463,7 +472,19 @@ const BoardCapabilities kAngelia = {
     .board            = HPSDRHW::Angelia,
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 2,
+    // RX2 has its own front end, so RX1 alone selects the receive low-pass.
+    // From Thetis console.cs:14815-14817 SetupForHPSDRModel [v2.10.3.15]
+    //   case HPSDRModel.ANAN100D: ... _rx2_preamp_present = true;
+    .rx2PreampPresent = true,
     .maxReceivers     = 7,
+    .maxSlices        = 5,   // Phase 3F: Angelia 5-slice cap (2-ADC, 7 DDCs; DDC0+1 reserved for PS+Div)
+    .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Angelia user DDCs = DDC2-6 (design doc §2)
+    .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
+                             // Was 2, which contradicted every other Protocol1 row and this
+                             // row's own .protocol field. NereusSDR has no P1 wideband receive
+                             // path, so advertising ADCs for it let extended view bypass the
+                             // Alex preselector for a stream that never arrives, losing receive
+                             // filtering for nothing. (Codex review round 5, PR #293.)
     .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
     .maxSampleRate    = 384000,
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
@@ -513,7 +534,18 @@ const BoardCapabilities kOrion = {
     .board            = HPSDRHW::Orion,
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 2,
+    // From Thetis console.cs:14819-14821 SetupForHPSDRModel [v2.10.3.15]
+    //   case HPSDRModel.ANAN200D: ... _rx2_preamp_present = true;
+    .rx2PreampPresent = true,
     .maxReceivers     = 7,
+    .maxSlices        = 5,   // Phase 3F: Orion 5-slice cap (2-ADC, 7 DDCs; DDC0+1 reserved for PS+Div)
+    .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Orion user DDCs = DDC2-6 (design doc §2)
+    .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
+                             // Was 2, which contradicted every other Protocol1 row and this
+                             // row's own .protocol field. NereusSDR has no P1 wideband receive
+                             // path, so advertising ADCs for it let extended view bypass the
+                             // Alex preselector for a stream that never arrives, losing receive
+                             // filtering for nothing. (Codex review round 5, PR #293.)
     .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
     .maxSampleRate    = 384000,
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
@@ -564,7 +596,26 @@ const BoardCapabilities kOrionMKII = {
     .board            = HPSDRHW::OrionMKII,
     .protocol         = ProtocolVersion::Protocol2,
     .adcCount         = 2,
+    // Two driven RX filter chains. ORIONMKII, ANAN7000D, ANAN8000D,
+    // ANVELINAPRO3 and REDPITAYA all resolve to this HW row and all five are
+    // in the setAlex2HPF model list at console.cs:15435-15443 [v2.10.3.15].
+    .rxFilterChainCount = 2,
+    // All five models on this row are _rx2_preamp_present = true.
+    // From Thetis console.cs:14823-14853 SetupForHPSDRModel [v2.10.3.15]
+    // Upstream inline attribution preserved verbatim. These are the tags
+    // upstream carries in and just around the cited range, not a list of
+    // models on this row:
+    //   case HPSDRModel.ANAN_G2E: //N1GP G2E added
+    //   case HPSDRModel.ANAN_G2_1K:                          // G8NJJ: likely to need further changes for PA
+    //   case HPSDRModel.REDPITAYA: //DH1KLM
+    //   RX2PreampPresent = _rx2_preamp_present; //[2.10.3.11]MW0LGE we were setting the member var above, but this was not actually having any effect/update
+    //   case HPSDRModel.ORIONMKII / ANAN7000D / ANAN8000D -> true
+    //   case HPSDRModel.ANVELINAPRO3                      -> true
+    .rx2PreampPresent = true,
     .maxReceivers     = 7,
+    .maxSlices        = 5,   // Phase 3F: OrionMKII/7000D/8000D/AnvelinaPro3/RedPitaya 5-slice cap (2-ADC P2; DDC0+1 reserved)
+    .userDdcCount     = 5,   // Phase 3F Sub-Epic I: OrionMKII/7000D/8000D/AnvelinaPro3/RedPitaya user DDCs = DDC2-6 (design doc §2)
+    .widebandAdcs     = 2,   // Phase 3F: 2-ADC P2 board — ADC0 + ADC1 both support wideband stream on ports 1027+1028
     .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
     .maxSampleRate    = 1536000,
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
@@ -599,8 +650,24 @@ const BoardCapabilities kOrionMKII = {
     .minFirmwareVersion = 0,   // floor check removed; see file header
     .knownGoodFirmware  = 0,
     // Phase 3P-B Task 6: OrionMKII family has independent per-ADC preamp control
-    // (ANAN-7000DLE / 8000DLE / AnvelinaPro3). p2SaturnBpf1Edges stays empty
-    // (OrionMKII uses standard Alex HPF/LPF; Saturn BPF1 override is G2/G2-1K only).
+    // (ANAN-7000DLE / 8000DLE / AnvelinaPro3).
+    //
+    // CORRECTION (2026-07-25): this comment used to read "OrionMKII uses
+    // standard Alex HPF/LPF; Saturn BPF1 override is G2/G2-1K only".  That is
+    // wrong, and it is where the wrong-ladder defect on 80m / 60m / 40m / 15m
+    // came from.  Thetis dispatches OrionMKII to setBPF1ForOrionIISaturn right
+    // alongside Saturn and HermesC10 (console.cs:6827-6837 [v2.10.3.15]), and
+    // deskhpsdr independently groups NEW_DEVICE_ORION2 with NEW_DEVICE_SATURN
+    // for the band-pass bank (new_protocol.c:1288-1290 [@f3d857c]).  OrionMKII
+    // carries the MkII BAND-PASS front end, not the legacy high-pass ladder.
+    // The ladder is selected by codec::alex::usesBpf1Preselector, which is the
+    // single source of truth for the board split.
+    //
+    // p2SaturnBpf1Edges stays empty on every board: it is the per-band USER
+    // OVERRIDE channel (populated from the Setup > Antenna > Alex-1 Filters
+    // page, persisted under hardware/<mac>/alex/bpf1/<band>/{start,end}).
+    // Empty means "use the shipped Thetis defaults", which now live in
+    // codec::alex::computeBpf1 rather than being absent entirely.
     .p2PreampPerAdc   = true,
     .displayName      = "ANAN-7000DLE/8000DLE (OrionMkII)",
     .sourceCitation   = "network.h:453, enums.cs:395, clsHardwareSpecific.cs:143-190",
@@ -627,6 +694,43 @@ const BoardCapabilities kHermesC10 = {
     .protocol         = ProtocolVersion::Protocol2,
     .adcCount         = 1,                                  // SetRxADC(1) [v2.10.3.15]
     .maxReceivers     = 4,                                  // P1_rxcount=4 nddc=4 (console.cs:8388 [v2.10.3.15])
+    // 5 slices over 4 DDCs is legitimate: slices sharing a window share a DDC.
+    // The old comment here read "2-ADC P2 class", which contradicts adcCount=1
+    // two lines up; the G2E is Thetis's 1-ADC HERMES-class branch
+    // (console.cs:8388 [v2.10.3.15]) and has no DDC0/DDC1 reservation of the
+    // kind the 2-ADC rows describe.
+    .maxSlices        = 5,   // Phase 3F: HermesC10/G2E 5-slice cap (1-ADC HERMES class; slices may share a DDC)
+    // Phase 3F Sub-Epic I closeout, defect F2: was 5 with a "DDC2-6" comment.
+    // Both were wrong. Thetis asks for 4 on this family (console.cs:8391-8392
+    // [v2.10.3.15]: P1_rxcount = 4; nddc = 4) and places rx1 on DDC0, not DDC2
+    // (console.cs:8610-8642 [v2.10.3.15] GetDDC groups HermesC10 with Hermes
+    // and HermesII on rx1 = 0). A fifth stream was allocatable but left at
+    // streamDdc[4] == -1, so it drew no enable bit and its slice was silently
+    // dead. maxReceivers=4 on the line above was already telling the truth.
+    //
+    // Per the header's policy-vs-hardware caveat: 4 is Thetis's client policy,
+    // not a verified hardware bound. The G2E has no public gateware to check it
+    // against (see docs/attribution/GATEWARE-PROVENANCE.md), so this is the
+    // best evidence available rather than silicon truth. Both codecs that serve
+    // this SKU agree at 4 (P2CodecHermes::familyDdcCount(), and P1CodecStandard
+    // on P1), so nothing downstream is currently reaching past it.
+    .userDdcCount     = 4,   // Phase 3F Sub-Epic I: HermesC10/G2E user DDCs = DDC0-3 (console.cs:8391-8392 [v2.10.3.15])
+    // Bounded by adcCount, and unlike the DDC counts above this one IS a
+    // hardware bound: ADC count is a physical part on the board, not a Verilog
+    // synthesis parameter that moves between firmware builds. The G2E has one
+    // ADC (clsHardwareSpecific.cs:130 [v2.10.3.15] SetRxADC(1)), so there is no
+    // ADC1 to carry a second wideband stream.
+    //
+    // Was 2 with a "P2 2-ADC class" comment inherited from the design doc §2
+    // table, which mis-filed the G2E among the 2-ADC boards. That contradicted
+    // the adcCount = 1 line at the top of this row.
+    //
+    // Note that Thetis only ever enables ADC0's wideband stream on any board:
+    // SetWBEnable(adc, enable) sets one bit per ADC in wb_enable (wire byte 23,
+    // ChannelMaster/network.c:879 [v2.10.3.15]), and both call sites pass 0
+    // (console.cs:43558 on, wideband.cs:52 off).
+    //N1GP G2E added  [original inline tag from clsHardwareSpecific.cs:129 — ANAN_G2E case label]
+    .widebandAdcs     = 1,   // Phase 3F: 1-ADC board — ADC0 only (SetRxADC(1), clsHardwareSpecific.cs:130 [v2.10.3.15])
     // Thetis setup.cs:849-850 [v2.10.3.15] — every P2/ETH board gets the
     // full 6-rate list; Thetis has no per-board cap, only per-protocol.
     // Pcap of working Thetis-on-G2E ran at 768 kHz (CmdRx byte 18-19 =
@@ -712,6 +816,9 @@ const BoardCapabilities kHermesLite = {
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 1,
     .maxReceivers     = 4,
+    .maxSlices        = 1,   // Phase 3F: HL2 single-slice cap (1-ADC; DDCs reserved for firmware quirks)
+    .userDdcCount     = 1,   // Phase 3F Sub-Epic I: HL2 user DDCs = DDC0 only (design doc §2)
+    .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
     .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
     .maxSampleRate    = 384000,
     // HL2: signed user-facing range −28..+31 dB.  mi0bot widens to +32 at
@@ -816,6 +923,9 @@ const BoardCapabilities kHermesLiteRxOnly = {
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 1,
     .maxReceivers     = 4,
+    .maxSlices        = 1,   // Phase 3F: HL2 RX-only 1-slice cap (mirrors kHermesLite; single-ADC firmware cap)
+    .userDdcCount     = 1,   // Phase 3F Sub-Epic I: HL2 RX-only user DDCs = DDC0 only (design doc §2)
+    .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
     .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
     .maxSampleRate    = 384000,
     // HL2 RX-only inherits the standard HL2 signed −28..+31 dB ATT range.
@@ -874,7 +984,22 @@ const BoardCapabilities kSaturn = {
     .board            = HPSDRHW::Saturn,
     .protocol         = ProtocolVersion::Protocol2,
     .adcCount         = 2,
+    // Two driven RX filter chains. ANAN_G2 and ANAN_G2_1K both resolve here
+    // (clsHardwareSpecific.cs:164-177 [v2.10.3.15]) and both are in the
+    // setAlex2HPF model list at console.cs:15435-15443 [v2.10.3.15].
+    .rxFilterChainCount = 2,
+    // Both models on this row are _rx2_preamp_present = true.
+    // From Thetis console.cs:14839-14845 SetupForHPSDRModel [v2.10.3.15]
+    //   case HPSDRModel.ANAN_G2: ... _rx2_preamp_present = true;
+    // Upstream inline attribution preserved verbatim. Tags upstream carries
+    // in and just around the cited range, not models on this row:
+    //   case HPSDRModel.ANAN_G2E: //N1GP G2E added
+    //   case HPSDRModel.ANAN_G2_1K:                          // G8NJJ: likely to need further changes for PA
+    .rx2PreampPresent = true,
     .maxReceivers     = 7,
+    .maxSlices        = 5,   // Phase 3F: Saturn/ANAN-G2/G2-1K 5-slice cap (2-ADC P2; DDC0+1 reserved)
+    .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Saturn/ANAN-G2/G2-1K user DDCs = DDC2-6 (design doc §2)
+    .widebandAdcs     = 2,   // Phase 3F: 2-ADC P2 board — ADC0 + ADC1 both support wideband stream on ports 1027+1028
     .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
     .maxSampleRate    = 1536000,
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
@@ -926,7 +1051,22 @@ const BoardCapabilities kSaturnMKII = {
     .board            = HPSDRHW::SaturnMKII,
     .protocol         = ProtocolVersion::Protocol2,
     .adcCount         = 2,
+    // Two driven RX filter chains, taken from the physical board rather than
+    // from upstream list membership: HPSDRHW.SaturnMKII appears once in all
+    // of Thetis (enums.cs:399 [v2.10.3.15], "ANAN-G2: MKII board?") and no
+    // HPSDRModel resolves to it, so console.cs:15435-15443 cannot answer for
+    // it. This row describes the ANAN-G2 MkII board revision, so it inherits
+    // the ANAN-G2's two chains along with the rest of kSaturn.
+    .rxFilterChainCount = 2,
+    // Inherited from kSaturn along with the rest of this row, for the same
+    // reason: no HPSDRModel resolves to HPSDRHW.SaturnMKII, so
+    // console.cs:14783-14857 [v2.10.3.15] cannot answer for it directly and
+    // the ANAN-G2 board revision it describes is _rx2_preamp_present = true.
+    .rx2PreampPresent = true,
     .maxReceivers     = 7,
+    .maxSlices        = 5,   // Phase 3F: SaturnMKII 5-slice cap (2-ADC P2 Saturn variant; DDC0+1 reserved)
+    .userDdcCount     = 5,   // Phase 3F Sub-Epic I: SaturnMKII user DDCs = DDC2-6 (design doc §2)
+    .widebandAdcs     = 2,   // Phase 3F: 2-ADC P2 board — ADC0 + ADC1 both support wideband stream on ports 1027+1028
     .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
     .maxSampleRate    = 1536000,
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
@@ -980,7 +1120,21 @@ const BoardCapabilities kAndromeda = {
     .board            = HPSDRHW::Andromeda,
     .protocol         = ProtocolVersion::Protocol2,
     .adcCount         = 2,
+    // Two driven RX filter chains, derived from kSaturn like the rest of this
+    // row. Thetis has no HPSDRHW entry for Andromeda at all (enums.cs:389-402
+    // [v2.10.3.15] stops at HermesC10), so console.cs:15435-15443 cannot
+    // answer for it and this is a NereusSDR judgement, not an upstream fact.
+    // Revisit with the rest of the row when Andromeda hardware specs land.
+    .rxFilterChainCount = 2,
+    // Derived from kSaturn like the rest of this row, and a NereusSDR
+    // judgement rather than an upstream fact for the same reason: Thetis has
+    // no HPSDRHW entry for Andromeda, so console.cs:14783-14857 [v2.10.3.15]
+    // cannot answer for it. Revisit when Andromeda hardware specs land.
+    .rx2PreampPresent = true,
     .maxReceivers     = 7,
+    .maxSlices        = 5,   // Phase 3F: Andromeda 5-slice cap (2-ADC P2; DDC0+1 reserved per Saturn class)
+    .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Andromeda user DDCs = DDC2-6 (design doc §2)
+    .widebandAdcs     = 2,   // Phase 3F: 2-ADC P2 board — ADC0 + ADC1 both support wideband stream on ports 1027+1028
     .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
     .maxSampleRate    = 1536000,
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},

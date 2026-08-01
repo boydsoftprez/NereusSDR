@@ -38,6 +38,7 @@
 // =================================================================
 
 #include "P1CodecHl2.h"
+#include "core/DdcAssignment.h"
 #include "core/IoBoardHl2.h"
 
 namespace NereusSDR {
@@ -673,6 +674,183 @@ PsDdcConfig P1CodecHl2::applyPureSignalDdcConfig(
     }
 
     return cfg;
+}
+
+// =================================================================
+// P1CodecHl2::applyDdcAssignment  (Phase 3F Sub-Epic B Task 9)
+// =================================================================
+//
+// Porting from mi0bot-Thetis console.cs:8409-8488 [v2.10.3.13-beta2]
+// (UpdateDDCs, HPSDRModel.HERMESLITE case grouped with HERMES/ANAN10/ANAN100).
+//
+//MI0BOT  [HL2 case-statement marker at console.cs:8409 `case HPSDRModel.HERMESLITE: // MI0BOT: HL2`]
+//
+// Original C# logic quoted:
+//   case HPSDRModel.HERMES:
+//   case HPSDRModel.HERMESLITE:     // MI0BOT: HL2
+//   case HPSDRModel.ANAN10:
+//   case HPSDRModel.ANAN100:
+//       P1_rxcount = 4;             // RX4 used for puresignal feedback
+//       nddc = 4;
+//       if (!_mox)
+//       {
+//           if (!diversity_enabled)
+//           {
+//               P1_DDCConfig = 4;
+//               DDCEnable = DDC0; SyncEnable = 0;
+//               Rate[0] = rx1_rate; cntrl1 = 0; cntrl2 = 0;
+//               if (rx2_enabled) { DDCEnable += DDC1; Rate[1] = rx2_rate; }
+//           }
+//           else
+//           {
+//               P1_DDCConfig = 5;
+//               DDCEnable = DDC0; SyncEnable = DDC1;
+//               Rate[0] = rx1_rate; Rate[1] = rx1_rate; cntrl1 = 0; cntrl2 = 0;
+//           }
+//       }
+//       else
+//       {
+//           if (!diversity_enabled && !puresignal_enabled)
+//           {
+//               P1_DDCConfig = 4;
+//               DDCEnable = DDC0; SyncEnable = 0;
+//               Rate[0] = rx1_rate; cntrl1 = 0; cntrl2 = 0;
+//               if (rx2_enabled) { DDCEnable += DDC1; Rate[1] = rx2_rate; }
+//           }
+//           else if (diversity_enabled && !puresignal_enabled)
+//           {
+//               P1_DDCConfig = 5;
+//               DDCEnable = DDC0; SyncEnable = DDC1;
+//               Rate[0] = rx1_rate; Rate[1] = rx1_rate; cntrl1 = 0; cntrl2 = 0;
+//           }
+//           else // transmitting and PS is ON
+//           {
+//               P1_DDCConfig = 6;
+//               DDCEnable = DDC0; SyncEnable = DDC1;
+//               Rate[0] = ps_rate; Rate[1] = ps_rate;
+//               if (hpsdr_model == HPSDRModel.HERMESLITE) // MI0BOT: HL2 can work at a high sample rate
+//               {
+//                   Rate[0] = rx1_rate;
+//                   Rate[1] = rx1_rate;
+//               }
+//               else { Rate[0] = ps_rate; Rate[1] = ps_rate; }
+//               cntrl1 = 4; cntrl2 = 0;
+//           }
+//       }
+//
+// NereusSDR architectural note:
+//   HL2 hardware has maxSlices=1 (BoardCapabilities enforces this).  Slices B-E
+//   are never live for HL2; the defensive check below guards against caller bugs.
+//   The diversity path (P1_DDCConfig=5) is logically available but HL2 hardware
+//   does not support RX diversity in practice; retained for completeness.
+//
+// mi0bot divergence from ramdor: the PS-MOX branch uses rx1_rate (not ps_rate=192k)
+//   for HL2, preserving high-rate operation through PureSignal TX.
+//   From mi0bot console.cs:8476-8479 [v2.10.3.13-beta2]:
+//     if (hpsdr_model == HPSDRModel.HERMESLITE) // MI0BOT: HL2 can work at a high sample rate
+//     {   Rate[0] = rx1_rate; Rate[1] = rx1_rate;  }
+// =================================================================
+DdcAssignment P1CodecHl2::applyDdcAssignment(
+    const CodecContext& ctx,
+    const std::array<SliceConfig, 5>& slices) const
+{
+    DdcAssignment a{};
+    constexpr int DDC0bit = 1;
+    constexpr int DDC1bit = 2;
+
+    // HL2: maxSlices=1; only stream 0 is used. Streams 1-4 are ignored even if
+    // .live (defensive; HL2 BoardCapabilities.maxSlices=1 enforces this at
+    // the caller level).
+    if (!slices[0].live) {
+        return a;
+    }
+
+    // From mi0bot console.cs:8412-8413 [v2.10.3.13-beta2]:
+    //   case HPSDRModel.HERMESLITE: // MI0BOT: HL2 (at console.cs:8409)
+    //   P1_rxcount = 4;   // RX4 used for puresignal feedback
+    //   nddc = 4;
+    //MI0BOT  [HL2 case-statement marker at console.cs:8409 — within ±5 of 8412]
+    a.p1RxCount = 4;  // RX4 used for puresignal feedback
+    a.nDdc = 4;
+
+    // Phase 3F Sub-Epic I Task 7b: stream 0 always demodulates from DDC0 on
+    // HL2 (maxSlices=1), in every branch below (mox/diversity/PS all keep
+    // DDCEnable = DDC0bit); only DDC1's role as a sync/PS partner changes.
+    // The early return above already guarantees slices[0].live here.
+    a.streamDdc[0] = 0;
+
+    const int rx1Rate = slices[0].sampleRateHz;
+
+    if (!ctx.mox) {
+        if (!ctx.diversity) {
+            // From mi0bot console.cs:8417-8430 [v2.10.3.13-beta2]:
+            //   P1_DDCConfig = 4; DDCEnable = DDC0; SyncEnable = 0;
+            //   Rate[0] = rx1_rate; cntrl1 = 0; cntrl2 = 0;
+            a.p1DdcConfig = 4;
+            a.ddcEnable = DDC0bit;
+            a.syncEnable = 0;
+            a.rate[0] = rx1Rate;
+            a.adcCtrl1 = 0;
+            a.adcCtrl2 = 0;
+        } else {
+            // From mi0bot console.cs:8432-8440 [v2.10.3.13-beta2]:
+            //   P1_DDCConfig = 5; DDCEnable = DDC0; SyncEnable = DDC1;
+            //   Rate[0] = rx1_rate; Rate[1] = rx1_rate; cntrl1 = 0; cntrl2 = 0;
+            a.p1DdcConfig = 5;
+            a.ddcEnable = DDC0bit;
+            a.syncEnable = DDC1bit;
+            a.rate[0] = rx1Rate;
+            a.rate[1] = rx1Rate;
+            a.adcCtrl1 = 0;
+            a.adcCtrl2 = 0;
+        }
+    } else {
+        if (!ctx.diversity && !ctx.puresignalRun) {
+            // From mi0bot console.cs:8444-8458 [v2.10.3.13-beta2]:
+            //   P1_DDCConfig = 4; DDCEnable = DDC0; SyncEnable = 0;
+            //   Rate[0] = rx1_rate; cntrl1 = 0; cntrl2 = 0;
+            a.p1DdcConfig = 4;
+            a.ddcEnable = DDC0bit;
+            a.syncEnable = 0;
+            a.rate[0] = rx1Rate;
+            a.adcCtrl1 = 0;
+            a.adcCtrl2 = 0;
+        } else if (ctx.diversity && !ctx.puresignalRun) {
+            // From mi0bot console.cs:8459-8468 [v2.10.3.13-beta2]:
+            //   P1_DDCConfig = 5; DDCEnable = DDC0; SyncEnable = DDC1;
+            //   Rate[0] = rx1_rate; Rate[1] = rx1_rate; cntrl1 = 0; cntrl2 = 0;
+            a.p1DdcConfig = 5;
+            a.ddcEnable = DDC0bit;
+            a.syncEnable = DDC1bit;
+            a.rate[0] = rx1Rate;
+            a.rate[1] = rx1Rate;
+            a.adcCtrl1 = 0;
+            a.adcCtrl2 = 0;
+        } else { // transmitting and PS is ON
+            // From mi0bot console.cs:8469-8488 [v2.10.3.13-beta2]:
+            //   P1_DDCConfig = 6; DDCEnable = DDC0; SyncEnable = DDC1;
+            //   Rate[0] = ps_rate; Rate[1] = ps_rate;
+            //   if (hpsdr_model == HPSDRModel.HERMESLITE) // MI0BOT: HL2 can work at a high sample rate
+            //   {   Rate[0] = rx1_rate; Rate[1] = rx1_rate;  }
+            //   else { Rate[0] = ps_rate; Rate[1] = ps_rate; }
+            //   cntrl1 = 4; cntrl2 = 0;
+            a.p1DdcConfig = 6;
+            a.ddcEnable  = DDC0bit;
+            a.syncEnable = DDC1bit;
+            // MI0BOT: HL2 can work at a high sample rate  [console.cs:8476]
+            // HL2-specific divergence from ramdor: use rx1_rate, NOT ps_rate (192000).
+            a.rate[0] = rx1Rate;
+            a.rate[1] = rx1Rate;
+            a.adcCtrl1 = 4;
+            a.adcCtrl2 = 0;
+            // PS DDC pair indices (same as applyPureSignalDdcConfig — psFbDdc=2, txMonDdc=3).
+            // From mi0bot networkproto1.c:549-553 [v2.10.3.13-beta2].
+            a.psFwdDdc = 0;
+            a.psRevDdc = 1;
+        }
+    }
+
+    return a;
 }
 
 } // namespace NereusSDR

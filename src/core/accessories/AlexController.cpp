@@ -47,6 +47,8 @@
 
 #include "AlexController.h"
 #include "core/AppSettings.h"
+#include <set>
+#include <QStringList>
 
 namespace NereusSDR {
 
@@ -59,6 +61,97 @@ AlexController::AlexController(QObject* parent) : QObject(parent)
     m_txAnt.fill(1);
     m_rxAnt.fill(1);
     m_rxOnlyAnt.fill(0);  // 0 = none selected — matches Thetis Alex.cs:59 [v2.10.3.13 @501e3f5]
+    // Phase 3F: initialize slice-per-ADC arrays to Band::Count sentinel ("no slice in slot")
+    for (auto& perAdc : m_slicesPerAdc) { perAdc.fill(Band::Count); }
+}
+
+// ── Per-ADC BPF mode mutators + recompute ──────────────────────────────────
+// NereusSDR-original; no Thetis port.
+
+AlexController::BpfMode AlexController::bpfMode(int adc) const
+{
+    if (adc < 0 || adc >= 2) { return BpfMode::Auto; }
+    return m_perAdcState[adc].mode;
+}
+
+void AlexController::setBpfMode(int adc, BpfMode mode)
+{
+    if (adc < 0 || adc >= 2) { return; }
+    if (m_perAdcState[adc].mode == mode) { return; }
+    m_perAdcState[adc].mode = mode;
+    recomputeBpf(adc);  // emits bpfStateChanged when effective changes
+}
+
+const AlexController::AlexAdcState& AlexController::adcState(int adc) const
+{
+    static const AlexAdcState empty{};
+    if (adc < 0 || adc >= 2) { return empty; }
+    return m_perAdcState[adc];
+}
+
+void AlexController::setWidebandActive(int adc, bool on)
+{
+    if (adc < 0 || adc >= 2) { return; }
+    if (m_widebandActive[adc] == on) { return; }
+    m_widebandActive[adc] = on;
+    recomputeBpf(adc);
+}
+
+// Phase 3F: slice-aware recompute trigger.
+// Band::Count is the sentinel for "no slice in this position".
+void AlexController::notifySlicesOnAdc(int adc, const std::array<Band, 5>& slicesOnAdc)
+{
+    if (adc < 0 || adc >= 2) { return; }
+    m_slicesPerAdc[adc] = slicesOnAdc;
+    recomputeBpf(adc);
+}
+
+void AlexController::recomputeBpf(int adc)
+{
+    if (adc < 0 || adc >= 2) { return; }
+
+    AlexAdcState& s = m_perAdcState[adc];
+    AlexAdcState prev = s;
+
+    // Priority order: wideband > operator force-bypass > operator force-band > auto.
+    if (m_widebandActive[adc]) {
+        s.effective = BpfEffective::WidebandLocked;
+        s.reasonText = QStringLiteral("BYPASS (wideband active)");
+    } else if (s.mode == BpfMode::ForceBypass) {
+        s.effective = BpfEffective::Bypass;
+        s.reasonText = QStringLiteral("BYPASS (operator override)");
+    } else if (s.mode == BpfMode::ForceBand) {
+        s.effective = BpfEffective::Filtered;
+        s.reasonText = QStringLiteral("%1 (forced)").arg(bandLabel(s.currentBpfBand));
+    } else {
+        // Auto mode: inspect slice bands on this ADC.
+        // 0 bands -> idle/filtered; 1 band -> Filtered at that band;
+        // 2+ distinct bands -> BYPASS (multi-band attenuation trade-off).
+        // Phase 3F Task 13 — NereusSDR-original; no Thetis port.
+        std::set<Band> uniqueBands;
+        for (Band b : m_slicesPerAdc[adc]) {
+            if (b != Band::Count) { uniqueBands.insert(b); }
+        }
+
+        if (uniqueBands.empty()) {
+            s.effective = BpfEffective::Filtered;
+            s.reasonText = QStringLiteral("%1 (idle)").arg(bandLabel(s.currentBpfBand));
+        } else if (uniqueBands.size() == 1) {
+            s.currentBpfBand = *uniqueBands.begin();
+            s.effective = BpfEffective::Filtered;
+            s.reasonText = bandLabel(s.currentBpfBand);
+        } else {
+            // 2+ distinct bands on this ADC -> BYPASS
+            s.effective = BpfEffective::Bypass;
+            QStringList bandList;
+            for (Band b : uniqueBands) { bandList << bandLabel(b); }
+            s.reasonText = QStringLiteral("BYPASS (multi-band: %1)").arg(bandList.join(QStringLiteral(" + ")));
+        }
+    }
+
+    if (s.effective != prev.effective || s.reasonText != prev.reasonText) {
+        emit bpfStateChanged(adc, s);
+    }
 }
 
 // Source: HPSDR/Alex.cs:setTxAnt / TxAnt[] accessor [@501e3f5]
@@ -290,6 +383,13 @@ void AlexController::load()
     m_ext2OutOnTx   = (s.value(QStringLiteral("%1/ext2OutOnTx").arg(base),   QStringLiteral("False")).toString() == QStringLiteral("True"));
     m_rxOutOverride = (s.value(QStringLiteral("%1/rxOutOverride").arg(base), QStringLiteral("False")).toString() == QStringLiteral("True"));
     m_useTxAntForRx = (s.value(QStringLiteral("%1/useTxAntForRx").arg(base), QStringLiteral("False")).toString() == QStringLiteral("True"));
+    // Phase 3F: per-ADC BPF mode restore
+    m_perAdcState[0].mode = static_cast<BpfMode>(
+        s.value(QStringLiteral("%1/Alex0_BpfMode").arg(base), QStringLiteral("0")).toInt());
+    m_perAdcState[1].mode = static_cast<BpfMode>(
+        s.value(QStringLiteral("%1/Alex1_BpfMode").arg(base), QStringLiteral("0")).toInt());
+    recomputeBpf(0);
+    recomputeBpf(1);
     emit blockTxChanged();
     emit rxOutOnTxChanged(m_rxOutOnTx);
     emit ext1OutOnTxChanged(m_ext1OutOnTx);
@@ -317,6 +417,9 @@ void AlexController::save()
     s.setValue(QStringLiteral("%1/ext2OutOnTx").arg(base),   m_ext2OutOnTx   ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(QStringLiteral("%1/rxOutOverride").arg(base), m_rxOutOverride ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(QStringLiteral("%1/useTxAntForRx").arg(base), m_useTxAntForRx ? QStringLiteral("True") : QStringLiteral("False"));
+    // Phase 3F: per-ADC BPF mode persistence
+    s.setValue(QStringLiteral("%1/Alex0_BpfMode").arg(base), QString::number(int(m_perAdcState[0].mode)));
+    s.setValue(QStringLiteral("%1/Alex1_BpfMode").arg(base), QString::number(int(m_perAdcState[1].mode)));
 }
 
 } // namespace NereusSDR

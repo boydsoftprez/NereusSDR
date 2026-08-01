@@ -83,12 +83,14 @@
 #include "AntennaAlexAntennaControlTab.h"
 
 #include "core/accessories/AlexController.h"
+#include "core/AppSettings.h"
 #include "core/SkuUiProfile.h"
 #include "core/HardwareProfile.h"
 #include "core/RadioDiscovery.h"
 #include "models/RadioModel.h"
 #include "models/Band.h"
 
+#include <QAbstractButton>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QFrame>
@@ -136,6 +138,12 @@ AntennaAlexAntennaControlTab::AntennaAlexAntennaControlTab(RadioModel* model, QW
     // Row 3: TX-bypass checkboxes (Phase 3P-I-b T7).
     // Source: Thetis setup.cs:6174-6300 [v2.10.3.13 @501e3f5].
     buildTxBypassStrip(outerLayout);
+
+    // Row 4: Antenna conflict policy (Phase 3F Sub-Epic E Tasks 11-13).
+    // NereusSDR-original; persisted operator preference for how add-slice
+    // antenna conflicts are resolved. Consumer wire-up (RadioModel) lands
+    // when the antenna-auto-switch pipeline is built.
+    buildConflictPolicyGroup(outerLayout);
 
     // Initial SKU sync — applies to current model state.
     applySkuProfile();
@@ -525,6 +533,64 @@ void AntennaAlexAntennaControlTab::buildTxBypassStrip(QVBoxLayout* outerLayout)
     });
     connect(m_alex, &AlexController::useTxAntForRxChanged, this, [this](bool on) {
         QSignalBlocker b(m_chkUseTxAntForRx); m_chkUseTxAntForRx->setChecked(on);
+    });
+}
+
+// ── buildConflictPolicyGroup ─────────────────────────────────────────────────
+//
+// NereusSDR-original (Phase 3F Sub-Epic E Tasks 11-13). No upstream port.
+// Persists a tri-state operator preference for how add-slice antenna
+// conflicts are resolved against a slice already using the same chain.
+//
+// AppSettings key: "Antenna_ConflictPolicy" (int, default 0 = Auto).
+//   0 = Auto    — resolve silently when safe, toast on RX-only switch
+//   1 = Warn    — show TxBoundConfirmDialog before TX-bound re-route
+//   2 = Block   — refuse add-slice when chain conflict would occur
+//
+// Consumer wire-up (RadioModel::addSliceOnPan reads this key before
+// acting on chain conflicts) lands when the antenna-auto-switch pipeline
+// is built; for now the persistence is operator-visible and round-trips.
+
+void AntennaAlexAntennaControlTab::buildConflictPolicyGroup(QVBoxLayout* outerLayout)
+{
+    auto* group = new QGroupBox(tr("Conflict policy"), this);
+    auto* layout = new QVBoxLayout(group);
+    layout->setContentsMargins(8, 4, 8, 4);
+    layout->setSpacing(4);
+
+    auto* hint = new QLabel(
+        tr("How NereusSDR handles antenna conflicts when adding a slice "
+           "that needs an antenna currently in use by another slice's chain:"),
+        group);
+    hint->setWordWrap(true);
+    layout->addWidget(hint);
+
+    auto* btnGroup = new QButtonGroup(this);
+    auto* autoBtn  = new QRadioButton(tr("Auto - resolve silently when safe, toast on RX-only switch"), group);
+    auto* warnBtn  = new QRadioButton(tr("Warn - show TxBoundConfirmDialog before TX-bound re-route"), group);
+    auto* blockBtn = new QRadioButton(tr("Block - refuse add-slice when chain conflict would occur"), group);
+    btnGroup->addButton(autoBtn,  0);
+    btnGroup->addButton(warnBtn,  1);
+    btnGroup->addButton(blockBtn, 2);
+
+    // Restore persisted choice (default = Auto/0).
+    const int persisted =
+        AppSettings::instance().value(QStringLiteral("Antenna_ConflictPolicy"), 0).toInt();
+    if (auto* btn = btnGroup->button(persisted)) {
+        btn->setChecked(true);
+    } else {
+        autoBtn->setChecked(true);
+    }
+
+    layout->addWidget(autoBtn);
+    layout->addWidget(warnBtn);
+    layout->addWidget(blockBtn);
+
+    outerLayout->addWidget(group);
+
+    // UI -> AppSettings (write-through on selection change).
+    connect(btnGroup, &QButtonGroup::idClicked, this, [](int id) {
+        AppSettings::instance().setValue(QStringLiteral("Antenna_ConflictPolicy"), id);
     });
 }
 

@@ -1206,6 +1206,14 @@ void AppSettings::ensureSettingsAtVersion(int currentVersion)
         qDebug() << "Settings migration to schema v5 complete";
     }
 
+    if (storedVersion < 6 && currentVersion >= 6) {
+        // Phase 3F: schema v6 is additive only. No key renames, no defaults to populate.
+        // New per-slice per-band keys (Slice<X>_Band_<band>_SampleRate, diversity keys, etc.)
+        // are populated lazily by SliceModel::saveToSettings on first write. Operators with
+        // existing v5 settings see no behavioural change until they touch the new controls.
+        // See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §12.
+    }
+
     setValue(versionKey, QString::number(currentVersion));
 }
 

@@ -51,10 +51,17 @@ namespace NereusSDR {
 // P1CodecStandard.  Its switch dispatches HpsdrModel::ANVELINAPRO3 into
 // the G2-class branch, matching Thetis console.cs:8218 [v2.10.3.13]
 // which lists ANVELINAPRO3 in the same case as ANAN_G2 / 7000D / 8000D.
+//
+// Phase 3F: applyDdcAssignment overridden with a stub; real implementation
+// queued for Sub-Epic B Task 10 per Thetis UpdateDDCs Hermes-class branch.
 class P1CodecAnvelinaPro3 : public P1CodecStandard {
 public:
     void composeCcForBank(int bank, const CodecContext& ctx, quint8 out[5]) const override;
     int  maxBank() const override { return 17; }
+
+    DdcAssignment applyDdcAssignment(
+        const CodecContext& ctx,
+        const std::array<SliceConfig, 5>& slices) const override;
 };
 
 } // namespace NereusSDR

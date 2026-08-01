@@ -56,11 +56,14 @@ using namespace NereusSDR;
 // ---------------------------------------------------------------------------
 // Channel ID convention (Thetis cmaster.c / dsp.cs [v2.10.3.13]):
 //   RX channel 0: WDSP.id(0, 0) = 0 (rx0, subrx0)
-//   TX channel  : WDSP.id(1, 0) = CMsubrcvr * CMrcvr = 1 * 1 = 1
-//     (dsp.cs:926-944 case 2, with NereusSDR CMsubrcvr=CMrcvr=1)
+//   TX channel  : WDSP.id(1, 0) = CMsubrcvr * CMrcvr
+//     (dsp.cs:926-944 case 2 [v2.10.3.15]).  Phase 3F: NereusSDR's radio
+//     structure is CMsubrcvr=1, CMrcvr=WdspEngine::kMaxSliceChannels, so
+//     the TX id is kMaxSliceChannels rather than the old 1.  The literal
+//     is gone on purpose: tst_wdsp_channel_id_map owns the numbering.
 // ---------------------------------------------------------------------------
 static constexpr int kRxChannelId = 0;
-static constexpr int kTxChannelId = 1;   // WDSP.id(1, 0) with single-RX layout
+static constexpr int kTxChannelId = WdspEngine::kTxChannelId;
 
 // ---------------------------------------------------------------------------
 
@@ -205,11 +208,18 @@ private slots:
     // ── TX channel ID does not alias an RX channel ID ────────────────────────
 
     void txChannelIdIsDistinctFromRxChannelId() {
-        // TX channel uses ID 1 (WDSP.id(1, 0)); RX channel uses ID 0.
-        // Verify these are not equal — the channel ID space must not alias.
+        // TX channel uses WDSP.id(1, 0) = CMsubrcvr * CMrcvr; RX slice
+        // channels use ID 0 upward.  Verify these are not equal — the
+        // channel ID space must not alias.
+        //
+        // Phase 3F: this used to assert the literal 1, which was the whole
+        // bug: the RX slice pool opened channel 1 on every SKU with
+        // maxSlices > 1 and the TXA then overwrote it.  The id now sits
+        // above the reserved RX block; the arithmetic itself and the
+        // pool's behaviour live in tst_wdsp_channel_id_map.
         QVERIFY(kTxChannelId != kRxChannelId);
-        QCOMPARE(kTxChannelId, 1);   // TX ID per WDSP.id(1,0) + CMsubrcvr=CMrcvr=1
-        QCOMPARE(kRxChannelId, 0);
+        QVERIFY(kTxChannelId >= WdspEngine::kMaxSliceChannels);
+        QCOMPARE(kRxChannelId, WdspEngine::kFirstSliceChannelId);
     }
 
     // ── TxChannel created via WdspEngine must have no Qt parent ─────────────

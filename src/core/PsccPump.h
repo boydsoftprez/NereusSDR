@@ -98,6 +98,7 @@
 #include <vector>
 
 #include "codec/CodecContext.h"   // PsDdcConfig
+#include "WdspEngine.h"           // kTxChannelId
 
 namespace NereusSDR {
 
@@ -224,7 +225,14 @@ private:
     // tracks solidmox via the LMOXDELAY → LSETUP transition based on
     // moxsamps count — but the psccF wrapper takes the flag for the
     // disabled-since-2.9 codepath at calcc.c:846-847).
-    int m_txChannelId{1};
+    // The real TXA channel, not a literal. pscc() dereferences
+    // txa[channel].calcc.p with no null check (calcc.c:645-652), and that
+    // pointer only exists on a channel create_txa() actually ran on
+    // (txa.c:405). Pointing this at an RX channel segfaults on key-down.
+    //
+    // Phase 3F moved the TXA above the reserved RX slice block, so a
+    // hardcoded 1 became an RX channel (WdspEngine.h:214, RadioModel.cpp:3010).
+    int m_txChannelId{WdspEngine::kTxChannelId};
     bool m_active{false};
     int m_txMonDdc{1};   // Thetis cmaster.cs:534 [v2.10.3.13]: Stream1 = TX
     int m_psFbDdc{0};    // Thetis cmaster.cs:533 [v2.10.3.13]: Stream0 = RX

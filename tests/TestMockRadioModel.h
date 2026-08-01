@@ -50,6 +50,9 @@
 //           (5 doubles per slice, default 0.0).
 // Aim: ~60 accessors total by end of Phase 14. Each commit that adds
 // accessors should note the addition in the commit message.
+// Phase 3F Sub-Epic J Task 10: 57 accessors total, added afGain/setRxAfGain
+//           (per-slice AF gain backing rx_volume:, distinct from the
+//           existing global afLinear/setAfLinear pair above).
 
 #pragma once
 
@@ -411,6 +414,24 @@ public:
     Q_INVOKABLE void setAfLinear(int v) { m_afLinear = v; }
     Q_INVOKABLE int afLinear() const { return m_afLinear; }
 
+    // Per-slice AF gain (rx_volume: query source). Distinct from afLinear
+    // above: afLinear is the single radio-global master volume; afGain(rx)
+    // is the per-receiver gain (Thetis RX0Gain/RX1Gain/RX2Gain,
+    // handleRxVolume). Default 50 matches SliceModel::m_afGain's default
+    // and afLinear's default so existing callers that never seed this
+    // still see the same numbers they did before this pair existed.
+    // setRxAfGain is a test-only seeding helper (production RadioModel has
+    // no rx_volume setter -- TciProtocol has no set/query dispatch case for
+    // rx_volume today, only the init burst reads this).
+    Q_INVOKABLE int afGain(int rx) const
+    {
+        return (rx >= 0 && rx < 2) ? m_rxAfGain[rx] : 0;
+    }
+    Q_INVOKABLE void setRxAfGain(int rx, int gain)
+    {
+        if (rx >= 0 && rx < 2) { m_rxAfGain[rx] = gain; }
+    }
+
     // MON (TX monitor) volume stored as linear int [0..100].
     // From Thetis TCIServer.cs:4133-4148 [v2.10.3.13] — handleMONVolume.
     // Q_INVOKABLE: called via QMetaObject::invokeMethod from TciProtocol.
@@ -583,6 +604,9 @@ public:
         m_audioStreamSamples = 2048;
         m_afLinear  = 50;
         m_monLinear = 50;
+        // Phase 3F Sub-Epic J Task 10: per-slice AF gain (rx_volume), separate
+        // from the radio-global m_afLinear reset just above.
+        m_rxAfGain  = { 50, 50 };
         // Phase 11: IQ stream state resets.
         m_iqSampleRate = 192000;
         // Phase 13: bespoke _ex state resets.
@@ -638,6 +662,9 @@ private:
     int     m_audioStreamSamples{2048};
     int     m_afLinear{50};
     int     m_monLinear{50};
+    // Phase 3F Sub-Epic J Task 10: per-slice AF gain (rx_volume), separate
+    // from m_afLinear (the radio-global master volume) above.
+    std::array<int, 2>     m_rxAfGain{50, 50};
     // Phase 11: IQ stream state.
     int     m_iqSampleRate{192000};
     // Phase 13: bespoke _ex state.

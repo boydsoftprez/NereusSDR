@@ -67,6 +67,7 @@
 
 #include <atomic>
 #include <memory>
+#include <unordered_map>
 
 #include <QObject>
 #include <QVector>
@@ -77,6 +78,7 @@ class WdspEngine;
 class AudioEngine;
 class RadeChannel;
 class Resampler;
+struct AudioPriorityToken;   // src/core/audio/RealtimeAudioPriority.h
 
 // RxDspWorker runs the per-receiver I/Q → WDSP → audio processing step
 // on a dedicated DSP thread, off the GUI main thread.
@@ -135,6 +137,14 @@ public:
     // when the (in, out) pair actually changes (idempotent re-calls are
     // suppressed). Consumed by TxWorkerThread::setAntiVoxBlockGeometry
     // to align WDSP DEXP detector dimensions with RX block geometry.
+    //
+    // Phase 3F Sub-Epic I closeout, defect H1: `inSize` here is the DEFAULT
+    // for streams that have not been given one of their own. A stream whose
+    // DDC runs at its own rate carries its own drain size through
+    // setStreamInputChunk() and ignores this value. `outSize` stays global:
+    // every WDSP RX channel decimates input_rate -> 48 kHz and hands back
+    // 64 samples per call regardless of its input rate, so there is nothing
+    // per-stream about it.
     void setBufferSizes(int inSize, int outSize);
 
     // Configure the post-decimation panel sample rate (Hz, default 48 kHz).
@@ -146,6 +156,25 @@ public:
     int inSize() const { return m_inSize.load(std::memory_order_relaxed); }
     int outSize() const { return m_outSize.load(std::memory_order_relaxed); }
     double sampleRate() const { return m_sampleRate; }
+    static constexpr int kMaxSaneExternalDiversityChunk = 65536;
+
+#ifdef NEREUS_BUILD_TESTS
+    using ExternalDiversityOutputHookForTest =
+        void (*)(int targetSlice, const float* i, const float* q, int samples);
+    using ExternalDiversityRouteHookForTest =
+        void (*)(bool active, int targetSlice,
+                 int primarySource, int secondarySource);
+    void setExternalDiversityOutputHookForTest(
+        ExternalDiversityOutputHookForTest hook)
+    {
+        m_externalDiversityOutputHookForTest = hook;
+    }
+    void setExternalDiversityRouteHookForTest(
+        ExternalDiversityRouteHookForTest hook)
+    {
+        m_externalDiversityRouteHookForTest = hook;
+    }
+#endif
 
 public slots:
     // Receive a batch of interleaved I/Q from ReceiverManager. Runs
@@ -155,10 +184,84 @@ public slots:
     void processIqBatch(int receiverIndex,
                         const QVector<float>& interleavedIQ);
 
+    /// Feed one raw hardware-DDC stream into the paired diversity route.
+    ///
+    /// This is deliberately separate from processIqBatch(): the primary DDC
+    /// is also mapped by ReceiverManager to a logical stream for ordinary
+    /// co-hosted slices, while the synced partner DDC has no logical receiver.
+    /// A dedicated raw path therefore supplies each diversity leg exactly
+    /// once without changing the normal logical-stream fan-out.
+    void processExternalDiversityIqBatch(
+        int sourceStream, const QVector<float>& interleavedIQ);
+
+    /// Select the two raw source streams and the stable target slice for one
+    /// WdspEngine external-diversity slot. Runs on the DSP thread through a
+    /// queued/blocking invocation from RadioModel.
+    void setExternalDiversityRoute(int extDivId, int targetSliceId,
+                                   int primaryStream, int secondaryStream);
+
+    /// Disable the worker route and flush both unmatched source queues.
+    void clearExternalDiversityRoute();
+
     // Drop any partial accumulator state. Called from RadioModel
     // teardown via Qt::BlockingQueuedConnection so it executes on
     // the worker thread before the WDSP channel is destroyed.
+    //
+    // Phase 3F Sub-Epic I Task 4: clears every stream's partial I/Q.
+    // Slice bindings (m_streamSlices) deliberately survive: both live
+    // callers (RadioModel::setSampleRateLive / setActiveRxCountLive) are
+    // mid-flight reconfigures that resume feeding the same slices, and
+    // dropping the bindings here would silence every slice until
+    // something republished them.
     void resetAccumulator();
+
+    /// Declare which slice indices are bound to a DDC stream. Called from
+    /// the main thread on every slice bind / unbind / migration; queued,
+    /// so the map is only ever touched on the DSP thread.
+    ///
+    /// Phase 3F Sub-Epic I Task 4. A stream with no declared slices
+    /// accumulates and drains but demodulates nothing.
+    void setStreamSlices(int streamIndex, const QVector<int>& sliceIndices);
+
+    /// Give one DDC stream its own accumulator drain size, overriding the
+    /// global setBufferSizes() value for that stream alone. `inSize <= 0`
+    /// drops the override and returns the stream to the global default.
+    ///
+    /// Phase 3F Sub-Epic I closeout, defect H1. The drain size is a property
+    /// of the DDC stream's sample rate, not of the radio: ChannelMaster keys
+    /// it per input stream too.
+    ///
+    ///   From Thetis cmaster.c:461 [v2.10.3.15] (SetXcmInrate):
+    ///     pcm->xcm_insize[in_id] = getbuffsize (rate);
+    ///
+    /// with getbuffsize(rate) = 64 * rate / 48000 (cmsetup.c:106-111
+    /// [v2.10.3.15]). Callers must compute `inSize` with
+    /// SampleRateCatalog's bufferSizeForRate(), which is that formula and
+    /// the only copy of it in the tree. RxDspWorker stores what it is told
+    /// and never recomputes.
+    ///
+    /// Changing a stream's size DROPS that stream's partial accumulator. The
+    /// samples already in it were captured by the DDC at the old rate, and a
+    /// WDSP channel carries exactly one input rate (SetInputSamplerate,
+    /// channel.c:197-208), so a chunk straddling the change is demodulated
+    /// against the wrong timebase end to end rather than merely clicking at
+    /// the seam. The loss is bounded by one drain interval, which the Thetis
+    /// formula fixes at inSize / rate = 64 / 48000 seconds at every rate.
+    /// An idempotent re-push of the same size keeps the partial.
+    ///
+    /// Cross-thread queued slot, same contract as setStreamSlices: written
+    /// from the main thread, only ever touched on the DSP thread.
+    void setStreamInputChunk(int streamIndex, int inSize);
+
+    /// Drop every per-stream drain-size override, returning all streams to
+    /// the global setBufferSizes() value, and clear their accumulators.
+    ///
+    /// Phase 3F Sub-Epic I closeout, defect H1: paired with setBufferSizes()
+    /// whenever the connection-wide geometry moves (RadioModel::
+    /// setSampleRateLive), because overrides published against the previous
+    /// wire rate would otherwise outlive it and leave a stream draining a
+    /// chunk size no channel is configured for.
+    void clearStreamInputChunks();
 
     // Phase 3R K-bench: set the active RadeChannel for I/Q routing.
     // When non-null AND WDSP rxChannel(0) returns null (slice is in
@@ -171,6 +274,21 @@ public slots:
     // Cross-thread queued slot. Atomic raw pointer write; ownership
     // remains with WdspEngine::m_radeChannels.
     void setRadeChannel(RadeChannel* channel);
+
+    // 2026-05-25 KG4VCF bench fix: real-time scheduling priority for
+    // audio DSP work.  Connected by RadioModel to m_dspThread's
+    // started() / finished() signals so the elevation runs ON the
+    // DSP thread (a prerequisite of pthread_set_qos_class_self_np
+    // and os_workgroup_join, which both act on the calling thread).
+    //
+    // Without these, the DSP feeder runs at default Qt priority and
+    // gets preempted during heavy system load (parallel compiles
+    // etc), draining the audio ring buffer and producing severe
+    // jitter on the listening end.  PortAudio's own callback thread
+    // is unaffected (it runs SCHED_FIFO via PortAudio's internal
+    // priority setup); this slot fixes the FEEDER thread.
+    void onThreadStarted();
+    void onThreadFinished();
 
 signals:
     // Emitted at the end of every processIqBatch invocation, on the
@@ -185,6 +303,22 @@ signals:
     // test that pins the per-rate accumulator-drain contract.
     void chunkDrained(int sampleCount);
 
+    // Phase 3F Sub-Epic I Task 4: per-stream companion to chunkDrained,
+    // carrying the originating DDC stream. chunkDrained is kept unchanged
+    // for existing single-slice subscribers.
+    void chunkDrainedForStream(int streamIndex, int samples);
+
+    // Phase 3F Sub-Epic I Task 4: emitted once per slice per drained
+    // chunk, after that slice's WDSP channel has run. Test seam for the
+    // fan-out; fires even without engines wired, mirroring chunkDrained.
+    void sliceProcessed(int sliceIndex, int samples);
+
+    /// Emitted once per drained chunk when the stream's noise blanker pass
+    /// runs. The blanker belongs to the DDC stream, not the slice
+    /// (ChannelMaster cmaster.h:79-81 [v2.10.3.15]), so exactly one pass
+    /// happens per chunk no matter how many slices share the stream.
+    void streamNoiseBlankerApplied(int streamIndex);
+
     // Phase 3M-3a-iv: fires whenever setBufferSizes() actually changes
     // the (inSize, outSize) pair. Consumed by
     // TxWorkerThread::setAntiVoxBlockGeometry to align WDSP DEXP's
@@ -198,23 +332,16 @@ signals:
     // decimation panel rate.
     void bufferSizesChanged(int outSize, double outRate);
 
-    // Phase 3M-3a-iv: fires per drained chunk after the existing
-    // chunkDrained / rxBlockReady delivery. Consumed by
-    // TxWorkerThread::onAntiVoxSamplesReady to feed WDSP DEXP.
-    //
-    // Payload: (sliceId, interleaved L/R float buffer, sampleCount).
-    //
-    // From Thetis ChannelMaster cmaster.c:171 [v2.10.3.13]: aamix's
-    // SendAntiVOXData callback delivers exactly one audio_outsize block
-    // at audio_outrate. Single-RX equivalent here — no resample, no mix,
-    // one source — replaces the aamix port with a direct queued signal.
-    //
-    // Fires regardless of WDSP/AudioEngine wiring, mirroring chunkDrained,
-    // so tests without fake engines still observe the contract. When
-    // engines are wired the buffer carries the WDSP-decoded interleaved
-    // audio; when they are not, a zero-filled stereo buffer of the
-    // correct size is emitted instead.
-    void antiVoxSampleReady(int sliceId, const QVector<float>& interleaved, int sampleCount);
+    // (Phase 3M-3a-iv added antiVoxSampleReady here: one slice-0 audio block
+    //  per drain interval, forked to TxWorkerThread::onAntiVoxSamplesReady to
+    //  feed WDSP DEXP. Phase 3F Sub-Epic J Task 9 retired it. The anti-VOX
+    //  reference is now AudioEngine::m_antiVoxMix, a second MasterMixer
+    //  summing every audible slice, matching Thetis cmaster.c:371-372
+    //  [v2.10.3.15]; AudioEngine::antiVoxBlockReady carries its drained
+    //  block. bufferSizesChanged above is still this class's contribution to
+    //  the chain, and still sets DEXP's block geometry. The retired feed's
+    //  cadence argument is preserved at the bottom of the drain loop in
+    //  RxDspWorker.cpp.)
 
     // Phase 3R K-bench: per-batch RADE feed.  Emitted from the DSP
     // thread with a 24 kHz interleaved-float32 I/Q buffer (real=audio,
@@ -241,12 +368,124 @@ signals:
 private:
     WdspEngine*      m_wdspEngine{nullptr};
     AudioEngine*     m_audioEngine{nullptr};
-    QVector<float>   m_iqAccumI;
-    QVector<float>   m_iqAccumQ;
+
+    // 2026-05-25 KG4VCF bench fix: opaque token returned by
+    // elevateAudioThreadPriority().  Allocated on the DSP thread
+    // from onThreadStarted() and released from onThreadFinished()
+    // (also on the DSP thread, before the thread exits).  See
+    // src/core/audio/RealtimeAudioPriority.h.
+    AudioPriorityToken* m_audioPrioToken{nullptr};
+
+    // ── Phase 3F Sub-Epic I Task 4: per-stream accumulation ─────────────
+    //
+    // Before this, one shared accumulator pair served every caller and
+    // processIqBatch's receiverIndex argument was ignored, so a second
+    // DDC's samples were appended into Slice A's stream and corrupted its
+    // audio.
+    //
+    // Keyed by DDC stream index. Each stream's drained chunk is then fed
+    // to every slice bound to that stream, mirroring ChannelMaster's
+    // `struct _rcvr` which holds one I/Q input and one noise blanker but
+    // `double* audio[cmMAXSubRcvr]` outputs (cmaster.h:74-82
+    // [v2.10.3.15]).
+    //
+    // Touched only on the DSP thread, so no lock is needed. m_streamSlices
+    // is written via a queued setStreamSlices call, which lands on the DSP
+    // thread's event loop, so it is also DSP-thread-only at point of use.
+    struct StreamAccum {
+        QVector<float> i;
+        QVector<float> q;
+    };
+    std::unordered_map<int, StreamAccum>  m_accums;
+    std::unordered_map<int, QVector<int>> m_streamSlices;
+
+    // Phase 3F Sub-Epic I closeout, defect H1: per-stream drain size, keyed
+    // by DDC stream index. Absent = that stream follows the global m_inSize,
+    // which is what every stream does on a single-rate radio, so the
+    // single-rate path never consults this map at all.
+    //
+    // Mirrors ChannelMaster's `pcm->xcm_insize[in_id]` (cmaster.c:461
+    // [v2.10.3.15]): one buffer size per input stream, derived from that
+    // stream's own rate. Same threading contract as m_streamSlices: written
+    // through the queued setStreamInputChunk slot, so DSP-thread-only at
+    // point of use and no lock is needed. Deliberately NOT std::atomic like
+    // m_inSize: an atomic would only protect one scalar, and what has to
+    // stay coherent here is the (size, accumulator) pair, which only the DSP
+    // thread ever touches.
+    std::unordered_map<int, int>          m_streamInSize;
+
+    // ── Phase 3F Sub-Epic A: paired external-diversity route ──────────────
+    //
+    // WDSP external diversity consumes two equally sized interleaved-double
+    // buffers. Radio packets can arrive at different times and in different
+    // chunk sizes, so each raw DDC leg has a separate bounded accumulator.
+    // Route changes clear the queues and pre-size every scratch vector on the
+    // DSP control path; steady-state drains then perform no heap allocation.
+    struct ExternalDiversityRoute {
+        int extDivId{-1};
+        int targetSliceId{-1};
+        int primaryStream{-1};
+        int secondaryStream{-1};
+
+        bool active() const noexcept
+        {
+            return extDivId >= 0 && targetSliceId >= 0
+                && primaryStream >= 0 && secondaryStream >= 0
+                && primaryStream != secondaryStream;
+        }
+    };
+
+    static constexpr int kMaxSaneSamplesPerBatch =
+        kMaxSaneExternalDiversityChunk;
+
+    ExternalDiversityRoute m_externalDiversityRoute;
+    StreamAccum m_externalDiversityPrimary;
+    StreamAccum m_externalDiversitySecondary;
+    int m_externalDiversityChunkSize{0};
+    int m_externalDiversityMaxQueuedSamples{0};
+    QVector<double> m_externalDiversityPrimaryInterleaved;
+    QVector<double> m_externalDiversitySecondaryInterleaved;
+    QVector<double> m_externalDiversityOutputInterleaved;
+    QVector<float> m_externalDiversityOutputI;
+    QVector<float> m_externalDiversityOutputQ;
+
+#ifdef NEREUS_BUILD_TESTS
+    ExternalDiversityOutputHookForTest
+        m_externalDiversityOutputHookForTest{nullptr};
+    ExternalDiversityRouteHookForTest
+        m_externalDiversityRouteHookForTest{nullptr};
+#endif
+
+    int externalDiversityChunkSize() const;
+    void prepareExternalDiversityBuffers(int chunkSize);
+    void appendExternalDiversitySamples(StreamAccum& destination,
+                                        const QVector<float>& interleavedIQ);
+    void drainExternalDiversity();
+    void feedExternalDiversityTarget(int samples);
+    bool isExternalDiversityTarget(int sliceId) const noexcept;
+
     // Reusable interleaved stereo scratch handed to AudioEngine::rxBlockReady.
     // Sized to outSize*2 on first use and reused in-place per batch so the
     // DSP thread never allocates in the hot path after warmup.
+    //
+    // Phase 3F Sub-Epic I Task 4: m_interleavedOut is reserved for SLICE 0.
+    // It doubles as the anti-VOX cancellation reference read after the
+    // drain, so secondary slices must not clobber it; they interleave
+    // through m_interleavedOutAux instead. AudioEngine::rxBlockReady
+    // consumes the pointer synchronously (AudioEngine.cpp:928), so one
+    // shared scratch per role is safe.
     QVector<float>   m_interleavedOut;
+    QVector<float>   m_interleavedOutAux;
+
+    // Phase 3F Sub-Epic I Task 4: reusable WDSP output scratch. Previously
+    // two QVectors were constructed per drained chunk; with N slices per
+    // chunk that would be 2N allocations on the audio path. Grown to
+    // max(inSize, outSize) on demand and reused. RxChannel::processIq
+    // writes sampleCount floats on the inactive-channel memset path
+    // (RxChannel.cpp:1532) and outSampleCount via fexchange2, so the
+    // buffer must cover the larger of the two.
+    QVector<float>   m_sliceOutI;
+    QVector<float>   m_sliceOutQ;
     // Written by setBufferSizes() (typically on the main thread when the
     // wire rate changes) and read by processIqBatch() on the DSP thread.
     // std::atomic<int> prevents the C++ data race that plain int reads
