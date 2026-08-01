@@ -577,11 +577,24 @@ struct PsDdcConfig {
     //   HermesII P1 PS-MOX:      psrx=0, pstx=1
     //   Saturn-class P2 PS-MOX:  rx1=2, rx2=3 (DDC0+DDC1 implicit PS pair)
     //
-    // Defaults match cmaster.cs:533-534 (Stream0/Stream1) which is correct
-    // for nddc=2 boards and Saturn-class P2.  Per-board codec overrides for
-    // the nddc=4 family (HL2 / Hermes / ANAN10 / ANAN100).
-    int      psFbDdc    = 0;     // PS feedback DDC index (Stream0 default)
-    int      txMonDdc   = 1;     // TX monitor DDC index (Stream1 default)
+    // Both default to -1, meaning "this config carries no PS pair".  Every
+    // PS-MOX branch of every codec assigns both explicitly, including the
+    // families whose real pair IS (0, 1): the nddc=2 group above, and every
+    // Saturn-class P2 branch.  0 and 1 stay fully expressible and are still
+    // what those boards emit; the sentinel only distinguishes "PS is parked
+    // on Stream0/Stream1" from "PS is not running at all".
+    //
+    // The pair used to default to (0, 1) instead, which conflated those two
+    // states: no branch outside PS-MOX assigns the fields, so a plain RX
+    // config still looked like a configured pair.
+    // P1RadioConnection::parseEp6Frame gates its paired emit on both indices
+    // being non-negative, so it materialised two QVector copies and emitted
+    // one signal per EP6 frame on the connection thread, up to roughly 5000
+    // times a second at 192 kHz, for a PsccPump that dropped every one of
+    // them on its !m_active guard.  Measured on a live HL2 at 201,400
+    // samples/sec with PureSignal switched off.
+    int      psFbDdc    = -1;    // PS feedback DDC index (-1 = no PS pair)
+    int      txMonDdc   = -1;    // TX monitor DDC index (-1 = no PS pair)
 };
 
 } // namespace NereusSDR

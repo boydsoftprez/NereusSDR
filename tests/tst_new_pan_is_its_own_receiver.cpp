@@ -122,33 +122,43 @@ private slots:
         QCOMPARE(streams.size(), 4);
     }
 
-    // ── 4. A full DDC pool shares rather than refusing ───────────────────
+    // ── 4. A full DDC pool refuses rather than silently coupling ─────────
     //
-    // Dedicated is a preference, not a demand. With every DDC spoken for,
-    // a coupled pan beats no pan and a toast: the operator can still see
-    // and hear, and the coupling is visible rather than silent.
-    void a_new_pan_falls_back_to_sharing_when_no_ddc_is_free()
+    // This assertion was inverted on 2026-08-01. The original (PR #293) held
+    // that a coupled pan beats no pan, so a full pool fell back to sharing.
+    // The HL2 bench behind PR #311 showed that fallback is the same defect
+    // this flag exists to prevent, arriving silently: the third pan opens,
+    // looks independent, and tunes in lockstep with whichever pan it landed
+    // on. On a 2-DDC radio "no third independent window" is the truth, and
+    // saying so is better than a pan that lies about what it is.
+    //
+    // The slice is still created; only the stream bind is refused, and the
+    // caller surfaces placement.reason.
+    void a_new_pan_is_refused_when_no_ddc_is_free()
     {
-        RadioModel model;
-        seed(model, /*ddcs*/ 2);
+        SliceStreamAllocator alloc;
+        alloc.configure(/*userDdcCount*/ 2, /*maxSlices*/ 5);
+        alloc.setDefaultSampleRateHz(192000);
+        alloc.activateStream(0, 14200000.0, 192000);
+        alloc.activateStream(1, 7100000.0, 192000);
 
-        const int a = model.addSlice(QStringLiteral("pan-0"));
-        SliceModel* sliceA = model.sliceById(a);
-        QVERIFY(sliceA);
-        sliceA->setFrequency(14200000.0);
+        using Outcome = SliceStreamAllocator::Outcome;
 
-        const int b = model.addSlice(QStringLiteral("pan-1"));
-        SliceModel* sliceB = model.sliceById(b);
-        QVERIFY(sliceB);
-        QVERIFY(sliceA->streamIndex() != sliceB->streamIndex());
+        // A third pan on a frequency stream 0 already covers. Sharing would
+        // succeed and is exactly what must not happen here.
+        const auto p = alloc.placeSlice(14200000.0, /*preferOwnStream*/ true);
+        QCOMPARE(p.outcome, Outcome::Rejected);
+        QVERIFY2(!p.reason.isEmpty(),
+                 "a refusal must carry a reason for the operator");
+        QVERIFY2(!p.reason.contains(QStringLiteral("none covers")),
+            "the pool is exhausted, not mistuned: telling the operator to "
+            "retune sends them chasing a fix that cannot work");
 
-        // Third pan, no DDC left. It must still open.
-        const int c = model.addSlice(QStringLiteral("pan-2"));
-        SliceModel* sliceC = model.sliceById(c);
-        QVERIFY2(sliceC != nullptr, "the pan must still get a slice");
-        QVERIFY2(sliceC->streamIndex() >= 0,
-            "and that slice must be bound to something: refusing to bind "
-            "would leave a pan rendering nothing");
+        // The same frequency without the flag still shares, which is what
+        // keeps co-hosted slices free.
+        const auto shared = alloc.placeSlice(14200000.0, /*preferOwnStream*/ false);
+        QCOMPARE(shared.outcome, Outcome::JoinedExisting);
+        QCOMPARE(shared.streamIndex, 0);
     }
 
     // ── 5. The allocator honours the preference directly ─────────────────
@@ -165,11 +175,11 @@ private slots:
         using Outcome = SliceStreamAllocator::Outcome;
 
         // Same frequency, inside stream 0's window.
-        const auto shared = alloc.placeSlice(14200000.0, /*preferDedicated*/ false);
+        const auto shared = alloc.placeSlice(14200000.0, /*preferOwnStream*/ false);
         QCOMPARE(shared.outcome, Outcome::JoinedExisting);
         QCOMPARE(shared.streamIndex, 0);
 
-        const auto dedicated = alloc.placeSlice(14200000.0, /*preferDedicated*/ true);
+        const auto dedicated = alloc.placeSlice(14200000.0, /*preferOwnStream*/ true);
         QCOMPARE(dedicated.outcome, Outcome::NewStream);
         QVERIFY2(dedicated.streamIndex != 0,
                  "a dedicated request must not land on the occupied stream");

@@ -674,7 +674,11 @@ public:
     // an empty string preserves the legacy single-pan behaviour.
     /// Returns the new slice's id — the lowest not currently in use, which
     /// is also its WDSP RX channel id and its A-E display letter.
-    int addSlice(const QString& initialPanId = QString());
+    /// `ownStream` forwards to bindSliceToStream: true means this slice is
+    /// getting its own panadapter and needs its own receiver window, false
+    /// means the cheapest placement is right. Set by addSliceOnPan.
+    int addSlice(const QString& initialPanId = QString(),
+                 bool ownStream = false);
 
     /// Takes a slice ID (see sliceById), not a list position. sliceRemoved
     /// carries the same id.
@@ -2425,6 +2429,24 @@ private slots:
     // reassigned anywhere in baseline Thetis — effectively no-op.
     void pumpAudioVolume(double audioVolume);
 
+    /// Recompute the drive byte through the NORMAL (non-tune) power path.
+    ///
+    /// Ports the restore mi0bot performs on every MOX-to-TX transition, at
+    /// console.cs:30272 [v2.10.3.13-beta2] inside chkMOX_CheckedChanged2's
+    /// `if (tx)` branch:
+    ///
+    ///   if (!chkTUN.Checked && !chk2TONE.Checked) ptbPWR_Scroll(this, EventArgs.Empty);
+    ///   //MW0LGE_22b need this here as we may have adjusted power via tune slider when not in mox
+    ///
+    /// `ptbPWR_Scroll` calls setPowerFromDriveSlider (console.cs:47601-47607),
+    /// which is SetPowerUsingTargetDBM with bFromTune=false. Without it a
+    /// preceding TUNE leaves its drive value in place for the next normal
+    /// transmit. On the HL2 that value is 0, because the mi0bot carve-out at
+    /// console.cs:47660-47673 deliberately zeroes the drive byte for tune
+    /// powers at or below 51 and carries the level in the post-gen tone
+    /// magnitude instead, so a TUNE silences every following SSB transmit.
+    void restoreNormalTxDrive();
+
     // ── Phase 3J-2 H2: per-source spot-adapter slots ────────────────────────
     //
     // Each ingest client emits spotReceived(DxSpot); the adapter slot
@@ -2760,18 +2782,20 @@ public:
     /// room. Returns false silently when the pool has not been sized yet
     /// (disconnected): there is no DDC to bind to, and a slice with
     /// streamIndex() < 0 is unbound and feeds nothing.
-    /// Bind a slice to a DDC stream, claiming or sharing as the allocator
-    /// decides.
-    ///
-    /// `preferDedicatedStream` asks for a DDC of this slice's own when one
-    /// is spare, and is honoured on the FIRST bind only. Set it when the
-    /// slice is opening a new pan: a pan is a receiver, and a shared DDC
-    /// would make it a second view of an existing one, panning and tuning in
-    /// lockstep because a DDC has a single centre. Leave it false for a
-    /// slice joining a pan that already has slices, where sharing that pan's
-    /// receiver is the intent.
+    /// `preferOwnStream` is forwarded to SliceStreamAllocator::placeSlice on a
+    /// first bind, and says the caller wants an independent window rather than
+    /// the cheapest placement. Set by the +PAN path; see that header for why a
+    /// pan and a slice want different answers. Ignored on a retune, which
+    /// already owns a stream.
     bool bindSliceToStream(SliceModel* slice, double frequencyHz,
-                           bool preferDedicatedStream = false);
+                           bool preferOwnStream = false);
+
+    /// Mirror a stream's liveness into ReceiverManager's active-receiver set,
+    /// which is what decides whether that hardware DDC's samples are forwarded
+    /// or dropped. Called from bindSliceToStream on both edges. Idempotent.
+    /// See the definition for the bench defect that showed the two were never
+    /// connected.
+    void syncReceiverToStream(int streamIndex, bool live);
 
     /// Push the current slice set for `streamIndex` to RxDspWorker and emit
     /// streamBindingsChanged. Called after every bind / unbind.

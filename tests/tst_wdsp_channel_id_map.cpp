@@ -136,7 +136,11 @@ private slots:
         QVERIFY(engine->rxChannel(WdspEngine::kPsFeedbackChannelId) == nullptr);
     }
 
-    // A single-slice SKU (HL2, maxSlices = 1) opens exactly one channel.
+    // A minimal-size pool request (N=1) opens exactly one channel. No
+    // current SKU caps at 1 slice (HermesLite2 was the last one, corrected
+    // to maxSlices=5 on 2026-07-31; see
+    // docs/architecture/2026-07-31-hl2-slice-cap-design.md), but the pool
+    // sizing logic still has to behave correctly at this boundary.
     void a_single_slice_sku_opens_only_channel_zero()
     {
         RadioModel model;

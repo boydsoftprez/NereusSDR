@@ -57,12 +57,11 @@ int SliceStreamAllocator::firstFreeStream() const
 }
 
 SliceStreamAllocator::Placement
-SliceStreamAllocator::placeSlice(double frequencyHz, bool preferDedicated) const
+SliceStreamAllocator::placeSlice(double frequencyHz,
+                                 bool preferOwnStream) const
 {
     Placement p;
 
-    // Claiming a DDC of its own, when asked for and one is spare.
-    //
     // Bench report 2026-07-30 (JJ, KG4VCF): "creating a second pan, then
     // retuning the first or second pan causes both to tune... they should be
     // independent." They were not independent because they were not two
@@ -77,28 +76,28 @@ SliceStreamAllocator::placeSlice(double frequencyHz, bool preferDedicated) const
     // already has one still shares that pan's receiver, so `+RX` keeps
     // costing no hardware.
     //
-    // Deliberately a preference and not a demand: if every DDC is spoken
-    // for, sharing beats refusing to open the pan at all. The operator gets
-    // a pan that works and is coupled, rather than no pan and a toast.
-    if (preferDedicated) {
-        const int freeStream = firstFreeStream();
-        if (freeStream >= 0) {
-            p.outcome           = Outcome::NewStream;
-            p.streamIndex       = freeStream;
-            p.shiftOffsetHz     = 0.0;
-            p.newStreamCentreHz = frequencyHz;
-            return p;
-        }
-    }
+    // The first fix (PR #293) made this a preference: try for a spare DDC,
+    // fall back to sharing when none is free, on the reasoning that a coupled
+    // pan beats no pan. The 2026-08-01 HL2 bench (PR #311) showed that is the
+    // wrong trade. The fallback reintroduces the coupled pans this flag exists
+    // to prevent, and it does so silently, at exactly the moment the operator
+    // is most likely to blame the radio. On a 2-DDC board "no third
+    // independent window" is simply the truth, and a toast that says so beats
+    // a third pan that lies. Hence the skip below rather than an early claim.
 
     // 1. Prefer sharing: an active stream whose window already covers this
     //    frequency costs no extra DDC and no extra bus bandwidth.
-    for (int i = 0; i < m_streams.size(); ++i) {
-        if (windowContains(m_streams.at(i), frequencyHz)) {
-            p.outcome       = Outcome::JoinedExisting;
-            p.streamIndex   = i;
-            p.shiftOffsetHz = frequencyHz - m_streams.at(i).centreHz;
-            return p;
+    //
+    //    Skipped when the caller asked for its own window. See the header for
+    //    why a pan and a slice want different answers here.
+    if (!preferOwnStream) {
+        for (int i = 0; i < m_streams.size(); ++i) {
+            if (windowContains(m_streams.at(i), frequencyHz)) {
+                p.outcome       = Outcome::JoinedExisting;
+                p.streamIndex   = i;
+                p.shiftOffsetHz = frequencyHz - m_streams.at(i).centreHz;
+                return p;
+            }
         }
     }
 
@@ -112,15 +111,27 @@ SliceStreamAllocator::placeSlice(double frequencyHz, bool preferDedicated) const
         return p;
     }
 
-    // 3. Every DDC is in use and none covers this frequency. Thetis would
-    //    simply disable Multi-RX here (console.cs:31924); we surface the
-    //    hardware limit instead so the UI can explain it.
+    // 3. Every DDC is in use. Thetis would simply disable Multi-RX here
+    //    (console.cs:31924); we surface the hardware limit instead so the UI
+    //    can explain it.
     p.outcome = Outcome::Rejected;
-    p.reason  = QStringLiteral(
-        "All %1 receiver DDCs are in use and none covers %2 MHz. "
-        "Retune or remove a slice, or widen a DDC's sample rate.")
-        .arg(m_streams.size())
-        .arg(frequencyHz / 1.0e6, 0, 'f', 4);
+    if (preferOwnStream) {
+        // Distinct wording: nothing is wrong with the frequency here, the
+        // radio simply has no spare receiver to give this pan. Reusing the
+        // "none covers" phrasing would send the operator off retuning, which
+        // cannot help.
+        p.reason = QStringLiteral(
+            "All %1 receiver DDCs are in use, so this radio cannot give a new "
+            "panadapter its own receiver. Remove a panadapter, or add this "
+            "slice to an existing one to share its receiver.")
+            .arg(m_streams.size());
+    } else {
+        p.reason = QStringLiteral(
+            "All %1 receiver DDCs are in use and none covers %2 MHz. "
+            "Retune or remove a slice, or widen a DDC's sample rate.")
+            .arg(m_streams.size())
+            .arg(frequencyHz / 1.0e6, 0, 'f', 4);
+    }
     return p;
 }
 

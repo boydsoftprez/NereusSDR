@@ -1940,42 +1940,27 @@ RadioModel::RadioModel(QObject* parent)
     // Pre-hotfix: ANAN-8000DLE 80m TUN at slider=50 produced wire_byte=127
     // (=> ~300W on a 200W radio).  Post-hotfix: wire_byte=49 (=> ~85W).
     // Ratio matches the band's 50.5 dB PA gain compensation.
+    // Body extracted to RadioModel::restoreNormalTxDrive so the MOX-edge
+    // restore below can share it. Behaviour on this path is unchanged.
     connect(&m_transmitModel, &TransmitModel::powerChanged, this,
-            [this](int /*power*/) {
-        if (m_transmitModel.isTune()) { return; }
-        if (!m_connection)            { return; }
-        // Active-profile resolution.  Without a loaded PaProfileManager
-        // (MAC scope not set, or first-launch state before factory regen),
-        // activeProfile() returns nullptr and we silently no-op — same
-        // contract as MicProfileManager when not yet loaded.  The user
-        // sees no wire byte change until the profile bank is live.
-        if (!m_paProfileManager)      { return; }
-        const PaProfile* activeProfile =
-            m_paProfileManager->activeProfile();
-        if (!activeProfile)           { return; }
+            [this](int /*power*/) { restoreNormalTxDrive(); });
 
-        const SliceModel* const txSlice = txBoundSlice();
-        const Band currentBand = txSlice
-                                    ? bandFromFrequency(txSlice->frequency())
-                                    : m_lastBand;
-
-        // Phase 3C deep-parity wrapper: computes audio_volume + applies
-        // ATT-on-TX safety gate (PS-active dormant until 3M-4).  txMode 0
-        // (normal): bFromTune=false, bTwoTone=false.
-        // Issue #175 Task 4: thread connected model so HL2 sub-step path
-        // resolves correctly (txMode 0 path is non-HL2-affected, but
-        // passing the model keeps the call site uniform with TUN path).
-        const auto result = m_transmitModel.setPowerUsingTargetDbm(
-            *activeProfile, currentBand, /*bSetPower=*/true,
-            /*bFromTune=*/false, /*bTwoTone=*/false,
-            m_hardwareProfile.model);
-
-        // Wire byte + IQ scalar pump now happens inside pumpAudioVolume,
-        // wired below to TransmitModel::audioVolumeChanged.  setPowerUsingTargetDbm
-        // emits that signal at TransmitModel.cpp:1129, which fires the
-        // listener synchronously (Qt::AutoConnection on same thread).
-        (void)result;
-    });
+    // From mi0bot console.cs:30272 [v2.10.3.13-beta2]: the drive byte is
+    // recomputed through the normal path on every MOX-to-TX transition, so a
+    // value left behind by TUNE or 2-TONE cannot leak into an ordinary
+    // transmit. See restoreNormalTxDrive for the full cite and the HL2 bench
+    // finding that exposed the missing restore.
+    //
+    // Wired here rather than on tune release: any path that leaves the drive
+    // wrong is then corrected at the start of the next normal transmit, not
+    // just the one path we happened to notice.
+    if (m_moxController) {
+        connect(m_moxController, &MoxController::moxStateChanged, this,
+                [this](bool active) {
+            if (!active) { return; }
+            restoreNormalTxDrive();
+        });
+    }
 
     // ── #202 deep-fix: Audio.RadioVolume setter analogue ─────────────────────
     //
@@ -3851,8 +3836,59 @@ bool RadioModel::setStreamSampleRate(int streamIndex, int rateHz)
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// syncReceiverToStream — make ReceiverManager follow the allocator
+//
+// The allocator is the authority on which DDC streams are live: a stream is
+// live exactly when a slice sits on it. ReceiverManager decides which hardware
+// DDC indices it will forward samples for, and it rebuilds that table only
+// when a receiver is activated or deactivated. Nothing connected the two.
+//
+// Bench-caught 2026-08-01 (J.J. Boyd, KG4VCF) on a live HL2. The second
+// panadapter was permanently blank while the radio streamed DDC1 the whole
+// time, because ReceiverManager was throwing it away:
+//
+//   WRN: ReceiverManager: first feedIqData dropped;
+//        hwReceiverIndex=1 map="hw0->rx0"
+//
+// activateReceiver was reachable only from setActiveRxCountLive, which
+// follows the operator's active-RX-count setting rather than the allocator,
+// so a stream claimed by placing a slice never became routable.
+//
+// Both ReceiverManager calls are idempotent, so this is safe to call on every
+// bind including the retunes and rejoins where nothing has changed.
+// ---------------------------------------------------------------------------
+void RadioModel::syncReceiverToStream(int streamIndex, bool live)
+{
+    if (!m_receiverManager || streamIndex < 0) { return; }
+
+    if (!live) {
+        m_receiverManager->deactivateReceiver(streamIndex);
+        return;
+    }
+
+    // createReceiver hands out sequential indices, so reaching index N means
+    // creating everything up to it. Bounded by the receiver pool's own cap,
+    // which returns -1 once it is full; the guard is belt and braces against
+    // a future createReceiver that stops being sequential rather than a
+    // condition that can arise today.
+    for (int guard = 0; guard <= streamIndex + 1; ++guard) {
+        if (m_receiverManager->receiverConfig(streamIndex).receiverIndex >= 0) {
+            break;
+        }
+        if (m_receiverManager->createReceiver() < 0) {
+            qCWarning(lcConnection)
+                << "Stream" << streamIndex
+                << "claimed but the receiver pool is full; its DDC will not"
+                   " route and its panadapter will stay blank";
+            return;
+        }
+    }
+    m_receiverManager->activateReceiver(streamIndex);
+}
+
 bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
-                                   bool preferDedicatedStream)
+                                   bool preferOwnStream)
 {
     if (!slice) { return false; }
 
@@ -3881,16 +3917,46 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     const bool soleOccupant =
         previousStream >= 0 && slicesOnStream(previousStream).size() == 1;
 
-    // preferDedicatedStream applies to the first bind only. A retune has an
-    // existing window and a co-host set to answer to; asking for a fresh DDC
-    // there would migrate a slice off a stream other slices may still need.
+    // preferOwnStream applies only to a first bind. A retune already owns a
+    // stream, and the retune path has its own rules about when it may keep,
+    // move or leave it; forcing a fresh DDC there would strand the old one.
     const auto placement =
         (previousStream < 0)
-            ? m_streamAllocator.placeSlice(frequencyHz, preferDedicatedStream)
+            ? m_streamAllocator.placeSlice(frequencyHz, preferOwnStream)
             : m_streamAllocator.retuneSlice(previousStream, soleOccupant,
                                             ddcPinned, frequencyHz);
 
     using Outcome = NereusSDR::SliceStreamAllocator::Outcome;
+
+    // Placement diagnostic. Added 2026-08-01 chasing a bench report that a
+    // second pan sometimes lands on the same DDC as the first, so tuning one
+    // appears to retune the other. Two slices sharing a stream is a legitimate
+    // outcome (placeSlice prefers it, since a slice inside an existing window
+    // costs no DDC and no bus bandwidth), but two PANS on one stream are two
+    // views of one window, and recentring it moves both. Nothing on this path
+    // logged anything, so an hour of bench use produced no evidence at all.
+    //
+    // JoinedExisting with a stream that already has an occupant is the case to
+    // look for; NewStream and RetunedStream are the healthy ones.
+    {
+        static const char* const kOutcomeName[] = {
+            "JoinedExisting", "NewStream", "RetunedStream", "Rejected"
+        };
+        const int occupants = (placement.streamIndex >= 0)
+                                  ? slicesOnStream(placement.streamIndex).size()
+                                  : 0;
+        qCInfo(lcConnection).nospace()
+            << "Placement: slice " << slice->sliceIndex()
+            << " freq=" << (frequencyHz / 1.0e6) << " MHz"
+            << " prevStream=" << previousStream
+            << " sole=" << soleOccupant
+            << " pinned=" << ddcPinned
+            << " -> " << kOutcomeName[int(placement.outcome)]
+            << " stream=" << placement.streamIndex
+            << " shift=" << placement.shiftOffsetHz
+            << " newCentre=" << (placement.newStreamCentreHz / 1.0e6)
+            << " occupantsBefore=" << occupants;
+    }
 
     if (placement.outcome == Outcome::Rejected) {
         // Phase 3F Sub-Epic I closeout, defect F4: stash the reason for the
@@ -3930,6 +3996,11 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
 
         m_streamAllocator.activateStream(
             placement.streamIndex, placement.newStreamCentreHz, rateForStream);
+
+        // A claimed stream is worthless until its hardware DDC routes.
+        // setReceiverFrequency below tunes the DDC; this is what makes
+        // ReceiverManager forward its samples.
+        syncReceiverToStream(placement.streamIndex, /*live=*/true);
 
         if (m_receiverManager) {
             // forceHardwareFrequency, not setReceiverFrequency: this arm only
@@ -4017,6 +4088,10 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     if (previousStream >= 0 && previousStream != placement.streamIndex) {
         if (slicesOnStream(previousStream).isEmpty()) {
             m_streamAllocator.deactivateStream(previousStream);
+            // Symmetric with the claim above. A receiver left active for a
+            // stream with no slices keeps a DDC in the routing table and in
+            // the announced count that nothing is listening to.
+            syncReceiverToStream(previousStream, /*live=*/false);
         }
         republishStreamBindings(previousStream);
     }
@@ -4080,7 +4155,7 @@ bool RadioModel::requestTxHandoffToSlice(int sliceId)
     return m_txSliceArbiter->requestHandoff(sliceId);
 }
 
-int RadioModel::addSlice(const QString& initialPanId)
+int RadioModel::addSlice(const QString& initialPanId, bool ownStream)
 {
     auto* slice = new SliceModel(this);
 
@@ -4158,30 +4233,7 @@ int RadioModel::addSlice(const QString& initialPanId)
         slice->setFrequency(m_activeSlice->frequency());
         slice->setDspMode(m_activeSlice->dspMode());
     }
-
-    // A new pan is a new receiver; a slice joining an existing pan shares
-    // that pan's receiver.
-    //
-    // Bench report 2026-07-30 (JJ, KG4VCF): with two pans open, panning or
-    // tuning either one moved both. Not a wiring fault. The seed above puts
-    // the new slice on the active slice's frequency, which is inside the
-    // active stream's window, so the allocator shared the DDC. A DDC has one
-    // centre and feeds one FFT stream, so the two pans were two views of a
-    // single receiver, moving together exactly as a single receiver should.
-    //
-    // Operator decision, 2026-07-30: a new pan should be independent. That
-    // matches AetherSDR, and Thetis's RX1/RX2, where each display has its
-    // own receiver. `+RX` on a pan that already has slices keeps sharing,
-    // which is what makes co-hosted slices on one panadapter free.
-    //
-    // The frequency seed stays either way, so a new pan still opens on the
-    // band being worked rather than the 14.225 MHz ctor default that read as
-    // "Slice C is stuck on 20 m" on an earlier bench. It just gets its own
-    // window on that band now, which it can then be tuned away from.
-    const bool openingANewPan =
-        !initialPanId.isEmpty() && slicesOnPan(initialPanId, slice).isEmpty();
-
-    bindSliceToStream(slice, slice->frequency(), openingANewPan);
+    bindSliceToStream(slice, slice->frequency(), ownStream);
 
     // Retuning re-runs the allocator: the slice may stay on its stream
     // (shift only), move its stream's centre if it is the sole occupant, or
@@ -4498,6 +4550,10 @@ void RadioModel::removeSlice(int sliceId)
     deactivateSliceChannel(sliceId);
     if (freedStream >= 0 && slicesOnStream(freedStream).isEmpty()) {
         m_streamAllocator.deactivateStream(freedStream);
+        // Same pairing as bindSliceToStream's two edges: a receiver left
+        // active for a stream with no slices keeps a DDC in the routing
+        // table, and in the announced receiver count, that nothing reads.
+        syncReceiverToStream(freedStream, /*live=*/false);
     }
     if (freedStream >= 0) {
         republishStreamBindings(freedStream);
@@ -4546,7 +4602,26 @@ void RadioModel::addSliceOnPan(const QString& panId)
     // wiring, and active-slice bookkeeping in one place. Pass the panId so
     // it is stamped on the slice BEFORE sliceAdded() fires (bench fix
     // 2026-06-03; previously set after the emit -> handler saw it empty).
-    addSlice(panId);
+    // ownStream: opening a NEW pan asks for an independent window, not the
+    // cheapest placement. Without it the slice seeded above at the active
+    // slice's frequency lands inside that slice's window and shares its DDC,
+    // and the two pans then move together. Bench-caught 2026-08-01.
+    //
+    // Only when the pan is genuinely empty, though. This entry point serves
+    // both "+PAN" and the pan menu's "add slice on active pan", and the
+    // second one wants the opposite answer: a slice joining a populated pan
+    // should share that pan's receiver, which is what makes co-hosted slices
+    // free. Demanding a fresh DDC there is a hardware request the radio
+    // cannot always honour -- on a 2-DDC HL2 with both pans populated it
+    // fails outright, even though maxSlices=5 exists precisely because
+    // slices share the two available windows.
+    //
+    // Predicate from the 2026-07-30 bench work on the same defect (PR #293):
+    // a pan is a receiver when it is new, and a host when it is not. No
+    // `except` argument needed -- the slice does not exist yet.
+    const bool openingANewPan = !panId.isEmpty() && slicesOnPan(panId).isEmpty();
+
+    addSlice(panId, openingANewPan);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -8666,12 +8741,47 @@ quint64 RadioModel::txFrequencyForSlice(const SliceModel* slice) const
 
 void RadioModel::pushTxFrequencyFromTxSlice()
 {
-    if (!m_connection) { return; }
+    if (!m_connection) {
+        // Same consequence as the no-bound-slice case below: the transmit
+        // frequency is never published and the radio keeps 0 Hz. Logged
+        // because a caller running before m_connection is assigned looks
+        // identical from the outside to never being called at all.
+        qCWarning(lcConnection)
+            << "TX frequency NOT pushed: no connection yet (caller ran before"
+               " m_connection was assigned).";
+        return;
+    }
 
     SliceModel* slice = txBoundSlice();
-    if (!slice) { return; }
+    if (!slice) {
+        // Returning silently here leaves P1RadioConnection::m_txFreqHz at
+        // whatever it last held, which from construction is 0. The codec
+        // still composes a TX VFO bank from it, so the radio is commanded to
+        // transmit at 0 Hz and produces no RF, with nothing anywhere saying
+        // so. Bench-caught 2026-08-01 on a live HL2 (J.J. Boyd, KG4VCF):
+        // TUNE and SSB both silent while the whole TX sequence logged clean.
+        //
+        // The arbiter's id is -1 until something binds a slice for transmit,
+        // and sliceById(-1) is null, so this is reachable whenever the bind
+        // has not happened or the persisted id no longer names a live slice.
+        qCWarning(lcConnection).nospace()
+            << "TX frequency NOT pushed: no TX-bound slice. arbiterId="
+            << (m_txSliceArbiter ? m_txSliceArbiter->txBoundSliceId() : -99)
+            << " sliceCount=" << m_slices.size()
+            << " -- the radio keeps its previous TX frequency (0 at startup)"
+               " and will transmit no RF.";
+        return;
+    }
 
     const quint64 txFreqHz = txFrequencyForSlice(slice);
+
+    // Success is logged too. The failure modes above are only meaningful
+    // against evidence that this path ever runs, and a zero here (a bound
+    // slice sitting at 0 Hz) is its own defect that would otherwise look
+    // exactly like a successful push.
+    qCInfo(lcConnection).nospace()
+        << "TX frequency pushed: " << txFreqHz << " Hz (slice "
+        << slice->sliceIndex() << ", xit=" << xitOffset << ")";
 
     QMetaObject::invokeMethod(m_connection, [conn = m_connection, txFreqHz]() {
         conn->setTxFrequency(txFreqHz);
@@ -10107,17 +10217,67 @@ void RadioModel::republishAlexAdcSlices()
     std::array<double, kAdcCount> lowestHz {0.0, 0.0};
 
     const HPSDRHW alexBoard = boardCapabilities().board;
-    auto addToChain = [&bands, &preselectors, &counts, &lowestHz, alexBoard](
+
+    // Boards whose RX preselector is the OC matrix rather than an Alex
+    // bank (HL2's N2ADR filter board; hasIoBoardHl2 is the honest
+    // discriminator -- see P1RadioConnection::buildCodecContext for the
+    // wire-side half of this fix) have no physical filter selection to
+    // read from the Alex ladder at all. computeRxPreselector falls back to
+    // computeHpf() for any board outside usesBpf1Preselector's list, and
+    // that ladder's crossovers do not track the N2ADR relay groupings: it
+    // splits 60m from 40m, which N2adrPreset.cpp wires to the same OcMatrix
+    // mask (0x44), while merging 20m with 17m, which do not share a relay.
+    // Two slices on 60m + 40m therefore reported as "2 distinct bands" and
+    // bypassed a filter neither slice needed to leave.
+    //
+    // Reading the mask straight out of OcMatrix instead makes the grouping
+    // test exact for whatever the matrix actually holds -- the N2ADR preset
+    // or a user's own pin assignment -- and needs no fixed table of its
+    // own. AlexController needs no HL2 knowledge to benefit from this: the
+    // two bands never reach it as separate entries once this collapses
+    // them here, exactly as already happens for Alex boards sharing one
+    // Saturn BPF1 selection (the 20/17/15m case in the comment below).
+    //
+    // NereusSDR-original (2026-08-01): the confirmed bug is that
+    // AlexController correctly enters BYPASS for these already-compatible
+    // pairs because this grouping step, not AlexController itself, was
+    // comparing the wrong filter identity.
+    const bool ocFilterPath = boardCapabilities().hasIoBoardHl2;
+    auto addToChain = [&bands, &preselectors, &counts, &lowestHz, alexBoard,
+                        ocFilterPath, this](
                           int chain, Band band, double hz) {
         if (chain < 0 || chain >= kAdcCount) { return; }
-        const quint8 physicalFilter =
-            codec::alex::computeRxPreselector(hz / 1.0e6, alexBoard);
+
+        // A zero mask is "no pins configured for this band", not "a filter
+        // that every band shares". OcMatrix::maskFor returns 0 for any
+        // unconfigured band, so with the N2ADR preset off, or no filter
+        // board fitted at all, every band would compare equal and the
+        // multi-band check would never fire.
+        //
+        // Bench-caught 2026-08-01 by J.J. Boyd (KG4VCF) with the N2ADR
+        // disabled: slices on 40m and 20m, which need different relay
+        // selections, stopped reporting BYPASS entirely. Introduced by the
+        // OC-mask grouping in 231e1c23.
+        //
+        // Falling back to the preselector ladder restores the pre-231e1c23
+        // answer for the unconfigured case while keeping the exact grouping
+        // wherever the matrix actually holds a mask. Deliberately per-band
+        // rather than a whole-matrix emptiness test: a partly-filled matrix
+        // is legitimate, and each band should use the best identity
+        // available to it.
+        quint8 physicalFilter = 0;
+        if (ocFilterPath) {
+            physicalFilter = m_ocMatrix.maskFor(band, /*tx=*/false);
+        }
+        if (physicalFilter == 0) {
+            physicalFilter = codec::alex::computeRxPreselector(hz / 1.0e6, alexBoard);
+        }
 
         // Compatibility is a property of the relay selection, not the Band
         // enum. Several amateur bands share one physical filter (for
-        // example 20/17/15 m on the Saturn BPF1 bank). Count those as one
-        // compatible range; bypass only when the chain would need two
-        // different relay selections at once.
+        // example 20/17/15 m on the Saturn BPF1 bank, or 60/40 m on the
+        // N2ADR OC bank). Count those as one compatible range; bypass only
+        // when the chain would need two different relay selections at once.
         for (int i = 0; i < counts[chain]; ++i) {
             if (preselectors[chain][i] == physicalFilter) {
                 if (hz < lowestHz[chain]) { lowestHz[chain] = hz; }
@@ -11149,6 +11309,56 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
 // swrProtectFactorChanged emit can re-pump the same audio_volume through
 // updated SWR protect (mirrors console.cs:26102-26109 [v2.10.3.13]
 // `Audio.RadioVolume = Audio.RadioVolume` re-emit on _swr_protect change).
+// Ports the drive restore mi0bot performs on every MOX-to-TX transition, at
+// console.cs:30272 [v2.10.3.13-beta2] inside chkMOX_CheckedChanged2's
+// `if (tx)` branch:
+//
+//   if (!chkTUN.Checked && !chk2TONE.Checked) ptbPWR_Scroll(this, EventArgs.Empty);
+//MW0LGE_22b need this here as we may have adjusted power via tune slider when not in mox
+//
+// `ptbPWR_Scroll` (console.cs:29307) calls setPowerFromDriveSlider
+// (:47601-47607), which is SetPowerUsingTargetDBM with bFromTune=false.
+//
+// Bench-caught 2026-08-01 on a live HL2 by J.J. Boyd (KG4VCF): TUNE and then
+// SSB both produced no RF while the software TX sequence logged clean end to
+// end. The TX-edge diagnostic showed the drive byte going 41 to 0 on the TUNE
+// and never coming back, so every later transmit keyed at zero drive. The
+// zero is correct at the time: the mi0bot HL2 carve-out at
+// console.cs:47660-47673 [v2.10.3.13-beta2] deliberately zeroes the drive
+// byte for tune powers at or below 51 and carries the level in the post-gen
+// tone magnitude instead, because the HL2 has only a 15-step output
+// attenuator. What was missing is the restore afterwards.
+void RadioModel::restoreNormalTxDrive()
+{
+    // Guard mirrors upstream's `!chkTUN.Checked && !chk2TONE.Checked`. Both
+    // modes own the drive byte while running, and recomputing here would undo
+    // the HL2 tune carve-out mid-tune.
+    if (m_transmitModel.isTune())          { return; }
+    if (m_transmitModel.isTwoToneActive()) { return; }
+    if (!m_connection)                     { return; }
+
+    // Active-profile resolution. Without a loaded PaProfileManager (MAC scope
+    // not set, or first-launch state before factory regen), activeProfile()
+    // returns nullptr and we silently no-op, the same contract as
+    // MicProfileManager when not yet loaded.
+    if (!m_paProfileManager) { return; }
+    const PaProfile* activeProfile = m_paProfileManager->activeProfile();
+    if (!activeProfile)      { return; }
+
+    const SliceModel* const txSlice = txBoundSlice();
+    const Band currentBand = txSlice ? bandFromFrequency(txSlice->frequency())
+                                     : m_lastBand;
+
+    // txMode 0 (normal): bFromTune=false, bTwoTone=false. The wire byte and
+    // IQ scalar pump happen inside pumpAudioVolume, wired to
+    // TransmitModel::audioVolumeChanged, which setPowerUsingTargetDbm emits.
+    const auto result = m_transmitModel.setPowerUsingTargetDbm(
+        *activeProfile, currentBand, /*bSetPower=*/true,
+        /*bFromTune=*/false, /*bTwoTone=*/false,
+        m_hardwareProfile.model);
+    (void)result;
+}
+
 void RadioModel::pumpAudioVolume(double audioVolume)
 {
     if (!m_connection) {
@@ -11487,14 +11697,38 @@ void RadioModel::setTune(bool on)
                     m_hardwareProfile.model);
 
                 // #202 deep-fix: TXPostGenRun=0 case for new_pwr==0 during TUNE.
-                // Mirrors Thetis console.cs:46749-46752 [v2.10.3.13]:
+                // Mirrors ramdor Thetis console.cs:46749-46752 [v2.10.3.15]:
                 //   if (new_pwr == 0) {
                 //       Audio.RadioVolume = 0.0;
                 //       if (chkTUN.Checked) radio.GetDSPTX(0).TXPostGenRun = 0;
                 //   }
                 // setTuneTone(false, ...) maps to TXPostGenRun=0 in NereusSDR's
                 // TxChannel wrapper (sets the run flag while leaving freq/mag).
-                if (result.newPower == 0 && m_txChannel) {
+                //
+                // NOT applied on the HL2. Bench-caught 2026-08-01 on a live
+                // HL2 (J.J. Boyd, KG4VCF): TUNE produced no RF while every
+                // commanded byte was correct (freq 7221100, alexLpf 0x02,
+                // ocByte 0x04, PA enabled).
+                //
+                // The two upstreams disagree about what new_pwr == 0 means,
+                // and this guard took ramdor's meaning for a board mi0bot
+                // owns. Ramdor's new_pwr == 0 is genuinely zero power, so
+                // killing the tone is right. mi0bot's HL2 carve-out at
+                // console.cs:47660-47673 [v2.10.3.13-beta2] deliberately sets
+                // new_pwr = 0 as the NORMAL tune state, because the HL2 has
+                // only a 15-step output attenuator, and carries the level in
+                // TXPostGenToneMag = (new_pwr + 40) / 100 instead. Killing
+                // the tone there removes the only thing generating RF.
+                //
+                // mi0bot has no new_pwr == 0 tone-kill anywhere. Its only
+                // HL2 TXPostGenRun = 0 is in the tune-RELEASE path at
+                // console.cs:47764 [v2.10.3.13-beta2], commented "MI0BOT:
+                // Switch of the tone gen before releasing PTT", paired with
+                // TXPostGenRun = 1 at :47769 to turn it on for tune.
+                const bool hl2ToneCarriesLevel =
+                    (m_hardwareProfile.model == HPSDRModel::HERMESLITE);
+                if (result.newPower == 0 && !hl2ToneCarriesLevel
+                    && m_txChannel) {
                     m_txChannel->setTuneTone(false, signedFreq,
                                              TxChannel::kMaxToneMag);
                 }
@@ -11652,26 +11886,56 @@ void RadioModel::setTune(bool on)
         // pttOutDelayTimer (ptt_out_delay) → rxReady.  Always called (even
         // when MOX is already off) because it also clears m_manualMox and
         // emits manualMoxChanged(false) — Cite: console.cs:30142 [v2.10.3.13].
+        // TUNE-release ordering, HL2, UNRESOLVED as of 2026-08-01.
+        //
+        // Bench: a thump at the end of an unkey, TUNE only, never on SSB.
+        // That rules out the RX audio gate and the mixer up-slew, which run on
+        // every MOX transition, and points at the tune tone generator.
+        //
+        // mi0bot stops the tone and settles BEFORE dropping PTT, HL2 only:
+        //   if (HardwareSpecific.Model == HPSDRModel.HERMESLITE)   // MI0BOT: Switch of the tone gen before releasing PTT
+        //   {
+        //       radio.GetDSPTX(0).TXPostGenRun = 0;
+        //       await Task.Delay(MoxDelay);
+        //   }
+        //   chkMOX.Checked = false;
+        //     console.cs:30876-30880 [v2.10.3.13-beta2]
+        //
+        // That was implemented here and did NOT cure the thump, so it is not
+        // in the tree. It is also in tension with the ordering rationale
+        // below: killing gen1 while TXA still runs puts a hard step into a
+        // live filter chain, which is the transient the ramdor order avoids.
+        // Two candidate causes remain and they want opposite fixes:
+        //   (a) carrier still generating as the T/R relay switches -> stop
+        //       the tone earlier, which is mi0bot's answer;
+        //   (b) the stop itself is a discontinuity -> setTuneTone writes
+        //       kMaxToneMag and then clears the run flag, truncating a
+        //       full-amplitude sine in one sample, so it wants a ramp down
+        //       rather than a reorder.
+        // Deciding between them needs instrumentation on this path, not
+        // another reorder. Do not re-apply (a) without evidence.
         if (m_moxController) {
             m_moxController->setTune(false);
         }
 
-        if (!moxWasOn) {
-            // No TX→RX walk will fire because MoxController::setMox(false)
-            // hit its idempotent guard.  Schedule completeTuneOff directly
-            // off a QTimer::singleShot so the deferred path still gets a
-            // turn.  The settle delay matches m_tuneOffSettleMs both for
-            // ordering symmetry with the walk path and because Thetis's
-            // `await Task.Delay(100)` (console.cs:30107 [v2.10.3.13]) is
-            // unconditional — it fires whether or not the chkMOX assignment
-            // triggered a walk.  The lambda re-checks the latch in case a
-            // fresh setTune(true) clears it before the timer fires.
-            QTimer::singleShot(m_tuneOffSettleMs, this, [this]() {
-                if (!m_pendingTuneOff) {
-                    return;
-                }
-                completeTuneOff();
-            });
+        {
+            if (!moxWasOn) {
+                // No TX→RX walk will fire because MoxController::setMox(false)
+                // hit its idempotent guard.  Schedule completeTuneOff directly
+                // off a QTimer::singleShot so the deferred path still gets a
+                // turn.  The settle delay matches m_tuneOffSettleMs both for
+                // ordering symmetry with the walk path and because Thetis's
+                // `await Task.Delay(100)` (console.cs:30107 [v2.10.3.13]) is
+                // unconditional — it fires whether or not the chkMOX assignment
+                // triggered a walk.  The lambda re-checks the latch in case a
+                // fresh setTune(true) clears it before the timer fires.
+                QTimer::singleShot(m_tuneOffSettleMs, this, [this]() {
+                    if (!m_pendingTuneOff) {
+                        return;
+                    }
+                    completeTuneOff();
+                });
+            }
         }
 
         // The remainder of the TUN-off work runs from completeTuneOff()
@@ -12948,22 +13212,20 @@ qint64 RadioModel::setActiveRxCountLive(int newCount)
     }
 
     // ── Step 5: Update hardware ───────────────────────────────────────────────
-    if (auto* p1 = qobject_cast<P1RadioConnection*>(m_connection)) {
-        // P1: update m_activeRxCount and restart the EP6 stream so the radio
-        // re-arms with the new per-frame slot count.  restartStreamWithCount()
-        // mirrors restartStreamWithRate(): stop + prime(3) + start + prime(3).
-        // Must run on the connection thread.
-        QMetaObject::invokeMethod(p1, [p1, clamped]() {
-            p1->restartStreamWithCount(clamped);
-        }, Qt::QueuedConnection);
-    } else {
-        // P2 (and future protocol variants): setActiveReceiverCount() calls
-        // sendCmdRx() when running — no stop/start cycle needed.
-        QMetaObject::invokeMethod(m_connection,
-                                  [conn = m_connection, clamped]() {
-            conn->setActiveReceiverCount(clamped);
-        }, Qt::QueuedConnection);
-    }
+    //
+    // One call for every protocol. This used to branch, reaching past
+    // setActiveReceiverCount into P1's restartStreamWithCount because that
+    // was the only entry point that restarted the ep6 stream. P1's
+    // setActiveReceiverCount now does the restart itself, and combines this
+    // count with what the DDC configuration needs before announcing anything
+    // (P1RadioConnection.h::announceRxCount) -- which the branch could not
+    // do, and which is how a panadapter removal came to starve PureSignal of
+    // DDC2 and DDC3 on the bench. P2's has always sent sendCmdRx() when
+    // running and needs no stop/start cycle.
+    QMetaObject::invokeMethod(m_connection,
+                              [conn = m_connection, clamped]() {
+        conn->setActiveReceiverCount(clamped);
+    }, Qt::QueuedConnection);
 
     // ── Step 6: Restart TX pump ───────────────────────────────────────────────
     if (m_txWorker && m_txChannel) {
@@ -14477,6 +14739,22 @@ void RadioModel::invokeCodecDdcAssignment()
         return;
     }
     const NereusSDR::DdcAssignment assignment = *computed;
+
+    // Phase 3F: publish stream-1 liveness to ReceiverManager.
+    //
+    // ReceiverManager::setRx2Enabled had no caller, so m_rx2Enabled was
+    // permanently false and the rx2 arms of the P1 codecs'
+    // applyPureSignalDdcConfig could never fire, whatever the capability row
+    // said. buildStreamConfigsForCodec() is the single source of stream
+    // liveness and is what computeDdcAssignment() just consumed, so reading
+    // it again here cannot disagree with the assignment above.
+    if (m_receiverManager) {
+        const std::array<NereusSDR::SliceConfig, 5> streams =
+            buildStreamConfigsForCodec();
+        m_receiverManager->setRx2Rate(streams[1].live ? streams[1].sampleRateHz
+                                                      : 0);
+        m_receiverManager->setRx2Enabled(streams[1].live);
+    }
 
     // Wire push. P2 only: the P1 codec's DdcAssignment is computed above but
     // the existing applyPsDdcConfig flow handles P1 wire writes, and full P1

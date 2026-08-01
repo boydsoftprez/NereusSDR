@@ -692,7 +692,11 @@ void P1RadioConnection::connectToRadio(const RadioInfo& info)
     // model-override setting. parseEp6Frame uses this same value to select
     // the 14-byte nddc=2 slot layout, so sent and received must agree.
     if (m_radioInfo.protocol == ProtocolVersion::Protocol1) {
-        m_activeRxCount = 2;
+        // Seeds the DDC-configuration axis; announceRxCount folds in the
+        // panadapter axis and writes m_activeRxCount. Not yet running, so
+        // this records the value rather than restarting anything.
+        m_codecRxCount = 2;
+        announceRxCount();
     }
 
     // Reset reconnect state — fresh connection resets the retry counter.
@@ -987,7 +991,15 @@ void P1RadioConnection::setTxFrequency(quint64 frequencyHz)
         m_alexLpfBitsTx = newLpfBitsTx;
     }
 }
-void P1RadioConnection::setActiveReceiverCount(int count)    { m_activeRxCount = count; }
+// The panadapter axis of the announced receiver count. Was a bare assignment
+// to m_activeRxCount, which both ignored the DDC configuration's needs and
+// skipped the stream restart that makes the radio and parseEp6Frame agree on
+// the slot layout.
+void P1RadioConnection::setActiveReceiverCount(int count)
+{
+    m_panRxCount = qMax(1, count);
+    announceRxCount();
+}
 void P1RadioConnection::setSampleRate(int sampleRate)
 {
     m_sampleRate = sampleRate;
@@ -1092,7 +1104,27 @@ void P1RadioConnection::restartStreamWithRate(int newSampleRate)
 }
 
 // ---------------------------------------------------------------------------
+// announceRxCount — the single writer for the wire's receiver count
+//
+// The DDC configuration and the panadapters each get a say, and neither can
+// see the other, so the announcement is the max of the two. See the
+// declaration in P1RadioConnection.h for the bench defect that made this a
+// derived value rather than three call sites writing one field.
+//
+// Cheap to over-announce briefly, ruinous to under-announce: the count is the
+// ep6 slot layout, so a receiver the codec is expecting simply is not in the
+// frame.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::announceRxCount()
+{
+    restartStreamWithCount(qMax(m_codecRxCount, m_panRxCount));
+}
+
+// ---------------------------------------------------------------------------
 // restartStreamWithCount — Task 1.7 (active-RX-count live-apply, P1 path)
+//
+// The mechanism behind announceRxCount, private so that no caller can set the
+// count knowing only one of its two axes.
 //
 // Updates m_activeRxCount then stops → primes → starts the EP6 stream so
 // the radio re-arms with the new per-frame slot count (bank-0 C0 bits 8-10
@@ -1949,8 +1981,20 @@ void P1RadioConnection::applyPsDdcConfig(const NereusSDR::PsDdcConfig& cfg)
     // (parseEp6Frame's slotBytes = 6*numRx + 2) matches what the radio
     // actually sends during PS-MOX, and nDdc → m_psNDdc for the bank-2/3
     // freq override gate.
-    if (cfg.p1RxCount > 0 && m_activeRxCount != cfg.p1RxCount) {
-        m_activeRxCount = cfg.p1RxCount;
+    if (cfg.p1RxCount > 0 && m_codecRxCount != cfg.p1RxCount) {
+        // The DDC-configuration axis only. announceRxCount combines it with
+        // the panadapter axis and restarts the stream if the announcement
+        // moves, because the count is the ep6 slot layout (parseEp6Frame's
+        // slotBytes = 6 * numRx + 2) and both sides have to change together:
+        // a frame composed under the old layout and parsed under the new one
+        // is silently misparsed, since the 7F 7F 7F sync check does not
+        // encode the layout.
+        //
+        // Writing m_activeRxCount directly here is what let a panadapter
+        // removal take the announcement below what PureSignal needed. See
+        // P1RadioConnection.h::announceRxCount.
+        m_codecRxCount = cfg.p1RxCount;
+        announceRxCount();
         changed = true;
     }
     if (cfg.nDdc > 0 && m_psNDdc != cfg.nDdc) {
@@ -1962,6 +2006,13 @@ void P1RadioConnection::applyPsDdcConfig(const NereusSDR::PsDdcConfig& cfg)
     // pair so parseEp6Frame can emit the source-first paired signal.
     // PsDdcConfig stores -1 when no PS pair applies (RX-only steady state);
     // a non-negative pair means PS-MOX is engaged on this connection.
+    //
+    // That was the intent from the start but not the behaviour until
+    // 2026-08-01: PsDdcConfig defaulted the pair to (0, 1) and only the
+    // PS-MOX branches assign it, so an RX-only config latched a valid-looking
+    // pair here and left parseEp6Frame's gate open for the whole session.
+    // The struct now defaults to the sentinel (CodecContext.h), so a config
+    // without a PS pair clears the latch instead of arming it.
     if (cfg.psFbDdc != m_psFbDdc) {
         m_psFbDdc = cfg.psFbDdc;
         changed = true;
@@ -2360,6 +2411,64 @@ CodecContext P1RadioConnection::buildCodecContext() const
     } else {
         ctx.ocByte = m_ocOutput;
     }
+
+    // The HL2 has no Alex board (hasAlexFilters=false, m_caps->hasAlex=
+    // false): its RX preselector is the N2ADR board wired through these
+    // same OC pins, driven by ctx.ocByte above rather than the Alex
+    // bank-10 HPF word that effectiveAlexHpfBits() feeds. AlexController's
+    // per-ADC BYPASS / WidebandLocked decision (see setAlexRxBpf above)
+    // therefore has nowhere else to reach the wire on this board.
+    //
+    // Scoped to hasIoBoardHl2 -- true only for the two HL2 rows
+    // (kHermesLite, kHermesLiteRxOnly) -- and not every P1 board:
+    // Alex-equipped boards already carry this same decision on bank 10 via
+    // effectiveAlexHpfBits() and must not also have it clobber their
+    // independently-addressed OC bank.
+    //
+    // RX only (!m_mox). On TX the N2ADR pins double as the transmit
+    // low-pass segment for the slice actually keying the radio
+    // (N2adrPreset.cpp's chkPenOCxmit* entries): forcing 0x00 mid-transmit
+    // because some OTHER slice's receive band conflicts with a third would
+    // strip TX harmonic filtering for a decision that says nothing about
+    // the transmitted signal. This scoping is a judgment call, not
+    // something the bug report specified either way; flagged for
+    // maintainer review in the PR report.
+    //
+    // 0x00 = "disable/bypass the N2ADR board": maintainer-supplied
+    // hardware knowledge (J.J. Boyd / KG4VCF, 2026-08-01), not documented
+    // in any upstream source -- mi0bot never commands 0x00.
+    static constexpr int kAlexBypassSentinel = 0x20;  // AlexRxBpf.hpfBitsAdc0 bypass encoding
+    if (!m_mox && m_caps && m_caps->hasIoBoardHl2
+        && m_alexRxHpfOverride == kAlexBypassSentinel) {
+        ctx.ocByte = 0x00;
+    }
+
+    // TX wire-byte diagnostic. Added 2026-08-01 chasing a "TUNE and SSB key
+    // but produce no RF" report on a live HL2, where the software TX
+    // sequence logged clean end to end and gave nothing to work from.
+    //
+    // These four are what actually decide whether the radio emits: the drive
+    // byte (bank 10 C1, zero drive means a silent carrier), the PTT bit
+    // (bank 0 C0 bit 0), the transmit frequency, and the announced receiver
+    // count that sizes the frame. Logged on MOX edges only, so an idle
+    // receive session stays quiet.
+    if (m_mox != m_lastMoxLogged) {
+        m_lastMoxLogged = m_mox;
+        // Read the MEMBERS, not ctx. This diagnostic sits above the block
+        // that populates most of ctx (ctx.txFreqHz is assigned further down),
+        // so reading ctx here reports default-initialised zeros rather than
+        // live state. That cost several rebuilds chasing a transmit frequency
+        // that was never actually zero. ctx.ocByte is the one exception,
+        // assigned above this point, and is read from ctx deliberately
+        // because the bypass override that rewrites it also lives above.
+        qDebug("HL2 TX edge: mox=%d txDrive=%d (0x%02X) txFreq=%llu "
+               "alexLpf=0x%02X activeRx=%d ocByte=0x%02X paEnabled=%d",
+               int(m_mox), m_txDrive, quint8(m_txDrive & 0xFF),
+               static_cast<unsigned long long>(m_txFreqHz),
+               m_alexLpfBits,
+               m_activeRxCount, ctx.ocByte, int(m_paEnabled));
+    }
+
     if (ctx.ocByte != m_lastOcByteLogged) {
         const int bandIdx = int(bandFromFrequency(static_cast<double>(m_rxFreqHz[0])));
         qDebug("HL2 ocByte=0x%02X band=%d mox=%d (matrix=%p)",
@@ -3194,11 +3303,116 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
     // observation matches Thetis: ChannelMaster fires the PS-paired
     // call (xrouter case 2 → InboundBlock(1)) on the same frame that
     // feeds the regular per-RX consumers.
-    if (m_psFbDdc >= 0 && m_psTxMonDdc >= 0
+    const bool psPairPresent =
+        m_psFbDdc >= 0 && m_psTxMonDdc >= 0
         && m_psFbDdc < static_cast<int>(perRxVecs.size())
         && m_psTxMonDdc < static_cast<int>(perRxVecs.size())
         && !perRxVecs[m_psFbDdc].isEmpty()
-        && !perRxVecs[m_psTxMonDdc].isEmpty()) {
+        && !perRxVecs[m_psTxMonDdc].isEmpty();
+
+    // PS stream diagnostic. Added 2026-08-01 (J.J. Boyd, KG4VCF) because
+    // PureSignal parks in LCOLLECT on a live HL2 and the state alone cannot
+    // say why: LCOLLECT bins by TX magnitude (calcc.c:733-756) and needs all
+    // 16 bins filled, so a flat envelope and a dead stream look identical
+    // from outside. The peaks distinguish them:
+    //
+    //   tx peak near zero          TX monitor is not carrying the drive
+    //   tx peak steady, non-zero   constant envelope, PS cannot calibrate
+    //                              on this signal (a TUNE carrier does this)
+    //   tx peak varying            envelope is fine, look further downstream
+    //   rx peak near zero          no feedback reaching DDC2 (coupler,
+    //                              attenuation, or ADC steering)
+    //
+    // Nothing on this path logged anything, so a whole bench session
+    // produced no evidence beyond "state=4". Once per second, and only while
+    // the PS pair is latched, so it costs nothing in normal RX.
+    // Gated on MOX, not merely on the PS indices being non-negative.
+    //
+    // The indices alone used to mean nothing at all: PsDdcConfig defaulted
+    // psFbDdc=0 / txMonDdc=1, and no branch of applyPureSignalDdcConfig
+    // outside PS-MOX assigns them, so "has a PS pair" was true with
+    // PureSignal switched off entirely. An earlier revision of this
+    // diagnostic keyed on that and measured itself running at 201,400
+    // samples per second on a quiet receiver; the paired emit below shared
+    // the same open gate. Fixed 2026-08-01 by defaulting both indices to -1
+    // in CodecContext.h, so the gate now tracks the PS pair the codec
+    // actually configured.
+    if (m_mox && m_psFbDdc >= 0 && m_psTxMonDdc >= 0) {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (nowMs - m_psDiagLastMs >= 1000) {
+            m_psDiagLastMs = nowMs;
+            if (!psPairPresent) {
+                qCInfo(lcConnection).nospace()
+                    << "PS streams: pair NOT emitted -- fb=" << m_psFbDdc
+                    << " txMon=" << m_psTxMonDdc
+                    << " slotsInFrame=" << int(perRxVecs.size())
+                    << " fbEmpty=" << (m_psFbDdc < int(perRxVecs.size())
+                                       ? perRxVecs[m_psFbDdc].isEmpty() : true)
+                    << " txMonEmpty=" << (m_psTxMonDdc < int(perRxVecs.size())
+                                       ? perRxVecs[m_psTxMonDdc].isEmpty() : true);
+            } else {
+                // The ENVELOPE, sample by sample, not the peak of the raw
+                // floats. LCOLLECT bins on env = sqrt(I^2 + Q^2) of the TX
+                // reference and needs all 16 bins filled (calcc.c:733-765).
+                //
+                // A peak alone cannot answer whether that happens: a
+                // two-tone's envelope peak is constant by construction, so
+                // the earlier probe read a rock-steady 0.230 whether the
+                // envelope was sweeping 0 to peak or sitting flat at peak.
+                // Only the spread distinguishes them.
+                //
+                //   min near 0, bins near 16   envelope sweeps, LCOLLECT
+                //                              should complete
+                //   min near max, bins 1 or 2  envelope is flat, so only
+                //                              those bins ever fill and
+                //                              full_ints resets every 4 s
+                //
+                // `bins` counts distinct bins this one block would touch,
+                // computed exactly as LCOLLECT does, using the HL2's
+                // hwPeak (BoardCapabilities psDefaultPeak 0.233, confirmed
+                // reaching the engine via getPSHWPeak).
+                const auto envStats = [](const QVector<float>& v,
+                                         double hwScale, int ints) {
+                    struct { double mn; double mx; double mean; int bins; } r
+                        {1e9, 0.0, 0.0, 0};
+                    QSet<int> touched;
+                    const int n = v.size() / 2;
+                    if (n <= 0) { r.mn = 0.0; return r; }
+                    for (int i = 0; i < n; ++i) {
+                        const double re = v[2 * i];
+                        const double im = v[2 * i + 1];
+                        const double e  = std::sqrt(re * re + im * im);
+                        if (e < r.mn) { r.mn = e; }
+                        if (e > r.mx) { r.mx = e; }
+                        r.mean += e;
+                        const double scaled = e * hwScale;
+                        if (scaled <= 1.0) {
+                            touched.insert(int(scaled * double(ints)));
+                        }
+                    }
+                    r.mean /= double(n);
+                    r.bins = touched.size();
+                    return r;
+                };
+                // 0.233 is the HL2 psDefaultPeak; hw_scale is its reciprocal
+                // (calcc.c:1049). Hard-coded here rather than plumbed from
+                // BoardCapabilities because this is a diagnostic, and the
+                // engine-side value is already logged by PureSignal.
+                constexpr double kHwScale = 1.0 / 0.233;
+                const auto tx = envStats(perRxVecs[m_psTxMonDdc], kHwScale, 16);
+                const auto fb = envStats(perRxVecs[m_psFbDdc], kHwScale, 16);
+                qCInfo(lcConnection).nospace()
+                    << "PS env: txMon(DDC" << m_psTxMonDdc << ") min=" << tx.mn
+                    << " max=" << tx.mx << " mean=" << tx.mean
+                    << " bins=" << tx.bins << "/16"
+                    << "  fb(DDC" << m_psFbDdc << ") min=" << fb.mn
+                    << " max=" << fb.mx << " mean=" << fb.mean
+                    << "  samples=" << perRxVecs[m_psTxMonDdc].size() / 2;
+            }
+        }
+    }
+
+    if (psPairPresent) {
         emit psPairedIqDataReceived(m_psFbDdc,    perRxVecs[m_psFbDdc],
                                     m_psTxMonDdc, perRxVecs[m_psTxMonDdc]);
     }

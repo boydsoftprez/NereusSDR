@@ -21,7 +21,7 @@ This design ports behaviour from multiple upstreams. Per `docs/attribution/HOW-T
 
 ## 1. Overview
 
-Phase 3F transitions NereusSDR from a fixed single-slice client to a hardware-capability-driven multi-slice client. Operators on 2-ADC boards (G2-class) get up to 5 user slices; HL2 stays at 1; intermediate SKUs gate at their hardware maximum. The pan layer is rebuilt around the AetherSDR overlay model. Wideband bandscope is folded into the pan-zoom gesture rather than a separate pan type. The Thetis Diversity dialog is ported in full, including the radar visualisation.
+Phase 3F transitions NereusSDR from a fixed single-slice client to a hardware-capability-driven multi-slice client. Operators on 2-ADC boards (G2-class) get up to 5 user slices; HL2 also reaches the 5-slice ceiling, over 2 panadapters, per the 2026-07-31 slice-cap correction (see §2 below); intermediate SKUs gate at their hardware maximum. The pan layer is rebuilt around the AetherSDR overlay model. Wideband bandscope is folded into the pan-zoom gesture rather than a separate pan type. The Thetis Diversity dialog is ported in full, including the radar visualisation.
 
 ### Goals
 
@@ -62,8 +62,8 @@ Existing fields used as inputs: `adcCount`, `supportedSampleRates`, `defaultSamp
 
 | SKU | ADCs | DDCs | User DDCs | maxSlices | Sample-rate ladder (kHz) | hasDiversity | widebandAdcs |
 |---|---|---|---|---|---|---|---|
-| HermesLite2 (HL2) | 1 | 4 | DDC0 only | **1** | 48, 96, 192, 384 | false | 0 (defer, P1 mechanism) |
-| HermesLite2 RX-only | 1 | 4 | DDC0 only | **1** | 48, 96, 192, 384 | false | 0 |
+| HermesLite2 (HL2) | 1 | 4 | DDC0-1 | **5** | 48, 96, 192, 384 | false | 0 (defer, P1 mechanism) |
+| HermesLite2 RX-only | 1 | 4 | DDC0-1 | **5** | 48, 96, 192, 384 | false | 0 |
 | Metis | 1 | 3 | DDC0-2 | **3** | 48, 96, 192 | false | 0 |
 | Hermes (ANAN-10/100) | 1 | 4 | DDC0-3 | **4** | 48, 96, 192 | false | 0 |
 | HermesII (ANAN-10E/100B) | 1 | 2 | DDC0-1 | **2** | 48, 96, 192 | false | 0 |
@@ -94,9 +94,30 @@ What the sources actually say:
 - **4 DDCs, rx1 on DDC0.** Thetis `console.cs:8387-8392 [v2.10.3.15]` groups `ANAN_G2E` with HERMES / ANAN10 / ANAN100 on `P1_rxcount = 4; nddc = 4;`, and `console.cs:8610-8642` (P2) plus `:8704-8730` (P1) group `HermesC10` with Hermes and HermesII on `rx1 = 0; rx2 = 1;`. Across every MOX, diversity and PureSignal branch, that case never enables anything above DDC1.
 - The SKU's own authority, [2026-05-21-anan-g2e-port-design.md](2026-05-21-anan-g2e-port-design.md) §"Resolved values", recorded ADC count 1, Max RX 4 and Diversity **No** from the start. This table contradicted it for two months.
 
-**On `maxSlices = 5` over 4 user DDCs.** This is the only row where the two differ, and it is deliberate. Slices whose frequencies fall inside an existing DDC's window share that DDC (`SliceStreamAllocator::placeSlice`), so a slice cap above the DDC count is meaningful rather than an error. Per maintainer decision 2026-07-25 the ceiling holds at 5 across all SKUs until Phase 3F multi-slice is proven on a bench. A fifth G2E slice with no covering window is refused with an explanation, not silently dropped.
+**On `maxSlices = 5` over 4 user DDCs.** Until 2026-07-31 this was the only row where the two differed; the HL2 rows now follow the same pattern (see the note below). The gap is deliberate: slices whose frequencies fall inside an existing DDC's window share that DDC (`SliceStreamAllocator::placeSlice`), so a slice cap above the DDC count is meaningful rather than an error. Per maintainer decision 2026-07-25 the ceiling holds at 5 across all SKUs until Phase 3F multi-slice is proven on a bench. A fifth G2E slice with no covering window is refused with an explanation, not silently dropped.
 
 **Standing caveat.** Every DDC count in this table is Thetis's client policy, not verified silicon. Receiver count is a compile-time Verilog parameter that has shipped as 2, 4, 7 and 8 on the same board. See the `maxSlices` comment in `src/core/BoardCapabilities.h` and `docs/attribution/GATEWARE-PROVENANCE.md`. The G2E has no public gateware at all, so its DDC count in particular is the best available evidence rather than hardware truth. The ADC count is different in kind: that is a physical part, and `SetRxADC(1)` is reliable.
+
+#### Note: the HL2 rows were derived from a source that does not cover the HL2
+
+Corrected 2026-07-31. Both HL2 rows read `DDC0 only | 1` until then, sourced
+from the "DDC reservations" cite above, ramdor Thetis `console.cs:8186-8538
+[v2.10.3.15]`. That switch has no `HERMESLITE` case: five case groups, no
+`default:` arm. Case-sensitive `HERMESLITE` (the `HPSDRModel` enumerator)
+appears in ramdor on five lines: `enums.cs:128`,
+`clsHardwareSpecific.cs:353,354,393`, and `ChannelMaster/network.h:444`. Two
+more lines, `enums.cs:397` and `ChannelMaster/network.h:422`, carry the
+distinct `HPSDRHW` value `HermesLite = 6`, mixed case, not a further sighting
+of the model. An HL2 leaves it with `nddc = 0` either way.
+
+mi0bot is authoritative for this SKU and enables DDC1 for RX2 in two arms of
+its `HERMESLITE` case (`console.cs:8425-8429` and `:8453-8457
+[v2.10.3.13-beta2]`), so the row is `DDC0-1`. `maxSlices` moves to the project
+ceiling of 5 because slices sharing a DDC window cost nothing.
+
+Same failure mode as the ANAN-G2E row noted above: a value copied from a cite
+that does not describe the SKU. Full analysis in
+[2026-07-31-hl2-slice-cap-design.md](2026-07-31-hl2-slice-cap-design.md).
 
 ### Why DDC0/DDC1 are reserved on 2-ADC boards
 
@@ -778,7 +799,7 @@ Matrix lives at `docs/architecture/2026-05-26-phase3f-verification/README.md` (c
 
 ### Rows (SKUs to test)
 
-1. HL2 (1-slice) - native bench available
+1. HL2 (2-pan / 5-slice) - native bench available
 2. HermesII (2-slice) - if available
 3. ANAN-G2 / Saturn (5-slice) - primary bench
 4. ANAN-G2E / HermesC10 (5-slice) - pending G2E hardware per v0.5.2 status
@@ -1186,7 +1207,7 @@ Architectural constraints discovered:
 **Sub-Epic H (bench verification + polish) is next.** Bench session priorities:
 1. Verify diversity engage/disengage on G2 (2-ADC SKU).
 2. Verify wideband stream activates on operator zoom-out past DDC bandwidth + Alex BPF auto-bypasses.
-3. Verify multi-slice add via +PAN dropdown (Slice B on G2; HL2 stays single-slice).
+3. Verify multi-slice add via +PAN dropdown (Slice B on G2; Slice B on HL2 too, per the 2026-07-31 slice-cap correction to 2 panadapters / 5 flags).
 4. Verify TX handoff via VfoWidget badge click drops MOX before flipping.
 5. Verify per-pan layout templates (1, 2v, 2h, 12h, 2x2) render correctly.
 6. Verify CH 0 / CH 1 BPF state badges reflect AlexController state on band changes.
@@ -1241,7 +1262,7 @@ The headline operator-visible deliverables:
 4. TX handoff via VFO TX badge click drops MOX before flipping.
 5. Wideband activation: operator zoom-out past DDC bandwidth -> Alex BPF auto-bypass -> radio streams wb packets -> bins arrive in SpectrumWidget.
 6. Diversity engage on Slice A (G2 only) -> DDC0+DDC1 sync pair codec change -> WDSP External Diversity runs.
-7. HL2 single-slice operation unchanged (regression).
+7. HL2 multi-slice operation (2 panadapters, 5 flags) per the 2026-07-31 slice-cap correction, not single-slice regression; see [2026-07-31-hl2-slice-cap-design.md](2026-07-31-hl2-slice-cap-design.md) section 9 for the current bench matrix.
 
 ### Follow-up PRs after 3F merge
 

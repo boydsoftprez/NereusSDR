@@ -39,6 +39,7 @@
 #include "core/AppSettings.h"
 #include "core/RadioConnection.h"
 #include "core/accessories/AlexController.h"
+#include "core/accessories/N2adrPreset.h"
 #include "core/codec/AlexFilterMap.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
@@ -393,6 +394,148 @@ private slots:
             model.injectConnectionForTest(nullptr);
             delete mock;
         }
+    }
+
+    // ── HL2 N2ADR mask-aware grouping (2026-08-01) ──────────────────────────
+    //
+    // addToChain's compatibility test used computeRxPreselector (the Alex
+    // HPF ladder) for every board, HL2 included. HL2 has no Alex bank, so
+    // that ladder's crossovers have no relationship to the N2ADR board's
+    // real relay groupings: it splits 60m from 40m (both wired to OcMatrix
+    // mask 0x44 by N2adrPreset.cpp) while merging 20m with 17m (which do
+    // not share a relay). Two slices on 60m + 40m therefore reported as
+    // "2 distinct bands" and bypassed a filter neither slice needed to
+    // leave. The fix reads the mask straight out of OcMatrix for boards
+    // whose RX preselector IS the OC matrix (hasIoBoardHl2), so bands
+    // sharing a relay collapse into one chain entry before AlexController
+    // ever sees them, the same mechanism that already collapses e.g.
+    // 20/17/15m for Alex boards on the Saturn BPF1 bank.
+
+    // 60m and 40m share OC mask 0x44 (N2adrPreset.cpp: both get RX bits
+    // {2, 6}). Must stay Filtered, not Bypass.
+    void hl2_bands_sharing_an_oc_mask_stay_filtered()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::HermesLite);
+        applyN2adrPreset(model.ocMatrixMutable(), /*enabled=*/true);
+        model.configureStreamPool(5, 5, 192000);
+        auto* mock = new BpfMockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(5357000.0);   // 60m
+
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(7150000.0);   // 40m
+
+        QCOMPARE(model.alexController().adcState(0).effective,
+                 AlexController::BpfEffective::Filtered);
+        QVERIFY2(mock->bpfCalls.last().hpfBitsAdc0 != kBypassBits,
+                 "60m+40m share an N2ADR mask and must not bypass");
+    }
+
+    // 20m (OC mask 0x48) and 40m (OC mask 0x44) do NOT share a relay. The
+    // fix narrows the false-positive above; it must not remove BYPASS for
+    // pairs that genuinely need two different filter selections at once.
+    // (This is also the exact PR #293 motivating scenario, now on HL2.)
+    void hl2_bands_with_different_oc_masks_bypass()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::HermesLite);
+        applyN2adrPreset(model.ocMatrixMutable(), /*enabled=*/true);
+        model.configureStreamPool(5, 5, 192000);
+        auto* mock = new BpfMockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);  // 20m
+
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(7150000.0);   // 40m
+
+        QCOMPARE(model.alexController().adcState(0).effective,
+                 AlexController::BpfEffective::Bypass);
+        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc0, kBypassBits);
+    }
+
+    // Regression, bench-caught 2026-08-01 by J.J. Boyd (KG4VCF) and
+    // introduced by the OC-mask grouping in 231e1c23.
+    //
+    // OcMatrix::maskFor returns 0 for any band with no pins set, so with the
+    // N2ADR preset OFF (or no filter board fitted) EVERY band returned the
+    // same 0x00. Grouping on that made two bands needing different relay
+    // selections compare equal, and BYPASS stopped being entered at all.
+    //
+    // Same slice pair as hl2_bands_with_different_oc_masks_bypass above, the
+    // single difference being an unconfigured matrix. The answer must not
+    // change: 20m and 40m still conflict.
+    void hl2_unconfigured_oc_matrix_still_detects_conflict()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::HermesLite);
+        // Deliberately NO applyN2adrPreset: matrix left empty.
+        model.configureStreamPool(5, 5, 192000);
+        auto* mock = new BpfMockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);  // 20m
+
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(7150000.0);   // 40m
+
+        QCOMPARE(model.alexController().adcState(0).effective,
+                 AlexController::BpfEffective::Bypass);
+    }
+
+    // The other half of the same regression: an unconfigured matrix must not
+    // make everything conflict either. 20m and 17m share a computeHpf bucket,
+    // so with no OC mask to group on they stay compatible.
+    void hl2_unconfigured_oc_matrix_still_groups_compatible_bands()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::HermesLite);
+        model.configureStreamPool(5, 5, 192000);
+        auto* mock = new BpfMockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);  // 20m
+
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(18100000.0);  // 17m
+
+        QVERIFY(model.alexController().adcState(0).effective
+                != AlexController::BpfEffective::Bypass);
+    }
+
+    // Regression: a non-HL2 (Alex) board keeps grouping via the HPF ladder,
+    // unaffected by the OC-mask path. 20m and 17m fall in the same
+    // computeHpf bucket (both < 20.0 MHz -> 0x01) and were already
+    // compatible before this fix; this locks that the Alex path is
+    // untouched.
+    void non_hl2_board_still_groups_via_hpf_ladder()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+        auto* mock = new BpfMockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);  // 20m
+
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(18100000.0);  // 17m
+
+        QCOMPARE(model.alexController().adcState(0).effective,
+                 AlexController::BpfEffective::Filtered);
+        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc0,
+                 int(codec::alex::computeHpf(14.2)));
     }
 };
 

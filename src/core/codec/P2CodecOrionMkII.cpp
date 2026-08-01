@@ -797,8 +797,11 @@ PsDdcConfig P2CodecOrionMkII::psDdcConfigG2Class(
             // Confirmed by mi0bot console.cs:8623 [v2.10.3.13-beta2] GetDDC()
             // P2 case 5: rx1=2, rx2=3 (no explicit psrx/pstx — implicit DDC0/DDC1).
             //
-            // Matches PsccPump default cmaster.cs:533-534 [v2.10.3.13].
-            // Explicit assignment for documentation + cross-codec consistency.
+            // Matches the PsccPump fallback and the cmaster.cs:533-534
+            // [v2.10.3.13] stream convention, but assigned here because it is
+            // this branch's real pair: PsDdcConfig defaults to -1 (no PS
+            // pair), so leaving it unset would unroute PureSignal rather than
+            // fall back to (0, 1).
             cfg.psFbDdc  = 0;
             cfg.txMonDdc = 1;
         } else if (diversityEnabled && psEnabled) {

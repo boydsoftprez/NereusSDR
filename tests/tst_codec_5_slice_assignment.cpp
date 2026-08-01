@@ -409,7 +409,7 @@ private slots:
     // Source: mi0bot-Thetis console.cs:8409-8488 [v2.10.3.13-beta2]
     // -----------------------------------------------------------------------
 
-    void hl2_1_slice_assigns_ddc0_at_slice_rate()
+    void hl2_slice_a_only_assigns_ddc0_at_slice_rate()
     {
         // From mi0bot console.cs:8409-8429 [v2.10.3.13-beta2] (no-mox no-diversity):
         //   case HPSDRModel.HERMESLITE: // MI0BOT: HL2

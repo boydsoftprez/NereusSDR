@@ -342,6 +342,13 @@ private slots:
     /// constructible in the harness, so what is left here is plumbing.
     void applyPanLayout(const QString& layoutId);
 
+    /// Give every pan that has no slice one, so it gets a VFO flag, an RX
+    /// applet entry and a stream. Called from applyPanLayout and again at
+    /// connect, because the startup layout restore cannot do it: no radio,
+    /// no stream pool. See the definition for the bench defect where a
+    /// persisted multi-pan layout came back with a permanently dead pane.
+    void populateEmptyPans();
+
     /// The pan-id list a layout template implies. Sole owner of the
     /// template-to-pan-count table, which previously had three copies.
     static QStringList panIdsForLayout(const QString& layoutId);

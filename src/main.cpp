@@ -2,11 +2,23 @@
 #include "gui/styles/AppTheme.h"
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
+#include "core/BuildIdentity.h"
 #include "core/MacMicPermission.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/RadioConnection.h"
 #include "core/mmio/ExternalVariableEngine.h"
 #include "core/LogCategories.h"
+
+// Generated into the build tree by cmake/NereusBuildTag.cmake, once per
+// build, so NEREUSSDR_BUILD_TAG names the commit actually being compiled
+// instead of whatever HEAD happened to be at the last cmake configure.
+//
+// This is the only translation unit that includes it, and that is on
+// purpose: it is compiled into the application target alone, so a new commit
+// rebuilds this file and relinks this binary, and leaves the test suite (which
+// links the NereusSDRObjs object library) untouched. See CMakeLists.txt
+// section "Build tag" and src/core/BuildIdentity.h.
+#include "NereusBuildTag.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
@@ -96,6 +108,12 @@ static QString extractProfileFromArgv(int argc, char* argv[])
 
 int main(int argc, char* argv[])
 {
+    // Hand the build stamp to the core accessor before anything can build a
+    // window title from it. Empty on release artifacts, in which case the
+    // title stays exactly as it was.
+    NereusSDR::BuildIdentity::setBuildTag(
+        QString::fromUtf8(NEREUSSDR_BUILD_TAG));
+
     // Resolve profile name first — downstream path lookups (AppSettings,
     // log dir, pre-QApplication UI scale read) all consult it.
     const QString earlyProfile = extractProfileFromArgv(argc, argv);

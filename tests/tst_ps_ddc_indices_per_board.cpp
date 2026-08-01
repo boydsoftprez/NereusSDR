@@ -185,23 +185,25 @@ private slots:
         QCOMPARE(cfg.txMonDdc, 1);
     }
 
-    // ── 7. Default PsDdcConfig (no PS) → psFbDdc=0, txMonDdc=1 ──────────────
+    // ── 7. Default PsDdcConfig (no PS) → psFbDdc=-1, txMonDdc=-1 ────────────
     //
-    // Sanity: PsDdcConfig default-initializes to (0, 1) per cmaster.cs:533-534.
-    // Codec branches that don't trigger the PS-on path leave the defaults.
-    // PsccPump treats this as Stream0/Stream1 which is correct for nddc=2
-    // and Saturn P2 fallback.
-    void defaultPsDdcConfig_indicesMatchCMasterDefaults() {
+    // Sanity: PsDdcConfig default-initializes to the no-pair sentinel. Codec
+    // branches that don't trigger the PS-on path leave it in place, which is
+    // what tells a consumer "PureSignal is not running" as distinct from
+    // "PureSignal is parked on Stream0/Stream1". Those are different states
+    // and (0, 1) cannot express both: the every-frame paired emit during
+    // ordinary RX (fixed 2026-08-01) is what happens when they are conflated.
+    void defaultPsDdcConfig_indicesAreTheNoPairSentinel() {
         PsDdcConfig cfg;
-        QCOMPARE(cfg.psFbDdc, 0);
-        QCOMPARE(cfg.txMonDdc, 1);
+        QCOMPARE(cfg.psFbDdc, -1);
+        QCOMPARE(cfg.txMonDdc, -1);
     }
 
-    // ── 8. P1 HL2 RX-only (mox=false): defaults preserved ──────────────────
+    // ── 8. P1 HL2 RX-only (mox=false): sentinel preserved ──────────────────
     //
     // Codec only sets psFbDdc/txMonDdc in the PS-on branch (mox && ps).
-    // Outside that branch, defaults (0, 1) are returned.
-    void p1_hl2_rxOnly_indicesAreDefaults() {
+    // Outside that branch the no-pair sentinel is returned.
+    void p1_hl2_rxOnly_indicesAreTheNoPairSentinel() {
         P1CodecHl2 codec;
         const PsDdcConfig cfg = codec.applyPureSignalDdcConfig(
             HPSDRModel::HERMESLITE,
@@ -214,8 +216,8 @@ private slots:
             /*adcCtrl1=*/0,
             /*adcCtrl2=*/0);
 
-        QCOMPARE(cfg.psFbDdc, 0);
-        QCOMPARE(cfg.txMonDdc, 1);
+        QCOMPARE(cfg.psFbDdc, -1);
+        QCOMPARE(cfg.txMonDdc, -1);
     }
 };
 

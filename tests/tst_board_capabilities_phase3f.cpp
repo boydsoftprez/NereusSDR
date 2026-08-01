@@ -22,6 +22,7 @@
 #include "core/codec/P2CodecSaturn.h"
 
 #include <memory>
+#include <vector>
 
 using namespace NereusSDR;
 
@@ -80,10 +81,10 @@ private slots:
     // Phase 3F Task 2: per-SKU maxSlices population tests.
     // Values from docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
 
-    void hl2_max_slices_is_1()
+    void hl2_max_slices_is_5()
     {
         const auto caps = capabilitiesFor(HPSDRModel::HERMESLITE);
-        QCOMPARE(caps.maxSlices, 1);
+        QCOMPARE(caps.maxSlices, 5);
     }
 
     void metis_max_slices_is_3()
@@ -294,7 +295,7 @@ private slots:
     void user_ddc_count_matches_design_doc_table()
     {
         QCOMPARE(capabilitiesFor(HPSDRModel::ANAN_G2).userDdcCount, 5);     // DDC2-6
-        QCOMPARE(capabilitiesFor(HPSDRModel::HERMESLITE).userDdcCount, 1); // DDC0 only
+        QCOMPARE(capabilitiesFor(HPSDRModel::HERMESLITE).userDdcCount, 2); // DDC0 + DDC1
         QCOMPARE(capabilitiesFor(HPSDRModel::ANAN10E).userDdcCount, 2);    // HermesII: DDC0-1
         QCOMPARE(capabilitiesFor(HPSDRModel::HERMES).userDdcCount, 4);     // DDC0-3
         QCOMPARE(capabilitiesFor(HPSDRModel::HPSDR).userDdcCount, 3);      // Metis: DDC0-2
@@ -389,21 +390,112 @@ private slots:
         }
     }
 
+    // HL2 is the second row where maxSlices exceeds userDdcCount, after the
+    // ANAN-G2E. Two DDC windows (mi0bot console.cs:8425-8429
+    // [v2.10.3.13-beta2]) with up to five flags sharing them: a slice inside
+    // an active window costs no DDC and no wire bandwidth.
+    void hermeslite_flags_exceed_panadapters()
+    {
+        const BoardCapabilities& caps = BoardCapsTable::forBoard(HPSDRHW::HermesLite);
+        QCOMPARE(caps.userDdcCount, 2);
+        QCOMPARE(caps.maxSlices, 5);
+        QCOMPARE(BoardCapsTable::forBoard(HPSDRHW::HermesLiteRxOnly).userDdcCount, 2);
+        QCOMPARE(BoardCapsTable::forBoard(HPSDRHW::HermesLiteRxOnly).maxSlices, 5);
+    }
+
+    // The guard has to fail on an undocumented gap, not just pass on the
+    // documented ones. HermesLite is deliberately absent from
+    // documentedUnderExposure(): its row matches its codec exactly, so if
+    // anyone lowers it again this is what fires.
+    void under_exposure_needs_a_written_reason()
+    {
+        QVERIFY(underExposureReason(HPSDRHW::HermesLite) == nullptr);
+        QCOMPARE(BoardCapsTable::forBoard(HPSDRHW::HermesLite).userDdcCount,
+                 assignableStreams(P1CodecHl2{}));
+
+        for (const UnderExposed& row : documentedUnderExposure()) {
+            QVERIFY2(qstrlen(row.reason) > 0,
+                     "every documentedUnderExposure entry needs a reason");
+        }
+    }
+
 private:
+    // Boards whose userDdcCount is deliberately BELOW what their codec will
+    // assign. Every entry needs a reason, because an unexplained gap is how
+    // the HL2 shipped at 1 against a 2-stream codec from 2026-05-26 to
+    // 2026-07-31.
+    //
+    // All three entries here are the same shape: the board has fewer hardware
+    // DDCs than the shared P1CodecStandard, which implements only ramdor's
+    // HERMES-class arm (nddc = 4, console.cs:8387-8459 [v2.10.3.15]).
+    struct UnderExposed {
+        HPSDRHW     hw;
+        const char* reason;
+    };
+
+    static const std::vector<UnderExposed>& documentedUnderExposure()
+    {
+        static const std::vector<UnderExposed> kRows = {
+            {HPSDRHW::Atlas,
+             "Metis has 3 DDCs (design doc section 2); P1CodecStandard is "
+             "shared with the 4-DDC Hermes class"},
+            {HPSDRHW::HermesII,
+             "ANAN-10E/100B have 2 DDCs (Thetis console.cs:8461-8464 "
+             "[v2.10.3.15], nddc = 2); P1CodecStandard is shared with the "
+             "4-DDC Hermes class"},
+            {HPSDRHW::HermesLiteRxOnly,
+             "HL2 has 2 user DDCs (mi0bot console.cs:8425-8429 "
+             "[v2.10.3.13-beta2]); this SKU has no HPSDRModel of its own so "
+             "P1 selectCodec lands on the 4-stream P1CodecStandard"},
+        };
+        return kRows;
+    }
+
+    static const char* underExposureReason(HPSDRHW hw)
+    {
+        for (const UnderExposed& row : documentedUnderExposure()) {
+            if (row.hw == hw) { return row.reason; }
+        }
+        return nullptr;
+    }
+
     static void expectFits(HPSDRHW hw, int codecCapacity)
     {
         const BoardCapabilities& caps = BoardCapsTable::forBoard(hw);
+        const QString name = QString::fromLatin1(caps.displayName);
+
         QVERIFY2(caps.userDdcCount <= codecCapacity,
                  qPrintable(QStringLiteral("%1: userDdcCount %2 exceeds the %3 "
                                            "streams its codec will assign")
-                                .arg(QString::fromLatin1(caps.displayName))
+                                .arg(name)
                                 .arg(caps.userDdcCount)
                                 .arg(codecCapacity)));
+
         // A pool smaller than the codec can drive is not a defect, but a pool
         // of zero on a board that has DDCs means no slice can ever bind.
         QVERIFY2(caps.userDdcCount >= 1,
                  qPrintable(QStringLiteral("%1: userDdcCount must be at least 1")
-                                .arg(QString::fromLatin1(caps.displayName))));
+                                .arg(name)));
+
+        // The other side. Exposing fewer DDCs than the codec will assign
+        // silently costs the operator a panadapter, and nothing else in the
+        // build notices. Allowed only with a written reason.
+        if (caps.userDdcCount < codecCapacity) {
+            const char* why = underExposureReason(hw);
+            QVERIFY2(why != nullptr,
+                     qPrintable(QStringLiteral(
+                         "%1: userDdcCount %2 is below the %3 streams its "
+                         "codec will assign, with no entry in "
+                         "documentedUnderExposure(). Either raise the row or "
+                         "add an entry saying why the hardware cannot use "
+                         "them.")
+                             .arg(name)
+                             .arg(caps.userDdcCount)
+                             .arg(codecCapacity)));
+            QVERIFY2(qstrlen(why) > 0,
+                     qPrintable(QStringLiteral("%1: under-exposure reason is empty")
+                                    .arg(name)));
+        }
     }
 
     static BoardCapabilities capabilitiesFor(HPSDRModel m)
