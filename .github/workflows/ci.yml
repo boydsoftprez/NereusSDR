@@ -119,9 +119,10 @@ jobs:
         with:
           path: |
             ${{ github.workspace }}/../Thetis
+            ${{ github.workspace }}/../Thetis-v2.10.3.15
             ${{ github.workspace }}/../mi0bot-Thetis
             ${{ github.workspace }}/../freedv-gui
-          key: thetis-clones-501e3f5-c26a8a4-77e793a-v2
+          key: thetis-clones-501e3f5-3759d09-c26a8a4-77e793a-v3
 
       - name: Clone Thetis + mi0bot-Thetis upstream (cache miss only)
         if: steps.thetis-cache.outputs.cache-hit != 'true'
@@ -135,6 +136,18 @@ jobs:
         # project and end active development") to match every
         # `[v2.10.3.13]` inline cite stamp.
         # See PR #120 CI failure 2026-04-23 for the original incident.
+        #
+        # ramdor/Thetis ALSO cloned at 3759d09 (tag v2.10.3.15, "g2e") into
+        # ../Thetis-v2.10.3.15, because one pin cannot serve two stamps.
+        # The ANAN-G2E SKU port and Phase 3F both cite v2.10.3.15, and
+        # upstream inserted a `case HPSDRModel.ANAN_G2E: //N1GP` between
+        # the two releases, shifting console.cs by 8 lines. Checked against
+        # the .13 pin, a correct .15 cite lands on unrelated code and the
+        # verifier demands the author tags sitting there: four such phantom
+        # FAILs blocked PR #293 on 2026-07-31, each naming a real
+        # contributor (//G8NJJ, //DH1KLM) and each entirely spurious.
+        # verify-inline-tag-preservation.py routes by the cite's own stamp
+        # (THETIS_VERSION_DIRS); this is the checkout it routes to.
         #
         # mi0bot/OpenHPSDR-Thetis pinned to c26a8a4 ("Updated for
         # release", 2026-04-01) to match every `[@c26a8a4]` inline cite
@@ -162,6 +175,11 @@ jobs:
           git -C ../Thetis remote add origin https://github.com/ramdor/Thetis.git
           git -C ../Thetis fetch --depth=1 -q origin 501e3f513f73f07742d7e1b85a0e9528bd14977d
           git -C ../Thetis checkout -q FETCH_HEAD
+          mkdir -p ../Thetis-v2.10.3.15
+          git -C ../Thetis-v2.10.3.15 init -q
+          git -C ../Thetis-v2.10.3.15 remote add origin https://github.com/ramdor/Thetis.git
+          git -C ../Thetis-v2.10.3.15 fetch --depth=1 -q origin 3759d096067b7574550b963c1e7a22003da2ab00
+          git -C ../Thetis-v2.10.3.15 checkout -q FETCH_HEAD
           mkdir -p ../mi0bot-Thetis
           git -C ../mi0bot-Thetis init -q
           git -C ../mi0bot-Thetis remote add origin https://github.com/mi0bot/OpenHPSDR-Thetis.git
