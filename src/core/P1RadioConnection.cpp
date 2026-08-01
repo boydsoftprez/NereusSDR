@@ -3190,7 +3190,17 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
     // Nothing on this path logged anything, so a whole bench session
     // produced no evidence beyond "state=4". Once per second, and only while
     // the PS pair is latched, so it costs nothing in normal RX.
-    if (m_psFbDdc >= 0 && m_psTxMonDdc >= 0) {
+    // Gated on MOX, not merely on the PS indices being non-negative.
+    //
+    // PsDdcConfig defaults psFbDdc=0 / txMonDdc=1 (CodecContext.h), and every
+    // branch of applyPureSignalDdcConfig outside PS-MOX leaves those defaults
+    // in place, so "has a PS pair" is true even with PureSignal switched off
+    // entirely. An earlier revision of this diagnostic keyed on that and
+    // measured itself running at 201,400 samples per second on a quiet
+    // receiver. The paired emit below has the same gate and the same problem;
+    // that one is a real cost worth fixing separately rather than in a
+    // diagnostic.
+    if (m_mox && m_psFbDdc >= 0 && m_psTxMonDdc >= 0) {
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         if (nowMs - m_psDiagLastMs >= 1000) {
             m_psDiagLastMs = nowMs;
@@ -3204,19 +3214,62 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
                     << " txMonEmpty=" << (m_psTxMonDdc < int(perRxVecs.size())
                                        ? perRxVecs[m_psTxMonDdc].isEmpty() : true);
             } else {
-                const auto peakOf = [](const QVector<float>& v) {
-                    float pk = 0.0F;
-                    for (float s : v) {
-                        const float a = std::fabs(s);
-                        if (a > pk) { pk = a; }
+                // The ENVELOPE, sample by sample, not the peak of the raw
+                // floats. LCOLLECT bins on env = sqrt(I^2 + Q^2) of the TX
+                // reference and needs all 16 bins filled (calcc.c:733-765).
+                //
+                // A peak alone cannot answer whether that happens: a
+                // two-tone's envelope peak is constant by construction, so
+                // the earlier probe read a rock-steady 0.230 whether the
+                // envelope was sweeping 0 to peak or sitting flat at peak.
+                // Only the spread distinguishes them.
+                //
+                //   min near 0, bins near 16   envelope sweeps, LCOLLECT
+                //                              should complete
+                //   min near max, bins 1 or 2  envelope is flat, so only
+                //                              those bins ever fill and
+                //                              full_ints resets every 4 s
+                //
+                // `bins` counts distinct bins this one block would touch,
+                // computed exactly as LCOLLECT does, using the HL2's
+                // hwPeak (BoardCapabilities psDefaultPeak 0.233, confirmed
+                // reaching the engine via getPSHWPeak).
+                const auto envStats = [](const QVector<float>& v,
+                                         double hwScale, int ints) {
+                    struct { double mn; double mx; double mean; int bins; } r
+                        {1e9, 0.0, 0.0, 0};
+                    QSet<int> touched;
+                    const int n = v.size() / 2;
+                    if (n <= 0) { r.mn = 0.0; return r; }
+                    for (int i = 0; i < n; ++i) {
+                        const double re = v[2 * i];
+                        const double im = v[2 * i + 1];
+                        const double e  = std::sqrt(re * re + im * im);
+                        if (e < r.mn) { r.mn = e; }
+                        if (e > r.mx) { r.mx = e; }
+                        r.mean += e;
+                        const double scaled = e * hwScale;
+                        if (scaled <= 1.0) {
+                            touched.insert(int(scaled * double(ints)));
+                        }
                     }
-                    return pk;
+                    r.mean /= double(n);
+                    r.bins = touched.size();
+                    return r;
                 };
+                // 0.233 is the HL2 psDefaultPeak; hw_scale is its reciprocal
+                // (calcc.c:1049). Hard-coded here rather than plumbed from
+                // BoardCapabilities because this is a diagnostic, and the
+                // engine-side value is already logged by PureSignal.
+                constexpr double kHwScale = 1.0 / 0.233;
+                const auto tx = envStats(perRxVecs[m_psTxMonDdc], kHwScale, 16);
+                const auto fb = envStats(perRxVecs[m_psFbDdc], kHwScale, 16);
                 qCInfo(lcConnection).nospace()
-                    << "PS streams: txMon(DDC" << m_psTxMonDdc << ") peak="
-                    << peakOf(perRxVecs[m_psTxMonDdc])
-                    << "  fb(DDC" << m_psFbDdc << ") peak="
-                    << peakOf(perRxVecs[m_psFbDdc])
+                    << "PS env: txMon(DDC" << m_psTxMonDdc << ") min=" << tx.mn
+                    << " max=" << tx.mx << " mean=" << tx.mean
+                    << " bins=" << tx.bins << "/16"
+                    << "  fb(DDC" << m_psFbDdc << ") min=" << fb.mn
+                    << " max=" << fb.mx << " mean=" << fb.mean
                     << "  samples=" << perRxVecs[m_psTxMonDdc].size() / 2;
             }
         }

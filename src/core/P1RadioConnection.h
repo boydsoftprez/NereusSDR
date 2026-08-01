@@ -596,6 +596,16 @@ private:
     // second; at 192 kHz the paired emit fires roughly 750 times a second.
     qint64  m_psDiagLastMs{0};
 
+    // A per-sample bin histogram lived here while the HL2 PureSignal stall was
+    // being chased (2026-08-01). It found the cause -- at 48 kHz a 700/1900 Hz
+    // two-tone envelope repeats every 40 samples with only 20 distinct
+    // magnitudes, and bin 5 of 16 falls in a gap, so LCOLLECT can never fill
+    // all its bins -- and was removed once answered: it cost a sqrt per sample
+    // on the connection thread at up to 192k samples/sec. The envelope
+    // min/max/mean line that remains is enough to recognise the same shape
+    // again, and is gated on MOX. Full analysis in the HL2 slice-cap design
+    // doc, PureSignal section.
+
     // Phase 3P-A: per-board codec chosen at applyBoardQuirks() time.
     // Null when m_caps is null (pre-connect) or env var
     // NEREUS_USE_LEGACY_P1_CODEC=1 forces legacy compose path.

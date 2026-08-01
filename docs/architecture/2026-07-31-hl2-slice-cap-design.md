@@ -542,6 +542,62 @@ Deferred. Not blocking this change.
 
 ---
 
+## 7a. PureSignal will not converge at 48 kHz (bench, 2026-08-01)
+
+Not caused by this change, and not a NereusSDR defect, but found while bench
+verifying it and worth recording because the failure is silent and the cause is
+several layers down.
+
+**Symptom.** With PureSignal enabled on a live HL2, calcc parks in LCOLLECT
+(`state=4`) forever. `corrApplied`, `calCount` and `feedbackLevel` all stay 0.
+Nothing warns the operator.
+
+**Cause.** LCOLLECT sorts transmit samples into `ints` bins by TX-reference
+envelope and will not advance until EVERY bin holds `spi` samples
+(`calcc.c:757-776 [WDSP v1.29]`, `ints=16`, `spi=256`). A two-tone at the Thetis
+default 700 / 1900 Hz has envelope `2A|cos(2*pi*600*t)|`, which at 48 kHz
+repeats every 40 samples and therefore takes only **20 distinct magnitudes**,
+`|cos(pi*n/40)|`. Scaled by `hw_scale = 1/0.233` those 20 values do not cover
+all 16 bins:
+
+| n | \|cos(pi n/40)\| | bin |
+| --- | --- | --- |
+| 15 | 0.3827 | 6 |
+| 16 | 0.3090 | 4 |
+
+Bin 5 is stepped over, gets zero samples, and `full_ints` can never reach 16.
+Every four seconds the reset at `calcc.c:779` wipes the partial progress and it
+starts again.
+
+Measured directly, one second of live samples per bin:
+
+```
+["1203 2406 2406 2406 2406 0 2405 2405 2405 2405 2405 2405 4810 2405 4810 9623"]
+belowSpi=1/16  weakest=bin5@0  overScale=1203/48108
+```
+
+48108 / 2405 = 20.0 exactly, confirming the 20-magnitude prediction.
+
+**Why 192 kHz works.** The envelope period becomes 160 samples, giving 80
+distinct magnitudes, which covers every bin. Verified on 40 m at 192 kHz:
+`corrApplied=1`, `calCount` climbing steadily, `feedbackLevel=152`,
+`dogCount=0`.
+
+**Why the HL2 is exposed and other boards are not.** Thetis forces
+`Rate[0] = Rate[1] = ps_rate` (192000) for the PS pair on every other board.
+mi0bot carves the HL2 out and uses `rx1_rate` instead
+(`console.cs:8475-8484 [v2.10.3.13-beta2]`, "MI0BOT: HL2 can work at a high
+sample rate"), and on Protocol 1 there is a single global sample rate anyway,
+so the PS DDCs run at whatever the operator selected. mi0bot has the identical
+failure at 48 kHz; this is shared with upstream, not introduced here.
+
+**Not fixable by forcing a rate on P1**, because P1 has one global sample rate
+for all DDCs: raising it for PureSignal would raise it for the whole receiver.
+The options are to warn the operator when PureSignal is enabled at a rate whose
+two-tone envelope cannot cover the bins (computable from
+`sampleRate / (f2 - f1)`), or to document it. Left as a maintainer decision;
+warning is the better of the two, since the present behaviour is silent.
+
 ## 8. Tests
 
 `tests/tst_board_capabilities_phase3f.cpp` already contains
