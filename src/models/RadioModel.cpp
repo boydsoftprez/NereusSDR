@@ -13070,22 +13070,20 @@ qint64 RadioModel::setActiveRxCountLive(int newCount)
     }
 
     // ── Step 5: Update hardware ───────────────────────────────────────────────
-    if (auto* p1 = qobject_cast<P1RadioConnection*>(m_connection)) {
-        // P1: update m_activeRxCount and restart the EP6 stream so the radio
-        // re-arms with the new per-frame slot count.  restartStreamWithCount()
-        // mirrors restartStreamWithRate(): stop + prime(3) + start + prime(3).
-        // Must run on the connection thread.
-        QMetaObject::invokeMethod(p1, [p1, clamped]() {
-            p1->restartStreamWithCount(clamped);
-        }, Qt::QueuedConnection);
-    } else {
-        // P2 (and future protocol variants): setActiveReceiverCount() calls
-        // sendCmdRx() when running — no stop/start cycle needed.
-        QMetaObject::invokeMethod(m_connection,
-                                  [conn = m_connection, clamped]() {
-            conn->setActiveReceiverCount(clamped);
-        }, Qt::QueuedConnection);
-    }
+    //
+    // One call for every protocol. This used to branch, reaching past
+    // setActiveReceiverCount into P1's restartStreamWithCount because that
+    // was the only entry point that restarted the ep6 stream. P1's
+    // setActiveReceiverCount now does the restart itself, and combines this
+    // count with what the DDC configuration needs before announcing anything
+    // (P1RadioConnection.h::announceRxCount) -- which the branch could not
+    // do, and which is how a panadapter removal came to starve PureSignal of
+    // DDC2 and DDC3 on the bench. P2's has always sent sendCmdRx() when
+    // running and needs no stop/start cycle.
+    QMetaObject::invokeMethod(m_connection,
+                              [conn = m_connection, clamped]() {
+        conn->setActiveReceiverCount(clamped);
+    }, Qt::QueuedConnection);
 
     // ── Step 6: Restart TX pump ───────────────────────────────────────────────
     if (m_txWorker && m_txChannel) {

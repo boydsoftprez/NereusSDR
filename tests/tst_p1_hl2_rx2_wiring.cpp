@@ -202,6 +202,116 @@ private slots:
         QTest::qWait(200);
         QCOMPARE(fake.metisStopCount(), stopsBefore);
     }
+
+    // ── Two axes, one announced count ────────────────────────────────────
+    //
+    // Bench-caught 2026-08-01 (J.J. Boyd, KG4VCF) on a live HL2 with
+    // PureSignal on. Removing the second panadapter dropped the announced
+    // receiver count to 1 while PS still needed 4, so DDC2 and DDC3 left the
+    // ep6 frame entirely for seven seconds. The log line that showed it:
+    //   14:07:33  HL2 TX edge: mox=1 ... activeRx=1     (PS needs 4)
+    //   14:07:33  applyPsDdcConfig ... activeRx=4       (repaired at key-down)
+    //
+    // Two independent things want a say in the count and neither knows about
+    // the other: the DDC configuration (PureSignal, diversity) and the
+    // panadapters. Last writer won, and the panadapter writer did not even
+    // restart the stream. The announced count is now max(codec, pan), so
+    // neither axis can starve the other.
+    //
+    // Latent before this branch: userDdcCount was 1 on the HL2, so the pan
+    // count never moved and had nothing to race with.
+    void a_pan_removal_cannot_lower_the_count_puresignal_needs()
+    {
+        P1FakeRadio fake;
+        fake.setAutoStreamEnabled(false);
+        fake.start();
+
+        P1RadioConnection conn;
+        conn.init();
+        // See ps_ddc_config_count_change_restarts_the_stream for why the
+        // silence watchdog has to be pushed past this test's lifetime.
+        conn.setReconnectTimingForTest(30000, 30000);
+        conn.connectToRadio(makeInfo(fake));
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+        fake.sendEp6Frames(1);
+        QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connected, 3000);
+
+        PsDdcConfig ps{};
+        ps.p1RxCount = 4;       // PureSignal on: DDC0/1 sync pair + 2 + 3
+        ps.nDdc      = 4;
+        conn.applyPsDdcConfig(ps);
+        QTRY_COMPARE_WITH_TIMEOUT(conn.activeRxCountForTest(), 4, 3000);
+
+        // The operator removes the second panadapter. One receiver is all
+        // the panadapters want; it is not all PureSignal needs.
+        conn.setActiveReceiverCount(1);
+
+        QTest::qWait(200);
+        QCOMPARE(conn.activeRxCountForTest(), 4);
+    }
+
+    // The other direction. More panadapters than the DDC configuration asks
+    // for must still be announced, and must restart the stream: the count is
+    // the ep6 slot layout, and a bare assignment leaves the two sides parsing
+    // different geometries with no way to notice (the 7F 7F 7F sync check is
+    // layout-independent).
+    void a_pan_count_above_the_codec_floor_is_announced_and_restarts()
+    {
+        P1FakeRadio fake;
+        fake.setAutoStreamEnabled(false);
+        fake.start();
+
+        P1RadioConnection conn;
+        conn.init();
+        conn.setReconnectTimingForTest(30000, 30000);
+        conn.connectToRadio(makeInfo(fake));
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+        fake.sendEp6Frames(1);
+        QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connected, 3000);
+
+        // Connect seeds the codec axis at 2 (P1RadioConnection.cpp:695).
+        QCOMPARE(conn.activeRxCountForTest(), 2);
+        const int stopsBefore = fake.metisStopCount();
+
+        conn.setActiveReceiverCount(3);
+
+        QTRY_COMPARE_WITH_TIMEOUT(conn.activeRxCountForTest(), 3, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(fake.metisStopCount() > stopsBefore, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+    }
+
+    // Turning PureSignal off releases its floor rather than pinning the count
+    // at 4 forever. The panadapter axis is what remains, and on a board whose
+    // connect default is 2 that is what should be announced.
+    void dropping_the_puresignal_floor_returns_the_count_to_the_pan_axis()
+    {
+        P1FakeRadio fake;
+        fake.setAutoStreamEnabled(false);
+        fake.start();
+
+        P1RadioConnection conn;
+        conn.init();
+        conn.setReconnectTimingForTest(30000, 30000);
+        conn.connectToRadio(makeInfo(fake));
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+        fake.sendEp6Frames(1);
+        QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connected, 3000);
+
+        PsDdcConfig on{};
+        on.p1RxCount = 4;
+        on.nDdc      = 4;
+        conn.applyPsDdcConfig(on);
+        QTRY_COMPARE_WITH_TIMEOUT(conn.activeRxCountForTest(), 4, 3000);
+
+        // PureSignal off. The codec drops to the two-DDC announcement
+        // (P1CodecHl2::applyPureSignalDdcConfig, the approved deviation).
+        PsDdcConfig off{};
+        off.p1RxCount = 2;
+        off.nDdc      = 4;
+        conn.applyPsDdcConfig(off);
+
+        QTRY_COMPARE_WITH_TIMEOUT(conn.activeRxCountForTest(), 2, 3000);
+    }
 };
 
 QTEST_MAIN(TestP1Hl2Rx2Wiring)

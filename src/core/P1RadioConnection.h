@@ -180,7 +180,12 @@ public slots:
 
     void setReceiverFrequency(int receiverIndex, quint64 frequencyHz) override;
     void setTxFrequency(quint64 frequencyHz) override;
+
+    // How many receivers the PANADAPTERS want. One of the two inputs to the
+    // announced count; see announceRxCount() for why there are two and how
+    // they combine. Restarts the ep6 stream when the announced count moves.
     void setActiveReceiverCount(int count) override;
+
     void setSampleRate(int sampleRate) override;
 
     // Task 1.6: live-apply a sample-rate change to a running P1 connection.
@@ -199,25 +204,6 @@ public slots:
     // [v2.10.3.13] — sendMetisStop + sendPrimingBurst(3) + sendMetisStart.
     void restartStreamWithRate(int newSampleRate);
 
-    // Task 1.7: live-apply an active-RX-count change to a running P1 connection.
-    //
-    // Updates m_activeRxCount then issues sendMetisStop() + sendPrimingBurst(3)
-    // + sendMetisStart() so the radio re-arms its EP6 sender with the new
-    // per-frame slot count encoded in bank-0 C0 bits 8-10 (nrx-1).
-    //
-    // P1 EP6 frame parsing: parseEp6Frame() takes numRx as a parameter on
-    // every call (not cached); it reads m_activeRxCount from the instance
-    // method overload.  Updating m_activeRxCount is therefore sufficient to
-    // handle the mid-stream count change — no MetisFrameParser rework needed.
-    //
-    // Must be called on the connection thread (invoke via QMetaObject::
-    // invokeMethod(Qt::QueuedConnection) from the main thread).
-    //
-    // No-op when m_running is false or when count equals m_activeRxCount.
-    //
-    // Cite: networkproto1.c WriteMainLoop bank-0 C0 nrx bits [v2.10.3.13]
-    // — same stop+prime+start cycle as restartStreamWithRate().
-    void restartStreamWithCount(int newActiveRxCount);
     void setAttenuator(int dB) override;
     void setPreamp(bool enabled) override;
     void setTxDrive(int level) override;
@@ -326,6 +312,60 @@ private slots:
     void onConnectTimeout();
 
 private:
+    // ── The announced receiver count has two inputs ──────────────────────
+    //
+    // Two independent things need a say in how many receivers the wire
+    // announces, and neither can see the other:
+    //
+    //   m_codecRxCount  what the DDC configuration requires. PureSignal
+    //                   needs four (DDC0/1 as the sync pair, DDC2 feedback,
+    //                   DDC3 TX monitor -- mi0bot console.cs:8757-8762
+    //                   [v2.10.3.13-beta2] GetDDC). Written by
+    //                   applyPsDdcConfig from PsDdcConfig::p1RxCount.
+    //
+    //   m_panRxCount    what the panadapters want. Written by
+    //                   setActiveReceiverCount, which follows the operator
+    //                   adding and removing panadapters.
+    //
+    // The announced count is the max of the two, so neither axis can starve
+    // the other. Bench-caught 2026-08-01 (J.J. Boyd, KG4VCF) on a live HL2:
+    // these were a single field written by three call sites, last writer
+    // wins. Removing the second panadapter with PureSignal on dropped the
+    // announcement to one receiver, and DDC2 and DDC3 left the ep6 frame
+    // entirely until the next key-down happened to rewrite it.
+    //
+    // Latent until this branch, because the HL2 exposed one panadapter and
+    // the pan axis never moved.
+    //
+    // announceRxCount() is the single writer; restartStreamWithCount is its
+    // mechanism and is deliberately private, so no caller can set the count
+    // while knowing only one of the two axes.
+    void announceRxCount();
+
+    // Live-apply an announced-count change to a running P1 connection.
+    //
+    // Updates m_activeRxCount then issues sendMetisStop() + sendPrimingBurst(3)
+    // + sendMetisStart() so the radio re-arms its EP6 sender with the new
+    // per-frame slot count encoded in bank-0 C0 bits 8-10 (nrx-1).
+    //
+    // Both sides have to change together: a frame composed under the old
+    // layout and parsed under the new one is silently misparsed, because the
+    // 7F 7F 7F sync check does not encode the layout.
+    //
+    // P1 EP6 frame parsing: parseEp6Frame() takes numRx as a parameter on
+    // every call (not cached); it reads m_activeRxCount from the instance
+    // method overload.  Updating m_activeRxCount is therefore sufficient to
+    // handle the mid-stream count change — no MetisFrameParser rework needed.
+    //
+    // Must be called on the connection thread.
+    //
+    // Records the value without a restart when m_running is false; no-op
+    // when the count is unchanged.
+    //
+    // Cite: networkproto1.c WriteMainLoop bank-0 C0 nrx bits [v2.10.3.13]
+    // — same stop+prime+start cycle as restartStreamWithRate().
+    void restartStreamWithCount(int newActiveRxCount);
+
     // --- Wire format (networkproto1.c) — implemented in Tasks 7 & 8 ---
     void sendMetisStart(bool iqAndMic);
     void sendMetisStop();
@@ -559,7 +599,13 @@ private:
     bool m_useLegacyCodec{false};
 
     int     m_sampleRate{48000};
+
+    // The count actually on the wire, and read back by parseEp6Frame for the
+    // slot layout. Derived: announceRxCount() is its only writer. See the
+    // announceRxCount declaration above for the two axes that feed it.
     int     m_activeRxCount{1};
+    int     m_codecRxCount{1};   ///< DDC configuration axis (PureSignal, diversity)
+    int     m_panRxCount{1};     ///< panadapter axis
 
     // HL2 mic decimation state.  At sample rates above 48 kHz the radio
     // embeds one mic sample per I/Q sample group in EP6 frames (so mic

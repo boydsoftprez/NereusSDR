@@ -692,7 +692,11 @@ void P1RadioConnection::connectToRadio(const RadioInfo& info)
     // model-override setting. parseEp6Frame uses this same value to select
     // the 14-byte nddc=2 slot layout, so sent and received must agree.
     if (m_radioInfo.protocol == ProtocolVersion::Protocol1) {
-        m_activeRxCount = 2;
+        // Seeds the DDC-configuration axis; announceRxCount folds in the
+        // panadapter axis and writes m_activeRxCount. Not yet running, so
+        // this records the value rather than restarting anything.
+        m_codecRxCount = 2;
+        announceRxCount();
     }
 
     // Reset reconnect state — fresh connection resets the retry counter.
@@ -883,7 +887,15 @@ void P1RadioConnection::setTxFrequency(quint64 frequencyHz)
         m_alexLpfBits = codec::alex::computeLpf(double(frequencyHz) / 1e6);
     }
 }
-void P1RadioConnection::setActiveReceiverCount(int count)    { m_activeRxCount = count; }
+// The panadapter axis of the announced receiver count. Was a bare assignment
+// to m_activeRxCount, which both ignored the DDC configuration's needs and
+// skipped the stream restart that makes the radio and parseEp6Frame agree on
+// the slot layout.
+void P1RadioConnection::setActiveReceiverCount(int count)
+{
+    m_panRxCount = qMax(1, count);
+    announceRxCount();
+}
 void P1RadioConnection::setSampleRate(int sampleRate)
 {
     m_sampleRate = sampleRate;
@@ -988,7 +1000,27 @@ void P1RadioConnection::restartStreamWithRate(int newSampleRate)
 }
 
 // ---------------------------------------------------------------------------
+// announceRxCount — the single writer for the wire's receiver count
+//
+// The DDC configuration and the panadapters each get a say, and neither can
+// see the other, so the announcement is the max of the two. See the
+// declaration in P1RadioConnection.h for the bench defect that made this a
+// derived value rather than three call sites writing one field.
+//
+// Cheap to over-announce briefly, ruinous to under-announce: the count is the
+// ep6 slot layout, so a receiver the codec is expecting simply is not in the
+// frame.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::announceRxCount()
+{
+    restartStreamWithCount(qMax(m_codecRxCount, m_panRxCount));
+}
+
+// ---------------------------------------------------------------------------
 // restartStreamWithCount — Task 1.7 (active-RX-count live-apply, P1 path)
+//
+// The mechanism behind announceRxCount, private so that no caller can set the
+// count knowing only one of its two axes.
 //
 // Updates m_activeRxCount then stops → primes → starts the EP6 stream so
 // the radio re-arms with the new per-frame slot count (bank-0 C0 bits 8-10
@@ -1823,16 +1855,20 @@ void P1RadioConnection::applyPsDdcConfig(const NereusSDR::PsDdcConfig& cfg)
     // (parseEp6Frame's slotBytes = 6*numRx + 2) matches what the radio
     // actually sends during PS-MOX, and nDdc → m_psNDdc for the bank-2/3
     // freq override gate.
-    if (cfg.p1RxCount > 0 && m_activeRxCount != cfg.p1RxCount) {
-        // restartStreamWithCount rather than a bare assignment. The count is
-        // the ep6 slot layout (parseEp6Frame's slotBytes = 6 * numRx + 2),
-        // and both sides have to change together: a frame composed under the
-        // old layout and parsed under the new one is silently misparsed,
-        // because the 7F 7F 7F sync check does not encode the layout. The
-        // stop, prime, start, prime cycle is the existing mechanism for
-        // exactly this (restartStreamWithCount, this file). Idempotent, and
-        // a plain record of the value when the stream is not yet running.
-        restartStreamWithCount(cfg.p1RxCount);
+    if (cfg.p1RxCount > 0 && m_codecRxCount != cfg.p1RxCount) {
+        // The DDC-configuration axis only. announceRxCount combines it with
+        // the panadapter axis and restarts the stream if the announcement
+        // moves, because the count is the ep6 slot layout (parseEp6Frame's
+        // slotBytes = 6 * numRx + 2) and both sides have to change together:
+        // a frame composed under the old layout and parsed under the new one
+        // is silently misparsed, since the 7F 7F 7F sync check does not
+        // encode the layout.
+        //
+        // Writing m_activeRxCount directly here is what let a panadapter
+        // removal take the announcement below what PureSignal needed. See
+        // P1RadioConnection.h::announceRxCount.
+        m_codecRxCount = cfg.p1RxCount;
+        announceRxCount();
         changed = true;
     }
     if (cfg.nDdc > 0 && m_psNDdc != cfg.nDdc) {
