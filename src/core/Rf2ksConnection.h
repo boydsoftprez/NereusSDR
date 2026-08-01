@@ -101,6 +101,14 @@ public:
     void testScheduleReconnect() { scheduleReconnect(); }
     bool testReconnectPending() const { return m_reconnectTimer.isActive(); }
     int testInFlightReplyCount() const { return m_inFlight.size(); }
+    // Test-only: is the REST poller running?  markPollFailure() stops it
+    // on the down transition so a dead amp is not polled through the
+    // whole backoff window.
+    bool testPollActive() const { return m_pollTimer.isActive(); }
+    // Test-only: drive one poll/probe failure without a network stack, so a
+    // test can walk the down transition and the reconnect-probe-failed path
+    // that keeps the retry schedule alive.
+    void testMarkPollFailure() { markPollFailure(); }
 
 public slots:
     void connectToAmp(const QString& host, quint16 port = 8080);
@@ -196,6 +204,24 @@ private:
     int    m_rttAvgMs            = 0;
     int    m_reconnectAttempts   = 0;
     int    m_consecutiveFailures = 0;
+
+    // Session counter, bumped by connectToAmp() and disconnect().  Every
+    // reply carries the generation it was issued under; onReplyFinished()
+    // drops any whose generation has moved on.
+    //
+    // Without it, a GET still in flight when the operator disables RF-Kit
+    // completed afterwards, fell through to the "not connected yet" branch
+    // and set m_connected back to true -- reviving a connection the
+    // operator had just shut down.  The same race applied the previous
+    // host's state after switching amplifiers.  Codex review, PR #291.
+    //
+    // That session counter is m_generation above, declared alongside
+    // m_inFlight because the two are one mechanism: abort what is in flight,
+    // and tag what escapes. PR #291 arrived with a second counter of its own
+    // (m_connectionGeneration) that did the tagging without the aborting;
+    // the merge kept this one and dropped that one, since disconnect() and
+    // connectToAmp() already bump m_generation at both the sites #291 cared
+    // about.
 };
 
 } // namespace NereusSDR

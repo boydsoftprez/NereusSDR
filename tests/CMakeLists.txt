@@ -5624,6 +5624,18 @@ target_link_libraries(tst_rf2ks_connection_poll PRIVATE Qt6::Network)
 #   successResetsBackoff (testForceBackoffReset resets to 1s).
 nereus_add_test(tst_rf2ks_connection_reconnect)
 
+# Codex review, PR #291: session lifecycle races the older fakes could not
+# reach.  ControllableAmpServer can delay a response (so a session can be
+# retired while a GET is genuinely in flight) and stop answering
+# mid-session (so real poll failures accumulate on a live connection).
+# Tests: lateReplyAfterDisconnectDoesNotRevive (an in-flight reply used to
+#   set m_connected back to true after the operator shut the link down);
+#   lateReplyFromPreviousHostDoesNotApply (same race across an amp switch);
+#   pollingStopsWhenTheLinkIsDeclaredDown (the poller used to keep hammering
+#   a dead endpoint for the whole backoff window).
+nereus_add_test(tst_rf2ks_connection_lifecycle)
+target_link_libraries(tst_rf2ks_connection_lifecycle PRIVATE Qt6::Network)
+
 # Task 5: REST control verbs (4 PUT/POST endpoints).
 # RecordingAmpServer (QTcpServer, ephemeral port 0) captures raw request bytes
 # so we can assert verb + path + JSON body.

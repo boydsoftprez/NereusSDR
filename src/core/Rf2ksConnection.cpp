@@ -362,6 +362,19 @@ void Rf2ksConnection::onReplyFinished()
         return;
     }
     m_inFlight.remove(reply);
+
+    // Drop replies belonging to a retired session.  disconnect() and
+    // connectToAmp() both bump the generation, so a request still in
+    // flight when the operator disables RF-Kit -- or switches to a
+    // different amp -- lands here with a stale tag.  Neither its state
+    // nor its liveness proof applies any more: counting it as a success
+    // would set m_connected back to true and revive a link the operator
+    // just shut down, and counting it as a failure would charge the new
+    // session for the old one's error.  Codex review, PR #291.
+    //
+    // The abort() sweep in disconnect()/connectToAmp() is the first line of
+    // defence and this tag is the second: an abort cannot un-queue a
+    // `finished` already sitting in the event loop.
     const quint64 replyGeneration =
         reply->property("rfkitGeneration").toULongLong();
     if (replyGeneration != m_generation || m_operatorDisconnected) {
@@ -399,6 +412,20 @@ void Rf2ksConnection::onReplyFinished()
     if (!m_connected && path == QStringLiteral("/info")) {
         m_connected = true;
         m_connectedSinceMs = QDateTime::currentMSecsSinceEpoch();
+        // Resume polling here, on the proven-live transition, and nowhere
+        // else.  onReconnectTimeout() used to restart the poll timer as
+        // soon as it issued the probe, without waiting to see whether the
+        // probe answered.  With m_connected still false, every subsequent
+        // failure hit markPollFailure()'s `m_consecutiveFailures >= 3 &&
+        // m_connected` guard and fell straight through, so the timer was
+        // never stopped again and no further reconnect was ever scheduled:
+        // the backoff froze at whatever delay it had reached while the
+        // poller hammered a dead amp at the full configured cadence
+        // forever.  Codex review, PR #291.
+        if (!m_pollTimer.isActive() && !m_host.isEmpty()) {
+            // See connectToAmp(): timer fires per-path, one-sixth of cycle.
+            m_pollTimer.start(qMax(1, m_pollIntervalMs / 6));
+        }
         emit connected();
     }
     if (m_connected && !m_pollTimer.isActive()) {
@@ -421,14 +448,25 @@ void Rf2ksConnection::markPollFailure()
 {
     m_pollsFailed++;
     m_consecutiveFailures++;
-    if (m_consecutiveFailures >= 3 && m_connected) {
+
+    if (!m_connected) {
+        // A reconnect probe failed.  Nothing else is in flight while we are
+        // down (the poll timer is stopped below and stays stopped until the
+        // connected transition in onReplyFinished restarts it), so this is
+        // the only place that can keep the retry schedule alive.  Without
+        // it the amp would be probed exactly once and then never again.
+        // Codex review, PR #291.
+        scheduleReconnect();
+        return;
+    }
+
+    if (m_consecutiveFailures >= 3) {
         m_connected = false;
         // Stop polling the amp we just declared down.  Without this the
         // poll timer kept firing at the configured cadence against a dead
         // endpoint, which made the exponential backoff decorative -- the
         // retry schedule stretched to 60 s while the poller carried on
-        // hammering every few hundred ms.  onReconnectTimeout() restarts
-        // the timer when a probe succeeds.  Codex review, PR #291.
+        // hammering every few hundred ms.  Codex review, PR #291.
         m_pollTimer.stop();
         emit disconnected();
         scheduleReconnect();
@@ -461,6 +499,12 @@ void Rf2ksConnection::onReconnectTimeout()
     }
     // Reconnect is a probe-only state. A successful current-generation /info
     // reply starts periodic polling in onReplyFinished().
+    //
+    // Deliberately nothing else here. Restarting the poller alongside the
+    // probe is what defeated the backoff: the poll timer would fire against a
+    // dead amp and reset the schedule, so the delay never grew. A probe that
+    // fails just runs markPollFailure() -> scheduleReconnect() and the delay
+    // keeps doubling. Reasoning carried over from PR #291.
     issueGet(QStringLiteral("/info"));
 }
 

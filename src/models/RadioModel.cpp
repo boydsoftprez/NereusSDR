@@ -2662,6 +2662,25 @@ void RadioModel::setRfKitEnabled(bool enabled)
 // so the operator can't reach the write path with an unbound MAC.
 QString RadioModel::currentRadioMac() const
 {
+    // Gated on the connection state, matching this accessor's documented
+    // contract in RadioModel.h ("returns m_lastRadioInfo.macAddress when
+    // connected, empty otherwise") -- the implementation had drifted from
+    // its own documentation and returned the MAC unconditionally.
+    //
+    // m_lastRadioInfo is deliberately retained across a disconnect, so the
+    // ungated version kept naming the previous radio forever.  RfKitPage
+    // and FourO3APage both use a non-empty result as their live/enabled
+    // gate, which let the operator edit -- and start -- peripherals scoped
+    // to a radio that was no longer there.  Codex review, PR #291.
+    //
+    // Deliberately m_connectionState rather than isConnected(): the latter
+    // requires a live RadioConnection object, and the Setup-page tests
+    // drive state through setConnectionStateForTest() without one.
+    // teardownPeripherals() reads no MAC, so nothing in the disconnect
+    // path depends on the old behaviour.
+    if (m_connectionState != ConnectionState::Connected) {
+        return QString{};
+    }
     return m_lastRadioInfo.macAddress;
 }
 
@@ -2887,12 +2906,20 @@ bool RadioModel::isAnyExternalAmpInOperate() const
     // predicate true forever after it dropped, pinning MainWindow to the
     // 2 kW scale and suppressing the radio's barefoot power updates.
     // Codex review, PR #291.
-    if (m_rfKitConnection
-        && m_rfKitConnection->isConnected()
-        && m_rfKitConnection->operateMode() == QStringLiteral("OPERATE")) {
+    if (isRfKitInOperate()) {
         return true;
     }
     return false;
+}
+
+bool RadioModel::isRfKitInOperate() const
+{
+    // Same liveness requirement as the RF-Kit branch above: m_operateMode is
+    // a cache with no disconnect invalidation, so an amp last seen in
+    // OPERATE would otherwise read as amplifying forever after it dropped.
+    return m_rfKitConnection
+        && m_rfKitConnection->isConnected()
+        && m_rfKitConnection->operateMode() == QStringLiteral("OPERATE");
 }
 
 const BoardCapabilities& RadioModel::boardCapabilities() const

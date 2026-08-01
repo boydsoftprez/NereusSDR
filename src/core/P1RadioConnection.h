@@ -634,7 +634,19 @@ private:
 
     quint64 m_rxFreqHz[7]{};
     quint64 m_txFreqHz{0};
-    bool    m_mox{false};
+    // THREAD SAFETY: written only from the connection thread; every compose
+    // function and fillTxZone() read it there too.
+    //
+    // Atomic because of one genuine cross-thread READER, exactly as on
+    // P2RadioConnection::m_mox: sendTxIq() runs on the TX/audio producer
+    // thread and gates its producer-rate telemetry on m_mox.  A plain bool
+    // there is a data race with setMox() on the connection thread.  Codex
+    // review, PR #291.
+    //
+    // Default seq_cst ordering is deliberate: read once per sendTxIq() call,
+    // not once per sample, so the ordering cost is irrelevant next to the
+    // surrounding ring arithmetic.
+    std::atomic<bool> m_mox{false};
     int     m_antennaIdx{0};
     int     m_rxOnlyAnt{0};   // RX-only input mux (0..3). Bank 0 C3 bits 5-6.
     bool    m_rxOut{false};   // _Rx_1_Out relay. Bank 0 C3 bit 7.

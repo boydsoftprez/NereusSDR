@@ -4310,13 +4310,19 @@ void MainWindow::populateDefaultMeter()
         // externalAmpFwdSwrUpdated carries watts (int) and SWR (float);
         // setTxMeters takes (float fwdPower, float swr).
         //
-        // 2026-05-25 KG4VCF bench fix: gate on isAnyExternalAmpInOperate so
-        // a STANDBY amp doesn't push 0 W into the needle while the radio's
-        // barefoot reading is also wanting the meter.  Only fire when at
-        // least one external amp is actually amplifying.
+        // 2026-05-25 KG4VCF bench fix: gate so a STANDBY amp doesn't push
+        // 0 W into the needle while the radio's barefoot reading is also
+        // wanting the meter.  Only fire when the amp is actually amplifying.
+        //
+        // The gate is RF-Kit's own OPERATE state, not the cross-vendor
+        // isAnyExternalAmpInOperate(): this signal carries RF-Kit telemetry
+        // exclusively, so the cross-vendor form let a PGXL in OPERATE pass
+        // RF-Kit /power polls through from an RF2K-S sitting in STANDBY,
+        // clobbering the live PGXL reading with RF-Kit's 0 W once per poll.
+        // Codex review, PR #291.
         connect(m_radioModel, &RadioModel::externalAmpFwdSwrUpdated, this,
                 [this, sm](int fwd, float swr) {
-            if (m_radioModel->isAnyExternalAmpInOperate()) {
+            if (m_radioModel->isRfKitInOperate()) {
                 sm->setTxMeters(static_cast<float>(fwd), swr);
             }
         });

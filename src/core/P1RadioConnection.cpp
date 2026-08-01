@@ -1531,6 +1531,7 @@ void P1RadioConnection::sendTxIq(const float* iq, int n)
     const quint8 iLoMask = isHl2 ? 0xFE : 0xFF;
     const quint8 qLoMask = isHl2 ? 0xFE : 0xFF;
 
+    int pushedSamples = 0;
     for (int k = 0; k < n; ++k) {
         // Ring-buffer full: drop sample, matching deskhpsdr overflow path.
         // acquire: see the latest fetch_sub from the connection thread so we
@@ -1575,6 +1576,20 @@ void P1RadioConnection::sendTxIq(const float* iq, int n)
         // release: publishes the byte writes above before the count increment
         // is observed by the connection thread's acquire load.
         m_txIqCount.fetch_add(1, std::memory_order_release);
+        ++pushedSamples;
+    }
+
+    if (pushedSamples > 0 && m_mox) {
+        // Producer-side rate telemetry, the counterpart to the
+        // incTxIqUnderrun() call in fillTxZone().  Without this the perf
+        // overlay showed a producer rate of zero for every P1/HL2
+        // transmission while valid I/Q was being queued, which reads as
+        // producer starvation and points debugging at the wrong end of the
+        // chain.  Compared against the 48 kHz P1 wire rate (P2's equivalent
+        // is compared against 192 kHz).  Gated on m_mox so the metric
+        // reflects only TX-engaged samples, matching P2RadioConnection.
+        // Codex review, PR #291.
+        PerfMonitor::instance().incTxIqProduced(pushedSamples);
     }
 }
 

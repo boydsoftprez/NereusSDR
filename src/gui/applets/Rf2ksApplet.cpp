@@ -304,8 +304,15 @@ void Rf2ksApplet::setAntennas(const QList<RfKitAntenna>& list)
 
 void Rf2ksApplet::setActiveAntenna(const RfKitAntenna& a)
 {
+    // m_antennaButtons is keyed by INTERNAL antenna number (1..4).  The amp
+    // numbers its external antennas from 1 as well, so matching on number
+    // alone lit the internal ANT button whose index happened to collide with
+    // the active external antenna, telling the operator RF was routed
+    // somewhere it was not.  An external antenna owns no button here, so
+    // every internal button goes dark.  Codex review, PR #291.
+    const bool internalActive = (a.type == RfKitAntenna::Type::Internal);
     for (auto it = m_antennaButtons.begin(); it != m_antennaButtons.end(); ++it) {
-        setButtonActive(it.value(), it.key() == a.number);
+        setButtonActive(it.value(), internalActive && it.key() == a.number);
     }
 }
 
