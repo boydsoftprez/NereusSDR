@@ -10053,9 +10053,31 @@ void RadioModel::republishAlexAdcSlices()
                         ocFilterPath, this](
                           int chain, Band band, double hz) {
         if (chain < 0 || chain >= kAdcCount) { return; }
-        const quint8 physicalFilter = ocFilterPath
-            ? m_ocMatrix.maskFor(band, /*tx=*/false)
-            : codec::alex::computeRxPreselector(hz / 1.0e6, alexBoard);
+
+        // A zero mask is "no pins configured for this band", not "a filter
+        // that every band shares". OcMatrix::maskFor returns 0 for any
+        // unconfigured band, so with the N2ADR preset off, or no filter
+        // board fitted at all, every band would compare equal and the
+        // multi-band check would never fire.
+        //
+        // Bench-caught 2026-08-01 by J.J. Boyd (KG4VCF) with the N2ADR
+        // disabled: slices on 40m and 20m, which need different relay
+        // selections, stopped reporting BYPASS entirely. Introduced by the
+        // OC-mask grouping in 231e1c23.
+        //
+        // Falling back to the preselector ladder restores the pre-231e1c23
+        // answer for the unconfigured case while keeping the exact grouping
+        // wherever the matrix actually holds a mask. Deliberately per-band
+        // rather than a whole-matrix emptiness test: a partly-filled matrix
+        // is legitimate, and each band should use the best identity
+        // available to it.
+        quint8 physicalFilter = 0;
+        if (ocFilterPath) {
+            physicalFilter = m_ocMatrix.maskFor(band, /*tx=*/false);
+        }
+        if (physicalFilter == 0) {
+            physicalFilter = codec::alex::computeRxPreselector(hz / 1.0e6, alexBoard);
+        }
 
         // Compatibility is a property of the relay selection, not the Band
         // enum. Several amateur bands share one physical filter (for

@@ -460,6 +460,59 @@ private slots:
         QCOMPARE(mock->bpfCalls.last().hpfBitsAdc0, kBypassBits);
     }
 
+    // Regression, bench-caught 2026-08-01 by J.J. Boyd (KG4VCF) and
+    // introduced by the OC-mask grouping in 231e1c23.
+    //
+    // OcMatrix::maskFor returns 0 for any band with no pins set, so with the
+    // N2ADR preset OFF (or no filter board fitted) EVERY band returned the
+    // same 0x00. Grouping on that made two bands needing different relay
+    // selections compare equal, and BYPASS stopped being entered at all.
+    //
+    // Same slice pair as hl2_bands_with_different_oc_masks_bypass above, the
+    // single difference being an unconfigured matrix. The answer must not
+    // change: 20m and 40m still conflict.
+    void hl2_unconfigured_oc_matrix_still_detects_conflict()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::HermesLite);
+        // Deliberately NO applyN2adrPreset: matrix left empty.
+        model.configureStreamPool(5, 5, 192000);
+        auto* mock = new BpfMockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);  // 20m
+
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(7150000.0);   // 40m
+
+        QCOMPARE(model.alexController().adcState(0).effective,
+                 AlexController::BpfEffective::Bypass);
+    }
+
+    // The other half of the same regression: an unconfigured matrix must not
+    // make everything conflict either. 20m and 17m share a computeHpf bucket,
+    // so with no OC mask to group on they stay compatible.
+    void hl2_unconfigured_oc_matrix_still_groups_compatible_bands()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::HermesLite);
+        model.configureStreamPool(5, 5, 192000);
+        auto* mock = new BpfMockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);  // 20m
+
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(18100000.0);  // 17m
+
+        QVERIFY(model.alexController().adcState(0).effective
+                != AlexController::BpfEffective::Bypass);
+    }
+
     // Regression: a non-HL2 (Alex) board keeps grouping via the HPF ladder,
     // unaffected by the OC-mask path. 20m and 17m fall in the same
     // computeHpf bucket (both < 20.0 MHz -> 0x01) and were already
