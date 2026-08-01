@@ -57,18 +57,24 @@ int SliceStreamAllocator::firstFreeStream() const
 }
 
 SliceStreamAllocator::Placement
-SliceStreamAllocator::placeSlice(double frequencyHz) const
+SliceStreamAllocator::placeSlice(double frequencyHz,
+                                 bool preferOwnStream) const
 {
     Placement p;
 
     // 1. Prefer sharing: an active stream whose window already covers this
     //    frequency costs no extra DDC and no extra bus bandwidth.
-    for (int i = 0; i < m_streams.size(); ++i) {
-        if (windowContains(m_streams.at(i), frequencyHz)) {
-            p.outcome       = Outcome::JoinedExisting;
-            p.streamIndex   = i;
-            p.shiftOffsetHz = frequencyHz - m_streams.at(i).centreHz;
-            return p;
+    //
+    //    Skipped when the caller asked for its own window. See the header for
+    //    why a pan and a slice want different answers here.
+    if (!preferOwnStream) {
+        for (int i = 0; i < m_streams.size(); ++i) {
+            if (windowContains(m_streams.at(i), frequencyHz)) {
+                p.outcome       = Outcome::JoinedExisting;
+                p.streamIndex   = i;
+                p.shiftOffsetHz = frequencyHz - m_streams.at(i).centreHz;
+                return p;
+            }
         }
     }
 
@@ -82,15 +88,27 @@ SliceStreamAllocator::placeSlice(double frequencyHz) const
         return p;
     }
 
-    // 3. Every DDC is in use and none covers this frequency. Thetis would
-    //    simply disable Multi-RX here (console.cs:31924); we surface the
-    //    hardware limit instead so the UI can explain it.
+    // 3. Every DDC is in use. Thetis would simply disable Multi-RX here
+    //    (console.cs:31924); we surface the hardware limit instead so the UI
+    //    can explain it.
     p.outcome = Outcome::Rejected;
-    p.reason  = QStringLiteral(
-        "All %1 receiver DDCs are in use and none covers %2 MHz. "
-        "Retune or remove a slice, or widen a DDC's sample rate.")
-        .arg(m_streams.size())
-        .arg(frequencyHz / 1.0e6, 0, 'f', 4);
+    if (preferOwnStream) {
+        // Distinct wording: nothing is wrong with the frequency here, the
+        // radio simply has no spare receiver to give this pan. Reusing the
+        // "none covers" phrasing would send the operator off retuning, which
+        // cannot help.
+        p.reason = QStringLiteral(
+            "All %1 receiver DDCs are in use, so this radio cannot give a new "
+            "panadapter its own receiver. Remove a panadapter, or add this "
+            "slice to an existing one to share its receiver.")
+            .arg(m_streams.size());
+    } else {
+        p.reason = QStringLiteral(
+            "All %1 receiver DDCs are in use and none covers %2 MHz. "
+            "Retune or remove a slice, or widen a DDC's sample rate.")
+            .arg(m_streams.size())
+            .arg(frequencyHz / 1.0e6, 0, 'f', 4);
+    }
     return p;
 }
 

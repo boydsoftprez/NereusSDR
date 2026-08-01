@@ -60,7 +60,28 @@ public:
     void deactivateStream(int streamIndex);
 
     /// Where should a brand-new slice at `frequencyHz` go?
-    Placement placeSlice(double frequencyHz) const;
+    ///
+    /// `preferOwnStream` distinguishes what the caller is actually asking
+    /// for. Adding a SLICE means "demodulate this frequency", and sharing an
+    /// existing window is the best answer: it costs no DDC and no bus
+    /// bandwidth. Adding a PAN means "give me another window", and sharing
+    /// silently defeats it, because every pan is recentred on its stream
+    /// (MainWindow::applyStreamWindowToPan), so two pans on one stream are
+    /// two views of the same span and move together.
+    ///
+    /// Bench-caught 2026-08-01 (J.J. Boyd, KG4VCF): a second pan added while
+    /// the first was on 20m tuned in lockstep with it. A new slice is seeded
+    /// at the active slice's frequency (RadioModel::addSlice), so it landed
+    /// inside that window every time and the sharing scan absorbed it. Taking
+    /// the pan to another band and back repaired it, because leaving forced a
+    /// fresh stream and returning it was the sole occupant.
+    ///
+    /// With `preferOwnStream` the sharing scan is skipped entirely: claim a
+    /// free DDC or refuse. Refusing is deliberate. Falling back to sharing
+    /// would reintroduce the coupled pans this flag exists to prevent, and on
+    /// a 2-DDC board "no third independent window" is the truth.
+    Placement placeSlice(double frequencyHz,
+                         bool preferOwnStream = false) const;
 
     /// Where should an existing slice go after retuning to `frequencyHz`?
     ///

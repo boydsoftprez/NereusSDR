@@ -3817,7 +3817,8 @@ bool RadioModel::setStreamSampleRate(int streamIndex, int rateHz)
     return true;
 }
 
-bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
+bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
+                                   bool preferOwnStream)
 {
     if (!slice) { return false; }
 
@@ -3846,13 +3847,46 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
     const bool soleOccupant =
         previousStream >= 0 && slicesOnStream(previousStream).size() == 1;
 
+    // preferOwnStream applies only to a first bind. A retune already owns a
+    // stream, and the retune path has its own rules about when it may keep,
+    // move or leave it; forcing a fresh DDC there would strand the old one.
     const auto placement =
         (previousStream < 0)
-            ? m_streamAllocator.placeSlice(frequencyHz)
+            ? m_streamAllocator.placeSlice(frequencyHz, preferOwnStream)
             : m_streamAllocator.retuneSlice(previousStream, soleOccupant,
                                             ddcPinned, frequencyHz);
 
     using Outcome = NereusSDR::SliceStreamAllocator::Outcome;
+
+    // Placement diagnostic. Added 2026-08-01 chasing a bench report that a
+    // second pan sometimes lands on the same DDC as the first, so tuning one
+    // appears to retune the other. Two slices sharing a stream is a legitimate
+    // outcome (placeSlice prefers it, since a slice inside an existing window
+    // costs no DDC and no bus bandwidth), but two PANS on one stream are two
+    // views of one window, and recentring it moves both. Nothing on this path
+    // logged anything, so an hour of bench use produced no evidence at all.
+    //
+    // JoinedExisting with a stream that already has an occupant is the case to
+    // look for; NewStream and RetunedStream are the healthy ones.
+    {
+        static const char* const kOutcomeName[] = {
+            "JoinedExisting", "NewStream", "RetunedStream", "Rejected"
+        };
+        const int occupants = (placement.streamIndex >= 0)
+                                  ? slicesOnStream(placement.streamIndex).size()
+                                  : 0;
+        qCInfo(lcConnection).nospace()
+            << "Placement: slice " << slice->sliceIndex()
+            << " freq=" << (frequencyHz / 1.0e6) << " MHz"
+            << " prevStream=" << previousStream
+            << " sole=" << soleOccupant
+            << " pinned=" << ddcPinned
+            << " -> " << kOutcomeName[int(placement.outcome)]
+            << " stream=" << placement.streamIndex
+            << " shift=" << placement.shiftOffsetHz
+            << " newCentre=" << (placement.newStreamCentreHz / 1.0e6)
+            << " occupantsBefore=" << occupants;
+    }
 
     if (placement.outcome == Outcome::Rejected) {
         // Phase 3F Sub-Epic I closeout, defect F4: stash the reason for the
@@ -4019,7 +4053,7 @@ bool RadioModel::requestTxHandoffToSlice(int sliceId)
     return m_txSliceArbiter->requestHandoff(sliceId);
 }
 
-int RadioModel::addSlice(const QString& initialPanId)
+int RadioModel::addSlice(const QString& initialPanId, bool ownStream)
 {
     auto* slice = new SliceModel(this);
 
@@ -4097,7 +4131,7 @@ int RadioModel::addSlice(const QString& initialPanId)
         slice->setFrequency(m_activeSlice->frequency());
         slice->setDspMode(m_activeSlice->dspMode());
     }
-    bindSliceToStream(slice, slice->frequency());
+    bindSliceToStream(slice, slice->frequency(), ownStream);
 
     // Retuning re-runs the allocator: the slice may stay on its stream
     // (shift only), move its stream's centre if it is the sole occupant, or
@@ -4462,7 +4496,11 @@ void RadioModel::addSliceOnPan(const QString& panId)
     // wiring, and active-slice bookkeeping in one place. Pass the panId so
     // it is stamped on the slice BEFORE sliceAdded() fires (bench fix
     // 2026-06-03; previously set after the emit -> handler saw it empty).
-    addSlice(panId);
+    // ownStream: +PAN asks for an independent window, not the cheapest
+    // placement. Without it the slice seeded above at the active slice's
+    // frequency lands inside that slice's window and shares its DDC, and
+    // the two pans then move together. Bench-caught 2026-08-01.
+    addSlice(panId, /*ownStream=*/true);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

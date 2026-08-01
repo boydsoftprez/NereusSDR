@@ -674,7 +674,11 @@ public:
     // an empty string preserves the legacy single-pan behaviour.
     /// Returns the new slice's id — the lowest not currently in use, which
     /// is also its WDSP RX channel id and its A-E display letter.
-    int addSlice(const QString& initialPanId = QString());
+    /// `ownStream` forwards to bindSliceToStream: true means this slice is
+    /// getting its own panadapter and needs its own receiver window, false
+    /// means the cheapest placement is right. Set by addSliceOnPan.
+    int addSlice(const QString& initialPanId = QString(),
+                 bool ownStream = false);
 
     /// Takes a slice ID (see sliceById), not a list position. sliceRemoved
     /// carries the same id.
@@ -2730,7 +2734,13 @@ public:
     /// room. Returns false silently when the pool has not been sized yet
     /// (disconnected): there is no DDC to bind to, and a slice with
     /// streamIndex() < 0 is unbound and feeds nothing.
-    bool bindSliceToStream(SliceModel* slice, double frequencyHz);
+    /// `preferOwnStream` is forwarded to SliceStreamAllocator::placeSlice on a
+    /// first bind, and says the caller wants an independent window rather than
+    /// the cheapest placement. Set by the +PAN path; see that header for why a
+    /// pan and a slice want different answers. Ignored on a retune, which
+    /// already owns a stream.
+    bool bindSliceToStream(SliceModel* slice, double frequencyHz,
+                           bool preferOwnStream = false);
 
     /// Push the current slice set for `streamIndex` to RxDspWorker and emit
     /// streamBindingsChanged. Called after every bind / unbind.
