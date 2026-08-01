@@ -4,17 +4,13 @@
 **Date:** 2026-07-28 (rev 2)
 **Author:** J.J. Boyd (KG4VCF), with AI-assisted drafting via Anthropic Claude Code
 
-> **All NereusSDR line numbers in this document are PROVISIONAL.** They are
-> taken against `origin/feature/phase3f-sub-epic-a-foundation` (PR #293), which
-> §2.8 declares as the baseline, and are NOT valid against `main`. That branch
-> is 264 commits ahead of `main` and **32 commits behind it**, so the cites are
-> anchored to a stale ref. They are to be re-derived once in a single pass
-> after the branch is rebased onto `main`, and should not be relied on before
-> then. File paths, symbol names, and API shapes are stable; only the line
-> numbers are provisional.
->
-> Thetis cites are against the local clone at tag `v2.10.3.15`, commit
-> `3759d096`, with `origin/master` named explicitly where it differs.
+> **All NereusSDR line numbers are taken against
+> `origin/feature/phase3f-sub-epic-a-foundation` (PR #293) as rebased onto
+> `main` on 2026-07-29, at which point the branch was 374 commits ahead of
+> `main` and 0 behind.** They were re-derived by symbol search in a single pass
+> after that rebase, not carried forward. They are NOT valid against `main`
+> until #293 merges. Thetis cites are against `v2.10.3.15` @ `3759d096` and are
+> unaffected by our branch state.
 
 ---
 
@@ -268,7 +264,7 @@ Adaptive blocks on, Keyframe 120, Accuracy "1 Normal", Frames per line 2.
 | Route probing | `src/core/RouteProbe` | §10.6, §10.7 |
 | Realtime audio scheduling | `src/core/RealtimeAudioPriority` | §4.3 |
 | Waterfall cadence | `src/core/WaterfallTicker` | §9.2 frames-per-line |
-| Qt WebSocket server, configurable bind | `src/core/TciServer.cpp:1130` | `NonSecureMode` only; no TLS anywhere in tree |
+| Qt WebSocket server, configurable bind | `src/core/TciServer.cpp:1267` | `NonSecureMode` only; no TLS anywhere in tree |
 | 3-priority send queue | `src/core/TciSendQueue.h` | Urgent / Binary / Control |
 | Opus, static, `OPUS_DRED` + `OPUS_OSCE` | `third_party/rade/cmake/BuildOpus.cmake` | |
 | r8brain polyphase resampler | `third_party/r8brain/` | |
@@ -302,18 +298,18 @@ What 3F changes for this design:
 - **`TxSliceArbiter` already owns TX arbitration**, but not the way this
   document previously claimed (§7.1).
 - **`SliceStreamAllocator` makes slice, stream, FFT and pan four different
-  numbers** (`SliceStreamAllocator.h:27-33`). Every bandwidth and endpoint
+  numbers** (`SliceStreamAllocator.h:29`). Every bandwidth and endpoint
   argument in §9 depends on this.
 - **Multi-pan is a first-class case**, which makes the shared-FFT question in
   §9.1 live and the budget in §9.5 mandatory.
 - **AppSettings migrates v5 to v6**, additive with no renames and lazy key
-  population (`AppSettings.cpp:1209-1215`), so `SettingsProxy` needs no rename
+  population (`AppSettings.cpp:1119`), so `SettingsProxy` needs no rename
   map. But `ensureSettingsAtVersion` has exactly **one** call site in the tree,
   `src/main.cpp:280`, so a daemon-first install would run unmigrated (§4.2).
 - **Per-slice DSP routing and per-slice audio both landed in Sub-Epic I.** N
   slices are demodulated concurrently and summed by `MasterMixer` into one
   global output (`RxDspWorker.cpp` per-slice loop at `:317`, `rxBlockReady` at
-  `:491`; `AudioEngine.cpp:305` preregisters `maxSlices`). An earlier revision
+  `:491`; `AudioEngine.cpp:294` preregisters `maxSlices`). An earlier revision
   claimed this was deferred to a "Phase 3F-1", a label that appears **nowhere**
   in the repository. That was false, and it mis-sized §8, §9.3 and §9.5. 3F's
   actual audio non-goal is per-slice **output device** routing
@@ -374,7 +370,7 @@ rubbery on a filter-width drag.
 
 **Per-slice AF gain, mute and pan are daemon-side and pre-mix**, and therefore
 also cost a round trip. They are WDSP parameters applied upstream of the mix:
-`RxChannel::setAfGain` calls `SetRXAPanelGain1` (`RxChannel.cpp:1423`),
+`RxChannel::setAfGain` calls `SetRXAPanelGain1` (`RxChannel.cpp:1397`),
 `setMuted` calls `SetRXAPanelRun` (`:1396`), `setPan` calls `SetRXAPanelPan`
 (`:1438`), and mute is additionally gated pre-mix in `AudioEngine::rxBlockReady`
 before `MasterMixer::accumulate`. An earlier revision claimed these stay
@@ -457,7 +453,7 @@ at all.
 1. **Extract the view-hook interface.** `src/models/RadioModel.cpp:299`
    includes `gui/SpectrumWidget.h`. `RadioModel` holds **two** non-owning view
    hooks (`m_spectrumWidget` and `m_fftEngine`), both wired exactly once at
-   `MainWindow.cpp:2866-2867`. Extract a minimal abstract sink into
+   `MainWindow.cpp:3103-3104`. Extract a minimal abstract sink into
    `src/core/`.
 2. **Extract the `SpectrumDetector` enum** out of `gui/SpectrumWidget.h` into a
    standalone core header. `SpectrumDetector.h:62` includes
@@ -468,17 +464,17 @@ at all.
    paths updated. `SpectrumAvenger` is already clean; `SpectrumDetector` is
    only clean after item 2.
 4. **Extract the FFT engine pool owner.** `MainWindow::createFftEngineForStream`
-   (`MainWindow.cpp:1334-1373`) creates per-stream engines, reads four
+   (`MainWindow.cpp:1430`) creates per-stream engines, reads four
    **global** AppSettings keys (`DisplaySpectrumFps`, `DisplayFftSize`,
    `DisplayFftWindow`, `DisplayHzPerBinTarget`), and parks every engine on one
-   shared `m_fftThread` (`MainWindow.h:532-534`). This is core work sitting in
+   shared `m_fftThread` (`MainWindow.h:597-606`). This is core work sitting in
    a QWidget.
 5. **Extract the topology builder.** `MainWindow::rebuildFftRouting`
-   (`MainWindow.cpp:1921`) iterates `m_panStack->allApplets()`, a QWidget, so
+   (`MainWindow.cpp:2092`) iterates `m_panStack->allApplets()`, a QWidget, so
    without `PanadapterStack` the router stays empty. The daemon needs an
    equivalent driven by remote subscriptions.
 6. **Extract the crop-and-reduce stage.** It currently lives inside a
-   QRhiWidget (`SpectrumWidget::updateSpectrumLinear`, `SpectrumWidget.cpp:2614+`),
+   QRhiWidget (`SpectrumWidget::updateSpectrumLinear`, `SpectrumWidget.cpp:2679+`),
    `visibleBinRange()` is private, and the pixel count is derived from widget
    geometry (`const int displayWidth = qMax(width() - effectiveStripW(), 800);`,
    where `effectiveStripW()` is itself a visibility query). The extracted
@@ -615,9 +611,9 @@ a documentation one:
 
 - `SliceModel` has **no** `sliceIndex` Q_PROPERTY. Nothing in the mirrored set
   identifies which slice a tuple belongs to.
-- `RadioModel::slices()` is a plain getter (`RadioModel.h:374`), not a
+- `RadioModel::slices()` is a plain getter (`RadioModel.h:446`), not a
   property, so the far side never learns the collection changed.
-- `sliceAdded(int)` / `sliceRemoved(int)` (`RadioModel.h:1902-1903`) are
+- `sliceAdded(int)` / `sliceRemoved(int)` (`RadioModel.h:2184-2185`) are
   ordinary signals, not any property's `NOTIFY`, so a property-enumerating
   mirror cannot see them.
 
@@ -785,11 +781,11 @@ with an in-code comment noting that if `setMox` ever becomes async, a
 is synchronous on the `moxChanged` side. **It does not hold across a network
 link**, where MOX state round-trips. Remote handoff must add an explicit
 unkey-confirmed gate before the flag flip, and **R4 owns that gate**.
-(`TxSliceArbiter.h:52-53` carries a stale comment claiming a confirmation wait
+(`TxSliceArbiter.h:46` carries a stale comment claiming a confirmation wait
 and contradicts its own `.cpp`; fix separately.)
 
 **Remote requests must not call `requestHandoff(int)`, which is positional.**
-`TxSliceArbiter.h:34-40` is explicit that the index is a list position, not a
+`TxSliceArbiter.h:59` is explicit that the index is a list position, not a
 `SliceModel::sliceIndex()`, and that resolving it as an id picks the wrong
 slice once a mid-list removal makes ids and positions diverge (`removeSlice`
 does not renumber survivors). Remote TX routes through
@@ -846,7 +842,7 @@ against roughly 100, under four percent.
 
 **The existing 64-byte `TciBinaryFrame` header is not reused for the remote
 path.** **Forty** of its sixty-four bytes are reserved zeros (offsets 12-19
-and 32-63, `TciBinaryFrame.h:98-106`), it carries no timestamp and no context
+and 32-63, `TciBinaryFrame.h:101-107`), it carries no timestamp and no context
 concept, and §7.3 needs compact sub-frame headers regardless. It remains
 unchanged for the existing TCI server, a separate surface.
 
@@ -908,7 +904,7 @@ optimisation rather than a requirement.
 
 The RX path fans out on **three independent axes**, and slice count, stream
 count, FFT count and pan count are four different numbers
-(`SliceStreamAllocator.h:27-33`).
+(`SliceStreamAllocator.h:29`).
 
 ```
 Radio → P1/P2RadioConnection → ReceiverManager → per-stream I/Q (0..userDdcCount-1)
@@ -978,7 +974,7 @@ inhibited during the transition.
 Specific hazards:
 
 - **Sample-rate change** is a station-wide 12-step live-apply sequence
-  (`RadioModel::setSampleRateLive`, `RadioModel.h:1058`) that retunes every RX
+  (`RadioModel::setSampleRateLive`, `RadioModel.h:1263`) that retunes every RX
   channel. It is **not** a per-endpoint client-set parameter and is removed
   from §9.4's client-owned list.
 - **Mode change into RADE swaps the entire DSP channel object**
@@ -1008,7 +1004,7 @@ revision named `FFTRouter::fftFrameForPan` as the insertion point. That signal
 has **zero emitters** and `onFftFrame` **zero callers**; a `SpectrumEndpoint`
 connected to it would receive nothing, forever. `FFTRouter.h:18-22` says as
 much itself. The live path is `MainWindow::dispatchFftFrameToPans`
-(`MainWindow.cpp:2016`), which deliberately uses the router as a synchronous
+(`MainWindow.cpp:2187`), which deliberately uses the router as a synchronous
 oracle rather than a signal hop, for the reason stated at `:2025-2028`
 ("routing through its own signal would add a queued hop on the render path for
 no gain").
@@ -1065,10 +1061,10 @@ parameter names in §2.6 come from a screenshot and inform parameter choice
 only.
 
 **Each pan endpoint produces two reduced planes, not one.** Trace and waterfall
-have independent detector and averaging settings (`SpectrumWidget.h:369-386`
+have independent detector and averaging settings (`SpectrumWidget.h:371-388`
 declares `spectrumDetector()`, `spectrumAveraging()`, `waterfallDetector()`,
 `waterfallAveraging()` as four independent values; the second reduction pass is
-at `SpectrumWidget.cpp:2735`). The waterfall row therefore **cannot** be
+at `SpectrumWidget.cpp:2758`). The waterfall row therefore **cannot** be
 derived client-side from the trace array without losing its independent
 detector and averaging. Both planes are transmitted unless dropping one is made
 an explicit, recorded divergence from local rendering.
@@ -1217,7 +1213,7 @@ table, referenced by §6.3, §9.1 and §9.4:
 
 Note that per-stream FFT configuration is itself new work: these are four
 **global** AppSettings keys today, applied identically to every engine
-(`MainWindow.cpp:1334-1373`).
+(`MainWindow.cpp:1430`).
 
 ### 9.5 Multi-pan budget
 
@@ -1231,7 +1227,7 @@ requires three different quantities that an earlier revision conflated:
 | Docked pan count | Layout templates | **4** (`"1"`, `"2v"`, `"2h"`, `"12h"`, `"2x2"` in `PanadapterStack.cpp`), plus floating windows |
 
 There is **no five-pan template**; five pans requires floating windows. And
-slices bind to streams many-to-one (`SliceStreamAllocator.h:28-32`), so five
+slices bind to streams many-to-one (`SliceStreamAllocator.h:29`), so five
 slices commonly share fewer streams, fewer FFTs, and fewer pans.
 
 Per-SKU values must be read from `BoardCapabilities.cpp` rather than
@@ -1379,7 +1375,7 @@ literally that ships internet-reachable unencrypted TX keying for three phases.
 
 **The supporting claim was also overstated.** `git grep -n
 'NonSecureMode\|SecureMode\|QSslConfiguration\|setSslConfiguration' -- src`
-returns exactly one line: `src/core/TciServer.cpp:1130`, `NonSecureMode`. There
+returns exactly one line: `src/core/TciServer.cpp:1267`, `NonSecureMode`. There
 is no `QSslConfiguration`, no certificate handling, and no `wss` code path
 anywhere in the tree. "Close to free" omitted the actual work.
 
@@ -1682,7 +1678,7 @@ it.
    dependency is accepted. Fallback documented.
 2. **CPU headroom on target hardware.** Scope the spike as **5 streams at the
    SKU's top rate with FFT at `kMaxFftSize` on the single shared `m_fftThread`**
-   (`MainWindow.h:532-534` flags thread saturation as unresolved: "splitting to
+   (`MainWindow.h:597-606` flags thread saturation as unresolved: "splitting to
    one thread per engine is a follow-up needing maintainer sign-off"), plus
    WDSP RX per slice, plus Opus per slice, plus display codec per endpoint,
    plus the wideband FFT which runs on the main thread. It must answer both
@@ -1693,7 +1689,7 @@ it.
    `RealtimeAudioPriority` as instrumentation. Schedule in R1.
 3. **Display setup page split** (§6.3). A design pass, not a mechanical edit.
    The Display pages drive a single renderer and a single FFT engine through
-   two non-owning hooks wired once at `MainWindow.cpp:2866-2867` and never
+   two non-owning hooks wired once at `MainWindow.cpp:3103-3104` and never
    re-pointed, so roughly 80 setup call sites act on pan-0 and stream-0 only.
    Splitting for remote operation must also answer "which pan does this control
    act on", a multi-pan question. **The page already misbehaves under
