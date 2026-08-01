@@ -494,6 +494,7 @@ set(CORE_SOURCES
     src/core/AntennaLabels.cpp
     src/core/AppSettings.cpp
     src/core/BoardCapabilities.cpp
+    src/core/BuildIdentity.cpp
     src/core/FFTRouter.cpp
     src/core/SliceStreamAllocator.cpp
     src/core/WidebandFrameAccumulator.cpp
@@ -1339,7 +1340,7 @@ if(NEREUS_GPU_SPECTRUM)
 endif()
 
 # --------------------------------------------------------------------------
-# Build tag — identifies a smoke build in the window title
+# Build tag: identifies a smoke build in the window title
 # --------------------------------------------------------------------------
 # Every non-release build stamps its branch and short SHA into the title bar,
 # so a build under test can be told apart from a release, from another
@@ -1354,72 +1355,66 @@ endif()
 # title. Detection needs no CI change: release.yml checks out `ref: <tag>`
 # (.github/workflows/release.yml), so HEAD sits exactly on a tag there and
 # nowhere else.
+#
+# The derivation itself lives in cmake/NereusBuildTag.cmake and runs once per
+# build, not once per configure. It used to run here, which meant the tag
+# froze at whatever HEAD was when the build tree was last configured; a bench
+# build was observed advertising a sha five commits stale. The script writes
+# build/generated/NereusBuildTag.h only when the text changes, so the extra
+# build step costs one git call and recompiles nothing on a no-op build.
 set(NEREUSSDR_BUILD_TAG "" CACHE STRING
     "Text appended to the window title identifying a non-release build. Auto-derived from git when empty; set to a single space to force it off.")
 
-if(NOT NEREUSSDR_BUILD_TAG)
-    find_package(Git QUIET)
-    if(GIT_FOUND)
-        execute_process(
-            COMMAND "${GIT_EXECUTABLE}" describe --exact-match --tags HEAD
-            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-            RESULT_VARIABLE _nereus_head_is_tagged
-            OUTPUT_QUIET ERROR_QUIET)
+set(NEREUS_BUILD_TAG_HEADER "${CMAKE_BINARY_DIR}/generated/NereusBuildTag.h")
+set(NEREUS_BUILD_TAG_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NereusBuildTag.cmake")
 
-        if(NOT _nereus_head_is_tagged EQUAL 0)
-            execute_process(
-                COMMAND "${GIT_EXECUTABLE}" rev-parse --abbrev-ref HEAD
-                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-                OUTPUT_VARIABLE _nereus_branch
-                OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-            execute_process(
-                COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
-                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-                OUTPUT_VARIABLE _nereus_sha
-                OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-
-            if(_nereus_branch AND _nereus_sha)
-                set(NEREUSSDR_BUILD_TAG "${_nereus_branch}@${_nereus_sha}")
-            elseif(_nereus_sha)
-                # Detached HEAD that is not on a tag.
-                set(NEREUSSDR_BUILD_TAG "detached@${_nereus_sha}")
-            endif()
-        endif()
-
-        # Re-run configure when the checked-out ref changes, or the title
-        # would keep naming the branch that was current when the build tree
-        # was first configured. A confidently wrong build name is worse than
-        # none: it is the exact mistake this stamp exists to prevent. The
-        # path is resolved through git rather than assumed to be .git/HEAD,
-        # because in a worktree .git is a file and HEAD lives elsewhere.
-        execute_process(
-            COMMAND "${GIT_EXECUTABLE}" rev-parse --absolute-git-dir
-            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-            OUTPUT_VARIABLE _nereus_git_dir
-            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-        if(_nereus_git_dir AND EXISTS "${_nereus_git_dir}/HEAD")
-            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-                         "${_nereus_git_dir}/HEAD")
-        endif()
-    endif()
+# Resolve git once here rather than in the script, which would repeat the
+# find_program on every build. Copied into a local rather than clearing
+# GIT_EXECUTABLE itself: that is a cache variable, and a directory-scope
+# shadow of it would be inherited by add_subdirectory(tests) and
+# add_subdirectory(hal-plugin) below.
+find_package(Git QUIET)
+set(NEREUS_BUILD_TAG_GIT "")
+if(GIT_FOUND)
+    set(NEREUS_BUILD_TAG_GIT "${GIT_EXECUTABLE}")
 endif()
 
-if(NEREUSSDR_BUILD_TAG MATCHES "^[ \t]*$")
-    set(NEREUSSDR_BUILD_TAG "")
-endif()
+set(NEREUS_BUILD_TAG_ARGS
+    "-DNEREUS_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DNEREUS_OUTPUT=${NEREUS_BUILD_TAG_HEADER}"
+    "-DNEREUS_OVERRIDE=${NEREUSSDR_BUILD_TAG}"
+    "-DNEREUS_GIT_EXECUTABLE=${NEREUS_BUILD_TAG_GIT}")
 
-if(NEREUSSDR_BUILD_TAG)
-    message(STATUS "NereusSDR: smoke build, title tagged '${NEREUSSDR_BUILD_TAG}'")
-else()
-    message(STATUS "NereusSDR: release build, title untagged")
-endif()
+# Configure-time run: the header has to exist before the first compile (and
+# before AUTOMOC scans main.cpp), and this is where the one-line smoke-vs-
+# release status message comes from.
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${NEREUS_BUILD_TAG_ARGS} -DNEREUS_ANNOUNCE=ON
+            -P "${NEREUS_BUILD_TAG_SCRIPT}")
+
+# Build-time run: always out of date on purpose, so the tag tracks HEAD
+# without needing a re-configure.
+add_custom_target(nereus_build_tag ALL
+    COMMAND "${CMAKE_COMMAND}" ${NEREUS_BUILD_TAG_ARGS}
+            -P "${NEREUS_BUILD_TAG_SCRIPT}"
+    BYPRODUCTS "${NEREUS_BUILD_TAG_HEADER}"
+    COMMENT "Re-deriving the smoke-build tag"
+    VERBATIM)
+add_dependencies(NereusSDR nereus_build_tag)
+
+# Deliberately PRIVATE to the executable, and deliberately consumed only by
+# src/main.cpp. Every one of the ~450 test executables links NereusSDRObjs,
+# so a generated header reaching that object library would relink all of them
+# each time HEAD moved. Confined here, a new commit recompiles one small
+# translation unit and relinks one binary. main.cpp hands the value to
+# BuildIdentity, which is what MainWindow reads when it composes the title.
+target_include_directories(NereusSDR PRIVATE "${CMAKE_BINARY_DIR}/generated")
 
 # --------------------------------------------------------------------------
 # Version define
 # --------------------------------------------------------------------------
 target_compile_definitions(NereusSDRObjs PUBLIC
     NEREUSSDR_VERSION="${PROJECT_VERSION}"
-    NEREUSSDR_BUILD_TAG="${NEREUSSDR_BUILD_TAG}"
 )
 
 # --------------------------------------------------------------------------

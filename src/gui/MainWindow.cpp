@@ -265,6 +265,7 @@ warren@wpratt.com
 #include "core/TxChannel.h"  // H.2: setTxChannel wiring
 #include "core/ReceiverManager.h"
 #include "core/AppSettings.h"
+#include "core/BuildIdentity.h"
 #include "core/PaTempUnit.h"
 #include "core/RadioStatus.h"
 #include "core/RadioDiscovery.h"
@@ -2284,11 +2285,13 @@ void MainWindow::buildUI()
     // Standing rule (JJ, KG4VCF, 2026-07-30), earned when a session spent
     // real time proving by pgrep which binary was on screen.
     //
-    // NEREUSSDR_BUILD_TAG is empty on release artifacts, which are built
-    // from a tag ref, so their title stays exactly as it was.
+    // The tag is empty on release artifacts, which are built from a tag ref,
+    // so their title stays exactly as it was. main() fills BuildIdentity in
+    // from a header regenerated on every build, so the sha here is the sha
+    // that was compiled, not the one that was current at the last configure.
     QString title = QStringLiteral("NereusSDR %1").arg(NEREUSSDR_VERSION);
 
-    const QString buildTag = QString::fromUtf8(NEREUSSDR_BUILD_TAG);
+    const QString buildTag = BuildIdentity::buildTag();
     if (!buildTag.isEmpty()) {
         title += QStringLiteral(" · %1").arg(buildTag);
     }
