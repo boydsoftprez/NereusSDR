@@ -2242,6 +2242,38 @@ CodecContext P1RadioConnection::buildCodecContext() const
     } else {
         ctx.ocByte = m_ocOutput;
     }
+
+    // The HL2 has no Alex board (hasAlexFilters=false, m_caps->hasAlex=
+    // false): its RX preselector is the N2ADR board wired through these
+    // same OC pins, driven by ctx.ocByte above rather than the Alex
+    // bank-10 HPF word that effectiveAlexHpfBits() feeds. AlexController's
+    // per-ADC BYPASS / WidebandLocked decision (see setAlexRxBpf above)
+    // therefore has nowhere else to reach the wire on this board.
+    //
+    // Scoped to hasIoBoardHl2 -- true only for the two HL2 rows
+    // (kHermesLite, kHermesLiteRxOnly) -- and not every P1 board:
+    // Alex-equipped boards already carry this same decision on bank 10 via
+    // effectiveAlexHpfBits() and must not also have it clobber their
+    // independently-addressed OC bank.
+    //
+    // RX only (!m_mox). On TX the N2ADR pins double as the transmit
+    // low-pass segment for the slice actually keying the radio
+    // (N2adrPreset.cpp's chkPenOCxmit* entries): forcing 0x00 mid-transmit
+    // because some OTHER slice's receive band conflicts with a third would
+    // strip TX harmonic filtering for a decision that says nothing about
+    // the transmitted signal. This scoping is a judgment call, not
+    // something the bug report specified either way; flagged for
+    // maintainer review in the PR report.
+    //
+    // 0x00 = "disable/bypass the N2ADR board": maintainer-supplied
+    // hardware knowledge (J.J. Boyd / KG4VCF, 2026-08-01), not documented
+    // in any upstream source -- mi0bot never commands 0x00.
+    static constexpr int kAlexBypassSentinel = 0x20;  // AlexRxBpf.hpfBitsAdc0 bypass encoding
+    if (!m_mox && m_caps && m_caps->hasIoBoardHl2
+        && m_alexRxHpfOverride == kAlexBypassSentinel) {
+        ctx.ocByte = 0x00;
+    }
+
     if (ctx.ocByte != m_lastOcByteLogged) {
         const int bandIdx = int(bandFromFrequency(static_cast<double>(m_rxFreqHz[0])));
         qDebug("HL2 ocByte=0x%02X band=%d mox=%d (matrix=%p)",

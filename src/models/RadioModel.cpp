@@ -10023,17 +10023,45 @@ void RadioModel::republishAlexAdcSlices()
     std::array<double, kAdcCount> lowestHz {0.0, 0.0};
 
     const HPSDRHW alexBoard = boardCapabilities().board;
-    auto addToChain = [&bands, &preselectors, &counts, &lowestHz, alexBoard](
+
+    // Boards whose RX preselector is the OC matrix rather than an Alex
+    // bank (HL2's N2ADR filter board; hasIoBoardHl2 is the honest
+    // discriminator -- see P1RadioConnection::buildCodecContext for the
+    // wire-side half of this fix) have no physical filter selection to
+    // read from the Alex ladder at all. computeRxPreselector falls back to
+    // computeHpf() for any board outside usesBpf1Preselector's list, and
+    // that ladder's crossovers do not track the N2ADR relay groupings: it
+    // splits 60m from 40m, which N2adrPreset.cpp wires to the same OcMatrix
+    // mask (0x44), while merging 20m with 17m, which do not share a relay.
+    // Two slices on 60m + 40m therefore reported as "2 distinct bands" and
+    // bypassed a filter neither slice needed to leave.
+    //
+    // Reading the mask straight out of OcMatrix instead makes the grouping
+    // test exact for whatever the matrix actually holds -- the N2ADR preset
+    // or a user's own pin assignment -- and needs no fixed table of its
+    // own. AlexController needs no HL2 knowledge to benefit from this: the
+    // two bands never reach it as separate entries once this collapses
+    // them here, exactly as already happens for Alex boards sharing one
+    // Saturn BPF1 selection (the 20/17/15m case in the comment below).
+    //
+    // NereusSDR-original (2026-08-01): the confirmed bug is that
+    // AlexController correctly enters BYPASS for these already-compatible
+    // pairs because this grouping step, not AlexController itself, was
+    // comparing the wrong filter identity.
+    const bool ocFilterPath = boardCapabilities().hasIoBoardHl2;
+    auto addToChain = [&bands, &preselectors, &counts, &lowestHz, alexBoard,
+                        ocFilterPath, this](
                           int chain, Band band, double hz) {
         if (chain < 0 || chain >= kAdcCount) { return; }
-        const quint8 physicalFilter =
-            codec::alex::computeRxPreselector(hz / 1.0e6, alexBoard);
+        const quint8 physicalFilter = ocFilterPath
+            ? m_ocMatrix.maskFor(band, /*tx=*/false)
+            : codec::alex::computeRxPreselector(hz / 1.0e6, alexBoard);
 
         // Compatibility is a property of the relay selection, not the Band
         // enum. Several amateur bands share one physical filter (for
-        // example 20/17/15 m on the Saturn BPF1 bank). Count those as one
-        // compatible range; bypass only when the chain would need two
-        // different relay selections at once.
+        // example 20/17/15 m on the Saturn BPF1 bank, or 60/40 m on the
+        // N2ADR OC bank). Count those as one compatible range; bypass only
+        // when the chain would need two different relay selections at once.
         for (int i = 0; i < counts[chain]; ++i) {
             if (preselectors[chain][i] == physicalFilter) {
                 if (hz < lowestHz[chain]) { lowestHz[chain] = hz; }
