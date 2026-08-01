@@ -4,6 +4,9 @@
 #include "core/codec/P1CodecHl2.h"
 #include "core/DdcAssignment.h"
 #include "core/codec/CodecContext.h"
+#include "core/P1RadioConnection.h"
+#include "core/HpsdrModel.h"
+#include "core/codec/P1CodecStandard.h"
 
 using namespace NereusSDR;
 
@@ -411,6 +414,112 @@ private slots:
         QCOMPARE(a.streamDdc[2], -1);
         QCOMPARE(a.streamDdc[3], -1);
         QCOMPARE(a.streamDdc[4], -1);
+    }
+
+    // ── Approved deviation from mi0bot, 2026-07-31 ──────────────────────
+    // mi0bot announces nddc = 4 unconditionally for the HL2
+    // (console.cs:8412-8413 [v2.10.3.13-beta2]). NereusSDR announces 2 when
+    // PureSignal is off, halving the ep6 datagram rate: about 23 Mbit/s
+    // rather than 44 at 192 kHz. PureSignal needs four DDCs (DDC0+DDC1 as
+    // the sync pair, DDC2 feedback, DDC3 TX monitor, console.cs:8757-8762
+    // GetDDC), so the count stays 4 whenever PS is enabled.
+    // See docs/architecture/2026-07-31-hl2-slice-cap-design.md section 6.2.
+    void announced_count_is_two_with_puresignal_off() {
+        P1CodecHl2 codec;
+        const PsDdcConfig cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::HERMESLITE,
+            /*psEnabled=*/false, /*diversityEnabled=*/false,
+            /*moxState=*/false, /*rx1Rate=*/192000, /*rx2Rate=*/0,
+            /*rx2Enabled=*/false, /*adcCtrl1=*/0, /*adcCtrl2=*/0);
+        QCOMPARE(cfg.p1RxCount, 2);
+        QCOMPARE(cfg.nDdc, 4);          // PS freq-override gate, unchanged
+    }
+
+    void announced_count_is_four_with_puresignal_on() {
+        P1CodecHl2 codec;
+        const PsDdcConfig cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::HERMESLITE,
+            /*psEnabled=*/true, /*diversityEnabled=*/false,
+            /*moxState=*/false, /*rx1Rate=*/192000, /*rx2Rate=*/0,
+            /*rx2Enabled=*/false, /*adcCtrl1=*/0, /*adcCtrl2=*/0);
+        QCOMPARE(cfg.p1RxCount, 4);
+    }
+
+    // The central claim of the policy: MOX must not move the count. If this
+    // ever regresses to keying on the run state, the ep6 slot layout would
+    // change on every key-down.
+    void announced_count_does_not_move_on_mox() {
+        P1CodecHl2 codec;
+        for (bool ps : {false, true}) {
+            const PsDdcConfig rx = codec.applyPureSignalDdcConfig(
+                HPSDRModel::HERMESLITE, ps, false, /*moxState=*/false,
+                192000, 192000, /*rx2Enabled=*/true, 0, 0);
+            const PsDdcConfig tx = codec.applyPureSignalDdcConfig(
+                HPSDRModel::HERMESLITE, ps, false, /*moxState=*/true,
+                192000, 192000, /*rx2Enabled=*/true, 0, 0);
+            QCOMPARE(rx.p1RxCount, tx.p1RxCount);
+        }
+    }
+
+    // NOT the load-bearing test for this deviation. P1RadioConnection::
+    // composeCcBank0 has zero production callers; every live HL2 connection
+    // composes bank 0 through P1CodecHl2::composeCcForBank case 0 instead
+    // (see bank0_c4_encodes_the_announced_count_in_the_live_composer below),
+    // which independently encodes ((ctx.activeRxCount - 1) & 0x0F) << 3. This
+    // test exists only to document that the two formulas agree for 2 and 4
+    // today. C4 bits 3-5 carry nddc - 1.
+    // Source: mi0bot networkproto1.c:968 [v2.10.3.13-beta2]
+    //   C4 |= (nddc - 1) << 3;   // number of DDCs to run
+    void bank0_c4_encodes_the_announced_count() {
+        quint8 out[5] = {};
+        P1RadioConnection::composeCcBank0(out, 192000, /*mox=*/false,
+                                          /*activeRxCount=*/2);
+        QCOMPARE(int(out[4]), (2 - 1) << 3);   // 0x08
+
+        P1RadioConnection::composeCcBank0(out, 192000, /*mox=*/false,
+                                          /*activeRxCount=*/4);
+        QCOMPARE(int(out[4]), (4 - 1) << 3);   // 0x18
+    }
+
+    // THE load-bearing wire-byte test. Every live HL2 connection composes
+    // bank 0 through P1CodecHl2::composeCcForBank case 0 (this codec, above),
+    // not through the composeCcBank0 stub pinned above, which nothing in
+    // production calls. Confirmed by reading the case-0 body: the DDC-count
+    // field is a single expression,
+    //   out[4] = ... | (((ctx.activeRxCount - 1) & 0x0F) << 3) | ...
+    // with mask 0x0F and shift 3, and nothing else in the case writes out[4]
+    // afterward. ctx.duplex defaults to true (CodecContext.h, mirroring
+    // mi0bot's unconditional "C4 |= 0b00000100; // duplex bit" at
+    // networkproto1.c:967 [v2.10.3.13-beta2]) and lands in C4 bit 2, so it is
+    // cleared here to isolate the DDC-count field under test; antennaIdx and
+    // diversity already default to 0 / false and do not need clearing.
+    void bank0_c4_encodes_the_announced_count_in_the_live_composer() {
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        ctx.duplex = false;
+
+        ctx.activeRxCount = 2;
+        quint8 out[5] = {};
+        codec.composeCcForBank(0, ctx, out);
+        QCOMPARE(int(out[4]), 0x08);
+
+        ctx.activeRxCount = 4;
+        std::fill_n(out, 5, quint8{0});
+        codec.composeCcForBank(0, ctx, out);
+        QCOMPARE(int(out[4]), 0x18);
+    }
+
+    // The deviation is HL2-only. P1CodecStandard serves ramdor's HERMES-class
+    // arm, a different SKU family with no approval attached to it, and it must
+    // keep announcing 4 unconditionally (console.cs:8391-8392 [v2.10.3.15]).
+    void deviation_does_not_leak_into_the_hermes_class_codec() {
+        P1CodecStandard codec;
+        for (bool ps : {false, true}) {
+            const PsDdcConfig cfg = codec.applyPureSignalDdcConfig(
+                HPSDRModel::HERMES, ps, /*diversityEnabled=*/false,
+                /*moxState=*/false, 192000, 0, /*rx2Enabled=*/false, 0, 0);
+            QCOMPARE(cfg.p1RxCount, 4);
+        }
     }
 };
 

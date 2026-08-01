@@ -553,8 +553,43 @@ PsDdcConfig P1CodecHl2::applyPureSignalDdcConfig(
     //
     // Inline tag preserved per CLAUDE.md "Inline comment preservation":
     //MI0BOT  [HL2 case-statement marker at console.cs:8409]
-    cfg.p1RxCount = 4;                     // RX4 used for puresignal feedback
-    cfg.nDdc      = 4;
+    cfg.nDdc = 4;
+
+    // ── APPROVED DEVIATION FROM mi0bot, 2026-07-31 ─────────────────────────
+    //
+    // mi0bot sets P1_rxcount = 4 unconditionally here
+    // (console.cs:8412-8413 [v2.10.3.13-beta2]), in every MOX, diversity and
+    // PureSignal state and at every sample rate. This is NOT a port. It is a
+    // NereusSDR-original divergence justified by the link budget, approved by
+    // the maintainer on 2026-07-31 conditional on bench verification.
+    //
+    // p1RxCount becomes the wire C4 field, nddc - 1 << 3
+    // (P1RadioConnection::composeCcBank0), and the ep6 slot layout,
+    // slotBytes = 6 * numRx + 2. Because ep6 datagrams are fixed at 1032
+    // bytes, sample capacity falls as the count rises
+    // (networkproto1.c:527: spr = 504 / (6 * nddc + 2)), so the datagram rate
+    // scales with the count whether or not the extra DDCs are consumed.
+    // Announcing 4 for a two-panadapter board costs about 44 Mbit/s at
+    // 192 kHz and 89 at 384, against 23 and 47 for 2.
+    //
+    // PureSignal genuinely needs four: DDC0 and DDC1 as the sync pair, DDC2
+    // feedback, DDC3 TX monitor (mi0bot console.cs:8757-8762
+    // [v2.10.3.13-beta2] GetDDC: rx1 = 0; rx2 = 1; psrx = 2; pstx = 3).
+    //
+    // Keyed on psEnabled, the operator's master toggle, NOT on moxState or
+    // the PS run state. Keying on either would flip the count on every
+    // key-down, changing the slot layout mid-stream. The floor is 2 rather
+    // than 1 because 2 is already sent on every P1 connect
+    // (P1RadioConnection.cpp:695) and 1 never has been.
+    //
+    // nDdc stays 4 in all cases: it feeds only the bank-2/3 frequency
+    // override gate (m_psNDdc), not the wire count.
+    //
+    // Full rationale and the bench gate that conditions this approval:
+    // docs/architecture/2026-07-31-hl2-slice-cap-design.md section 6.2.
+    //
+    // RX4 used for puresignal feedback  [original inline comment from mi0bot console.cs:8412]
+    cfg.p1RxCount = psEnabled ? 4 : 2;
 
     if (!moxState) {
         if (!diversityEnabled) {
