@@ -376,6 +376,48 @@ are 4 on the HL2 today the wire is byte-identical, so this is not a live defect,
 and the separation is convenient here. It is recorded so the next reader does
 not assume the names match upstream semantics.
 
+### 6.3a The announced count has two axes (bench follow-up, 2026-08-01)
+
+The deviation in 6.2 makes the announced count vary, and a varying count turned
+out to have more than one author. Two independent things need a say in it and
+neither can see the other:
+
+| Axis | Source | Wants |
+| --- | --- | --- |
+| DDC configuration | `applyPsDdcConfig` from `PsDdcConfig::p1RxCount` | 4 with PureSignal on, 2 off |
+| Panadapters | `setActiveReceiverCount`, following the operator | 1 or 2 on the HL2 |
+
+Before this change, three call sites wrote one field and the last writer won.
+On a live HL2 with PureSignal on, removing the second panadapter dropped the
+announcement to one receiver, and DDC2 and DDC3 left the ep6 frame entirely
+until the next key-down happened to rewrite it:
+
+```
+14:07:26  DDCAssign fire: psEn=true ... rx2En=false
+14:07:33  HL2 TX edge: mox=1 ... activeRx=1      PureSignal needs 4
+14:07:33  applyPsDdcConfig ...     activeRx=4    repaired, by luck of timing
+```
+
+Worse, `setActiveReceiverCount` was a bare assignment with no stream restart, so
+the radio and `parseEp6Frame` were left on different slot geometries with no way
+to notice: the `7F 7F 7F` sync check is layout-independent.
+
+The count is now derived, `max(codec axis, panadapter axis)`, with
+`P1RadioConnection::announceRxCount` as its single writer.
+`restartStreamWithCount` is private so no caller can set the count knowing only
+one axis. Cheap to over-announce briefly, ruinous to under-announce: the count
+*is* the ep6 slot layout, so a receiver the codec expects is simply absent from
+the frame.
+
+This was latent before the cap change, because a one-panadapter HL2 had a pan
+axis that never moved. It is a precondition for 6.2 being safe, not an
+independent nicety.
+
+Side effect worth noting on a 2-DDC board: adding or removing a panadapter no
+longer restarts the ep6 stream at all, because the codec axis already holds the
+announcement at 2. That removes an audio interruption 6.5 would otherwise have
+introduced.
+
 ### 6.4 Not in scope
 
 `RadioModel.cpp:14313` forwards `DdcAssignment` to `P2RadioConnection` only,
@@ -554,7 +596,8 @@ gate on the approved deviation (§6.2). **If any of rows 8 to 13 fail, commit 2
 is reverted and §6.1 ships alone.** Rows 14 and 15 verify the fleet-wide
 connect-time effect documented in §6.5, on a non-HL2 Protocol 1 board (Hermes,
 Angelia, or Orion). No such hardware exists on this branch; both rows are
-blocked until it does.
+blocked until it does. Rows 16 and 17 verify the two-axis count of §6.3a, and
+run on the HL2.
 
 | # | Check | Expected |
 | --- | --- | --- |
@@ -573,6 +616,8 @@ blocked until it does.
 | 13 | Rows 9 to 12 over the 45 ms tunnel | Stable, no ep6 stalls |
 | 14 | Connect a non-HL2 Protocol 1 board (Hermes, Angelia, or Orion). §6.5's fix now stops, primes, starts and primes on this connect where it previously did not (Hermes 2 to 4, Angelia/Orion 2 to 5) | Reaches a streaming Connected state; no rejected frames, clicks, dropouts or corrupted audio in the first minute. **Requires hardware nobody on this branch has.** |
 | 15 | Same connect, watch the ep6 silence path across the extra stop/start | The radio-side turnaround does not run long enough to trip the 2000 ms ep6 silence watchdog (`kWatchdogSilenceMs`, `P1RadioConnection.h:471`) into a `LinkLost`/reconnect cycle. **Requires hardware nobody on this branch has.** |
+| 16 | PureSignal on, remove the second panadapter, then key down | C4 stays `0x18` throughout. The defect §6.3a fixes showed as `0x00` (one receiver) between the removal and the next key-down, taking DDC2 and DDC3 out of the frame |
+| 17 | PureSignal off, add and remove a panadapter | C4 stays `0x08` and no ep6 stop/start occurs, so no audio interruption: the codec axis already holds the announcement at 2 |
 
 Row 9 is the one that matters most. `nddc = 2` is sent today only during the
 first moments of a connection, so a sustained run is the first real evidence
