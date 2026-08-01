@@ -1921,42 +1921,27 @@ RadioModel::RadioModel(QObject* parent)
     // Pre-hotfix: ANAN-8000DLE 80m TUN at slider=50 produced wire_byte=127
     // (=> ~300W on a 200W radio).  Post-hotfix: wire_byte=49 (=> ~85W).
     // Ratio matches the band's 50.5 dB PA gain compensation.
+    // Body extracted to RadioModel::restoreNormalTxDrive so the MOX-edge
+    // restore below can share it. Behaviour on this path is unchanged.
     connect(&m_transmitModel, &TransmitModel::powerChanged, this,
-            [this](int /*power*/) {
-        if (m_transmitModel.isTune()) { return; }
-        if (!m_connection)            { return; }
-        // Active-profile resolution.  Without a loaded PaProfileManager
-        // (MAC scope not set, or first-launch state before factory regen),
-        // activeProfile() returns nullptr and we silently no-op — same
-        // contract as MicProfileManager when not yet loaded.  The user
-        // sees no wire byte change until the profile bank is live.
-        if (!m_paProfileManager)      { return; }
-        const PaProfile* activeProfile =
-            m_paProfileManager->activeProfile();
-        if (!activeProfile)           { return; }
+            [this](int /*power*/) { restoreNormalTxDrive(); });
 
-        const SliceModel* const txSlice = txBoundSlice();
-        const Band currentBand = txSlice
-                                    ? bandFromFrequency(txSlice->frequency())
-                                    : m_lastBand;
-
-        // Phase 3C deep-parity wrapper: computes audio_volume + applies
-        // ATT-on-TX safety gate (PS-active dormant until 3M-4).  txMode 0
-        // (normal): bFromTune=false, bTwoTone=false.
-        // Issue #175 Task 4: thread connected model so HL2 sub-step path
-        // resolves correctly (txMode 0 path is non-HL2-affected, but
-        // passing the model keeps the call site uniform with TUN path).
-        const auto result = m_transmitModel.setPowerUsingTargetDbm(
-            *activeProfile, currentBand, /*bSetPower=*/true,
-            /*bFromTune=*/false, /*bTwoTone=*/false,
-            m_hardwareProfile.model);
-
-        // Wire byte + IQ scalar pump now happens inside pumpAudioVolume,
-        // wired below to TransmitModel::audioVolumeChanged.  setPowerUsingTargetDbm
-        // emits that signal at TransmitModel.cpp:1129, which fires the
-        // listener synchronously (Qt::AutoConnection on same thread).
-        (void)result;
-    });
+    // From mi0bot console.cs:30272 [v2.10.3.13-beta2]: the drive byte is
+    // recomputed through the normal path on every MOX-to-TX transition, so a
+    // value left behind by TUNE or 2-TONE cannot leak into an ordinary
+    // transmit. See restoreNormalTxDrive for the full cite and the HL2 bench
+    // finding that exposed the missing restore.
+    //
+    // Wired here rather than on tune release: any path that leaves the drive
+    // wrong is then corrected at the start of the next normal transmit, not
+    // just the one path we happened to notice.
+    if (m_moxController) {
+        connect(m_moxController, &MoxController::moxStateChanged, this,
+                [this](bool active) {
+            if (!active) { return; }
+            restoreNormalTxDrive();
+        });
+    }
 
     // ── #202 deep-fix: Audio.RadioVolume setter analogue ─────────────────────
     //
@@ -8579,15 +8564,50 @@ void RadioModel::installBandPlanMoxCheck()
 // ---------------------------------------------------------------------------
 void RadioModel::pushTxFrequencyFromTxSlice()
 {
-    if (!m_connection) { return; }
+    if (!m_connection) {
+        // Same consequence as the no-bound-slice case below: the transmit
+        // frequency is never published and the radio keeps 0 Hz. Logged
+        // because a caller running before m_connection is assigned looks
+        // identical from the outside to never being called at all.
+        qCWarning(lcConnection)
+            << "TX frequency NOT pushed: no connection yet (caller ran before"
+               " m_connection was assigned).";
+        return;
+    }
 
     SliceModel* slice = txBoundSlice();
-    if (!slice) { return; }
+    if (!slice) {
+        // Returning silently here leaves P1RadioConnection::m_txFreqHz at
+        // whatever it last held, which from construction is 0. The codec
+        // still composes a TX VFO bank from it, so the radio is commanded to
+        // transmit at 0 Hz and produces no RF, with nothing anywhere saying
+        // so. Bench-caught 2026-08-01 on a live HL2 (J.J. Boyd, KG4VCF):
+        // TUNE and SSB both silent while the whole TX sequence logged clean.
+        //
+        // The arbiter's id is -1 until something binds a slice for transmit,
+        // and sliceById(-1) is null, so this is reachable whenever the bind
+        // has not happened or the persisted id no longer names a live slice.
+        qCWarning(lcConnection).nospace()
+            << "TX frequency NOT pushed: no TX-bound slice. arbiterId="
+            << (m_txSliceArbiter ? m_txSliceArbiter->txBoundSliceId() : -99)
+            << " sliceCount=" << m_slices.size()
+            << " -- the radio keeps its previous TX frequency (0 at startup)"
+               " and will transmit no RF.";
+        return;
+    }
 
     const qint64 xitOffset =
         slice->xitEnabled() ? static_cast<qint64>(slice->xitHz()) : 0LL;
     const qint64 txHz = static_cast<qint64>(slice->frequency()) + xitOffset;
     const quint64 txFreqHz = (txHz < 0) ? 0 : static_cast<quint64>(txHz);
+
+    // Success is logged too. The failure modes above are only meaningful
+    // against evidence that this path ever runs, and a zero here (a bound
+    // slice sitting at 0 Hz) is its own defect that would otherwise look
+    // exactly like a successful push.
+    qCInfo(lcConnection).nospace()
+        << "TX frequency pushed: " << txFreqHz << " Hz (slice "
+        << slice->sliceIndex() << ", xit=" << xitOffset << ")";
 
     QMetaObject::invokeMethod(m_connection, [conn = m_connection, txFreqHz]() {
         conn->setTxFrequency(txFreqHz);
@@ -11115,6 +11135,56 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
 // swrProtectFactorChanged emit can re-pump the same audio_volume through
 // updated SWR protect (mirrors console.cs:26102-26109 [v2.10.3.13]
 // `Audio.RadioVolume = Audio.RadioVolume` re-emit on _swr_protect change).
+// Ports the drive restore mi0bot performs on every MOX-to-TX transition, at
+// console.cs:30272 [v2.10.3.13-beta2] inside chkMOX_CheckedChanged2's
+// `if (tx)` branch:
+//
+//   if (!chkTUN.Checked && !chk2TONE.Checked) ptbPWR_Scroll(this, EventArgs.Empty);
+//MW0LGE_22b need this here as we may have adjusted power via tune slider when not in mox
+//
+// `ptbPWR_Scroll` (console.cs:29307) calls setPowerFromDriveSlider
+// (:47601-47607), which is SetPowerUsingTargetDBM with bFromTune=false.
+//
+// Bench-caught 2026-08-01 on a live HL2 by J.J. Boyd (KG4VCF): TUNE and then
+// SSB both produced no RF while the software TX sequence logged clean end to
+// end. The TX-edge diagnostic showed the drive byte going 41 to 0 on the TUNE
+// and never coming back, so every later transmit keyed at zero drive. The
+// zero is correct at the time: the mi0bot HL2 carve-out at
+// console.cs:47660-47673 [v2.10.3.13-beta2] deliberately zeroes the drive
+// byte for tune powers at or below 51 and carries the level in the post-gen
+// tone magnitude instead, because the HL2 has only a 15-step output
+// attenuator. What was missing is the restore afterwards.
+void RadioModel::restoreNormalTxDrive()
+{
+    // Guard mirrors upstream's `!chkTUN.Checked && !chk2TONE.Checked`. Both
+    // modes own the drive byte while running, and recomputing here would undo
+    // the HL2 tune carve-out mid-tune.
+    if (m_transmitModel.isTune())          { return; }
+    if (m_transmitModel.isTwoToneActive()) { return; }
+    if (!m_connection)                     { return; }
+
+    // Active-profile resolution. Without a loaded PaProfileManager (MAC scope
+    // not set, or first-launch state before factory regen), activeProfile()
+    // returns nullptr and we silently no-op, the same contract as
+    // MicProfileManager when not yet loaded.
+    if (!m_paProfileManager) { return; }
+    const PaProfile* activeProfile = m_paProfileManager->activeProfile();
+    if (!activeProfile)      { return; }
+
+    const SliceModel* const txSlice = txBoundSlice();
+    const Band currentBand = txSlice ? bandFromFrequency(txSlice->frequency())
+                                     : m_lastBand;
+
+    // txMode 0 (normal): bFromTune=false, bTwoTone=false. The wire byte and
+    // IQ scalar pump happen inside pumpAudioVolume, wired to
+    // TransmitModel::audioVolumeChanged, which setPowerUsingTargetDbm emits.
+    const auto result = m_transmitModel.setPowerUsingTargetDbm(
+        *activeProfile, currentBand, /*bSetPower=*/true,
+        /*bFromTune=*/false, /*bTwoTone=*/false,
+        m_hardwareProfile.model);
+    (void)result;
+}
+
 void RadioModel::pumpAudioVolume(double audioVolume)
 {
     if (!m_connection) {
@@ -11453,14 +11523,38 @@ void RadioModel::setTune(bool on)
                     m_hardwareProfile.model);
 
                 // #202 deep-fix: TXPostGenRun=0 case for new_pwr==0 during TUNE.
-                // Mirrors Thetis console.cs:46749-46752 [v2.10.3.13]:
+                // Mirrors ramdor Thetis console.cs:46749-46752 [v2.10.3.15]:
                 //   if (new_pwr == 0) {
                 //       Audio.RadioVolume = 0.0;
                 //       if (chkTUN.Checked) radio.GetDSPTX(0).TXPostGenRun = 0;
                 //   }
                 // setTuneTone(false, ...) maps to TXPostGenRun=0 in NereusSDR's
                 // TxChannel wrapper (sets the run flag while leaving freq/mag).
-                if (result.newPower == 0 && m_txChannel) {
+                //
+                // NOT applied on the HL2. Bench-caught 2026-08-01 on a live
+                // HL2 (J.J. Boyd, KG4VCF): TUNE produced no RF while every
+                // commanded byte was correct (freq 7221100, alexLpf 0x02,
+                // ocByte 0x04, PA enabled).
+                //
+                // The two upstreams disagree about what new_pwr == 0 means,
+                // and this guard took ramdor's meaning for a board mi0bot
+                // owns. Ramdor's new_pwr == 0 is genuinely zero power, so
+                // killing the tone is right. mi0bot's HL2 carve-out at
+                // console.cs:47660-47673 [v2.10.3.13-beta2] deliberately sets
+                // new_pwr = 0 as the NORMAL tune state, because the HL2 has
+                // only a 15-step output attenuator, and carries the level in
+                // TXPostGenToneMag = (new_pwr + 40) / 100 instead. Killing
+                // the tone there removes the only thing generating RF.
+                //
+                // mi0bot has no new_pwr == 0 tone-kill anywhere. Its only
+                // HL2 TXPostGenRun = 0 is in the tune-RELEASE path at
+                // console.cs:47764 [v2.10.3.13-beta2], commented "MI0BOT:
+                // Switch of the tone gen before releasing PTT", paired with
+                // TXPostGenRun = 1 at :47769 to turn it on for tune.
+                const bool hl2ToneCarriesLevel =
+                    (m_hardwareProfile.model == HPSDRModel::HERMESLITE);
+                if (result.newPower == 0 && !hl2ToneCarriesLevel
+                    && m_txChannel) {
                     m_txChannel->setTuneTone(false, signedFreq,
                                              TxChannel::kMaxToneMag);
                 }
@@ -11616,26 +11710,56 @@ void RadioModel::setTune(bool on)
         // pttOutDelayTimer (ptt_out_delay) → rxReady.  Always called (even
         // when MOX is already off) because it also clears m_manualMox and
         // emits manualMoxChanged(false) — Cite: console.cs:30142 [v2.10.3.13].
+        // TUNE-release ordering, HL2, UNRESOLVED as of 2026-08-01.
+        //
+        // Bench: a thump at the end of an unkey, TUNE only, never on SSB.
+        // That rules out the RX audio gate and the mixer up-slew, which run on
+        // every MOX transition, and points at the tune tone generator.
+        //
+        // mi0bot stops the tone and settles BEFORE dropping PTT, HL2 only:
+        //   if (HardwareSpecific.Model == HPSDRModel.HERMESLITE)   // MI0BOT: Switch of the tone gen before releasing PTT
+        //   {
+        //       radio.GetDSPTX(0).TXPostGenRun = 0;
+        //       await Task.Delay(MoxDelay);
+        //   }
+        //   chkMOX.Checked = false;
+        //     console.cs:30876-30880 [v2.10.3.13-beta2]
+        //
+        // That was implemented here and did NOT cure the thump, so it is not
+        // in the tree. It is also in tension with the ordering rationale
+        // below: killing gen1 while TXA still runs puts a hard step into a
+        // live filter chain, which is the transient the ramdor order avoids.
+        // Two candidate causes remain and they want opposite fixes:
+        //   (a) carrier still generating as the T/R relay switches -> stop
+        //       the tone earlier, which is mi0bot's answer;
+        //   (b) the stop itself is a discontinuity -> setTuneTone writes
+        //       kMaxToneMag and then clears the run flag, truncating a
+        //       full-amplitude sine in one sample, so it wants a ramp down
+        //       rather than a reorder.
+        // Deciding between them needs instrumentation on this path, not
+        // another reorder. Do not re-apply (a) without evidence.
         if (m_moxController) {
             m_moxController->setTune(false);
         }
 
-        if (!moxWasOn) {
-            // No TX→RX walk will fire because MoxController::setMox(false)
-            // hit its idempotent guard.  Schedule completeTuneOff directly
-            // off a QTimer::singleShot so the deferred path still gets a
-            // turn.  The settle delay matches m_tuneOffSettleMs both for
-            // ordering symmetry with the walk path and because Thetis's
-            // `await Task.Delay(100)` (console.cs:30107 [v2.10.3.13]) is
-            // unconditional — it fires whether or not the chkMOX assignment
-            // triggered a walk.  The lambda re-checks the latch in case a
-            // fresh setTune(true) clears it before the timer fires.
-            QTimer::singleShot(m_tuneOffSettleMs, this, [this]() {
-                if (!m_pendingTuneOff) {
-                    return;
-                }
-                completeTuneOff();
-            });
+        {
+            if (!moxWasOn) {
+                // No TX→RX walk will fire because MoxController::setMox(false)
+                // hit its idempotent guard.  Schedule completeTuneOff directly
+                // off a QTimer::singleShot so the deferred path still gets a
+                // turn.  The settle delay matches m_tuneOffSettleMs both for
+                // ordering symmetry with the walk path and because Thetis's
+                // `await Task.Delay(100)` (console.cs:30107 [v2.10.3.13]) is
+                // unconditional — it fires whether or not the chkMOX assignment
+                // triggered a walk.  The lambda re-checks the latch in case a
+                // fresh setTune(true) clears it before the timer fires.
+                QTimer::singleShot(m_tuneOffSettleMs, this, [this]() {
+                    if (!m_pendingTuneOff) {
+                        return;
+                    }
+                    completeTuneOff();
+                });
+            }
         }
 
         // The remainder of the TUN-off work runs from completeTuneOff()

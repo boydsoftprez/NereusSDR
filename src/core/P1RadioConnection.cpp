@@ -2274,6 +2274,32 @@ CodecContext P1RadioConnection::buildCodecContext() const
         ctx.ocByte = 0x00;
     }
 
+    // TX wire-byte diagnostic. Added 2026-08-01 chasing a "TUNE and SSB key
+    // but produce no RF" report on a live HL2, where the software TX
+    // sequence logged clean end to end and gave nothing to work from.
+    //
+    // These four are what actually decide whether the radio emits: the drive
+    // byte (bank 10 C1, zero drive means a silent carrier), the PTT bit
+    // (bank 0 C0 bit 0), the transmit frequency, and the announced receiver
+    // count that sizes the frame. Logged on MOX edges only, so an idle
+    // receive session stays quiet.
+    if (m_mox != m_lastMoxLogged) {
+        m_lastMoxLogged = m_mox;
+        // Read the MEMBERS, not ctx. This diagnostic sits above the block
+        // that populates most of ctx (ctx.txFreqHz is assigned further down),
+        // so reading ctx here reports default-initialised zeros rather than
+        // live state. That cost several rebuilds chasing a transmit frequency
+        // that was never actually zero. ctx.ocByte is the one exception,
+        // assigned above this point, and is read from ctx deliberately
+        // because the bypass override that rewrites it also lives above.
+        qDebug("HL2 TX edge: mox=%d txDrive=%d (0x%02X) txFreq=%llu "
+               "alexLpf=0x%02X activeRx=%d ocByte=0x%02X paEnabled=%d",
+               int(m_mox), m_txDrive, quint8(m_txDrive & 0xFF),
+               static_cast<unsigned long long>(m_txFreqHz),
+               m_alexLpfBits,
+               m_activeRxCount, ctx.ocByte, int(m_paEnabled));
+    }
+
     if (ctx.ocByte != m_lastOcByteLogged) {
         const int bandIdx = int(bandFromFrequency(static_cast<double>(m_rxFreqHz[0])));
         qDebug("HL2 ocByte=0x%02X band=%d mox=%d (matrix=%p)",

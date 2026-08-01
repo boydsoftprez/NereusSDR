@@ -656,6 +656,9 @@ private:
     // Diagnostic: log a single line whenever the resolved ocByte changes.
     // mutable so const buildCodecContext() can update it.
     mutable int m_lastOcByteLogged{0xFFFF};
+    // Diagnostic: log the TX-deciding wire bytes on each MOX edge. Same
+    // mutable-for-const reason as above. -1 so the first edge always logs.
+    mutable int m_lastMoxLogged{-1};
     quint16 m_adcCtrl{0};          // ADC-to-DDC assignment bits
 
     // P1-only ADC-to-DDC routing — Thetis `P1_adc_cntrl` global mirror.

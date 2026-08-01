@@ -2407,6 +2407,24 @@ private slots:
     // reassigned anywhere in baseline Thetis — effectively no-op.
     void pumpAudioVolume(double audioVolume);
 
+    /// Recompute the drive byte through the NORMAL (non-tune) power path.
+    ///
+    /// Ports the restore mi0bot performs on every MOX-to-TX transition, at
+    /// console.cs:30272 [v2.10.3.13-beta2] inside chkMOX_CheckedChanged2's
+    /// `if (tx)` branch:
+    ///
+    ///   if (!chkTUN.Checked && !chk2TONE.Checked) ptbPWR_Scroll(this, EventArgs.Empty);
+    ///   //MW0LGE_22b need this here as we may have adjusted power via tune slider when not in mox
+    ///
+    /// `ptbPWR_Scroll` calls setPowerFromDriveSlider (console.cs:47601-47607),
+    /// which is SetPowerUsingTargetDBM with bFromTune=false. Without it a
+    /// preceding TUNE leaves its drive value in place for the next normal
+    /// transmit. On the HL2 that value is 0, because the mi0bot carve-out at
+    /// console.cs:47660-47673 deliberately zeroes the drive byte for tune
+    /// powers at or below 51 and carries the level in the post-gen tone
+    /// magnitude instead, so a TUNE silences every following SSB transmit.
+    void restoreNormalTxDrive();
+
     // ── Phase 3J-2 H2: per-source spot-adapter slots ────────────────────────
     //
     // Each ingest client emits spotReceived(DxSpot); the adapter slot
