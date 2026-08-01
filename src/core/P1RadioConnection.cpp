@@ -2480,7 +2480,12 @@ CodecContext P1RadioConnection::buildCodecContext() const
                "alexLpf=0x%02X activeRx=%d ocByte=0x%02X paEnabled=%d",
                int(m_mox), m_txDrive, quint8(m_txDrive & 0xFF),
                static_cast<unsigned long long>(m_txFreqHz),
-               m_alexLpfBits,
+               // effectiveAlexLpfBits(), not a raw member: PR #293 split the
+               // single m_alexLpfBits this diagnostic was written against
+               // into Rx/Tx halves, and the accessor is what bank 10 C4
+               // actually carries. Logging either half directly would print
+               // the wrong one on half the edges.
+               effectiveAlexLpfBits(),
                m_activeRxCount, ctx.ocByte, int(m_paEnabled));
     }
 

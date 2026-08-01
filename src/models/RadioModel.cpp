@@ -8802,6 +8802,16 @@ void RadioModel::pushTxFrequencyFromTxSlice()
 
     const quint64 txFreqHz = txFrequencyForSlice(slice);
 
+    // Recomputed rather than read from RadioModel::xitOffset(). The XIT that
+    // went into txFreqHz is the BOUND SLICE's, which is what this line is
+    // reporting; the member accessor answers for the active slice, and those
+    // are different slices whenever the operator is working split. The
+    // computation used to be inline here and moved into
+    // txFrequencyForSlice() -- the log line stayed behind and silently
+    // rebound to the member function.
+    const qint64 xitOffset =
+        slice->xitEnabled() ? static_cast<qint64>(slice->xitHz()) : 0LL;
+
     // Success is logged too. The failure modes above are only meaningful
     // against evidence that this path ever runs, and a zero here (a bound
     // slice sitting at 0 Hz) is its own defect that would otherwise look
