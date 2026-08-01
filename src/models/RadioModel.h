@@ -673,12 +673,17 @@ public:
     // MainWindow handler can route the VfoWidget to the owning pan. Passing
     // an empty string preserves the legacy single-pan behaviour.
     /// Returns the new slice's id — the lowest not currently in use, which
-    /// is also its WDSP RX channel id and its A-E display letter.
-    /// `ownStream` forwards to bindSliceToStream: true means this slice is
-    /// getting its own panadapter and needs its own receiver window, false
-    /// means the cheapest placement is right. Set by addSliceOnPan.
-    int addSlice(const QString& initialPanId = QString(),
-                 bool ownStream = false);
+    /// is also its WDSP RX channel id and its A-E display letter. Returns
+    /// -1 if the allocator refused to place it, in which case nothing is
+    /// added: see the rollback in the definition.
+    ///
+    /// Whether the slice gets its own receiver window or shares an existing
+    /// one is DERIVED from `initialPanId`, not passed in: a pan with no
+    /// other slices is new and needs its own, a pan that already has slices
+    /// is a host and sharing it is the point. It was briefly a caller-
+    /// supplied flag; every caller that forgot it silently reintroduced the
+    /// coupled-pan defect, so the decision lives with the data it depends on.
+    int addSlice(const QString& initialPanId = QString());
 
     /// Takes a slice ID (see sliceById), not a list position. sliceRemoved
     /// carries the same id.

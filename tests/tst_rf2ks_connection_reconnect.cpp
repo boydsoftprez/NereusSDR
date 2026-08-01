@@ -403,6 +403,8 @@ void Rf2ksConnectionReconnectTest::initialFailureDoesNotRetryWhenDisabled()
     QVERIFY2(!requestSpy.wait(200),
              "normal polling continued after the failed initial /info");
     QCOMPARE(server.paths(), QStringList{QStringLiteral("/info")});
+}
+
 // Codex review [P2] on PR #291: onReconnectTimeout() restarted the poll
 // timer as soon as it issued the /info probe, without waiting to see whether
 // the probe answered.  m_connected was still false, so every later failure
@@ -430,6 +432,22 @@ void Rf2ksConnectionReconnectTest::failedReconnectProbeKeepsBackingOff() {
     const int afterDown = conn.testCurrentBackoffMs();
 
     // First reconnect probe fails.  This is the case that used to dead-end.
+    //
+    // The timeout is fired explicitly rather than jumping straight to the
+    // failure.  scheduleReconnect() ignores a request while a retry is
+    // already armed, so a probe failure only advances the backoff once the
+    // pending timer has actually elapsed -- which is exactly what happens in
+    // production, because onReconnectTimeout() stops the timer before it
+    // issues /info.  Calling testMarkPollFailure() straight after the down
+    // transition models a probe failing before its own timer fired, which
+    // cannot occur, and the guard correctly swallows it.
+    //
+    // (Merge note: this test arrived with PR #291, whose scheduleReconnect()
+    // had no already-armed guard, so the shortcut happened to work there.
+    // The guard comes from the Phase 3F side and is the safer of the two;
+    // the invariant being asserted is unchanged.)
+    QVERIFY(QMetaObject::invokeMethod(&conn, "onReconnectTimeout",
+                                      Qt::DirectConnection));
     conn.testMarkPollFailure();
     QVERIFY2(conn.testReconnectPending(),
              "a failed reconnect probe must arm another retry, not give up");
@@ -440,6 +458,8 @@ void Rf2ksConnectionReconnectTest::failedReconnectProbeKeepsBackingOff() {
              "poller must stay stopped while the amp is still unreachable");
 
     // Second failed probe: still backing off, still not polling.
+    QVERIFY(QMetaObject::invokeMethod(&conn, "onReconnectTimeout",
+                                      Qt::DirectConnection));
     conn.testMarkPollFailure();
     QVERIFY(conn.testReconnectPending());
     QVERIFY2(conn.testCurrentBackoffMs() > afterProbe1,

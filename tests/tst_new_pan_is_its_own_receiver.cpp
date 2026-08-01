@@ -79,6 +79,72 @@ private slots:
             "panning either pan move both");
     }
 
+    // ── 1b. A refused pan leaves nothing behind ──────────────────────────
+    //
+    // Codex review P1, PR #311. addSlice discarded the bind result, so a
+    // refused placement still produced a wired, emitted slice with
+    // streamIndex() == -1: a pan that looks populated, receives no I/Q, and
+    // permanently burns one of the five slice slots. Reachable since the
+    // allocator started refusing instead of falling back to sharing.
+    //
+    // Two DDCs, both claimed by pans, then a third pan asked for.
+    void a_refused_pan_does_not_leave_a_dead_slice()
+    {
+        RadioModel model;
+        seed(model, /*ddcs*/ 2);
+
+        const int a = model.addSlice(QStringLiteral("pan-0"));
+        QVERIFY(model.sliceById(a));
+        model.sliceById(a)->setFrequency(14200000.0);
+
+        const int b = model.addSlice(QStringLiteral("pan-1"));
+        QVERIFY(model.sliceById(b));
+
+        const int before = model.slices().size();
+        QSignalSpy rejected(&model, &RadioModel::sliceAddRejected);
+
+        const int c = model.addSlice(QStringLiteral("pan-2"));
+
+        QCOMPARE(c, -1);
+        QCOMPARE(model.slices().size(), before);
+        QVERIFY2(model.sliceById(c) == nullptr,
+                 "a refused slice must not remain addressable");
+        QCOMPARE(rejected.count(), 1);
+
+        // The slot it would have burned is still available: a slice that
+        // CAN be placed still succeeds afterwards.
+        const int d = model.addSlice(QStringLiteral("pan-0"));
+        QVERIFY2(model.sliceById(d) != nullptr,
+                 "the refused slice must not have consumed a slice slot");
+        QVERIFY(model.sliceById(d)->streamIndex() >= 0);
+    }
+
+    // ── 1c. Slice A survives being created before the pool exists ────────
+    //
+    // The rollback keys on the pool being sized, not on the bare bool.
+    // bindSliceToStream also returns false when there is no pool yet, which
+    // is exactly where connectToRadio creates Slice A (configureStreamPool
+    // runs later, then bindUnboundSlices binds it). Rolling back on the bool
+    // alone would delete Slice A on every cold start.
+    void a_slice_created_before_the_pool_is_kept()
+    {
+        RadioModel model;                     // deliberately NOT seeded
+
+        const int a = model.addSlice(QStringLiteral("pan-0"));
+
+        QVERIFY2(a >= 0, "a slice created before connect must still be made");
+        QVERIFY(model.sliceById(a) != nullptr);
+        QCOMPARE(model.sliceById(a)->streamIndex(), -1);
+
+        // And it binds once the pool arrives, which is the whole reason it
+        // had to survive.
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        model.configureStreamPool(/*userDdcCount*/ 2, /*maxSlices*/ 5, 192000);
+        model.bindUnboundSlices();
+        QVERIFY2(model.sliceById(a)->streamIndex() >= 0,
+                 "bindUnboundSlices must adopt the pre-pool slice");
+    }
+
     // ── 2. +RX on an existing pan still shares ───────────────────────────
     //
     // The other half of the rule. If this also claimed a DDC, co-hosted

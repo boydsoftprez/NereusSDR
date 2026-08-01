@@ -4182,7 +4182,7 @@ bool RadioModel::requestTxHandoffToSlice(int sliceId)
     return m_txSliceArbiter->requestHandoff(sliceId);
 }
 
-int RadioModel::addSlice(const QString& initialPanId, bool ownStream)
+int RadioModel::addSlice(const QString& initialPanId)
 {
     auto* slice = new SliceModel(this);
 
@@ -4260,7 +4260,63 @@ int RadioModel::addSlice(const QString& initialPanId, bool ownStream)
         slice->setFrequency(m_activeSlice->frequency());
         slice->setDspMode(m_activeSlice->dspMode());
     }
-    bindSliceToStream(slice, slice->frequency(), ownStream);
+
+    // ── Roll back a slice the allocator refused ─────────────────────────
+    //
+    // Codex review P1, PR #311. The return used to be discarded, so a
+    // refused placement still wired and emitted the slice. It arrived with
+    // streamIndex() == -1, which makes the pan look populated while
+    // RxDspWorker never demodulates it -- the same "live-looking VFO
+    // attached to a dead receiver" the retune path below rolls back to
+    // avoid -- and it permanently consumed one of the five slice slots.
+    //
+    // This became reachable in this merge. While placeSlice fell back to
+    // sharing when the pool was full, a new pan practically never got
+    // Rejected; PR #311 made an own-stream request refuse instead, on
+    // purpose, so "no DDC left for a new pan" is now a normal outcome on a
+    // 2-DDC HL2 (restoring a 2x2 layout is the reported case).
+    //
+    // The pool check, NOT the bare bool: bindSliceToStream returns false for
+    // two unrelated reasons, and only one of them is a rejection. Before the
+    // pool is sized (disconnected, or connectToRadio has not yet reached
+    // configureStreamPool) it returns false without consulting the
+    // allocator, and that slice MUST survive -- Slice A is created exactly
+    // there, and bindUnboundSlices() binds it at connect. Rolling back on
+    // the bool alone would delete Slice A on every cold start.
+    // Whether this slice opens a NEW pan is derived here, not taken from the
+    // caller. PR #311 made it a parameter and addSliceOnPan passed a bare
+    // `true`, which is the Codex P1 that applied the new-pan policy to
+    // ordinary +RX slices. Moving the predicate to that one call site fixed
+    // that caller and silently broke every other one: addSlice(panId) then
+    // requested the cheapest placement, so a second pan created through any
+    // path but addSliceOnPan went back to sharing a DDC and tuning in
+    // lockstep -- the original defect, restored through the fix for it.
+    //
+    // Derived inside addSlice (PR #293's placement) it cannot be forgotten
+    // by a caller, and it answers correctly for both callers: a pan with no
+    // other slices on it is new and wants its own receiver, a pan that
+    // already has slices is a host and sharing it is the point.
+    //
+    // `slice` is excluded because m_slices.append above already added it, so
+    // "are there slices on this pan" would otherwise always answer yes.
+    const bool openingANewPan =
+        !initialPanId.isEmpty() && slicesOnPan(initialPanId, slice).isEmpty();
+
+    const bool poolReady = m_streamAllocator.streamCount() > 0;
+    if (!bindSliceToStream(slice, slice->frequency(), openingANewPan)
+        && poolReady) {
+        // bindSliceToStream already emitted sliceAddRejected with the
+        // allocator's reason for this first-bind case, so the operator has
+        // been told why; this only has to undo the half-built slice.
+        m_slices.removeAll(slice);
+        if (m_txSliceArbiter) {
+            // The syncToSliceList above may have handed TX to this slice.
+            // Re-run against the list it is no longer in.
+            m_txSliceArbiter->syncToSliceList();
+        }
+        delete slice;
+        return -1;
+    }
 
     // Retuning re-runs the allocator: the slice may stay on its stream
     // (shift only), move its stream's centre if it is the sole occupant, or
@@ -4629,26 +4685,13 @@ void RadioModel::addSliceOnPan(const QString& panId)
     // wiring, and active-slice bookkeeping in one place. Pass the panId so
     // it is stamped on the slice BEFORE sliceAdded() fires (bench fix
     // 2026-06-03; previously set after the emit -> handler saw it empty).
-    // ownStream: opening a NEW pan asks for an independent window, not the
-    // cheapest placement. Without it the slice seeded above at the active
-    // slice's frequency lands inside that slice's window and shares its DDC,
-    // and the two pans then move together. Bench-caught 2026-08-01.
-    //
-    // Only when the pan is genuinely empty, though. This entry point serves
-    // both "+PAN" and the pan menu's "add slice on active pan", and the
-    // second one wants the opposite answer: a slice joining a populated pan
-    // should share that pan's receiver, which is what makes co-hosted slices
-    // free. Demanding a fresh DDC there is a hardware request the radio
-    // cannot always honour -- on a 2-DDC HL2 with both pans populated it
-    // fails outright, even though maxSlices=5 exists precisely because
-    // slices share the two available windows.
-    //
-    // Predicate from the 2026-07-30 bench work on the same defect (PR #293):
-    // a pan is a receiver when it is new, and a host when it is not. No
-    // `except` argument needed -- the slice does not exist yet.
-    const bool openingANewPan = !panId.isEmpty() && slicesOnPan(panId).isEmpty();
-
-    addSlice(panId, openingANewPan);
+    // Whether this opens a new pan (own receiver) or joins a populated one
+    // (shared receiver) is derived inside addSlice from the pan id. This
+    // entry point serves both "+PAN" and the pan menu's "add slice on active
+    // pan", so it must not assert either answer: passing a bare `true` here
+    // is what made ordinary +RX slices demand a third DDC and get refused on
+    // a 2-DDC HL2 (Codex P1, PR #311).
+    addSlice(panId);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
