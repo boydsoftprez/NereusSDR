@@ -534,8 +534,8 @@ private:
     //     SetPSTxIdx convention — the per-board codec is authoritative.
     //
     // Read on the connection thread only (deinterleave runs there).
-    int m_psFbDdc{-1};       // PS-feedback DDC (Thetis ps_rx_idx; default 0)
-    int m_psTxMonDdc{-1};    // TX-monitor DDC  (Thetis ps_tx_idx; default 1)
+    int m_psFbDdc{-1};       // PS-feedback DDC (Thetis ps_rx_idx); -1 = no pair
+    int m_psTxMonDdc{-1};    // TX-monitor DDC  (Thetis ps_tx_idx); -1 = no pair
 
     // --- DDC enable-mask ownership (Phase 3F Sub-Epic I closeout) ─────────
     //

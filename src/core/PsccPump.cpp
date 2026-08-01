@@ -122,6 +122,16 @@ void PsccPump::onDdcConfigChanged(const PsDdcConfig& cfg)
     // PsDdcConfig.psFbDdc / .txMonDdc; if neither has been set (e.g.
     // codec hasn't been wired yet, or fallback pre-PS state), we use the
     // cmaster.cs:533-534 [v2.10.3.13] default of (0, 1).
+    //
+    // Since 2026-08-01 the unset state is the struct's own default: both
+    // fields start at -1 rather than at (0, 1), so this fallback is now the
+    // only thing that supplies Stream0/Stream1 for a config that satisfies
+    // wantActive without naming a pair (the diversity branches do, since
+    // they also run DDC0 with DDC1 synced at a matching rate). Keeping it
+    // leaves that case behaving exactly as it did before the sentinel. Such
+    // a pump is inert either way: the connection layer emits the paired
+    // signal only for a codec-configured pair, so nothing ever reaches
+    // onPsPairedIqData to be misread as PS feedback.
     const int newPsFbDdc  = (cfg.psFbDdc  >= 0) ? cfg.psFbDdc  : 0;
     const int newTxMonDdc = (cfg.txMonDdc >= 0) ? cfg.txMonDdc : 1;
 

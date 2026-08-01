@@ -1880,6 +1880,13 @@ void P1RadioConnection::applyPsDdcConfig(const NereusSDR::PsDdcConfig& cfg)
     // pair so parseEp6Frame can emit the source-first paired signal.
     // PsDdcConfig stores -1 when no PS pair applies (RX-only steady state);
     // a non-negative pair means PS-MOX is engaged on this connection.
+    //
+    // That was the intent from the start but not the behaviour until
+    // 2026-08-01: PsDdcConfig defaulted the pair to (0, 1) and only the
+    // PS-MOX branches assign it, so an RX-only config latched a valid-looking
+    // pair here and left parseEp6Frame's gate open for the whole session.
+    // The struct now defaults to the sentinel (CodecContext.h), so a config
+    // without a PS pair clears the latch instead of arming it.
     if (cfg.psFbDdc != m_psFbDdc) {
         m_psFbDdc = cfg.psFbDdc;
         changed = true;
@@ -3192,14 +3199,15 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
     // the PS pair is latched, so it costs nothing in normal RX.
     // Gated on MOX, not merely on the PS indices being non-negative.
     //
-    // PsDdcConfig defaults psFbDdc=0 / txMonDdc=1 (CodecContext.h), and every
-    // branch of applyPureSignalDdcConfig outside PS-MOX leaves those defaults
-    // in place, so "has a PS pair" is true even with PureSignal switched off
-    // entirely. An earlier revision of this diagnostic keyed on that and
-    // measured itself running at 201,400 samples per second on a quiet
-    // receiver. The paired emit below has the same gate and the same problem;
-    // that one is a real cost worth fixing separately rather than in a
-    // diagnostic.
+    // The indices alone used to mean nothing at all: PsDdcConfig defaulted
+    // psFbDdc=0 / txMonDdc=1, and no branch of applyPureSignalDdcConfig
+    // outside PS-MOX assigns them, so "has a PS pair" was true with
+    // PureSignal switched off entirely. An earlier revision of this
+    // diagnostic keyed on that and measured itself running at 201,400
+    // samples per second on a quiet receiver; the paired emit below shared
+    // the same open gate. Fixed 2026-08-01 by defaulting both indices to -1
+    // in CodecContext.h, so the gate now tracks the PS pair the codec
+    // actually configured.
     if (m_mox && m_psFbDdc >= 0 && m_psTxMonDdc >= 0) {
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         if (nowMs - m_psDiagLastMs >= 1000) {

@@ -804,9 +804,13 @@ PsDdcConfig P1CodecStandard::psDdcConfigHermesIIClass(
             //
             // The bank-2/3 freq override (commit `9bde052`) forces DDC0+DDC1
             // to TX freq during PS-MOX, so DDC0 = PS feedback, DDC1 = TX
-            // monitor.  These match the global cmaster.cs:533-534 defaults.
-            cfg.psFbDdc  = 0;     // explicit for documentation; matches default
-            cfg.txMonDdc = 1;     // explicit for documentation; matches default
+            // monitor.  These match the global cmaster.cs:533-534 stream
+            // convention, but they are this branch's real values and must be
+            // written here: PsDdcConfig defaults the pair to -1 (no PS pair),
+            // so an unassigned field would leave PureSignal unrouted on this
+            // family rather than falling back to (0, 1).
+            cfg.psFbDdc  = 0;
+            cfg.txMonDdc = 1;
         }
     }
 

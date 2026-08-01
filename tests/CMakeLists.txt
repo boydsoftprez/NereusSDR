@@ -545,6 +545,18 @@ target_compile_definitions(tst_ps_ddc_indices_per_board PRIVATE NEREUS_BUILD_TES
 nereus_add_test(tst_pscc_pump_paired)
 target_compile_definitions(tst_pscc_pump_paired PRIVATE NEREUS_BUILD_TESTS)
 
+# ── PS pairing must not run during ordinary RX (2026-08-01) ──────────────
+# PsDdcConfig defaulted psFbDdc/txMonDdc to 0 and 1, and only the PS-MOX
+# branches assign them, so P1RadioConnection::parseEp6Frame's
+# `m_psFbDdc >= 0 && m_psTxMonDdc >= 0` gate was open on every board from the
+# first DDC config onward: two QVector copies plus one signal per EP6 frame,
+# on the connection thread, all discarded by PsccPump's !m_active guard.
+# These 4 tests pin the sentinel (-1 = no pair) in both directions: silent
+# with PureSignal off or keyed without it, one emit on (DDC2, DDC3) under
+# HL2 PS-MOX, and silent again after unkeying.
+nereus_add_test(tst_p1_ps_pair_gate)
+target_compile_definitions(tst_p1_ps_pair_gate PRIVATE NEREUS_BUILD_TESTS)
+
 # ── P1 full-parity Task 2.5: TransmitModel::pureSig → setPuresignalRun wiring ─
 # 8 tests pin the model-to-connection wiring installed in
 # RadioModel::wireConnectionSignals + the initial-push pattern in
