@@ -592,6 +592,10 @@ private:
     int     m_psFbDdc{-1};       // PS-feedback DDC (Thetis ps_rx_idx)
     int     m_psTxMonDdc{-1};    // TX-monitor DDC  (Thetis ps_tx_idx)
 
+    // Rate limit for the PS stream diagnostic in parseEp6Frame. One line per
+    // second; at 192 kHz the paired emit fires roughly 750 times a second.
+    qint64  m_psDiagLastMs{0};
+
     // Phase 3P-A: per-board codec chosen at applyBoardQuirks() time.
     // Null when m_caps is null (pre-connect) or env var
     // NEREUS_USE_LEGACY_P1_CODEC=1 forces legacy compose path.

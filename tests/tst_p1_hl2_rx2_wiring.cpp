@@ -115,6 +115,83 @@ private slots:
         QVERIFY(model.receiverManager()->rx2Enabled());
     }
 
+    // ── Claiming a stream has to make its DDC routable ───────────────────
+    //
+    // Bench-caught 2026-08-01 (J.J. Boyd, KG4VCF) on a live HL2. The second
+    // panadapter came up permanently blank: no trace, no waterfall, VFO flag
+    // reading 0.0000. The radio was sending DDC1 the whole time (the PS
+    // stream diagnostic measured it), and an FFT engine had been built for
+    // stream 1, but ReceiverManager threw every sample away:
+    //
+    //   WRN: ReceiverManager: first feedIqData dropped;
+    //        hwReceiverIndex=1 map="hw0->rx0"
+    //
+    // bindSliceToStream's NewStream branch set the stream's frequency but
+    // never told ReceiverManager the receiver existed, so
+    // rebuildHardwareMapping never ran and m_hwToLogical stayed {0: 0}.
+    // activateReceiver was only reachable from setActiveRxCountLive, which
+    // follows the operator's active-RX-count setting, not the allocator.
+    //
+    // Latent until a second stream could actually be claimed. It was masked
+    // before the +PAN own-stream fix, because a second pan co-hosted on
+    // stream 0 and rendered a duplicate of the first rather than nothing:
+    // the two-pans-move-together symptom.
+    void claiming_a_stream_makes_its_hardware_ddc_routable()
+    {
+        P1CodecHl2 codec;
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::HermesLite);
+        model.receiverManager()->setP1Codec(&codec);
+        model.receiverManager()->setHpsdrModel(HPSDRModel::HERMESLITE);
+        model.configureStreamPool(/*userDdcCount=*/2, /*maxSlices=*/5, 192000);
+
+        const int idA = model.addSlice();
+        model.sliceById(idA)->setFrequency(14200000);
+
+        // Far outside A's 192 kHz window, so this claims stream 1.
+        const int idB = model.addSlice();
+        model.sliceById(idB)->setFrequency(7100000);
+        QCOMPARE(model.sliceById(idB)->streamIndex(), 1);
+
+        // The claim is worthless unless the hardware DDC routes. Without
+        // this, iqDataReceived(1, ...) is dropped and the pan stays blank.
+        const ReceiverConfig rx1 = model.receiverManager()->receiverConfig(1);
+        QVERIFY2(rx1.active, "stream 1 claimed but its receiver is inactive");
+        QCOMPARE(rx1.hardwareRx, 1);
+        QCOMPARE(model.receiverManager()->activeReceiverCount(), 2);
+    }
+
+    // The symmetric half. A stream whose last slice goes away goes idle in
+    // the allocator, and its receiver has to go with it, or the routing table
+    // and the announced count keep describing a DDC nobody reads.
+    //
+    // Removing the slice rather than retuning it: a sole occupant DRAGS its
+    // stream to the new frequency (SliceStreamAllocator::retuneSlice, the
+    // RetunedStream outcome) instead of migrating off it, so retuning B into
+    // A's window leaves stream 1 live and occupied. That is deliberate and is
+    // pinned by its own tests in tst_slice_stream_allocator.
+    void a_stream_going_idle_releases_its_receiver()
+    {
+        P1CodecHl2 codec;
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::HermesLite);
+        model.receiverManager()->setP1Codec(&codec);
+        model.receiverManager()->setHpsdrModel(HPSDRModel::HERMESLITE);
+        model.configureStreamPool(2, 5, 192000);
+
+        const int idA = model.addSlice();
+        model.sliceById(idA)->setFrequency(14200000);
+        const int idB = model.addSlice();
+        model.sliceById(idB)->setFrequency(7100000);
+        QCOMPARE(model.receiverManager()->activeReceiverCount(), 2);
+
+        model.removeSlice(idB);
+
+        QVERIFY2(!model.receiverManager()->receiverConfig(1).active,
+                 "stream 1 is idle but its receiver is still active");
+        QCOMPARE(model.receiverManager()->activeReceiverCount(), 1);
+    }
+
     // Changing the announced receiver count changes the ep6 slot layout on
     // both sides at once (parseEp6Frame's slotBytes = 6 * numRx + 2). A bare
     // assignment leaves frames in flight that were composed under the old

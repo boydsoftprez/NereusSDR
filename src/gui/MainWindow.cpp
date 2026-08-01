@@ -2426,6 +2426,23 @@ void MainWindow::buildUI()
         // (Codex review round 3, PR #293.)
         m_panStack->applyLayout(restoredLayout, panIdsForLayout(restoredLayout));
         m_panStack->restoreSplitterState();
+
+        // ...and finish the job once there IS a radio. Skipping the slice
+        // add-loop above is right, but nothing used to pick it up afterwards,
+        // so a persisted 2v layout came back with pan-1 permanently dead: no
+        // trace, no waterfall, a 0.0000 flag, and no way forward except
+        // noticing you have to add Slice B by hand (bench, 2026-08-01,
+        // J.J. Boyd KG4VCF).
+        //
+        // Queued so it lands after the connect handlers that size the stream
+        // pool and bind Slice A have run; addSliceOnPan needs a sized pool to
+        // bind what it creates.
+        connect(m_radioModel, &RadioModel::connectionStateChanged, this,
+                [this](ConnectionState s) {
+            if (s != ConnectionState::Connected) { return; }
+            QMetaObject::invokeMethod(this, [this]() { populateEmptyPans(); },
+                                      Qt::QueuedConnection);
+        });
     }
 
     // Phase 3F Sub-Epic E Task 3: the badge clicks are armed for every pan
@@ -8615,8 +8632,44 @@ void MainWindow::applyPanLayout(const QString& layoutId)
 
     // Whatever is still empty after the surplus has been used up genuinely
     // needs a new slice.
-    const QStringList stillEmpty = m_radioModel->pansWithoutSlices(ids);
-    for (const QString& emptyPan : stillEmpty) {
+    populateEmptyPans();
+}
+
+// ---------------------------------------------------------------------------
+// populateEmptyPans — every pan needs a slice to be worth anything
+//
+// A pan with no slice has no VfoWidget, no RX applet entry, and no stream
+// feeding it: it renders as an empty box with a 0.0000 flag.
+//
+// Called from two places, and the second one is why this is a function.
+// applyPanLayout calls it because a layout change can add panes. The connect
+// handler calls it because the startup layout restore deliberately does NOT
+// (MainWindow.cpp, the PanLayoutId block): at startup no radio is connected
+// and the stream pool is unsized, so manufacturing slices there would bind
+// nothing. Correct as far as it goes, but nothing finished the job once a
+// radio did connect.
+//
+// Bench-caught 2026-08-01 (J.J. Boyd, KG4VCF): quit with a 2v layout, relaunch,
+// connect, and the second pan is permanently dead until the operator notices
+// they have to add Slice B by hand. The log gives it away by omission, with no
+// "Pan layout: applying" line anywhere in the session.
+//
+// addSliceOnPan enforces the maxSlices cap itself and emits sliceAddRejected
+// with an operator-facing reason, so there is no cap arithmetic here.
+// ---------------------------------------------------------------------------
+void MainWindow::populateEmptyPans()
+{
+    if (!m_radioModel || !m_panStack) { return; }
+
+    // The pans that actually exist, not panIdsForLayout's template. After a
+    // restore those are the same, but reading the live stack means a pan
+    // created by any other route is covered too.
+    QStringList ids;
+    for (const PanadapterApplet* applet : m_panStack->allApplets()) {
+        if (applet) { ids << applet->panId(); }
+    }
+
+    for (const QString& emptyPan : m_radioModel->pansWithoutSlices(ids)) {
         m_radioModel->addSliceOnPan(emptyPan);
     }
 }

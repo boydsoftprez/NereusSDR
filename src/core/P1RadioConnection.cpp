@@ -3167,11 +3167,62 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
     // observation matches Thetis: ChannelMaster fires the PS-paired
     // call (xrouter case 2 → InboundBlock(1)) on the same frame that
     // feeds the regular per-RX consumers.
-    if (m_psFbDdc >= 0 && m_psTxMonDdc >= 0
+    const bool psPairPresent =
+        m_psFbDdc >= 0 && m_psTxMonDdc >= 0
         && m_psFbDdc < static_cast<int>(perRxVecs.size())
         && m_psTxMonDdc < static_cast<int>(perRxVecs.size())
         && !perRxVecs[m_psFbDdc].isEmpty()
-        && !perRxVecs[m_psTxMonDdc].isEmpty()) {
+        && !perRxVecs[m_psTxMonDdc].isEmpty();
+
+    // PS stream diagnostic. Added 2026-08-01 (J.J. Boyd, KG4VCF) because
+    // PureSignal parks in LCOLLECT on a live HL2 and the state alone cannot
+    // say why: LCOLLECT bins by TX magnitude (calcc.c:733-756) and needs all
+    // 16 bins filled, so a flat envelope and a dead stream look identical
+    // from outside. The peaks distinguish them:
+    //
+    //   tx peak near zero          TX monitor is not carrying the drive
+    //   tx peak steady, non-zero   constant envelope, PS cannot calibrate
+    //                              on this signal (a TUNE carrier does this)
+    //   tx peak varying            envelope is fine, look further downstream
+    //   rx peak near zero          no feedback reaching DDC2 (coupler,
+    //                              attenuation, or ADC steering)
+    //
+    // Nothing on this path logged anything, so a whole bench session
+    // produced no evidence beyond "state=4". Once per second, and only while
+    // the PS pair is latched, so it costs nothing in normal RX.
+    if (m_psFbDdc >= 0 && m_psTxMonDdc >= 0) {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (nowMs - m_psDiagLastMs >= 1000) {
+            m_psDiagLastMs = nowMs;
+            if (!psPairPresent) {
+                qCInfo(lcConnection).nospace()
+                    << "PS streams: pair NOT emitted -- fb=" << m_psFbDdc
+                    << " txMon=" << m_psTxMonDdc
+                    << " slotsInFrame=" << int(perRxVecs.size())
+                    << " fbEmpty=" << (m_psFbDdc < int(perRxVecs.size())
+                                       ? perRxVecs[m_psFbDdc].isEmpty() : true)
+                    << " txMonEmpty=" << (m_psTxMonDdc < int(perRxVecs.size())
+                                       ? perRxVecs[m_psTxMonDdc].isEmpty() : true);
+            } else {
+                const auto peakOf = [](const QVector<float>& v) {
+                    float pk = 0.0F;
+                    for (float s : v) {
+                        const float a = std::fabs(s);
+                        if (a > pk) { pk = a; }
+                    }
+                    return pk;
+                };
+                qCInfo(lcConnection).nospace()
+                    << "PS streams: txMon(DDC" << m_psTxMonDdc << ") peak="
+                    << peakOf(perRxVecs[m_psTxMonDdc])
+                    << "  fb(DDC" << m_psFbDdc << ") peak="
+                    << peakOf(perRxVecs[m_psFbDdc])
+                    << "  samples=" << perRxVecs[m_psTxMonDdc].size() / 2;
+            }
+        }
+    }
+
+    if (psPairPresent) {
         emit psPairedIqDataReceived(m_psFbDdc,    perRxVecs[m_psFbDdc],
                                     m_psTxMonDdc, perRxVecs[m_psTxMonDdc]);
     }

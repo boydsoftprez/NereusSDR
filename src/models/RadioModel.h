@@ -2742,6 +2742,13 @@ public:
     bool bindSliceToStream(SliceModel* slice, double frequencyHz,
                            bool preferOwnStream = false);
 
+    /// Mirror a stream's liveness into ReceiverManager's active-receiver set,
+    /// which is what decides whether that hardware DDC's samples are forwarded
+    /// or dropped. Called from bindSliceToStream on both edges. Idempotent.
+    /// See the definition for the bench defect that showed the two were never
+    /// connected.
+    void syncReceiverToStream(int streamIndex, bool live);
+
     /// Push the current slice set for `streamIndex` to RxDspWorker and emit
     /// streamBindingsChanged. Called after every bind / unbind.
     void republishStreamBindings(int streamIndex);

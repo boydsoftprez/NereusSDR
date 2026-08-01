@@ -3817,6 +3817,57 @@ bool RadioModel::setStreamSampleRate(int streamIndex, int rateHz)
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// syncReceiverToStream — make ReceiverManager follow the allocator
+//
+// The allocator is the authority on which DDC streams are live: a stream is
+// live exactly when a slice sits on it. ReceiverManager decides which hardware
+// DDC indices it will forward samples for, and it rebuilds that table only
+// when a receiver is activated or deactivated. Nothing connected the two.
+//
+// Bench-caught 2026-08-01 (J.J. Boyd, KG4VCF) on a live HL2. The second
+// panadapter was permanently blank while the radio streamed DDC1 the whole
+// time, because ReceiverManager was throwing it away:
+//
+//   WRN: ReceiverManager: first feedIqData dropped;
+//        hwReceiverIndex=1 map="hw0->rx0"
+//
+// activateReceiver was reachable only from setActiveRxCountLive, which
+// follows the operator's active-RX-count setting rather than the allocator,
+// so a stream claimed by placing a slice never became routable.
+//
+// Both ReceiverManager calls are idempotent, so this is safe to call on every
+// bind including the retunes and rejoins where nothing has changed.
+// ---------------------------------------------------------------------------
+void RadioModel::syncReceiverToStream(int streamIndex, bool live)
+{
+    if (!m_receiverManager || streamIndex < 0) { return; }
+
+    if (!live) {
+        m_receiverManager->deactivateReceiver(streamIndex);
+        return;
+    }
+
+    // createReceiver hands out sequential indices, so reaching index N means
+    // creating everything up to it. Bounded by the receiver pool's own cap,
+    // which returns -1 once it is full; the guard is belt and braces against
+    // a future createReceiver that stops being sequential rather than a
+    // condition that can arise today.
+    for (int guard = 0; guard <= streamIndex + 1; ++guard) {
+        if (m_receiverManager->receiverConfig(streamIndex).receiverIndex >= 0) {
+            break;
+        }
+        if (m_receiverManager->createReceiver() < 0) {
+            qCWarning(lcConnection)
+                << "Stream" << streamIndex
+                << "claimed but the receiver pool is full; its DDC will not"
+                   " route and its panadapter will stay blank";
+            return;
+        }
+    }
+    m_receiverManager->activateReceiver(streamIndex);
+}
+
 bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
                                    bool preferOwnStream)
 {
@@ -3927,6 +3978,11 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
         m_streamAllocator.activateStream(
             placement.streamIndex, placement.newStreamCentreHz, rateForStream);
 
+        // A claimed stream is worthless until its hardware DDC routes.
+        // setReceiverFrequency below tunes the DDC; this is what makes
+        // ReceiverManager forward its samples.
+        syncReceiverToStream(placement.streamIndex, /*live=*/true);
+
         if (m_receiverManager) {
             m_receiverManager->setReceiverFrequency(
                 placement.streamIndex,
@@ -3990,6 +4046,10 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     if (previousStream >= 0 && previousStream != placement.streamIndex) {
         if (slicesOnStream(previousStream).isEmpty()) {
             m_streamAllocator.deactivateStream(previousStream);
+            // Symmetric with the claim above. A receiver left active for a
+            // stream with no slices keeps a DDC in the routing table and in
+            // the announced count that nothing is listening to.
+            syncReceiverToStream(previousStream, /*live=*/false);
         }
         republishStreamBindings(previousStream);
     }
@@ -4448,6 +4508,10 @@ void RadioModel::removeSlice(int sliceId)
     deactivateSliceChannel(sliceId);
     if (freedStream >= 0 && slicesOnStream(freedStream).isEmpty()) {
         m_streamAllocator.deactivateStream(freedStream);
+        // Same pairing as bindSliceToStream's two edges: a receiver left
+        // active for a stream with no slices keeps a DDC in the routing
+        // table, and in the announced receiver count, that nothing reads.
+        syncReceiverToStream(freedStream, /*live=*/false);
     }
     if (freedStream >= 0) {
         republishStreamBindings(freedStream);
