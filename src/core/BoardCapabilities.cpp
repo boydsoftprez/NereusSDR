@@ -799,8 +799,9 @@ const BoardCapabilities kHermesLite = {
     .maxReceivers     = 4,
     // Phase 3F: HL2 gets two panadapters and five flags.
     //
-    // From mi0bot console.cs:8425-8429 [v2.10.3.13-beta2], inside
-    // case HPSDRModel.HERMESLITE:
+    // From mi0bot console.cs:8425-8429 [v2.10.3.13-beta2], inside the
+    // HERMESLITE arm of the HERMES/HERMESLITE/ANAN10/ANAN100 fallthrough
+    // group (console.cs:8408-8411; HERMESLITE does not stand alone):
     //   if (rx2_enabled)
     //   {
     //       DDCEnable += DDC1;

@@ -37,8 +37,11 @@ Applies to both `kHermesLite` and `kHermesLiteRxOnly`.
 
 ### 2.1 mi0bot supports RX2 on the HL2
 
-Inside `case HPSDRModel.HERMESLITE:` in `UpdateDDCs`, `DDC1` is added in exactly
-two places, both guarded by `rx2_enabled`:
+`HPSDRModel.HERMESLITE` is one of four case labels, `HERMES`, `HERMESLITE`,
+`ANAN10` and `ANAN100`, that fall through to a single shared body in
+`UpdateDDCs` (`console.cs:8408-8411 [v2.10.3.13-beta2]`); it does not stand
+alone. Inside that shared body, `DDC1` is added in exactly two places, both
+guarded by `rx2_enabled`:
 
 ```csharp
 // mi0bot console.cs:8425-8429 [v2.10.3.13-beta2]   (!mox && !diversity)
@@ -68,7 +71,7 @@ upstream rather than vestigial:
 - `networkproto1.c:995-1005 [v2.10.3.13-beta2]`, `case 3: //RX2 VFO (DDC1)` in
   `WriteMainLoop_HL2`, falls through to `ddc_freq = prn->rx[1].frequency` for the
   HL2 because `nddc == 4`. DDC1 carries an independently tunable frequency.
-- `networkproto1.c:544-556 [v2.10.3.13-beta2]`, `MetisReadThreadMainLoop_HL2`
+- `networkproto1.c:544-559 [v2.10.3.13-beta2]`, `MetisReadThreadMainLoop_HL2`
   `case 4:`, routes `RxBuff[1]` into a second stream via
   `xrouter(0, 0, 2, spr, prn->RxBuff[1])`.
 
@@ -83,13 +86,17 @@ design-doc table rather than from source:
 | `0ac488e9` | 2026-07-24 | `userDdcCount = 1` | "design doc §2 ... cited there against Thetis `console.cs:8186-8538 [v2.10.3.15]`" |
 
 **That cite is ramdor Thetis, and ramdor Thetis has no HL2 case at all.**
-`UpdateDDCs` spans `console.cs:8195-8545 [v2.10.3.15]`. Its switch contains
+`UpdateDDCs` spans `console.cs:8195-8548 [v2.10.3.15]`. Its switch contains
 five case groups, at lines 8220, 8305, 8387, 8461 and 8533, and no `default:`
 arm. `HERMESLITE` is not among them. Across the whole
-`Project Files/Source/` tree, ramdor mentions `HERMESLITE` on seven lines in
-three files: `enums.cs:128,397`, `clsHardwareSpecific.cs:353,354,393`, and
-`ChannelMaster/network.h:422,444`. An HL2 therefore leaves ramdor's
-`UpdateDDCs` switch with `nddc = 0`.
+`Project Files/Source/` tree, ramdor's case-sensitive `HERMESLITE` (the
+`HPSDRModel` enumerator) appears on five lines: `enums.cs:128`,
+`clsHardwareSpecific.cs:353,354,393`, and `ChannelMaster/network.h:444`. Two
+further lines, `enums.cs:397` and `ChannelMaster/network.h:422`, carry
+`HermesLite = 6`, mixed case, a different symbol in the separate `HPSDRHW`
+enum, not another sighting of the model. Seven lines in three files either
+way. None of them is a case label in `UpdateDDCs`, so an HL2 still leaves
+ramdor's switch with `nddc = 0`.
 
 So the HL2 rows were derived from a source that is silent on the HL2, on a
 project where `../mi0bot-Thetis/` is the designated authority for that SKU. This
@@ -154,10 +161,15 @@ drives the link load. At Ethernet framing of about 1098 bytes per datagram:
 ### 4.2 NereusSDR currently announces 4, always
 
 `P1CodecHl2::applyDdcAssignment` and `applyPureSignalDdcConfig` both set
-`p1RxCount = 4` unconditionally. `P1RadioConnection::applyPsDdcConfig` copies it
-into `m_activeRxCount` (`P1RadioConnection.cpp:1827`), and `composeCcBank0`
-encodes it as `C4 = (nddc - 1) << 3` (`P1RadioConnection.cpp:400-401`). A live HL2
-log on 2026-07-31 confirms it: `P1: applyPsDdcConfig nDdc=4 activeRx=4`.
+`p1RxCount = 4` unconditionally. `P1RadioConnection::applyPsDdcConfig` copies
+it into `m_activeRxCount`, and the composer that actually runs on a live HL2
+connection, `P1CodecHl2::composeCcForBank` case 0, encodes it as
+`C4 |= ((activeRxCount - 1) & 0x0F) << 3`. The static
+`P1RadioConnection::composeCcBank0` helper implements the equivalent
+`C4 = (nddc - 1) << 3` formula at `P1RadioConnection.cpp:400-401`, but
+nothing in production calls it: every live HL2 connection reaches bank 0
+through the codec instead. A live HL2 log on 2026-07-31 confirms the count:
+`P1: applyPsDdcConfig nDdc=4 activeRx=4`.
 
 A single-slice HL2 at 384 kHz therefore runs about 89 Mbit/s on a 100 Mbit PHY.
 This is inherited from mi0bot, which announces 4 for the same case, and it is
@@ -325,6 +337,21 @@ already performs the required stop, prime, start, prime cycle and is idempotent.
 `P1RadioConnection.cpp:1827` and only forcing a bank-0 flush. That must go
 through `restartStreamWithCount` instead.
 
+**This narrows the window; it does not close it.** `applyPsDdcConfig` calls
+`restartStreamWithCount` at `P1RadioConnection.cpp:1835`, but does not set
+`m_forceBank0Next = true` until 24 lines later, after `restartStreamWithCount`
+has already returned. The pre-start priming burst inside
+`restartStreamWithCount` therefore carries no forced bank 0: it just
+continues wherever `m_ccRoundRobinIdx` already was, covering 12 round-robin
+slots (`sendPrimingBurst(3)`'s six `sendCommandFrame()` calls, two banks each)
+out of the HL2's 19 banks (0 through `maxBank()` = 18). Bank 0 is likely but
+not guaranteed to land inside that pre-start burst before `sendMetisStart`
+resumes the ep6 stream, so this narrows the mismatch window to under one
+round-robin visit rather than closing it. Setting `m_forceBank0Next = true`
+before the `restartStreamWithCount` call, instead of 24 lines after it, would
+close the window properly. That reordering is not made here; it is recorded
+as a follow-up.
+
 This is a pre-existing latent defect, not one introduced here: today's HL2
 connect sequence already steps the count from the 2 seeded at
 `P1RadioConnection.cpp:695` to the 4 that `applyPsDdcConfig` writes, by bare
@@ -370,10 +397,33 @@ the seed:
 
 | Board (physical) | `HPSDRModel` value(s) | `p1RxCount` | Change on connect |
 | --- | --- | --- | --- |
-| HermesLite (HL2) | HERMESLITE | 4, always (`P1CodecHl2`) | 2 to 4 |
+| HermesLite (HL2) | HERMESLITE | `psEnabled ? 4 : 2`, default 2 (`P1CodecHl2`) | None: stays at 2 (PureSignal is off by default) |
+| HermesLiteRxOnly (HL2 RX-only kit) | none (has no `HPSDRModel` of its own; the model walk falls through to HERMES) | 4, always (`psDdcConfigHermesClass` via `P1CodecStandard`) | 2 to 4 |
 | Hermes | HERMES, ANAN10, ANAN100 | 4, always (`psDdcConfigHermesClass`) | 2 to 4 |
 | Angelia | ANAN100D | 5, always (`psDdcConfigG2Class`) | 2 to 5 |
 | Orion | ANAN200D | 5, always (`psDdcConfigG2Class`) | 2 to 5 |
+
+**HL2 row correction.** Task 6 changed `P1CodecHl2::applyPureSignalDdcConfig`
+to return `psEnabled ? 4 : 2` instead of an unconditional 4, and `m_psEnabled`
+defaults false (`ReceiverManager.cpp:146`). On a real HL2 connect the codec
+therefore returns 2, matching the `m_activeRxCount = 2` seed at
+`P1RadioConnection.cpp:695`, so the guard at `P1RadioConnection.cpp:1826`
+(`m_activeRxCount != cfg.p1RxCount`) is false and no restart happens at
+connect time at all. The connect-time restart this row used to describe is
+exercised by no available hardware. The same function through the same
+caller is exercised on live HL2 silicon by §9 row 11 (toggle PureSignal ten
+times), just at PS-toggle time rather than connect time, once the operator
+turns PureSignal on after connecting. A maintainer reading this table before
+this correction would conclude the HL2 covers the connect path. It does not.
+
+**HermesLiteRxOnly.** This row has no `HPSDRModel` of its own, so it never
+reaches `P1CodecHl2::applyPureSignalDdcConfig`: the live codec is
+`P1CodecStandard`, whose Hermes-class arm returns an unconditional 4
+(`tests/tst_board_capabilities_phase3f.cpp`'s `documentedUnderExposure()`
+records the same fallthrough as a deliberate, written-reason exception). It
+mirrors the standard HermesLite capability row (`userDdcCount = 2`,
+`maxSlices = 5`) but gets none of Task 6's PS-off saving, because that
+saving is implemented only in `P1CodecHl2`.
 
 Unaffected:
 
@@ -475,9 +525,12 @@ Per-SKU assertions for the two HL2 rows update alongside.
 Because commit 2 is a deviation rather than a port, the tests are the only thing
 holding it to its stated shape. Three are required:
 
-1. **Wire bytes.** `composeCcBank0` for an HL2 emits `C4 = 0x08` with PureSignal
-   off and `C4 = 0x18` with it on, that is `(2-1) << 3` and `(4-1) << 3`. A
-   byte-level assertion in the same style as the existing P1 wire-lock tests.
+1. **Wire bytes.** The live composer, `P1CodecHl2::composeCcForBank` case 0
+   (reached from `P1RadioConnection::sendCommandFrame`, not from the static
+   `composeCcBank0` helper, which has no production caller), emits
+   `C4 = 0x08` for an HL2 with PureSignal off and `C4 = 0x18` with it on,
+   that is `(2-1) << 3` and `(4-1) << 3`. A byte-level assertion in the same
+   style as the existing P1 wire-lock tests.
 2. **MOX does not move the count.** Drive `applyPureSignalDdcConfig` across MOX
    transitions with `psEnabled` fixed, and assert `p1RxCount` is unchanged. This
    is the guard on §4.4's central claim; if it ever regresses to keying on the

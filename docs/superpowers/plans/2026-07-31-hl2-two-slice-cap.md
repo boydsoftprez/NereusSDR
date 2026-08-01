@@ -203,7 +203,7 @@ In `src/core/codec/P1CodecHl2.cpp`, replace lines 757 to 782 (from `DdcAssignmen
     //   case HPSDRModel.HERMESLITE: // MI0BOT: HL2 (at console.cs:8409)
     //   P1_rxcount = 4;   // RX4 used for puresignal feedback
     //   nddc = 4;
-    //MI0BOT  [HL2 case-statement marker at console.cs:8409 — within ±5 of 8412]
+    //MI0BOT  [HL2 case-statement marker at console.cs:8409, within ±5 of 8412]
     a.p1RxCount = 4;  // RX4 used for puresignal feedback
     a.nDdc = 4;
 
@@ -421,9 +421,12 @@ Immediately after the "Source cites" list in that section, add:
 Corrected 2026-07-31. Both HL2 rows read `DDC0 only | 1` until then, sourced
 from the "DDC reservations" cite above, ramdor Thetis `console.cs:8186-8538
 [v2.10.3.15]`. That switch has no `HERMESLITE` case: five case groups, no
-`default:` arm, and `HERMESLITE` appears in ramdor on seven lines across
-three files: `enums.cs:128,397`, `clsHardwareSpecific.cs:353,354,393`, and
-`ChannelMaster/network.h:422,444`. An HL2 leaves it with `nddc = 0`.
+`default:` arm. Case-sensitive `HERMESLITE` (the `HPSDRModel` enumerator)
+appears in ramdor on five lines: `enums.cs:128`,
+`clsHardwareSpecific.cs:353,354,393`, and `ChannelMaster/network.h:444`. Two
+more lines, `enums.cs:397` and `ChannelMaster/network.h:422`, carry the
+distinct `HPSDRHW` value `HermesLite = 6`, mixed case, not a further sighting
+of the model. An HL2 leaves it with `nddc = 0` either way.
 
 mi0bot is authoritative for this SKU and enables DDC1 for RX2 in two arms of
 its `HERMESLITE` case (`console.cs:8425-8429` and `:8453-8457

@@ -21,7 +21,7 @@ This design ports behaviour from multiple upstreams. Per `docs/attribution/HOW-T
 
 ## 1. Overview
 
-Phase 3F transitions NereusSDR from a fixed single-slice client to a hardware-capability-driven multi-slice client. Operators on 2-ADC boards (G2-class) get up to 5 user slices; HL2 stays at 1; intermediate SKUs gate at their hardware maximum. The pan layer is rebuilt around the AetherSDR overlay model. Wideband bandscope is folded into the pan-zoom gesture rather than a separate pan type. The Thetis Diversity dialog is ported in full, including the radar visualisation.
+Phase 3F transitions NereusSDR from a fixed single-slice client to a hardware-capability-driven multi-slice client. Operators on 2-ADC boards (G2-class) get up to 5 user slices; HL2 also reaches the 5-slice ceiling, over 2 panadapters, per the 2026-07-31 slice-cap correction (see §2 below); intermediate SKUs gate at their hardware maximum. The pan layer is rebuilt around the AetherSDR overlay model. Wideband bandscope is folded into the pan-zoom gesture rather than a separate pan type. The Thetis Diversity dialog is ported in full, including the radar visualisation.
 
 ### Goals
 
@@ -103,9 +103,12 @@ What the sources actually say:
 Corrected 2026-07-31. Both HL2 rows read `DDC0 only | 1` until then, sourced
 from the "DDC reservations" cite above, ramdor Thetis `console.cs:8186-8538
 [v2.10.3.15]`. That switch has no `HERMESLITE` case: five case groups, no
-`default:` arm, and `HERMESLITE` appears in ramdor on seven lines across
-three files: `enums.cs:128,397`, `clsHardwareSpecific.cs:353,354,393`, and
-`ChannelMaster/network.h:422,444`. An HL2 leaves it with `nddc = 0`.
+`default:` arm. Case-sensitive `HERMESLITE` (the `HPSDRModel` enumerator)
+appears in ramdor on five lines: `enums.cs:128`,
+`clsHardwareSpecific.cs:353,354,393`, and `ChannelMaster/network.h:444`. Two
+more lines, `enums.cs:397` and `ChannelMaster/network.h:422`, carry the
+distinct `HPSDRHW` value `HermesLite = 6`, mixed case, not a further sighting
+of the model. An HL2 leaves it with `nddc = 0` either way.
 
 mi0bot is authoritative for this SKU and enables DDC1 for RX2 in two arms of
 its `HERMESLITE` case (`console.cs:8425-8429` and `:8453-8457
@@ -796,7 +799,7 @@ Matrix lives at `docs/architecture/2026-05-26-phase3f-verification/README.md` (c
 
 ### Rows (SKUs to test)
 
-1. HL2 (1-slice) - native bench available
+1. HL2 (2-pan / 5-slice) - native bench available
 2. HermesII (2-slice) - if available
 3. ANAN-G2 / Saturn (5-slice) - primary bench
 4. ANAN-G2E / HermesC10 (5-slice) - pending G2E hardware per v0.5.2 status
@@ -1204,7 +1207,7 @@ Architectural constraints discovered:
 **Sub-Epic H (bench verification + polish) is next.** Bench session priorities:
 1. Verify diversity engage/disengage on G2 (2-ADC SKU).
 2. Verify wideband stream activates on operator zoom-out past DDC bandwidth + Alex BPF auto-bypasses.
-3. Verify multi-slice add via +PAN dropdown (Slice B on G2; HL2 stays single-slice).
+3. Verify multi-slice add via +PAN dropdown (Slice B on G2; Slice B on HL2 too, per the 2026-07-31 slice-cap correction to 2 panadapters / 5 flags).
 4. Verify TX handoff via VfoWidget badge click drops MOX before flipping.
 5. Verify per-pan layout templates (1, 2v, 2h, 12h, 2x2) render correctly.
 6. Verify CH 0 / CH 1 BPF state badges reflect AlexController state on band changes.
@@ -1259,7 +1262,7 @@ The headline operator-visible deliverables:
 4. TX handoff via VFO TX badge click drops MOX before flipping.
 5. Wideband activation: operator zoom-out past DDC bandwidth -> Alex BPF auto-bypass -> radio streams wb packets -> bins arrive in SpectrumWidget.
 6. Diversity engage on Slice A (G2 only) -> DDC0+DDC1 sync pair codec change -> WDSP External Diversity runs.
-7. HL2 single-slice operation unchanged (regression).
+7. HL2 multi-slice operation (2 panadapters, 5 flags) per the 2026-07-31 slice-cap correction, not single-slice regression; see [2026-07-31-hl2-slice-cap-design.md](2026-07-31-hl2-slice-cap-design.md) section 9 for the current bench matrix.
 
 ### Follow-up PRs after 3F merge
 

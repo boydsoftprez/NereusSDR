@@ -563,10 +563,12 @@ PsDdcConfig P1CodecHl2::applyPureSignalDdcConfig(
     // NereusSDR-original divergence justified by the link budget, approved by
     // the maintainer on 2026-07-31 conditional on bench verification.
     //
-    // p1RxCount becomes the wire C4 field, nddc - 1 << 3
-    // (P1RadioConnection::composeCcBank0), and the ep6 slot layout,
-    // slotBytes = 6 * numRx + 2. Because ep6 datagrams are fixed at 1032
-    // bytes, sample capacity falls as the count rises
+    // p1RxCount becomes the wire C4 field, ((activeRxCount - 1) & 0x0F) << 3,
+    // via this file's composeCcForBank case 0 (reached from
+    // P1RadioConnection::sendCommandFrame; the static
+    // P1RadioConnection::composeCcBank0 helper has no production caller),
+    // and the ep6 slot layout, slotBytes = 6 * numRx + 2. Because ep6
+    // datagrams are fixed at 1032 bytes, sample capacity falls as the count rises
     // (networkproto1.c:527: spr = 504 / (6 * nddc + 2)), so the datagram rate
     // scales with the count whether or not the extra DDCs are consumed.
     // Announcing 4 for a two-panadapter board costs about 44 Mbit/s at
@@ -587,6 +589,13 @@ PsDdcConfig P1CodecHl2::applyPureSignalDdcConfig(
     //
     // Full rationale and the bench gate that conditions this approval:
     // docs/architecture/2026-07-31-hl2-slice-cap-design.md section 6.2.
+    //
+    // Cross-reference: applyDdcAssignment (below, in this file) hard-codes
+    // a.p1RxCount = 4 unconditionally instead of this psEnabled gate. That is
+    // not an oversight: the DdcAssignment path it feeds reaches no wire on
+    // Protocol 1 (RadioModel forwards DdcAssignment to P2RadioConnection
+    // only), so it carries none of this method's link-budget consequence.
+    // See design doc section 6.4.
     //
     // RX4 used for puresignal feedback  [original inline comment from mi0bot console.cs:8412]
     cfg.p1RxCount = psEnabled ? 4 : 2;
@@ -802,7 +811,14 @@ DdcAssignment P1CodecHl2::applyDdcAssignment(
     //   case HPSDRModel.HERMESLITE: // MI0BOT: HL2 (at console.cs:8409)
     //   P1_rxcount = 4;   // RX4 used for puresignal feedback
     //   nddc = 4;
-    //MI0BOT  [HL2 case-statement marker at console.cs:8409 — within ±5 of 8412]
+    //
+    // Cross-reference: applyPureSignalDdcConfig (above, in this file) gates
+    // cfg.p1RxCount on psEnabled (4 or 2) instead of this unconditional 4.
+    // Both are correct for what each feeds: this DdcAssignment path reaches
+    // no P1 wire (RadioModel forwards DdcAssignment to P2RadioConnection
+    // only), so it carries none of the link-budget consequence that makes
+    // the other method's gate worth having. See design doc section 6.4.
+    //MI0BOT  [HL2 case-statement marker at console.cs:8409, within ±5 of 8412]
     a.p1RxCount = 4;  // RX4 used for puresignal feedback
     a.nDdc = 4;
 
