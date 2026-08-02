@@ -51,7 +51,13 @@ void SpectrumOverlayMenu::buildUI()
         "  background: #1a2a3a; color: #c8d8e8; selection-background-color: #00b4d8;"
         "}"
         "QCheckBox { color: #c8d8e8; font-size: 11px; }"
-        "QCheckBox::indicator { width: 14px; height: 14px; }"));
+        "QCheckBox::indicator { width: 14px; height: 14px; }"
+        "QPushButton {"
+        "  background: #203040; color: #c8d8e8; border: 1px solid #2e4e6e;"
+        "  border-radius: 3px; padding: 3px 10px; font-size: 11px;"
+        "}"
+        "QPushButton:hover { background: #2a4055; border-color: #00b4d8; }"
+        "QPushButton:pressed { background: #16232f; }"));
 
     // --- Waterfall section ---
     auto* wfLabel = new QLabel(QStringLiteral("Waterfall"), this);
@@ -184,7 +190,49 @@ void SpectrumOverlayMenu::buildUI()
 
     connect(m_ctunCheck, &QCheckBox::toggled, this, &SpectrumOverlayMenu::ctunChanged);
 
+    // --- Notch section ---
+    // Plan decision D-e: the "add a notch here" convenience gesture goes
+    // into this popup rather than converting the popup into a QMenu, so no
+    // shipped right-click behaviour changes shape.  The panadapter's own
+    // Ctrl + right-click stays the primary add gesture; this row is the
+    // discoverable one for an operator who does not know the chord.
+    auto* notchLabel = new QLabel(QStringLiteral("Notch"), this);
+    notchLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: #00b4d8; margin-top: 6px;"));
+    layout->addWidget(notchLabel);
+
+    auto* notchRow = new QHBoxLayout;
+    m_notchAddButton = new QPushButton(QStringLiteral("Add notch here"), this);
+    m_notchAddButton->setToolTip(QStringLiteral(
+        "Place a notch filter at the frequency you right-clicked.\n"
+        "Ctrl + right-click on the panadapter does the same thing;\n"
+        "hold Shift as well for a narrow notch."));
+    m_notchFreqLabel = new QLabel(this);
+    notchRow->addWidget(m_notchAddButton);
+    notchRow->addWidget(m_notchFreqLabel);
+    notchRow->addStretch();
+    layout->addLayout(notchRow);
+
+    connect(m_notchAddButton, &QPushButton::clicked, this, [this]() {
+        emit notchAddRequested(m_notchAddFreqHz);
+    });
+    updateNotchAddLabel();
+
     setFixedWidth(280);
+}
+
+void SpectrumOverlayMenu::setNotchAddFrequency(double freqHz)
+{
+    m_notchAddFreqHz = freqHz;
+    updateNotchAddLabel();
+}
+
+void SpectrumOverlayMenu::updateNotchAddLabel()
+{
+    if (!m_notchFreqLabel) {
+        return;
+    }
+    m_notchFreqLabel->setText(
+        QStringLiteral("%1 MHz").arg(m_notchAddFreqHz / 1.0e6, 0, 'f', 6));
 }
 
 void SpectrumOverlayMenu::setValues(int wfColorGain, int wfBlackLevel, bool autoBlack,

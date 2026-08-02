@@ -6558,11 +6558,23 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                     this, [this](float v) { m_dynamicRange = v; update(); scheduleSettingsSave(); });
             connect(m_overlayMenu, &SpectrumOverlayMenu::ctunChanged,
                     this, [this](bool v) { setCtunEnabled(v); });
+            // Plan decision D-e: the empty-pan "add a notch here" row.
+            // The overlay-menu route always places the default width, so
+            // narrow is false; Ctrl + Shift + right-click on the pan is
+            // the narrow variant.
+            connect(m_overlayMenu, &SpectrumOverlayMenu::notchAddRequested,
+                    this, [this](double freqHz) {
+                        emit notchCreateRequested(freqHz, false);
+                    });
         }
         m_overlayMenu->setValues(m_wfColorGain, m_wfBlackLevel, false,
                                   static_cast<int>(m_wfColorScheme),
                                   m_fillAlpha, m_panFill, false,
                                   m_refLevel, m_dynamicRange, m_ctunEnabled);
+        // The frequency under the cursor, captured at popup time: the
+        // popup outlives the press, and by the time the button is clicked
+        // the pointer has moved onto the popup itself.
+        m_overlayMenu->setNotchAddFrequency(xToHz(mx, specRect));
 
         // Clamp onto the screen before showing.
         //

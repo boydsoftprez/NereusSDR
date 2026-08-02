@@ -40,6 +40,7 @@
 #include <QPainter>
 #include <QPoint>
 #include <QPointF>
+#include <QPushButton>
 #include <QSignalSpy>
 #include <QWheelEvent>
 
@@ -1424,6 +1425,79 @@ private slots:
         QMenu menu;
         w.buildNotchContextMenuForTest(99, menu);
         QVERIFY(menu.actions().isEmpty());
+    }
+
+    // -- plan decision D-e: right-click on empty pan ---------------------
+    //
+    // Resolved by adding the row to the EXISTING SpectrumOverlayMenu
+    // rather than converting that widget to a QMenu, so no shipped gesture
+    // changes shape.  SpectrumOverlayMenu is AetherSDR-registered and
+    // carries no Thetis cite.
+
+    void overlay_menu_declares_the_notch_add_signal_in_hz()
+    {
+        const QMetaObject& mo = SpectrumOverlayMenu::staticMetaObject;
+        const int idx = mo.indexOfSignal("notchAddRequested(double)");
+        QVERIFY2(idx >= 0, "SpectrumOverlayMenu::notchAddRequested(double)");
+        QCOMPARE(mo.method(idx).methodType(), QMetaMethod::Signal);
+    }
+
+    void overlay_menu_add_notch_button_emits_the_pushed_frequency()
+    {
+        SpectrumOverlayMenu m;
+        QSignalSpy spy(&m, &SpectrumOverlayMenu::notchAddRequested);
+
+        m.setNotchAddFrequency(kUiCentreHz);
+
+        QPushButton* addBtn = nullptr;
+        for (QPushButton* b : m.findChildren<QPushButton*>()) {
+            if (b->text() == QStringLiteral("Add notch here")) {
+                addBtn = b;
+                break;
+            }
+        }
+        QVERIFY2(addBtn != nullptr, "no 'Add notch here' button on the "
+                                    "spectrum overlay menu");
+        addBtn->click();
+
+        QCOMPARE(spy.count(), 1);
+        QVERIFY(std::abs(spy.at(0).at(0).toDouble() - kUiCentreHz) < 1e-6);
+    }
+
+    // The whole wire: a plain right-click on empty pan opens the overlay
+    // menu with the frequency under the cursor already pushed, and the
+    // button turns into notchCreateRequested at that frequency.
+    void overlay_menu_add_notch_forwards_the_cursor_frequency()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        QSignalSpy createSpy(&w, &SpectrumWidget::notchCreateRequested);
+
+        // No markers pushed, so this lands on empty pan and falls through
+        // to the overlay menu (a non-blocking popup widget).
+        sendMouse(&w, QEvent::MouseButtonPress, QPoint(600, kUiSpecY),
+                  Qt::RightButton, Qt::RightButton);
+        QCOMPARE(createSpy.count(), 0);
+
+        auto* menu = w.findChild<SpectrumOverlayMenu*>();
+        QVERIFY2(menu != nullptr, "right-click did not open the overlay menu");
+        menu->hide();
+
+        QPushButton* addBtn = nullptr;
+        for (QPushButton* b : menu->findChildren<QPushButton*>()) {
+            if (b->text() == QStringLiteral("Add notch here")) {
+                addBtn = b;
+                break;
+            }
+        }
+        QVERIFY(addBtn != nullptr);
+        addBtn->click();
+
+        QCOMPARE(createSpy.count(), 1);
+        QVERIFY(std::abs(createSpy.at(0).at(0).toDouble() - uiHzForX(600))
+                < 1e-3);
+        // The overlay-menu route always places the default width.
+        QCOMPARE(createSpy.at(0).at(1).toBool(), false);
     }
 };
 
