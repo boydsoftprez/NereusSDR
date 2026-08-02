@@ -298,6 +298,34 @@ private slots:
     /// maths) stays in Hz.
     void refreshPanNotchMarkers();
 
+    /// TNF: push the visual-notch (trace dent) toggle at EVERY pan
+    /// (design section 8.3).
+    ///
+    /// Same shape as refreshPanNotchMarkers above, and for the same reason:
+    /// the toggle is one global NotchModel flag but each pan owns its own
+    /// SpectrumWidget, so it has to reach pans created after startup too.
+    /// Armed from PanadapterStack::countChanged and from
+    /// NotchModel::visualEnabledChanged.
+    void refreshPanVisualNotch();
+
+    /// TNF: push WDSP's minimum notch width at EVERY pan
+    /// (design sections 7.2 and 8.3).
+    ///
+    /// SpectrumWidget cannot pull this: it varies with the filter's
+    /// coefficient count and the channel's DSP rate, and neither is visible
+    /// from the GUI layer. Without the push every pan keeps the 100 Hz
+    /// construction default forever, which silently mis-sizes both the
+    /// edge-drag clamp and the dent span the moment the operator changes nc
+    /// on the DSP Options page or the radio's sample rate.
+    ///
+    /// Resolved per pan through that pan's OWN activeSliceIndex, matching
+    /// refreshPanStatusOverlays, because a multi-pan layout can host slices
+    /// on channels with different rates. Re-arms the per-channel
+    /// RxChannel::minNotchWidthChanged follow on every pass
+    /// (Qt::UniqueConnection), since the channel a pan resolves to changes
+    /// with the slice set.
+    void refreshPanNotchMinWidth();
+
     /// TNF: connect the five per-pan notch interaction signals on EVERY pan.
     ///
     /// Armed from PanadapterStack::countChanged, the same hook

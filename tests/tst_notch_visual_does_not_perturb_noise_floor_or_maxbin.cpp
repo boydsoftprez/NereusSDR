@@ -47,9 +47,14 @@
 
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QMetaObject>
 #include <QVector>
 
+#include "gui/MainWindow.h"
+#include "gui/PanadapterApplet.h"
+#include "gui/PanadapterStack.h"
 #include "gui/SpectrumWidget.h"
+#include "models/NotchModel.h"
 
 using namespace NereusSDR;
 
@@ -471,6 +476,71 @@ private slots:
         // stale pristine frame can never outlive the toggle.
         QCOMPARE(w.undentedPixelsForTest()[kTonePixel],
                  w.renderedPixels()[kTonePixel]);
+    }
+
+    // ---- Cycle F: the fan-out onto every pan ----
+    //
+    // Two values have to reach every panadapter, not just the active one:
+    // the visual-notch toggle (one global NotchModel, one widget per pan)
+    // and WDSP's minimum notch width (which sets the dent's floor, so a pan
+    // left on the 100 Hz construction default would draw the wrong span
+    // after an operator changed nc or the sample rate).
+    //
+    // MainWindow is deliberately never constructed in this suite (see the
+    // banner of tests/tst_mainwindow_tools_spot_hub.cpp), so the loop bodies
+    // are mirrored here against a real PanadapterStack and the entry points
+    // themselves are resolved by name below.
+
+    void visual_notch_and_min_width_reach_every_pan()
+    {
+        PanadapterStack stack;
+        stack.applyLayout(QStringLiteral("2h"),
+                          {QStringLiteral("pan-0"), QStringLiteral("pan-1")});
+
+        NotchModel notches;
+        notches.setVisualEnabled(true);
+
+        // MainWindow::refreshPanVisualNotch's body.
+        for (auto* applet : stack.allApplets()) {
+            QVERIFY(applet != nullptr);
+            SpectrumWidget* sw = applet->spectrumWidget();
+            QVERIFY(sw != nullptr);
+            sw->setVisualNotchEnabled(notches.visualEnabled());
+        }
+
+        // MainWindow::refreshPanNotchMinWidth's body, with the value a live
+        // RxChannel::minNotchWidthHz() would have supplied. 400 Hz is the
+        // nc = 1024 case at 48 kHz through the wintype-0 arm of
+        // min_notch_width (third_party/wdsp/src/nbp.c:88).
+        for (auto* applet : stack.allApplets()) {
+            applet->spectrumWidget()->setNotchMinWidthHz(400.0);
+        }
+
+        for (const QString& panId : {QStringLiteral("pan-0"),
+                                     QStringLiteral("pan-1")}) {
+            SpectrumWidget* sw = stack.spectrum(panId);
+            QVERIFY(sw != nullptr);
+            QCOMPARE(sw->visualNotchEnabled(), true);
+            QCOMPARE(sw->notchMinWidthHzForTest(), 400.0);
+        }
+    }
+
+    void mainwindow_exposes_the_visual_notch_fanout_slots()
+    {
+        const QMetaObject& mo = MainWindow::staticMetaObject;
+        // Slots, not plain methods: both are re-armed from
+        // PanadapterStack::countChanged and Qt6 silently ignores
+        // Qt::UniqueConnection when the target is a lambda, so a lambda here
+        // would stack one extra connection per layout switch.
+        for (const char* sig : {"refreshPanVisualNotch()",
+                                "refreshPanNotchMinWidth()"}) {
+            QVERIFY2(mo.indexOfSlot(sig) >= 0,
+                     qPrintable(QStringLiteral("MainWindow::%1 is not an "
+                                               "invokable slot; the visual "
+                                               "notch would never reach a pan "
+                                               "created after startup")
+                                    .arg(QLatin1String(sig))));
+        }
     }
 };
 

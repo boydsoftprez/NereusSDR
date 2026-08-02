@@ -1657,6 +1657,56 @@ void MainWindow::refreshPanNotchMarkers()
     }
 }
 
+// TNF: visual-notch fan-out (design section 8.3). See the declaration for why
+// every pan is refreshed on every pass.
+void MainWindow::refreshPanVisualNotch()
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    NotchModel* notches = m_radioModel->notchModel();
+    if (!notches) { return; }
+    const bool on = notches->visualEnabled();
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        if (SpectrumWidget* sw = applet->spectrumWidget()) {
+            sw->setVisualNotchEnabled(on);
+        }
+    }
+}
+
+// TNF: minimum-notch-width fan-out (design sections 7.2 and 8.3).
+//
+// WDSP recomputes the minimum on every read as
+// 1600.0 / (nc / 256) * (rate / 48000) (third_party/wdsp/src/nbp.c:88, the
+// wintype-0 arm nbp0 is created with at RXA.c:103), so it moves whenever the
+// filter size or the channel rate does. Thetis has the same problem and
+// solves it the same way, re-reading through UpdateMinimumNotchWidthRX and
+// firing MinimumRXNotchWidthChangedHandlers (console.cs:48787-48818
+// [v2.10.3.15]) from the DSP-options apply path at console.cs:39052-39053.
+//
+// A pan with no resolvable channel keeps whatever it last had rather than
+// being reset: the alternative is a visible dent-width flicker every time the
+// operator drags a slice between pans.
+void MainWindow::refreshPanNotchMinWidth()
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        SpectrumWidget* sw = applet->spectrumWidget();
+        if (!sw) { continue; }
+        // Through RadioModel, not WdspEngine: scripts/verify-no-gui-dsp-
+        // access.py fails the build on a bare rxChannel() from src/gui/.
+        RxChannel* ch = m_radioModel->rxChannelForSlice(applet->activeSliceIndex());
+        if (!ch) { continue; }
+        // Re-armed every pass because the channel a pan resolves to changes
+        // with the slice set. UniqueConnection makes the repeat a no-op, and
+        // a destroyed channel drops its own connections.
+        connect(ch, &RxChannel::minNotchWidthChanged,
+                this, &MainWindow::refreshPanNotchMinWidth,
+                Qt::UniqueConnection);
+        sw->setNotchMinWidthHz(ch->minNotchWidthHz());
+    }
+}
+
 void MainWindow::wirePanNotchHandlers()
 {
     if (!m_panStack) { return; }
@@ -1664,6 +1714,11 @@ void MainWindow::wirePanNotchHandlers()
         if (!applet) { continue; }
         SpectrumWidget* sw = applet->spectrumWidget();
         if (!sw) { continue; }
+        // The pan's own slice selection decides which channel's minimum
+        // notch width it draws with, so a slice switch has to re-resolve it.
+        connect(applet, &PanadapterApplet::activeSliceChanged,
+                this, &MainWindow::refreshPanNotchMinWidth,
+                Qt::UniqueConnection);
         connect(sw, &SpectrumWidget::notchCreateRequested,
                 this, &MainWindow::onNotchCreateRequested,
                 Qt::UniqueConnection);
@@ -2546,6 +2601,8 @@ void MainWindow::buildUI()
         ensureOverlayPanels();
         refreshPanStatusOverlays();
         refreshPanNotchMarkers();
+        refreshPanVisualNotch();
+        refreshPanNotchMinWidth();
     });
 
     // TNF: the notch list is global, so one connect per NotchModel signal
@@ -2563,7 +2620,23 @@ void MainWindow::buildUI()
                 this, &MainWindow::refreshPanNotchMarkers);
         connect(notches, &NotchModel::globalEnabledChanged,
                 this, &MainWindow::refreshPanNotchMarkers);
+        // Design section 8.3: the visual-notch toggle is model state, so it
+        // gets a model trigger as well as the pan-count one above.
+        connect(notches, &NotchModel::visualEnabledChanged,
+                this, &MainWindow::refreshPanVisualNotch);
     }
+
+    // TNF: the minimum notch width comes off an RxChannel, and channels open
+    // when the pool does. Both of these run long after the pans exist, so
+    // they are what gets the real value onto a pan that started on the 100 Hz
+    // construction default. refreshPanNotchMinWidth arms the per-channel
+    // follow itself, so this only has to cover channels coming into being.
+    connect(m_radioModel, &RadioModel::sliceAdded, this,
+            [this](int) { refreshPanNotchMinWidth(); });
+    connect(m_radioModel, &RadioModel::sliceRemoved, this,
+            [this](int) { refreshPanNotchMinWidth(); });
+    connect(m_radioModel, &RadioModel::connectionStateChanged, this,
+            [this](NereusSDR::ConnectionState) { refreshPanNotchMinWidth(); });
 
     // The S-meter poller's slice list keys off SLICE lifetime, not pan count.
     // Adding a slice to an existing pan moves no pan count, so hanging this on
@@ -2579,6 +2652,8 @@ void MainWindow::buildUI()
     // loaded in the RadioModel constructor. The layout restore below fires
     // countChanged and re-runs both of these for the pans it creates.
     refreshPanNotchMarkers();
+    refreshPanVisualNotch();
+    refreshPanNotchMinWidth();
 
     // ── Bench 2026-07-28: click-to-tune always tuned flag A ────────────────
     //
