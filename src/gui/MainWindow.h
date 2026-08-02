@@ -117,6 +117,8 @@ class FreeDVReporterDialog;
 
 class RxDashboard;
 class StationBlock;
+class ChromeBarController;
+class SystemTile;
 class MetricLabel;
 class StatusBadge;
 class AdcOverloadBadge;
@@ -202,7 +204,7 @@ public slots:
     // Task 3.6: live-apply ANAN-8000DLE volts/amps visibility preference.
     // Called when the "Show volts/amps in title bar" checkbox changes.
     // Only has visible effect when the connected radio is an ANAN-8000D
-    // (the m_paVoltLabel is already auto-hidden for non-MKII boards).
+    // (the SystemTile PA row is already auto-hidden for non-MKII boards).
     void setVoltsAmpsVisible(bool visible);
 
 protected:
@@ -499,24 +501,25 @@ private:
     void saveMainWindowGeometry();
     bool restoreMainWindowGeometry();
 
-    // Re-runs the right-side strip's progressive-drop logic per design
-    // §286-294. Restores all drop candidates first (in case the window
-    // grew), then walks the priority order — PA OK → CAT/TCI →
-    // PSU/PA → CPU → time — hiding items + their trailing separators
-    // until the strip's required width fits the budget. The
-    // OverflowChip is updated with the human names of any items that
-    // were dropped this pass.
+    // Re-apply the true hardware/board-capability gate on top of
+    // m_chromeBar's fold decision, for the items that carry BOTH a fold
+    // rung (design §6) AND an independent presence gate the controller
+    // cannot express.
     //
-    // Called from resizeEvent + after any visibility toggle of an
-    // optional widget (ADC badge appearing, PA voltage row showing on
-    // first user_adc0 signal, etc.) since those events change the
-    // required width without firing a window resize.
-    // force=true bypasses the budget-deadband hysteresis. Pass true when
-    // calling from a content-change site (badge visibility toggle, voltage
-    // row hidden/shown) — those don't move the strip's available width but
-    // do change the required width, so the deadband on width alone would
-    // skip the re-evaluation. Resize-driven calls leave force=false.
-    void reapplyRightStripDropPriority(bool force = false);
+    // ChromeBarController::addItem's contract says it is the sole writer
+    // of visibility for every item it registers, and relayout() re-asserts
+    // setVisible() for every registered item on any rung change -- not
+    // just the item whose own state changed. m_tgxlChip and
+    // m_chain1IndicatorWidget are registered (they are explicitly on the
+    // §6 ladder, rungs 2 and 4) but ALSO already have a pre-existing,
+    // independent visibility owner: TunerModel::presenceChanged and the
+    // rxFilterChainCount capability gate respectively. Without this second
+    // pass, any resize that changes the fold rung force-shows a "TGXL" or
+    // "CH 1" tile that has no hardware behind it, and nothing else
+    // corrects it afterwards (TunerModel never emits presenceChanged(false),
+    // and the capability gate only re-fires on the next currentRadioChanged).
+    // Called immediately after every m_chromeBar->relayout() call.
+    void reapplyHardwarePresenceGates();
 
     // CPU usage helpers — return instantaneous percent since the last call.
     // First call after a toggle returns 0 (delta-state reset). The timer
@@ -528,7 +531,7 @@ private:
     //            GetSystemTimes on Windows
     double readProcessCpuPercent();
     double readSystemCpuPercent();
-    // Right-click menu on m_cpuMetric — System / App radio choice.
+    // Right-click menu on m_systemTile — System / App radio choice.
     void onCpuMenuRequested(const QPoint& localPos);
 
     // Phase 3M-3a-ii Batch 6 (Task 3): one-shot wiring helper called from
@@ -568,9 +571,14 @@ private:
     QPointer<FreeDVReporterDialog> m_freeDVReporterDialog;
 
     // Status bar widgets (double-height AetherSDR design, 46px)
-    QLabel* m_connStatusLabel{nullptr};
-    QLabel* m_radioModelLabel{nullptr};
-    QLabel* m_radioFwLabel{nullptr};
+    //
+    // Design §4.1: the left-section model+firmware pair (formerly
+    // m_radioModelLabel / m_radioFwLabel, plus the m_connStatusLabel alias
+    // to the model label) is retired. Both had no click affordance and sat
+    // in the banner's unprotected left section, so their width changes were
+    // what shoved neighbours. Radio identity now renders once, on
+    // StationBlock's second row via setHardwareLine() (Task A4), driven
+    // from onConnectionStateChanged().
     StationBlock* m_stationBlock{nullptr};    // Sub-PR-7 G.1: radio-name anchor
     QLabel* m_tnfLabel{nullptr};
 
@@ -630,35 +638,50 @@ private:
     /// Phase 3F Sub-Epic D Task 11: CH 1 stacked-indicator widget in the
     /// bottom status bar. Shown only on 2-ADC SKUs (gated by
     /// BoardCapabilities::adcCount in the currentRadioChanged handler).
+    /// Also registered with m_chromeBar at rung 4 (design §6) so it folds
+    /// under width pressure; see reapplyHardwarePresenceGates() for why
+    /// that registration needs a second, narrower gate on top.
     QWidget*            m_chain1IndicatorWidget{nullptr};
+    /// CH 0's stacked-indicator widget, captured the same way as CH 1 so
+    /// it can be registered with m_chromeBar (chain0 shares rung 4).
+    /// Always shown; single-ADC and multi-ADC SKUs alike have a chain 0.
+    QWidget*            m_chain0IndicatorWidget{nullptr};
+
     // Right-side strip wrapper widget — the inner QWidget hosting the
-    // QHBoxLayout that the buildStatusBar() routine populates. Stored
-    // as a member so reapplyRightStripDropPriority() can read its
-    // available width.
+    // QHBoxLayout that buildStatusBar() populates. Stored as a member so
+    // resizeEvent can read its available width for m_chromeBar->relayout().
     QWidget* m_chromeBarWidget{nullptr};
 
-    // Hysteresis state for reapplyRightStripDropPriority — without a
-    // deadband the function re-evaluates on every resize event, and at
-    // boundary widths the show/hide of indicator widgets re-fires
-    // resize, looping. Same flash-class issue as RxDashboard's pair
-    // stacking. See reapplyRightStripDropPriority() for details.
-    int  m_rightStripLastBudget{-1};
-    bool m_rightStripSettled{false};
+    // Single layout authority for the banner (design §5). Replaces both
+    // the old right-strip drop-priority ladder (30 px deadband
+    // hysteresis) and RxDashboard's internal 3-stage ladder. One rung
+    // table, one relayout() call per resize, no re-measure mid-decision.
+    // Item-to-rung wiring lives in registerChromeBarItems() (ChromeBarItems.h)
+    // rather than inline here, so it is testable without constructing
+    // MainWindow — see tests/tst_chrome_bar_items.cpp.
+    ChromeBarController* m_chromeBar{nullptr};
+    // Merged PA telemetry + CPU tile (design §4.3). Replaces the old
+    // m_paStackWidget / m_paVoltLabel / m_paTempLabel / m_cpuMetric quartet.
+    SystemTile* m_systemTile{nullptr};
+    QLabel*     m_systemTileSep{nullptr};
+    // Rung-10 group: band-stack dots + TNF/CWX/DVK/FDX, wrapped in one
+    // widget so the ladder folds them together instead of dribbling them
+    // out one label at a time (design §6, "last resort").
+    QWidget*    m_placeholderGroup{nullptr};
+    QLabel*     m_placeholderSep{nullptr};
 
-    // Right-side strip drop targets — captured so the drop-priority
-    // pass can hide them + their trailing separators in priority order.
-    // Each non-separator widget has a paired separator pointer so the
-    // pair hides + shows together (no dangling "··" runs).
+    // Right-side strip items — captured so they can be registered with
+    // m_chromeBar. Each non-separator widget has a paired separator
+    // pointer so the pair hides + shows together (no dangling "··" runs).
     QWidget* m_catIndicator{nullptr};
     QLabel*  m_catSep{nullptr};
     QWidget* m_tciIndicator{nullptr};
     QLabel*  m_tciSep{nullptr};
-    QLabel*  m_paVoltLabelSep{nullptr};
-    QLabel*  m_paStatusBadgeSep{nullptr};
-    QLabel*  m_cpuMetricSep{nullptr};
 
     // OverflowChip — "…" pill that surfaces drop-list contents via its
-    // hover tooltip. Hidden when the drop list is empty.
+    // hover tooltip. Hidden when the drop list is empty. Now driven by
+    // m_chromeBar's foldStateChanged signal rather than a direct call
+    // from the old right-strip drop-priority pass.
     OverflowChip* m_overflowChip{nullptr};
 
     // (Earlier revisions had a "voltage stack" wrapper holding PSU above
@@ -745,30 +768,26 @@ private:
     QAction* m_actManageRadios = nullptr;
     QAction* m_actProtocolInfo = nullptr;
 
-    // Status bar members (Task 13 / sub-PR-8 restyle)
+    // Status bar members (Task 13 / sub-PR-8 restyle; merged into
+    // SystemTile per design §4.3 in the bottom-banner cleanup).
     //
-    // PA telemetry tile: a 2-row vertical stack.  Top row is PA voltage
-    // (MKII-class boards only — Saturn / G2 / 8000D / 7000DLE /
-    // OrionMkII / Anvelina Pro 3; Thetis-faithful via convertToVolts).
-    // Bottom row is PA temperature (HL2 today; future PureSignal-feedback
-    // boards may surface a real temp source via Phase 3M-4).  Each row
-    // hides independently based on its data source; the container hides
-    // when both rows are hidden so non-MKII non-HL2 boards (Atlas /
-    // Hermes / Angelia / Orion) get no PA tile, same as before.
-    //
-    // The PA-T row is also click-to-toggle °C / °F via PaTempUnitNotifier.
-    // Tooltip explains the toggle.  Source-of-truth value lives in
-    // RadioStatus::paTemperatureCelsius (always °C); display formatting
-    // happens at paint time via PaTempUnitNotifier::format.
-    QWidget*     m_paStackWidget{nullptr};  // vertical container (PA-V on top, PA-T below)
-    MetricLabel* m_paVoltLabel{nullptr};    // "PA   13.8V"  — MKII-class only
-    MetricLabel* m_paTempLabel{nullptr};    // "PA T 42.5°C" — HL2 today; click toggles °C / °F
-    MetricLabel* m_cpuMetric{nullptr};      // "CPU  19.1%"
+    // PA telemetry + CPU now share one two-row tile (m_systemTile) instead
+    // of a separate PA stack (PA-V over PA-T) plus a standalone CPU
+    // MetricLabel. Row one is PA voltage (MKII-class boards — Saturn / G2 /
+    // 8000D / 7000DLE / OrionMkII / Anvelina Pro 3; Thetis-faithful via
+    // convertToVolts) and/or PA temperature (HL2 today; future
+    // PureSignal-feedback boards may surface a real temp source via
+    // Phase 3M-4) — both share row one when a board publishes both rather
+    // than evicting CPU. Row two is always CPU. The PA row is also
+    // click-to-toggle °C / °F via PaTempUnitNotifier when it carries a
+    // temperature reading (SystemTile::paTempClicked). Source-of-truth
+    // value lives in RadioStatus::paTemperatureCelsius (always °C);
+    // display formatting happens at paint time via PaTempUnitNotifier::format.
     QTimer*      m_cpuTimer{nullptr};
 
     // CPU usage source — System (whole machine) or App (this process).
     // Thetis equivalent: m_bShowSystemCPUUsage (console.cs:20668), default
-    // true. Right-click on m_cpuMetric pops a menu with the two choices,
+    // true. Right-click on m_systemTile pops a menu with the two choices,
     // matching Thetis's toolStripDropDownButton_CPU. Persisted as
     // AppSettings "CpuShowSystem" ("True"/"False"). Smoothed reading is
     // updated via 0.8 * prev + 0.2 * new (matches Thetis console.cs:26224).
@@ -809,10 +828,14 @@ private:
     // state and must agree on how "inactive" is represented.
     static void dimSafetyBadge(QWidget* w, bool active);
 
-    // Phase 3Q Sub-PR-6 (F.1): RxDashboard — always-visible RX1 glance surface.
-    // Replaces the Phase 3Q-7 m_statusConnInfo / m_statusLiveDot strip (those
-    // fields now live in the segment tooltip / NetworkDiagnosticsDialog).
-    // Bound to stable slice ID 0 via RadioModel::sliceById() in buildUI.
+    // Phase 3Q Sub-PR-6 (F.1): RxDashboard — always-visible glance surface
+    // for the ACTIVE slice's RX state. Replaces the Phase 3Q-7
+    // m_statusConnInfo / m_statusLiveDot strip (those fields now live in
+    // the segment tooltip / NetworkDiagnosticsDialog).
+    // Task A5 (2026-08-02 bottom-banner cleanup): rebound on every
+    // RadioModel::sliceAdded / activeSliceChanged so it follows whichever
+    // slice is active, not a fixed slice(0) -- see the rebindDashboard
+    // lambda in buildStatusBar().
     RxDashboard* m_rxDashboard{nullptr};
 
     // Phase 3M-4 Task 10: PSA bottom-banner indicator pair (FB + PS labels).

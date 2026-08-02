@@ -4228,6 +4228,17 @@ nereus_add_test(tst_chrome_fold_plan)
 # QLabels.
 nereus_add_test(tst_chrome_bar_controller)
 
+# ── Bottom-banner cleanup Task A8: ChromeBarItems registration sweep ─────
+# 7 tests: wide bar shows everything, fold rung never regresses as width
+# shrinks, one width always yields one layout (idempotent + no history),
+# never-fold items survive every width, ladder folds in designed order
+# (system tile -> TGXL -> CAT/TCI -> chain0 -> RX pill -> placeholders),
+# CAT and TCI fold together, null widgets skipped not crashed. Exercises
+# the SAME registerChromeBarItems() buildStatusBar() calls, via a plain
+# ChromeBarWidgets struct filled with sized stand-ins -- MainWindow cannot
+# be constructed in this harness (see file header for why).
+nereus_add_test(tst_chrome_bar_items)
+
 # -- Phase 3M-3a-ii follow-up Batch 1: ParametricEqWidget skeleton --
 nereus_add_test(tst_parametric_eq_widget_skeleton)
 

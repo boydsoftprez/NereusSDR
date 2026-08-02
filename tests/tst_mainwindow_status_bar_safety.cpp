@@ -77,26 +77,38 @@ private:
 
 private slots:
 
-    // ── 1. TX Inhibit label is hidden by default ──────────────────────────
+    // ── 1. TX Inhibit label is dimmed by default ───────────────────────────
     //
-    // Mirrors the buildStatusBar() contract:
-    //   m_txInhibitLabel->setVisible(false);
-    //
-    // The label must start invisible so the status bar shows clean until
-    // TxInhibitMonitor::inhibited() asserts (Task 17 wiring).
+    // Mirrors the CURRENT buildStatusBar() contract (bottom-banner cleanup
+    // Task A6, design §4.5): the label lives permanently in its reserved
+    // safety slot and is dimmed via dimSafetyBadge(), never hidden with
+    // setVisible(false) -- a fixed-width slot showing at 14% opacity holds
+    // its geometry; an outright-hidden widget would collapse it. This slot
+    // used to assert the pre-A6 "TX INHIBIT" / setVisible(false) / em-dash
+    // tooltip contract, none of which buildStatusBar() does any more, and
+    // passed anyway because it is a self-contained mirror -- Task A8
+    // Step 5b retires that drift.
 
     void txInhibitLabel_hiddenByDefault()
     {
-        QLabel label(u"TX INHIBIT"_s);
+        QLabel label(u"INH"_s);
         label.setObjectName(u"txInhibitLabel"_s);
         label.setStyleSheet(
             u"QLabel { color: #ff6060; font-weight: bold; font-size: 11px;"
             "         padding: 2px 6px; border: 1px solid #ff6060; border-radius: 3px; }"_s);
-        label.setToolTip(u"External TX Inhibit asserted — TX is blocked"_s);
-        label.setVisible(false);
+        label.setToolTip(u"External TX Inhibit asserted. TX is blocked."_s);
+        dimBadge(&label, false);
 
-        QVERIFY(!label.isVisible());
-        QCOMPARE(label.text(), u"TX INHIBIT"_s);
+        // Dimming (opacity), not setVisible(false), is the mechanism.
+        // isVisible() itself is not asserted: an unshown, unparented
+        // top-level QLabel like this one defaults to invisible regardless
+        // of dimming state, so that read would be vacuous either way (see
+        // the file-header note on asserting the constraint, not the
+        // laid-out geometry).
+        auto* fx = qobject_cast<QGraphicsOpacityEffect*>(label.graphicsEffect());
+        QVERIFY(fx);
+        QCOMPARE(fx->opacity(), 0.14);
+        QCOMPARE(label.text(), u"INH"_s);
     }
 
     // ── 2. PA Status badge shows "PA OK" by default ───────────────────────

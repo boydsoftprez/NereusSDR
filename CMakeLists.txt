@@ -732,6 +732,7 @@ set(GUI_SOURCES
     src/gui/widgets/SystemTile.cpp
     src/gui/chrome/ChromeFoldPlan.cpp
     src/gui/chrome/ChromeBarController.cpp
+    src/gui/chrome/ChromeBarItems.cpp
     src/gui/widgets/StatusBadge.cpp
     src/gui/widgets/StatusBadge.h
     src/gui/widgets/AdcOverloadBadge.cpp
