@@ -172,6 +172,7 @@ mw0lge@grange-lane.co.uk
 #include "core/ConnectionState.h"
 #include "core/WdspTypes.h"  // DSPMode — for TX filter IQ-space mapping (Plan 4 D9)
 #include "core/spectrum/SpectrumDetectorMode.h"
+#include "core/spectrum/ISpectrumSink.h"  // R1 Task 4: also supplies WfColorScheme + AverageMode
 
 QT_BEGIN_NAMESPACE
 class QLabel;
@@ -196,22 +197,12 @@ class VfoWidget;
 class ImdOverlay;  // Phase 3M-4 Task 12 — two-tone IMD overlay analytical core
 class WaterfallTicker;  // src/gui/spectrum/WaterfallTicker.h
 
-// Waterfall color scheme presets.
-// Default matches AetherSDR/SmartSDR style.
-// From Thetis enums.cs:68-79 (ColorScheme enum). Expanded 4 → 7 in
-// Phase 3G-8 commit 5 (plan §7 W17 waterfall colour schemes expansion).
-enum class WfColorScheme : int {
-    Default = 0,    // AetherSDR: black → blue → cyan → green → yellow → red
-    Enhanced,       // Thetis enhanced (9-band progression)
-    Spectran,       // SPECTRAN
-    BlackWhite,     // Grayscale
-    LinLog,         // Linear in low, log in high — Thetis LinLog
-    LinRad,         // Linradiance-style cool → hot
-    Custom,         // User-defined custom stops (reads from AppSettings)
-    ClarityBlue,    // Phase 3G-9b: narrow-band monochrome (80% navy noise floor,
-                    // top 20% cyan→white signals). AetherSDR-style readability.
-    Count
-};
+// Waterfall color scheme presets: extracted to core in R1 Task 4
+// (src/core/spectrum/ISpectrumSink.h) alongside AverageMode below, because
+// RadioModel::applyClaritySmoothDefaults names specific enumerators of
+// both and must keep compiling once this file is no longer reachable from
+// src/models. Same name, same namespace, no alias needed (contrast
+// SpectrumDetector below, which was renamed and does need one).
 
 // Frequency label alignment for the bottom scale bar.
 // From Thetis comboDisplayLabelAlign (setup.designer.cs:34635).
@@ -227,19 +218,8 @@ enum class FreqLabelAlign : int {
     Count
 };
 
-// Spectrum averaging mode. Ported from Thetis comboDispPanAveraging
-// (setup.designer.cs:34835, target console.specRX.GetSpecRX(0).AverageMode).
-// Thetis options: None / Recursive / Time Window / Log Recursive.
-// NereusSDR names: None / Weighted / TimeWindow / Logarithmic — the
-// previous single smoothing behavior (kSmoothAlpha * new + (1-a) * prev)
-// corresponds to Weighted.
-enum class AverageMode : int {
-    None = 0,        // pass frame through unchanged
-    Weighted,        // kSmoothAlpha exponential (current NereusSDR behavior)
-    Logarithmic,     // log-domain exponential (matches Thetis Log Recursive)
-    TimeWindow,      // approximated as slower exponential for now
-    Count
-};
+// AverageMode: see the ISpectrumSink.h comment above WfColorScheme; same
+// R1 Task 4 extraction, same reasoning, no alias needed.
 
 // Spectrum detector type: extracted to core in R1 (src/core/spectrum/
 // SpectrumDetectorMode.h) so this GUI header is no longer required to get
@@ -281,7 +261,7 @@ const WfGradientStop* wfSchemeStops(WfColorScheme scheme, int& count);
 //   20px  - frequency scale bar
 //
 // From gpu-waterfall.md lines 274-289
-class SpectrumWidget : public SpectrumBaseClass {
+class SpectrumWidget : public SpectrumBaseClass, public NereusSDR::ISpectrumSink {
     Q_OBJECT
 
     // Phase 3Q-8: animated dim factor for the disconnect overlay.
@@ -334,7 +314,7 @@ public:
     float dynamicRange() const { return m_dynamicRange; }
 
     // ---- Waterfall settings ----
-    void setWfColorScheme(WfColorScheme scheme);
+    void setWfColorScheme(WfColorScheme scheme) override;
     WfColorScheme wfColorScheme() const { return m_wfColorScheme; }
     void setWfColorGain(int gain);
     int  wfColorGain() const { return m_wfColorGain; }
@@ -346,7 +326,7 @@ public:
     // Legacy combined averaging mode — kept for backward compat (existing
     // callers not yet migrated).  Routes internally to setSpectrumAveraging().
     // Retired key: DisplayAverageMode (migration in Task 5.1).
-    void setAverageMode(AverageMode m);
+    void setAverageMode(AverageMode m) override;
     AverageMode averageMode() const { return m_averageMode; }
 
     // ---- Detector + Averaging split (Task 2.1, handwave fix from 3G-8) ----
@@ -419,7 +399,7 @@ public:
     // [v2.10.3.13]. The bare alpha setter is kept only for callers not yet
     // migrated; it overwrites the spectrum alpha and is clobbered on the
     // next time-spin or fps change.
-    void setAverageAlpha(float alpha);
+    void setAverageAlpha(float alpha) override;
     float averageAlpha() const { return m_spectrumAverageAlpha; }
 
     // Per-side averaging time constants (milliseconds, ms→τ via /1000).
@@ -486,7 +466,7 @@ public:
     QColor peakBlobTextColor()    const { return m_peakBlobTextColor; }
 
     // Trace fill (under-the-curve shaded region).
-    void setPanFillEnabled(bool on);
+    void setPanFillEnabled(bool on) override;
     bool panFillEnabled() const { return m_panFill; }
     void setFillAlpha(float a);       // 0.0 .. 1.0
     float fillAlpha() const { return m_fillAlpha; }
@@ -512,7 +492,7 @@ public:
     // Trace colour (Phase 3G-8 commit 6 wiring). Single colour used for
     // both the line and the fill in the current renderer; plan §6 S11/S13
     // track splitting these if needed by future UI polish.
-    void setFillColor(const QColor& c);
+    void setFillColor(const QColor& c) override;
     QColor fillColor() const { return m_fillColor; }
 
     // ---- Waterfall renderer controls (Phase 3G-8 commit 4) ----
@@ -521,7 +501,7 @@ public:
     float wfHighThreshold() const { return m_wfHighThreshold; }
     void setWfLowThreshold(float dbm);
     float wfLowThreshold() const { return m_wfLowThreshold; }
-    void setWfAgcEnabled(bool on);
+    void setWfAgcEnabled(bool on) override;
     bool wfAgcEnabled() const { return m_wfAgcEnabled; }
     void setClarityActive(bool on);
     bool clarityActive() const { return m_clarityActive; }
@@ -561,7 +541,7 @@ public:
     bool waterfallStopOnTx() const { return m_wfStopOnTx; }
     void setWfOpacity(int percent);          // 0..100
     int  wfOpacity() const { return m_wfOpacity; }
-    void setWfUpdatePeriodMs(int ms);
+    void setWfUpdatePeriodMs(int ms) override;
     int  wfUpdatePeriodMs() const { return m_wfUpdatePeriodMs; }
 
     qint64 waterfallHistoryMs() const  { return m_waterfallHistoryMs; }
@@ -805,7 +785,7 @@ public:
     // 6 px red border around the spectrum area. When `foldback` is true,
     // "\n\nPOWER FOLD BACK" is appended to the text per display.cs:4187-4194.
     // //MW0LGE_21k8  [original inline comment from display.cs:4213]
-    void setHighSwrOverlay(bool active, bool foldback) noexcept;
+    void setHighSwrOverlay(bool active, bool foldback) noexcept override;
     bool isHighSwrOverlayActive() const noexcept { return m_highSwrActive; }
     bool isHighSwrFoldback()      const noexcept { return m_highSwrFoldback; }
 

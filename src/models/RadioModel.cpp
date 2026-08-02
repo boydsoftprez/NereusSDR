@@ -296,7 +296,6 @@ warren@wpratt.com
 #include "core/ModelPaths.h"
 #include "core/SkuUiProfile.h"
 #include "core/wdsp_api.h"
-#include "gui/SpectrumWidget.h"
 
 // ── Phase 3J-2 H2: spot-system ownership ────────────────────────────────
 #include "core/DxClusterClient.h"
@@ -712,18 +711,18 @@ RadioModel::RadioModel(QObject* parent)
     //    consistent fwd/rev values.
 
     // 3. SwrProtectionController::highSwrChanged → SpectrumWidget overlay.
-    //    m_spectrumWidget may be null at construction time (set later by
-    //    MainWindow::setSpectrumWidget). Guard every access.
+    //    m_spectrumSink may be null at construction time (set later by
+    //    MainWindow::setSpectrumSink, R1 Task 4). Guard every access.
     connect(&m_swrProt, &safety::SwrProtectionController::highSwrChanged,
             this, [this](bool isHigh) {
-        if (m_spectrumWidget) {
-            m_spectrumWidget->setHighSwrOverlay(isHigh, m_swrProt.windBackLatched());
+        if (m_spectrumSink) {
+            m_spectrumSink->setHighSwrOverlay(isHigh, m_swrProt.windBackLatched());
         }
     });
     connect(&m_swrProt, &safety::SwrProtectionController::windBackLatchedChanged,
             this, [this](bool latched) {
-        if (m_spectrumWidget && m_swrProt.highSwr()) {
-            m_spectrumWidget->setHighSwrOverlay(true, latched);
+        if (m_spectrumSink && m_swrProt.highSwr()) {
+            m_spectrumSink->setHighSwrOverlay(true, latched);
         }
     });
 
@@ -11114,7 +11113,7 @@ void RadioModel::teardownConnection()
 // Phase 3G-9b — 7 smooth-default recipe values. See docs/architecture/waterfall-tuning.md.
 void RadioModel::applyClaritySmoothDefaults()
 {
-    SpectrumWidget* sw = spectrumWidget();
+    NereusSDR::ISpectrumSink* sw = spectrumSink();
     if (!sw) { return; }  // not yet wired by MainWindow — Task 3 re-invokes
 
     // 1. Palette — narrow-band monochrome. See docs/architecture/waterfall-tuning.md §1.

@@ -2378,6 +2378,12 @@ void MainWindow::buildUI()
         if (!m_radioModel || !m_panStack) { return; }
         if (SpectrumWidget* sw = m_panStack->spectrum(panId)) {
             m_radioModel->setSpectrumWidget(sw);
+            // R1 Task 4: RadioModel's own DSP-facing calls (SWR overlay,
+            // applyClaritySmoothDefaults) go through the abstract
+            // ISpectrumSink pointer, not m_spectrumWidget, so it has to
+            // follow the active pan too. Same object, set from the same
+            // sw at the same time; only the static type differs.
+            m_radioModel->setSpectrumSink(sw);
         }
     });
 
@@ -3121,6 +3127,11 @@ void MainWindow::buildUI()
     // Phase 3G-8: expose view hooks on RadioModel so Display setup pages can
     // reach the renderer / FFT engine without depending on MainWindow.
     m_radioModel->setSpectrumWidget(activeSpectrumWidget());
+    // R1 Task 4: same object as the line above, fed to the abstract
+    // ISpectrumSink pointer RadioModel's own DSP-facing calls use. See the
+    // activePanChanged handler earlier in this file for the matching
+    // re-wire when the active pan changes.
+    m_radioModel->setSpectrumSink(activeSpectrumWidget());
     m_radioModel->setFftEngine(primaryFftEngine());
 
     // Phase 3F Sub-Epic I Task 8: follow each stream's DDC centre + rate.

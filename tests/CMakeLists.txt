@@ -4358,6 +4358,14 @@ nereus_add_test(tst_detector_modes)
 # relocation, not a behavior change.
 nereus_add_test(tst_spectrum_detector_mode)
 
+# R1 Task 4 -- guard test for the ISpectrumSink extraction.  Walks src/core
+# and src/models and fails on any "#include \"gui/" line.  This is the
+# property the whole R1 build split depends on: nereusd links NereusCore
+# alone only as long as neither tree reaches into src/gui.
+nereus_add_test(tst_core_has_no_gui_includes)
+target_compile_definitions(tst_core_has_no_gui_includes PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
 # Phase 1B verification -- exhaustive sweep of every detector x averaging
 # combination through SpectrumWidget::updateSpectrumLinear():
 #   spectrum  5 detectors x 4 averagings = 20

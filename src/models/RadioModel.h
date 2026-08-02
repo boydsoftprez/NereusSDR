@@ -72,6 +72,7 @@
 #include "core/Rf2ksConnection.h"
 #include "core/TgxlConnection.h"
 #include "core/FaultLog.h"
+#include "core/spectrum/ISpectrumSink.h"
 #include "core/TxInterlockPolicy.h"
 #include "core/TuneMemoryStore.h"
 #include "models/TunerModel.h"
@@ -833,6 +834,21 @@ public:
     // outlives both.
     class SpectrumWidget* spectrumWidget() const { return m_spectrumWidget; }
     void setSpectrumWidget(class SpectrumWidget* w) { m_spectrumWidget = w; }
+
+    // R1 Task 4: the abstract counterpart of m_spectrumWidget above.
+    // RadioModel's own DSP-facing calls (SwrProtectionController overlay
+    // push, applyClaritySmoothDefaults) go through this pointer instead of
+    // the concrete widget, so RadioModel.cpp needs no "gui/" include.
+    // m_spectrumWidget stays alongside it, untouched, because 82 Setup
+    // page call sites (DisplaySetupPages, AppearanceSetupPages,
+    // SpectrumPeaksPage; see MainWindow.cpp's activePanChanged handler
+    // comment) reach the renderer through spectrumWidget() for far more
+    // than the ISpectrumSink surface covers. Both members are set from the
+    // same SpectrumWidget* at every call site in MainWindow.cpp, so they
+    // always name the same object; only the static type callers see
+    // differs.
+    NereusSDR::ISpectrumSink* spectrumSink() const { return m_spectrumSink; }
+    void setSpectrumSink(NereusSDR::ISpectrumSink* sink) { m_spectrumSink = sink; }
     class FFTEngine* fftEngine() const { return m_fftEngine; }
     void setFftEngine(class FFTEngine* e) { m_fftEngine = e; }
     class ClarityController* clarityController() const { return m_clarityController; }
@@ -3108,6 +3124,9 @@ private:
 
     // View hooks (non-owning, set by MainWindow). Phase 3G-8 + 3G-9c.
     class SpectrumWidget*     m_spectrumWidget{nullptr};
+    // R1 Task 4: abstract twin of m_spectrumWidget above, see the
+    // spectrumSink() comment. Same object, different static type.
+    NereusSDR::ISpectrumSink* m_spectrumSink{nullptr};
     class FFTEngine*          m_fftEngine{nullptr};
     class ClarityController*  m_clarityController{nullptr};
     class StepAttenuatorController* m_stepAttController{nullptr};
