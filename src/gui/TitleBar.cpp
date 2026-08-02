@@ -49,6 +49,9 @@
 //   2026-04-30 — Phase 3Q Sub-PR-4 D.1: replaced ConnectionSegment body
 //                 per shell-chrome redesign spec §4.1. See TitleBar.h for
 //                 the full change description.
+//   2026-08-02 — Task A7 (bottom-banner cleanup): single-row UTC clock,
+//                 inserted after MasterOutputWidget and before the 💡
+//                 feature-request button. See TitleBar.h for rationale.
 // =================================================================
 
 #include "TitleBar.h"
@@ -56,6 +59,7 @@
 #include "StyleConstants.h"
 #include "widgets/MasterOutputWidget.h"
 
+#include <QDateTime>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
@@ -422,6 +426,29 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     m_master = new MasterOutputWidget(audio, this);
     m_hbox->addWidget(m_master);
 
+    // ── UTC clock — Task A7 ─────────────────────────────────────────────────
+    // Single-row UTC, moved here from the bottom banner. Every desktop OS
+    // already puts a clock top-right; the one fact worth duplicating here
+    // is UTC, since it's the one the OS clock doesn't give an operator for
+    // logging. Dropping it from the banner frees that corner for alarms
+    // alone.
+    m_utcLabel = new QLabel(this);
+    m_utcLabel->setToolTip(tr("UTC time"));
+    m_utcLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #8aa8c0; font-size: 11px;"
+        " font-family: 'SF Mono', Menlo, monospace; }"));
+    m_hbox->addWidget(m_utcLabel);
+    m_hbox->addSpacing(10);
+
+    auto tickUtc = [this]() {
+        m_utcLabel->setText(QDateTime::currentDateTimeUtc()
+                                .toString(QStringLiteral("hh:mm:ss UTC")));
+    };
+    tickUtc();  // populate before the first timer fire
+    m_utcTimer = new QTimer(this);
+    connect(m_utcTimer, &QTimer::timeout, this, tickUtc);
+    m_utcTimer->start(1000);
+
     // ── 💡 Feature-request button — Task 10d ───────────────────────────────
     // Construction moved verbatim from the now-deleted featureBar QToolBar
     // in MainWindow.cpp (Phase 3G-14). The button lives at the far right
@@ -514,6 +541,11 @@ void TitleBar::setMenuBar(QMenuBar* mb)
     m_menuBar = mb;
     // Insert at position 0 (before the first stretch).
     m_hbox->insertWidget(0, mb);
+}
+
+QString TitleBar::utcText() const
+{
+    return m_utcLabel ? m_utcLabel->text() : QString();
 }
 
 } // namespace NereusSDR

@@ -6765,47 +6765,6 @@ void MainWindow::buildStatusBar()
     m_overflowChip = new OverflowChip(barWidget);
     hbox->addWidget(m_overflowChip);
 
-    // Time display: stacked UTC + date / local
-    // Top row: UTC time (hh:mm:ss UTC)
-    // Bottom row: date + local time
-    {
-        m_timeWidget = new QWidget(barWidget);
-        m_timeWidget->setMinimumWidth(130);
-        QVBoxLayout* tvl = new QVBoxLayout(m_timeWidget);
-        tvl->setContentsMargins(0, 0, 0, 0);
-        tvl->setSpacing(0);
-
-        m_utcTimeLabel = new QLabel(m_timeWidget);
-        m_utcTimeLabel->setStyleSheet(QStringLiteral(
-            "QLabel { color: #8aa8c0; font-size: 11px; }"));
-        m_utcTimeLabel->setToolTip(QStringLiteral("UTC time"));
-        tvl->addWidget(m_utcTimeLabel);
-
-        auto* localDateLabel = new QLabel(m_timeWidget);
-        localDateLabel->setStyleSheet(QStringLiteral(
-            "QLabel { color: #607080; font-size: 11px; }"));
-        localDateLabel->setToolTip(QStringLiteral("Local date/time"));
-        tvl->addWidget(localDateLabel);
-
-        hbox->addWidget(m_timeWidget);
-
-        // Combined clock timer — 1s updates for UTC+date+local
-        m_clockTimer = new QTimer(this);
-        connect(m_clockTimer, &QTimer::timeout, this, [this, localDateLabel]() {
-            QDateTime utcNow = QDateTime::currentDateTimeUtc();
-            QDateTime localNow = QDateTime::currentDateTime();
-            m_utcTimeLabel->setText(utcNow.toString(QStringLiteral("hh:mm:ss UTC")));
-            localDateLabel->setText(
-                localNow.toString(QStringLiteral("yyyy-MM-dd  hh:mm")));
-        });
-        // Fire once immediately so labels are populated before first tick
-        QDateTime utcNow = QDateTime::currentDateTimeUtc();
-        QDateTime localNow = QDateTime::currentDateTime();
-        m_utcTimeLabel->setText(utcNow.toString(QStringLiteral("hh:mm:ss UTC")));
-        localDateLabel->setText(localNow.toString(QStringLiteral("yyyy-MM-dd  hh:mm")));
-        m_clockTimer->start(1000);
-    }
-
     // ── CPU usage timer ──────────────────────────────────────────────────────
     // Two sources, user-toggleable via right-click on m_cpuMetric:
     //   System  (default) — host_processor_info / whole-machine CPU,
@@ -7841,8 +7800,6 @@ void MainWindow::reapplyRightStripDropPriority(bool force)
         {{ m_paStackWidget, m_paVoltLabelSep, tr("PA telemetry") }},
         // 4. CPU.
         {{ m_cpuMetric, m_cpuMetricSep, tr("CPU") }},
-        // 5. Time — drops last; if it goes the strip is essentially empty.
-        {{ m_timeWidget, nullptr, tr("Clock") }},
     };
 
     // Phase 1: restore everything (the window may have grown since the

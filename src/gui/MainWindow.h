@@ -572,8 +572,6 @@ private:
     QLabel* m_radioModelLabel{nullptr};
     QLabel* m_radioFwLabel{nullptr};
     StationBlock* m_stationBlock{nullptr};    // Sub-PR-7 G.1: radio-name anchor
-    QLabel* m_utcTimeLabel{nullptr};
-    QTimer* m_clockTimer{nullptr};
     QLabel* m_tnfLabel{nullptr};
 
     // Wisdom generation dialog (shown on first run)
@@ -658,7 +656,6 @@ private:
     QLabel*  m_paVoltLabelSep{nullptr};
     QLabel*  m_paStatusBadgeSep{nullptr};
     QLabel*  m_cpuMetricSep{nullptr};
-    QWidget* m_timeWidget{nullptr};
 
     // OverflowChip — "…" pill that surfaces drop-list contents via its
     // hover tooltip. Hidden when the drop list is empty.

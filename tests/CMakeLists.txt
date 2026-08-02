@@ -1253,6 +1253,13 @@ nereus_add_test(tst_master_output_widget)
 # the menu-re-parent + in-window render on macOS.
 nereus_add_test(tst_title_bar)
 
+# ── Task A7 (bottom-banner cleanup): TitleBar::utcText() ─────────────────────
+# Single-row UTC clock moved from the bottom banner into TitleBar. Verifies
+# the label is populated before the first timer tick, matches the exact
+# "HH:MM:SS UTC" single-row shape (fully anchored, so a reintroduced
+# second date/local-time row would fail it), and contains no hyphen.
+nereus_add_test(tst_title_bar_clock)
+
 # ── Shell-Chrome Redesign sub-PR-4 D.1: ConnectionSegment v2 ─────────────────
 # 5 tests: state queries, rates+RTT round-trip, RTT-region left-click emits
 # rttClicked(), right-click emits contextMenuRequested(), audio flow-state
