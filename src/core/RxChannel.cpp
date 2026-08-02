@@ -1590,6 +1590,37 @@ bool RxChannel::deleteNotch(int index)
 #endif
 }
 
+void RxChannel::syncNotches(const QList<Notch>& notches)
+{
+#ifdef HAVE_WDSP
+    // Drop whatever the channel is currently carrying. Always erase index 0:
+    // RXANBPDeleteNotch shifts the array down (nbp.c:426-434), so repeatedly
+    // removing the head walks the whole database without index arithmetic.
+    for (int remaining = notchCount(); remaining > 0; --remaining) {
+        RXANBPDeleteNotch(m_channelId, 0);
+    }
+
+    // From Thetis setup.cs:18002-18004 [v2.10.3.15],
+    // RestoreNotchesFromDatabase: one RXANBPAddNotch per stored notch with
+    // the loop counter as the index, which is what makes list position and
+    // WDSP index the same thing (design doc section 5.2).
+    // sets max limits, and selects first notch if one exists MW0LGE
+    //   [original inline comment from setup.cs:18007]
+    for (int i = 0; i < notches.size(); ++i) {
+        const Notch& n = notches.at(i);
+        if (RXANBPAddNotch(m_channelId, i, n.centerHz, n.widthHz,
+                           n.active ? 1 : 0) < 0) {
+            qCWarning(lcDsp) << "RxChannel" << m_channelId
+                             << "notch sync truncated at index" << i
+                             << "of" << notches.size();
+            return;
+        }
+    }
+#else
+    Q_UNUSED(notches);
+#endif
+}
+
 int RxChannel::notchCount() const
 {
 #ifdef HAVE_WDSP

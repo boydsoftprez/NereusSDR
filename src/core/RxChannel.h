@@ -665,6 +665,12 @@ public:
     /// position == WDSP index. Returns false when the index is past the end.
     bool deleteNotch(int index);
 
+    /// Replace this channel's entire notch set with `notches`, in list order,
+    /// so list position == WDSP notch index. Used on channel activation and
+    /// after NotchModel::restoreFromSettings; live edits use the incremental
+    /// calls above because this one designs 2N filter pairs.
+    void syncNotches(const QList<Notch>& notches);
+
     // --- Filter convenience setters (single-axis) ---
     // Thin wrappers that remember the pending low/high and call setFilterFreqs.
     // Carry-only for state preservation in captureState/applyState; WDSP wiring

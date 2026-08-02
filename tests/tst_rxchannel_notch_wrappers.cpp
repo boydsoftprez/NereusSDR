@@ -274,6 +274,63 @@ private slots:
         QCOMPARE(ch->notchCount(), 0);
 #endif
     }
+
+    // -- 6.2: full rebuild ------------------------------------------------
+
+    void sync_notches_replaces_the_whole_set_in_list_order()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("Requires a live WDSP build: the notch database is rxa[].ndb.");
+#else
+        WdspEngine engine;
+        RxChannel* ch = openNotchChannel(engine);
+        ChannelCloser closer{&engine};
+        QVERIFY(ch != nullptr);
+
+        // Stale set the channel is already carrying.
+        QVERIFY(ch->addNotch(0, Notch{9, 1810000.0, 200.0, true}));
+        QVERIFY(ch->addNotch(1, Notch{8, 1820000.0, 200.0, true}));
+
+        const QList<Notch> wanted = {
+            Notch{1, 7040000.0,  200.0, true},
+            Notch{2, 7074000.0,  100.0, false},
+            Notch{3, 7100000.0, 1000.0, true},
+        };
+        ch->syncNotches(wanted);
+
+        QCOMPARE(ch->notchCount(), static_cast<int>(wanted.size()));
+        for (int i = 0; i < wanted.size(); ++i) {
+            const RawNotch got = readRawNotch(kNotchTestChannel, i);
+            QCOMPARE(got.rval, 0);
+            QCOMPARE(got.centerHz, wanted.at(i).centerHz);
+            QCOMPARE(got.widthHz, wanted.at(i).widthHz);
+            QCOMPARE(got.active, wanted.at(i).active ? 1 : 0);
+        }
+#endif
+    }
+
+    void sync_notches_with_an_empty_list_clears_the_channel()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("Requires a live WDSP build: the notch database is rxa[].ndb.");
+#else
+        WdspEngine engine;
+        RxChannel* ch = openNotchChannel(engine);
+        ChannelCloser closer{&engine};
+        QVERIFY(ch != nullptr);
+
+        QVERIFY(ch->addNotch(0, Notch{1, 10120000.0, 200.0, true}));
+        QVERIFY(ch->addNotch(1, Notch{2, 10130000.0, 200.0, true}));
+
+        // NotchModel::clear() lands here via notchesReset(); a sync that did
+        // not erase would leave the channel notching while the model shows
+        // nothing (design doc section 5.3, clear() contract).
+        ch->syncNotches({});
+
+        QCOMPARE(ch->notchCount(), 0);
+        QCOMPARE(readRawNotch(kNotchTestChannel, 0).rval, -1);
+#endif
+    }
 };
 
 QTEST_MAIN(TestRxChannelNotchWrappers)
