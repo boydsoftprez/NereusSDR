@@ -80,9 +80,9 @@ endif()
 # unoptimised so single-step debugging still works.
 option(NEREUSSDR_AGGRESSIVE_OPT "Use -O3 (instead of -O2) for release builds" ON)
 # 2026-05-26 KG4VCF: LTO default flipped to OFF.  With LTO enabled on
-# the shared NereusSDRObjs object library, every test binary (526 of
-# them) inherits the LTO bitcode and triggers a multi-minute LTO link
-# of its own.  Net effect on a clean build: 1+ hour, load avg 250+,
+# the shared NereusCore/NereusGui object libraries, every test binary
+# (589 of them) inherits the LTO bitcode and triggers a multi-minute LTO
+# link of its own.  Net effect on a clean build: 1+ hour, load avg 250+,
 # unusable while building.  Per-target IPO=FALSE on tests doesn't
 # undo the bitcode embed.  Default LTO off makes dev builds fast;
 # release artifacts can opt in via `cmake -DNEREUSSDR_ENABLE_LTO=ON`.
@@ -110,14 +110,14 @@ if(NEREUSSDR_ENABLE_LTO)
     check_ipo_supported(RESULT _lto_ok OUTPUT _lto_err)
     if(_lto_ok)
         # 2026-05-26 KG4VCF: LTO is applied PER-TARGET below (only the
-        # main NereusSDR executable + the parallel NereusSDRObjs_LTO
-        # object library it links).  We deliberately do NOT set the
-        # global CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO
-        # flag, because that would make the shared NereusSDRObjs (used
-        # by 526 test executables) produce LTO bitcode, and every test
-        # link would then trigger a multi-minute LTO pass.  Net effect
-        # of the old global setting on a clean build: ~1 hour, load
-        # avg 250+, dev-loop unusable while building.
+        # main NereusSDR executable + the parallel NereusCore_LTO/
+        # NereusGui_LTO object libraries it links).  We deliberately do
+        # NOT set the global CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO
+        # flag, because that would make the shared NereusCore/NereusGui
+        # (used by 589 test executables) produce LTO bitcode, and every
+        # test link would then trigger a multi-minute LTO pass.  Net
+        # effect of the old global setting on a clean build: ~1 hour,
+        # load avg 250+, dev-loop unusable while building.
         set(NEREUSSDR_LTO_AVAILABLE TRUE)
         message(STATUS "NereusSDR: link-time optimization enabled (main app only)")
     else()
@@ -1080,7 +1080,7 @@ if(APPLE)
 endif()
 
 # --------------------------------------------------------------------------
-# NereusCore / NereusGui dependency application (R1 Task 1 — see
+# NereusCore / NereusGui dependency application (R1 Task 1; see
 # docs/architecture/2026-07-28-remote-daemon-architecture-design.md section 4.1)
 #
 # NereusCore, NereusGui, and their LTO twins are four distinct OBJECT
@@ -1170,7 +1170,7 @@ function(nereus_apply_core_deps target)
         target_compile_definitions(${target} PUBLIC HAVE_FFTW3)
     endif()
 
-    # libpipewire-0.3 — gated by the pkg_check_modules block above. Only links on
+    # libpipewire-0.3, gated by the pkg_check_modules block above. Only links on
     # Linux when the dev package is present; NEREUS_HAVE_PIPEWIRE lets follow-up
     # PipeWire sources compile conditionally.
     if(PIPEWIRE_FOUND)
@@ -1220,7 +1220,7 @@ function(nereus_apply_core_deps target)
         target_compile_definitions(${target} PUBLIC HAVE_MNR)
     endif()
 
-    # PortAudio (Phase 3O VAX) — always linked; PortAudioBus is the cross-platform
+    # PortAudio (Phase 3O VAX): always linked; PortAudioBus is the cross-platform
     # IAudioBus fallback when no native low-latency backend is available.
     target_link_libraries(${target} PRIVATE portaudio_static)
     target_include_directories(${target} PUBLIC ${portaudio_SOURCE_DIR}/include)
@@ -1581,9 +1581,12 @@ endif()
 # TUs. Adding rarely-used headers slows incremental builds because every
 # PCH change retriggers all consumers.
 #
-# NereusGui does not reuse this PCH (R1 Task 1): giving it one is a
-# build-speed question, not a behaviour one, and is left for a follow-up
-# task rather than folded into this pure target-graph split.
+# NereusGui reuses this PCH too (REUSE_FROM below). NereusGui accounts for
+# 217 of the object libraries' 351 translation units, so the PCH needs to
+# cover both to actually pay for itself; the "GUI commons" header set
+# right below exists for exactly those TUs. Safe to reuse: GUI_SOURCES
+# has zero .mm files, so the Objective-C++ SKIP_PRECOMPILE_HEADERS
+# problem below (which is specific to MacMicPermission.mm) doesn't apply.
 #
 # ccache must be configured with sloppiness=pch_defines,time_macros for
 # PCH'd compiles to be cacheable; CI sets this in the "Configure ccache"
@@ -1641,6 +1644,7 @@ if(NEREUS_USE_PCH)
         <cstdint>
         <utility>
     )
+    target_precompile_headers(NereusGui REUSE_FROM NereusCore)
 endif()
 
 # --------------------------------------------------------------------------

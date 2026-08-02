@@ -166,7 +166,7 @@ function(nereus_add_test name)
     set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS ${name})
 
     # Reuse the NereusCore precompiled header (CMakeLists.txt §PCH).
-    # 451 test executables × per-target PCH compile would burn the wins;
+    # 589 test executables × per-target PCH compile would burn the wins;
     # REUSE_FROM means the PCH is built once on NereusCore and shared
     # across every test target. Save 5 to 10 minutes of test compile
     # time on Linux CI. Gated on NEREUS_USE_PCH so users who turn the
