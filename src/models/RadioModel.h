@@ -533,6 +533,20 @@ public:
     /// WDSP has any channels, still comes back with all of them audible.
     void activateBoundSliceChannels();
 
+    /// Reconcile every OPEN pool channel with the current notch set.
+    ///
+    /// Design section 6.3. Runs at the tail of openRxChannelPool because
+    /// activateSliceChannel is dead as a hook for Slice A: connectToRadio's
+    /// WDSP-init lambda activates channel 0 before it opens the pool, and
+    /// activateSliceChannel early-returns on an already-active channel.
+    /// Covers reconnect for free, since teardownConnection destroys every
+    /// channel.
+    ///
+    /// Reconciles channels that no slice is bound to yet as well: a notch
+    /// database is created inert (third_party/wdsp/src/RXA.c:87) and this is
+    /// where the run flag lands.
+    void syncNotchesToAllChannels();
+
     /// Switch on one slice's WDSP channel, pushing its demodulation state
     /// first. No-op when the slice has no stream, has no channel yet, or is
     /// already live (Slice A, which connectToRadio activates after the full
@@ -2577,6 +2591,22 @@ private:
     /// Qt::UniqueConnection-safe member targets or are wired once at
     /// addSlice time.
     void wireSliceSignals(SliceModel* slice);
+
+    /// Push the full notch state at one channel: the list, the master run
+    /// flag, the auto-increase flag and the NBP tune frequency. `channelId`
+    /// is also the slice index (Sub-Epic I invariant), which is how the
+    /// hosting stream's centre is resolved for the tune frequency
+    /// (design section 4.1).
+    void syncNotchesToChannel(RxChannel* ch, int channelId);
+
+    /// Every WDSP RX channel that currently backs a slice. The fan-out
+    /// target set for a live notch mutation (design section 6.3).
+    QVector<RxChannel*> sliceRxChannels() const;
+
+    /// Design section 6.2: our list position IS the WDSP notch index, so a
+    /// count divergence is a correctness bug. Detect and recover with a full
+    /// resync rather than assert, which a release build compiles out.
+    void reconcileNotchCount(RxChannel* ch);
 
     // Recomputes the transmit frequency from the TX-bound slice and pushes it
     // at the connection. The single place that answers "what frequency is the

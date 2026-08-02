@@ -3129,6 +3129,16 @@ void RadioModel::openRxChannelPool(int poolSize, int inputBufferSize,
     // channels at all. Without this loop only Slice A would come back audible
     // after a reconnect.
     activateBoundSliceChannels();
+
+    // TNF design section 6.3: reconcile the notch set, the master run flag,
+    // the auto-increase flag and the NBP tune frequency across every channel
+    // this pool just opened, including channel 0, which the Slice A block in
+    // connectToRadio already activated and which activateSliceChannel
+    // therefore refuses to touch. Cheap when the notch list is empty
+    // (syncNotches deletes nothing and adds nothing) and idempotent when it
+    // is not (RXANBPSetTuneFrequency short-circuits at
+    // third_party/wdsp/src/nbp.c:479).
+    syncNotchesToAllChannels();
 }
 
 // ── Phase 3F Sub-Epic I: pooled-channel activation ──────────────────────────
@@ -3224,6 +3234,116 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
     ch->setShiftFrequency(composedShiftHz(slice));
 
     ch->setActive(true);
+}
+
+// ── TNF fan-out (design section 6.3) ────────────────────────────────────────
+//
+// Thetis fans every notch mutation at three fixed WDSP ids, WDSP.id(0, 0),
+// WDSP.id(0, 1) and WDSP.id(2, 0):
+//
+//   From Thetis console.cs:40271-40273 [v2.10.3.15] — AddNotch:
+//     WDSP.RXANBPAddNotch(WDSP.id(0, 0), nNumberofExistingNotches, fFreqHZ, fWidth, true);
+//     WDSP.RXANBPAddNotch(WDSP.id(0, 1), nNumberofExistingNotches, fFreqHZ, fWidth, true);
+//     WDSP.RXANBPAddNotch(WDSP.id(2, 0), nNumberofExistingNotches, fFreqHZ, fWidth, true);
+//
+// NereusSDR's slice count is dynamic post-3F, so we walk slices() instead of
+// naming three ids; the WDSP RX channel id is the slice index (Sub-Epic I
+// invariant).
+//
+// One list serves every slice (design D1). Notch centres are absolute RF Hz,
+// so a 20 m notch is inherently inert on a 40 m slice, which is what lets the
+// same list go to every channel unfiltered.
+QVector<RxChannel*> RadioModel::sliceRxChannels() const
+{
+    QVector<RxChannel*> out;
+    if (!m_wdspEngine) {
+        return out;
+    }
+    for (SliceModel* s : std::as_const(m_slices)) {
+        if (!s) {
+            continue;
+        }
+        if (RxChannel* ch = m_wdspEngine->rxChannel(s->sliceIndex())) {
+            out.append(ch);
+        }
+    }
+    return out;
+}
+
+void RadioModel::reconcileNotchCount(RxChannel* ch)
+{
+    if (!ch || !m_notchModel) {
+        return;
+    }
+    // RXANBPGetNumNotches takes the channel's DSP critical section
+    // (third_party/wdsp/src/nbp.c:465-472). Negligible next to
+    // UpdateNBPFilters, which every mutation already pays and which designs
+    // two filters, nbp0 plus recalc_bpsnba_filter (nbp.c:345-359 ->
+    // snb.c:814-828).
+    const int expected = m_notchModel->notches().size();
+    const int actual   = ch->notchCount();
+    if (actual == expected) {
+        return;
+    }
+    qCWarning(lcDsp) << "Notch index divergence on RX channel"
+                     << ch->channelId() << "- WDSP holds" << actual
+                     << "notches, the model holds" << expected
+                     << "- resyncing";
+    ch->syncNotches(m_notchModel->notches());
+}
+
+void RadioModel::syncNotchesToChannel(RxChannel* ch, int channelId)
+{
+    if (!ch || !m_notchModel) {
+        return;
+    }
+
+    ch->syncNotches(m_notchModel->notches());
+
+    // Every channel's notch database is built inert: create_notchdb takes
+    //   0,      // master run for all nbp's
+    // and create_nbp takes
+    //   0,      // run the notches
+    // (third_party/wdsp/src/RXA.c:85-93), and both calc_nbp_lightweight
+    // (nbp.c:190) and calc_nbp_impulse (nbp.c:223) bypass the database
+    // entirely while fnfrun is 0. RXANBPSetNotchesRun is its only writer
+    // (nbp.c:499), so a channel that misses this call is notch-inert rather
+    // than merely empty.
+    ch->setNotchesRun(m_notchModel->globalEnabled());
+
+    // Easy to drop and silent when dropped: without it a sub-minimum notch is
+    // never widened (nbp.c:122, "if (autoincr && width[k] < minwidth)") and
+    // the bench row for auto-increase fails with no other symptom. Design
+    // section 6.3 calls this out.
+    ch->setNotchAutoIncrease(m_notchModel->autoIncrease());
+
+    // Design section 4.1: NOTCHDB::tunefreq is the hosting stream's CENTRE,
+    // not the slice frequency. WDSP sums the two terms
+    // (offset = b->tunefreq + b->shift, nbp.c:192) and we already feed shift
+    // as the slice's displacement from its stream centre, so driving tunefreq
+    // from the slice frequency would compute 2*sliceFreq - streamCentre.
+    // Thetis proves the intent: it gives the sub-receiver its own shift
+    // (console.cs:31922 [v2.10.3.15]) while pushing the identical tunefreq to
+    // both ids (console.cs:31940-31941 [v2.10.3.15]).
+    if (SliceModel* s = sliceById(channelId)) {
+        if (s->streamIndex() >= 0) {
+            ch->setNotchTuneFrequency(
+                m_streamAllocator.streamCentreHz(s->streamIndex()));
+        }
+    }
+}
+
+void RadioModel::syncNotchesToAllChannels()
+{
+    if (!m_wdspEngine || !m_notchModel) {
+        return;
+    }
+    for (int ch = WdspEngine::kFirstSliceChannelId;
+         ch < WdspEngine::kMaxSliceChannels; ++ch) {
+        // rxChannel returns nullptr for ids this pool did not open, so the
+        // full sweep is safe even when the SKU's maxSlices is smaller.
+        syncNotchesToChannel(m_wdspEngine->rxChannel(ch), ch);
+    }
 }
 
 // The disable half of the same Thetis pair (console.cs:37398-37400

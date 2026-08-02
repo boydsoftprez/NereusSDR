@@ -135,6 +135,92 @@ private slots:
         // (nbp.c:406-411), so the wrapper must report failure, not garbage.
         QVERIFY(!ch->notchAt(1, got));
     }
+
+    // -- section 6.3: the whole point of the task -------------------------
+    //
+    // connectToRadio's WDSP-init lambda activates channel 0 BEFORE it opens
+    // the pool, and activateSliceChannel early-returns on an already-active
+    // channel. Slice A therefore never passes through that hook, so the
+    // reconcile has to live at the openRxChannelPool tail.
+    void slice_a_gets_notches_run_autoincrease_and_tunefreq_on_connect()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        NotchModel* nm = model.notchModel();
+        nm->setGlobalEnabled(true);
+        nm->setAutoIncrease(true);
+        QVERIFY(nm->addNotch(14074000.0, 200.0) >= 0);
+        QVERIFY(nm->addNotch(14100000.0, 500.0) >= 0);
+
+        model.configureStreamPool(5, 5, kRateHz);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+        QVERIFY(model.sliceById(a)->streamIndex() >= 0);
+
+        // Everything above happened with zero WDSP channels open, so nothing
+        // pushed anything. This call is the only writer.
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+
+        RxChannel* ch = engine->rxChannel(a);
+        QVERIFY(ch != nullptr);
+        QCOMPARE(ch->notchCount(), 2);
+        QVERIFY(ch->notchesRun());
+        QVERIFY(ch->notchAutoIncrease());
+
+        // Section 4.1: tunefreq is the hosting stream's centre, not the slice
+        // frequency. WDSP sums it with the shift (offset = tunefreq + shift,
+        // nbp.c:192), so both halves are asserted, not just the sum.
+        const int st = model.sliceById(a)->streamIndex();
+        QCOMPARE(ch->notchTuneFrequencyHz(), model.streamCentreHzForTest(st));
+        QCOMPARE(ch->notchTuneFrequencyHz() + model.sliceById(a)->shiftOffsetHz(),
+                 model.sliceById(a)->frequency());
+
+        // List order is the WDSP index (section 5.2).
+        Notch got;
+        QVERIFY(ch->notchAt(0, got));
+        QCOMPARE(got.centerHz, 14074000.0);
+        QVERIFY(ch->notchAt(1, got));
+        QCOMPARE(got.centerHz, 14100000.0);
+    }
+
+    // -- section 6.3: reconnect reopens the hole ---------------------------
+    //
+    // teardownConnection calls WdspEngine::shutdown, which destroys every RX
+    // channel; connectToRadio then re-opens the pool. Simulated here by
+    // destroying the pool directly, which is precisely the half of shutdown()
+    // that matters.
+    void notches_come_back_on_slice_a_after_a_reconnect()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        NotchModel* nm = model.notchModel();
+        nm->setGlobalEnabled(true);
+        QVERIFY(nm->addNotch(7040000.0, 200.0) >= 0);
+
+        model.configureStreamPool(5, 5, kRateHz);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(7040500.0);
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QCOMPARE(engine->rxChannel(a)->notchCount(), 1);
+
+        for (int ch = 0; ch < WdspEngine::kMaxSliceChannels; ++ch) {
+            engine->destroyRxChannel(ch);
+        }
+        QVERIFY(engine->rxChannel(a) == nullptr);
+
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+
+        RxChannel* ch = engine->rxChannel(a);
+        QVERIFY(ch != nullptr);
+        QCOMPARE(ch->notchCount(), 1);
+        QVERIFY(ch->notchesRun());
+        QCOMPARE(ch->notchTuneFrequencyHz(),
+                 model.streamCentreHzForTest(model.sliceById(a)->streamIndex()));
+    }
 };
 
 QTEST_MAIN(TestNotchChannelSync)
