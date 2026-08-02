@@ -729,6 +729,7 @@ set(GUI_SOURCES
     src/gui/widgets/VfoWidget.cpp
     src/gui/widgets/MetricLabel.cpp
     src/gui/widgets/MetricLabel.h
+    src/gui/chrome/ChromeFoldPlan.cpp
     src/gui/widgets/StatusBadge.cpp
     src/gui/widgets/StatusBadge.h
     src/gui/widgets/AdcOverloadBadge.cpp

@@ -4200,6 +4200,13 @@ nereus_add_test(tst_audio_engine_flow_state)
 # clears counters, signal-wire safety. QTEST_MAIN — needs QApplication.
 nereus_add_test(tst_network_diagnostics_dialog)
 
+# ── Bottom-banner cleanup Task A1: ChromeFoldPlan pure fold math ─────────
+# 9 tests: required-width gap/padding accounting, per-rung folding,
+# same-rung grouping, rung-0 anchor immunity, planFold fit/stop/monotonic/
+# deterministic behavior, folded-label ordering. QTEST_MAIN but no QWidget
+# construction; the whole ladder is testable without a GUI.
+nereus_add_test(tst_chrome_fold_plan)
+
 # -- Phase 3M-3a-ii follow-up Batch 1: ParametricEqWidget skeleton --
 nereus_add_test(tst_parametric_eq_widget_skeleton)
 
