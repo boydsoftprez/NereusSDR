@@ -295,6 +295,189 @@ private slots:
         model.notchModel()->removeNotch(id);
         QTRY_COMPARE(table->rowCount(), 0);
     }
+
+    // -- C. Row edits and the adminBusy lock ------------------------------
+
+    void rowFrequencyEdit_commitsToModel()
+    {
+        RadioModel model;
+        model.notchModel()->addNotch(14200000.0, 200.0);
+        const int id = model.notchModel()->notches().first().id;
+
+        MnfSetupPage page(&model);
+        page.show();
+        auto* table = page.findChild<QTableWidget*>(QStringLiteral("tblMNFNotches"));
+        QVERIFY(table);
+        auto* freq = qobject_cast<QDoubleSpinBox*>(table->cellWidget(0, 0));
+        QVERIFY(freq);
+
+        freq->setValue(14200500.0);
+        // QAbstractSpinBox::keyPressEvent emits editingFinished on Return.
+        QTest::keyClick(freq, Qt::Key_Return);
+
+        const Notch* n = model.notchModel()->notchById(id);
+        QVERIFY(n);
+        QCOMPARE(n->centerHz, 14200500.0);
+    }
+
+    void rowWidthEdit_commitsToModel()
+    {
+        RadioModel model;
+        model.notchModel()->addNotch(14200000.0, 200.0);
+        const int id = model.notchModel()->notches().first().id;
+
+        MnfSetupPage page(&model);
+        page.show();
+        auto* table = page.findChild<QTableWidget*>(QStringLiteral("tblMNFNotches"));
+        QVERIFY(table);
+        auto* width = qobject_cast<QDoubleSpinBox*>(table->cellWidget(0, 1));
+        QVERIFY(width);
+
+        width->setValue(400.0);
+        QTest::keyClick(width, Qt::Key_Return);
+
+        const Notch* n = model.notchModel()->notchById(id);
+        QVERIFY(n);
+        QCOMPARE(n->widthHz, 400.0);
+    }
+
+    void rowActiveCheckbox_commitsToModel()
+    {
+        RadioModel model;
+        model.notchModel()->addNotch(14200000.0);
+        const int id = model.notchModel()->notches().first().id;
+
+        MnfSetupPage page(&model);
+        page.show();
+        auto* table = page.findChild<QTableWidget*>(QStringLiteral("tblMNFNotches"));
+        QVERIFY(table);
+        auto* active = qobject_cast<QCheckBox*>(table->cellWidget(0, 2));
+        QVERIFY(active);
+        QCOMPARE(active->isChecked(), true);
+
+        active->setChecked(false);
+
+        const Notch* n = model.notchModel()->notchById(id);
+        QVERIFY(n);
+        QCOMPARE(n->active, false);
+    }
+
+    void rowDeleteButton_removesNotch()
+    {
+        RadioModel model;
+        model.notchModel()->addNotch(14200000.0);
+
+        MnfSetupPage page(&model);
+        page.show();
+        auto* table = page.findChild<QTableWidget*>(QStringLiteral("tblMNFNotches"));
+        QVERIFY(table);
+        auto* del = qobject_cast<QPushButton*>(table->cellWidget(0, 3));
+        QVERIFY(del);
+
+        del->click();
+
+        QCOMPARE(static_cast<int>(model.notchModel()->notches().size()), 0);
+        QTRY_COMPARE(table->rowCount(), 0);
+    }
+
+    void rowValueChangedFromElsewhere_refreshesEditors()
+    {
+        RadioModel model;
+        model.notchModel()->addNotch(14200000.0, 200.0);
+        const int id = model.notchModel()->notches().first().id;
+
+        MnfSetupPage page(&model);
+        page.show();
+        auto* table = page.findChild<QTableWidget*>(QStringLiteral("tblMNFNotches"));
+        QVERIFY(table);
+        auto* width = qobject_cast<QDoubleSpinBox*>(table->cellWidget(0, 1));
+        QVERIFY(width);
+
+        // Panadapter-side wheel resize while the page is idle.
+        QVERIFY(model.notchModel()->setWidth(id, 350.0));
+        QCOMPARE(width->value(), 350.0);
+    }
+
+    void rowEdit_holdsAdminBusy()
+    {
+        RadioModel model;
+        model.notchModel()->addNotch(14200000.0);
+
+        MnfSetupPage page(&model);
+        page.show();
+        auto* table = page.findChild<QTableWidget*>(QStringLiteral("tblMNFNotches"));
+        QVERIFY(table);
+        auto* freq = qobject_cast<QDoubleSpinBox*>(table->cellWidget(0, 0));
+        QVERIFY(freq);
+        QVERIFY(!model.notchModel()->adminBusy());
+
+        freq->setValue(14200500.0);
+        QVERIFY(model.notchModel()->adminBusy());
+    }
+
+    void rowCommit_clearsAdminBusyBeforeWriting()
+    {
+        RadioModel model;
+        model.notchModel()->addNotch(14200000.0);
+        const int id = model.notchModel()->notches().first().id;
+
+        MnfSetupPage page(&model);
+        page.show();
+        auto* table = page.findChild<QTableWidget*>(QStringLiteral("tblMNFNotches"));
+        QVERIFY(table);
+        auto* freq = qobject_cast<QDoubleSpinBox*>(table->cellWidget(0, 0));
+        QVERIFY(freq);
+
+        freq->setValue(14200500.0);
+        QVERIFY(model.notchModel()->adminBusy());
+        QTest::keyClick(freq, Qt::Key_Return);
+
+        QVERIFY(!model.notchModel()->adminBusy());
+        // Thetis's ENTER clears the flag first and only then writes:
+        // btnMNFEnter_Click (setup.cs:17738 [v2.10.3.15]) sets AddActive
+        // false at :17744 before RXANBPAddNotch at :17749, and EditActive
+        // false at :17759 before RXANBPEditNotch at :17766. The write must
+        // land, which it cannot if the lock is still up.
+        QCOMPARE(model.notchModel()->notchById(id)->centerHz, 14200500.0);
+    }
+
+    void adminBusy_blocksThePanadapterPathDuringAnEdit()
+    {
+        RadioModel model;
+        model.notchModel()->addNotch(14200000.0);
+        const int id = model.notchModel()->notches().first().id;
+
+        MnfSetupPage page(&model);
+        page.show();
+        auto* table = page.findChild<QTableWidget*>(QStringLiteral("tblMNFNotches"));
+        QVERIFY(table);
+        auto* freq = qobject_cast<QDoubleSpinBox*>(table->cellWidget(0, 0));
+        QVERIFY(freq);
+
+        freq->setValue(14200500.0);   // edit opens
+
+        // From Thetis console.cs:40079 [v2.10.3.15]:
+        //   "if (SetupForm.NotchAdminBusy) return false;"
+        QCOMPARE(model.notchModel()->setCenter(id, 21000000.0), false);
+        QCOMPARE(model.notchModel()->notchById(id)->centerHz, 14200000.0);
+    }
+
+    void rebuildingTheTable_doesNotOpenAnEdit()
+    {
+        RadioModel model;
+        model.notchModel()->addNotch(14200000.0);
+
+        MnfSetupPage page(&model);
+        page.show();
+        auto* table = page.findChild<QTableWidget*>(QStringLiteral("tblMNFNotches"));
+        QVERIFY(table);
+
+        // Seeding a second row re-runs rebuildTable(); the setValue() calls it
+        // makes must not read as operator edits.
+        model.notchModel()->addNotch(7100000.0);
+        QTRY_COMPARE(table->rowCount(), 2);
+        QVERIFY(!model.notchModel()->adminBusy());
+    }
 };
 
 QTEST_MAIN(TestMnfSetupPage)

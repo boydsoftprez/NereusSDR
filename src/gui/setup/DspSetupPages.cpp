@@ -2304,6 +2304,11 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
     connect(nm, &NotchModel::notchesReset, this,
             &MnfSetupPage::rebuildTable, Qt::QueuedConnection);
 
+    // Value-only changes refresh the row in place. Direct, not queued: it
+    // rewrites the existing editors instead of replacing them, so it is safe
+    // even when it lands inside a spin box's own editingFinished.
+    connect(nm, &NotchModel::notchChanged, this, &MnfSetupPage::refreshRow);
+
     rebuildTable();
 }
 
@@ -2354,6 +2359,12 @@ void MnfSetupPage::rebuildTable()
         freqSpin->setStyleSheet(kMnfEditorStyle);
         // From Thetis setup.designer.cs:44374 [v2.10.3.15] — udMNFFreq tooltip.
         freqSpin->setToolTip(QStringLiteral("Center frequency of the notch"));
+        // Connected after the value is pushed, so construction cannot read as
+        // an operator edit and raise the lock.
+        connect(freqSpin, &QDoubleSpinBox::valueChanged, this,
+                [this](double) { beginAdminEdit(); });
+        connect(freqSpin, &QDoubleSpinBox::editingFinished, this,
+                [this, id] { commitRow(id); });
         m_notchTable->setCellWidget(row, 0, freqSpin);
 
         // Col 1: width.
@@ -2367,6 +2378,10 @@ void MnfSetupPage::rebuildTable()
         // From Thetis setup.designer.cs:44343 [v2.10.3.15] — udMNFWidth tooltip
         // (upstream spelling preserved verbatim).
         widthSpin->setToolTip(QStringLiteral("Bandwdith of the notch"));
+        connect(widthSpin, &QDoubleSpinBox::valueChanged, this,
+                [this](double) { beginAdminEdit(); });
+        connect(widthSpin, &QDoubleSpinBox::editingFinished, this,
+                [this, id] { commitRow(id); });
         m_notchTable->setCellWidget(row, 1, widthSpin);
 
         // Col 2: active.
@@ -2375,6 +2390,13 @@ void MnfSetupPage::rebuildTable()
         activeChk->setChecked(n.active);
         // From Thetis setup.designer.cs:44261 [v2.10.3.15] — chkMNFActive tooltip.
         activeChk->setToolTip(QStringLiteral("Checked if the notch is active"));
+        connect(activeChk, &QCheckBox::toggled, this, [this, id](bool on) {
+            if (m_rebuilding) { return; }
+            RadioModel* r = model();
+            if (!r || !r->notchModel()) { return; }
+            endAdminEdit();
+            r->notchModel()->setActive(id, on);
+        });
         m_notchTable->setCellWidget(row, 2, activeChk);
 
         // Col 3: delete.
@@ -2395,6 +2417,81 @@ void MnfSetupPage::rebuildTable()
     }
 
     m_rebuilding = false;
+}
+
+// ── MnfSetupPage::refreshRow ──────────────────────────────────────────────────
+
+void MnfSetupPage::refreshRow(int notchId)
+{
+    RadioModel* rm = model();
+    if (!m_notchTable || !rm || !rm->notchModel()) { return; }
+
+    const int row = m_rowIds.indexOf(notchId);
+    if (row < 0) { return; }
+
+    const Notch* n = rm->notchModel()->notchById(notchId);
+    if (!n) { return; }
+
+    m_rebuilding = true;
+    if (auto* freqSpin = qobject_cast<QDoubleSpinBox*>(m_notchTable->cellWidget(row, 0))) {
+        QSignalBlocker b(freqSpin);
+        freqSpin->setValue(n->centerHz);
+    }
+    if (auto* widthSpin = qobject_cast<QDoubleSpinBox*>(m_notchTable->cellWidget(row, 1))) {
+        QSignalBlocker b(widthSpin);
+        widthSpin->setValue(n->widthHz);
+    }
+    if (auto* activeChk = qobject_cast<QCheckBox*>(m_notchTable->cellWidget(row, 2))) {
+        QSignalBlocker b(activeChk);
+        activeChk->setChecked(n->active);
+    }
+    m_rebuilding = false;
+}
+
+// ── MnfSetupPage::commitRow ───────────────────────────────────────────────────
+
+void MnfSetupPage::commitRow(int notchId)
+{
+    if (m_rebuilding) { return; }
+
+    RadioModel* rm = model();
+    if (!m_notchTable || !rm || !rm->notchModel()) { return; }
+
+    const int row = m_rowIds.indexOf(notchId);
+    if (row < 0) { return; }
+
+    auto* freqSpin  = qobject_cast<QDoubleSpinBox*>(m_notchTable->cellWidget(row, 0));
+    auto* widthSpin = qobject_cast<QDoubleSpinBox*>(m_notchTable->cellWidget(row, 1));
+    if (!freqSpin || !widthSpin) { return; }
+
+    // Lock down first, exactly as Thetis's ENTER does: btnMNFEnter_Click
+    // (setup.cs:17738 [v2.10.3.15]) sets AddActive false at :17744 before
+    // RXANBPAddNotch at :17749-17751, and EditActive false at :17759 before
+    // RXANBPEditNotch at :17766-17768. NotchModel's mutators are shared with
+    // the panadapter path and reject writes while adminBusy is set
+    // (console.cs:40009, :40079 [v2.10.3.15]), so this ordering is required
+    // for the page's own write to land at all.
+    endAdminEdit();
+
+    NotchModel* nm = rm->notchModel();
+    nm->setCenter(notchId, freqSpin->value());
+    nm->setWidth(notchId, widthSpin->value());
+}
+
+// ── MnfSetupPage::beginAdminEdit ──────────────────────────────────────────────
+
+void MnfSetupPage::beginAdminEdit()
+{
+    if (m_rebuilding) { return; }
+    RadioModel* rm = model();
+    if (!rm || !rm->notchModel()) { return; }
+    // Thetis raises the flag on btnMNFAdd (AddActive = true, setup.cs:17679
+    // [v2.10.3.15]) and btnMNFEdit (EditActive = true, :17718), and every
+    // console-side notch mutator bails on it (console.cs:40009, 40079, 40125,
+    // 40161, 40200, 40224, 40315 [v2.10.3.15]). An in-place table edit is the
+    // same window: it opens on the first value change and closes when the row
+    // commits.
+    rm->notchModel()->setAdminBusy(true);
 }
 
 // ── MnfSetupPage::endAdminEdit ────────────────────────────────────────────────

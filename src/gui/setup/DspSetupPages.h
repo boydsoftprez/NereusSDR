@@ -262,6 +262,14 @@ private:
     // Qt::QueuedConnection so a rebuild never destroys the cell widget whose
     // signal is being emitted right now (the row Delete button above all).
     void rebuildTable();
+    // Value-only refresh of one row. Destroys nothing, so it is safe to run
+    // synchronously from inside a cell widget's own signal.
+    void refreshRow(int notchId);
+    void commitRow(int notchId);
+    // Open the Settings-side edit window. Thetis's SetupForm.NotchAdminBusy is
+    // AddActive | EditActive (setup.cs:17728-17735 [v2.10.3.15]); an in-place
+    // table edit is the same window, opening on the first value change.
+    void beginAdminEdit();
     // Clear the Settings-side edit lock. NotchModel's mutators are shared with
     // the panadapter path and reject writes while adminBusy is set, so every
     // page-side write clears it first, exactly as Thetis's ENTER button does.
