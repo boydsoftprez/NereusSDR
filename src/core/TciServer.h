@@ -441,6 +441,17 @@ private:
     // next start().  Idempotent: if already true, hookGlobalBroadcasts no-ops.
     bool m_globalBroadcastsWired{false};
 
+    // TNF section 6.4: guard flag for the NotchModel master-enable broadcast
+    // wired by hookSliceBroadcasts.  Deliberately NOT reset in stop(), unlike
+    // m_globalBroadcastsWired above: stop()'s wholesale
+    // QObject::disconnect(m_model, nullptr, this, nullptr) is rooted on
+    // RadioModel, and NotchModel is a separate QObject, so that connection
+    // survives a stop()/start() cycle intact.  hookSliceBroadcasts runs from
+    // the constructor AND from every start(), so without this flag each
+    // restart would add another subscriber and every flip would emit
+    // duplicate rx_nf_enable frames.
+    bool m_notchBroadcastWired{false};
+
     // Phase 3J-1 review P2.3: guard flag for the IQ tap connection.
     // hookAudioAndIqTaps() sets this to true after connecting
     // RadioModel::rawIqData → onRawIqDataReceived; stop() resets it when it

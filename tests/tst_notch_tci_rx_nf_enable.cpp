@@ -149,6 +149,72 @@ private slots:
                  qPrintable(QStringLiteral("handler queued: %1")
                                 .arg(queued.join(QLatin1Char('|')))));
     }
+
+    // -- UI-originated flip broadcasts both indices ------------------------
+
+    void ui_flip_broadcasts_both_rx_indices()
+    {
+        RadioModel m;
+        TciServer  server(&m);   // the ctor runs hookSliceBroadcasts()
+        TciProtocol* p = server.protocolForTest();
+        QVERIFY(p);
+        drain(p);                // discard anything queued during wireup
+
+        m.notchModel()->setGlobalEnabled(true);
+
+        // From Thetis TCIServer.cs:1315-1320 [v2.10.3.15]: NfChanged calls
+        // sendRxNfEnable(0, newState) then sendRxNfEnable(1, newState).
+        QCOMPARE(drain(p),
+                 (QStringList{QStringLiteral("rx_nf_enable:0,true;"),
+                              QStringLiteral("rx_nf_enable:1,true;")}));
+
+        m.notchModel()->setGlobalEnabled(false);
+        QCOMPARE(drain(p),
+                 (QStringList{QStringLiteral("rx_nf_enable:0,false;"),
+                              QStringLiteral("rx_nf_enable:1,false;")}));
+    }
+
+    void repeat_flip_to_the_same_value_broadcasts_nothing()
+    {
+        RadioModel m;
+        TciServer  server(&m);
+        TciProtocol* p = server.protocolForTest();
+        QVERIFY(p);
+
+        m.notchModel()->setGlobalEnabled(true);
+        drain(p);
+
+        // Thetis gates the handler fire on change:
+        //   if (old_tnf != value) TNFChangedHandlers?.Invoke(old_tnf, value);
+        // (console.cs:40004 [v2.10.3.15]).  NotchModel's change-guarded
+        // signal is our equivalent gate.
+        m.notchModel()->setGlobalEnabled(true);
+        QCOMPARE(drain(p), QStringList());
+    }
+
+    void wire_survives_stop_start_without_duplicating()
+    {
+        RadioModel m;
+        TciServer  server(&m);
+        TciProtocol* p = server.protocolForTest();
+        QVERIFY(p);
+
+        // hookSliceBroadcasts runs from the ctor AND from every start().
+        // stop()'s QObject::disconnect(m_model, nullptr, this, nullptr) is
+        // rooted on RadioModel, so it cannot sever a NotchModel-rooted
+        // connection: without a wire-once guard this would leave three
+        // subscribers and emit three frame pairs per flip.
+        QVERIFY(server.start(0));
+        server.stop();
+        QVERIFY(server.start(0));
+        server.stop();   // also parks the 5 ms drain timer so the queue is ours
+        drain(p);
+
+        m.notchModel()->setGlobalEnabled(true);
+        QCOMPARE(drain(p),
+                 (QStringList{QStringLiteral("rx_nf_enable:0,true;"),
+                              QStringLiteral("rx_nf_enable:1,true;")}));
+    }
 };
 
 QTEST_MAIN(TestNotchTciRxNfEnable)

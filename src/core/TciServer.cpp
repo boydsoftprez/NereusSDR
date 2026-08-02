@@ -25,6 +25,7 @@
 #include "LogCategories.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"  // Phase 3J-1 closeout: SliceModel signal wireup for local broadcast.
+#include "models/NotchModel.h"  // TNF section 6.4: master notch enable broadcast.
 #include "models/TransmitModel.h"  // Phase 3J-1 closeout (review P2): MON / TUN broadcast wireup.
 #include "MoxController.h"         // Phase 3J-1 closeout (review P2): MOX broadcast wireup.
 #include "TxSliceArbiter.h"        // Codex review round 6: tx_frequency follows the TX-bound slice.
@@ -624,6 +625,34 @@ void TciServer::hookSliceBroadcasts()
             m_protocol->enqueueLocalBroadcastTxFrequency(
                 static_cast<qint64>(slice->frequency()));
         });
+    }
+
+    // ── Master notch enable (rx_nf_enable:, BOTH rx indices) ────────────────
+    // Source: Thetis console.TNFChangedHandlers subscription at
+    // TCIServer.cs:6771 [v2.10.3.15], routed to OnTnfChanged
+    // (TCIServer.cs:7686-7696 [v2.10.3.15]) which calls NfChanged on every
+    // listener; NfChanged sends sendRxNfEnable(0, ...) AND
+    // sendRxNfEnable(1, ...) (TCIServer.cs:1315-1320 [v2.10.3.15]) because
+    // the flag is global despite the per-rx command shape.  GetMNF returns
+    // TNFActive for either index:
+    //   // mnf enabled globally  [original inline comment from console.cs:52319]
+    //
+    // Wired HERE and not in wireSliceForBroadcast because NotchModel is
+    // radio-global: wireSliceForBroadcast runs once per slice, so the same
+    // connect placed there would emit N frame pairs per flip.
+    if (!m_notchBroadcastWired) {
+        if (NotchModel* notch = m_model->notchModel()) {
+            connect(notch, &NotchModel::globalEnabledChanged, this,
+                    [this](bool on) {
+                        const QString boolStr = on ? QStringLiteral("true")
+                                                   : QStringLiteral("false");
+                        m_protocol->enqueueLocalBroadcast(
+                            QStringLiteral("rx_nf_enable:0,%1;").arg(boolStr));
+                        m_protocol->enqueueLocalBroadcast(
+                            QStringLiteral("rx_nf_enable:1,%1;").arg(boolStr));
+                    });
+            m_notchBroadcastWired = true;
+        }
     }
 }
 
