@@ -1159,6 +1159,94 @@ private slots:
 
         QCOMPARE(spy.count(), 0);
     }
+
+    // -- section 7.4 wheel resize, gated on the selected notch ----------
+
+    void wheel_over_selected_notch_widens_by_ten_hz_per_detent()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 400.0)});
+        QSignalSpy spy(&w, &SpectrumWidget::notchWidthRequested);
+
+        sendMouse(&w, QEvent::MouseMove, QPoint(kUiCentreX, kUiSpecY),
+                  Qt::NoButton, Qt::NoButton);
+        sendWheel(&w, QPoint(kUiCentreX, kUiSpecY), 120);
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 1);
+        QVERIFY(std::abs(spy.at(0).at(1).toDouble() - 410.0) < 1e-9);
+    }
+
+    void wheel_with_shift_steps_one_hz()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 400.0)});
+        QSignalSpy spy(&w, &SpectrumWidget::notchWidthRequested);
+
+        sendMouse(&w, QEvent::MouseMove, QPoint(kUiCentreX, kUiSpecY),
+                  Qt::NoButton, Qt::NoButton);
+        sendWheel(&w, QPoint(kUiCentreX, kUiSpecY), -120, Qt::ShiftModifier);
+
+        QCOMPARE(spy.count(), 1);
+        QVERIFY(std::abs(spy.at(0).at(1).toDouble() - 399.0) < 1e-9);
+    }
+
+    // The step constants belong to NotchModel, so a rename or a second
+    // spelling minted in the widget is caught here rather than by the
+    // arithmetic above happening to still add up.
+    void wheel_steps_come_from_notch_model()
+    {
+        QCOMPARE(NotchModel::kWheelWidthStepHz, 10.0);
+        QCOMPARE(NotchModel::kWheelWidthStepFineHz, 1.0);
+    }
+
+    // Plan cross-task correction: width clamping lives ONLY in
+    // NotchModel::setWidth, so the wheel handler is a bare
+    // current + delta * step and the model pins it at _max_filter_width.
+    // Asserting the raw request here and the clamp on the model side keeps
+    // one owner for the bound instead of two that can drift.
+    void wheel_leaves_the_width_clamp_to_the_model()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 9995.0)});
+        QSignalSpy spy(&w, &SpectrumWidget::notchWidthRequested);
+
+        sendMouse(&w, QEvent::MouseMove, QPoint(kUiCentreX, kUiSpecY),
+                  Qt::NoButton, Qt::NoButton);
+        sendWheel(&w, QPoint(kUiCentreX, kUiSpecY), 120);
+
+        QCOMPARE(spy.count(), 1);
+        QVERIFY(std::abs(spy.at(0).at(1).toDouble() - 10005.0) < 1e-9);
+
+        // ... and the model is what pins it at 10000
+        // (Thetis _max_filter_width, console.cs:13221 [v2.10.3.15]).
+        NotchModel model;
+        const int id = model.addNotch(kUiCentreHz, 9995.0);
+        QVERIFY(id >= 0);
+        QVERIFY(model.setWidth(id, 10005.0));
+        QCOMPARE(model.notchById(id)->widthHz, NotchModel::kMaxNotchWidthHz);
+    }
+
+    void wheel_without_a_selected_notch_does_not_resize()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 400.0)});
+        QSignalSpy widthSpy(&w, &SpectrumWidget::notchWidthRequested);
+        QSignalSpy tuneSpy(&w, &SpectrumWidget::frequencyClicked);
+
+        // Hover away from the notch first: the selection clears, so the
+        // wheel must fall through to the VFO tune path.
+        sendMouse(&w, QEvent::MouseMove, QPoint(kUiCentreX + 100, kUiSpecY),
+                  Qt::NoButton, Qt::NoButton);
+        sendWheel(&w, QPoint(kUiCentreX + 100, kUiSpecY), 120);
+
+        QCOMPARE(widthSpy.count(), 0);
+        QCOMPARE(tuneSpy.count(), 1);
+    }
 };
 
 QTEST_MAIN(TestNotchHitTest)

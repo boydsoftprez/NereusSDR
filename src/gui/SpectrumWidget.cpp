@@ -7207,6 +7207,39 @@ void SpectrumWidget::leaveEvent(QEvent* event)
 
 void SpectrumWidget::wheelEvent(QWheelEvent* event)
 {
+    // MW0LGE before all, handle the notch size change
+    //   [original inline comment from console.cs:31140]
+    // From Thetis console.cs:31133-31145 [v2.10.3.15] — the wheel resizes
+    // the selected notch and returns before any other wheel handling.  The
+    // gate is mandatory: without a selected notch a plain scroll over the
+    // panadapter tunes the VFO, so an ungated resize would steal every
+    // scroll (design section 7.4).  num_steps is 1 per click upstream, not
+    // a raw delta, which is what makes the step constants below Hz.
+    const int notchDelta = event->angleDelta().y();
+    const int notchSteps = (notchDelta == 0) ? 0 : (notchDelta > 0 ? 1 : -1);
+    if (m_selectedNotchId >= 0 && notchSteps != 0) {
+        const NotchMarker* n = notchMarkerById(m_selectedNotchId);
+        if (n) {
+            // From Thetis console.cs:33299-33321 [v2.10.3.15],
+            // notchMouseWheel: Shift adds the raw detent count
+            // (console.cs:33306), no modifier multiplies it by 10
+            // (console.cs:33309).
+            //
+            // Upstream's own clamps (0..._max_filter_width at
+            // console.cs:33312-33313, and the "check to see if outside
+            // frequency limits" pair at console.cs:33315-33318) are NOT
+            // repeated here: NotchModel::setWidth carries both, so the
+            // bound has one owner.
+            const double step = (event->modifiers() & Qt::ShiftModifier)
+                ? NotchModel::kWheelWidthStepFineHz
+                : NotchModel::kWheelWidthStepHz;
+            emit notchWidthRequested(m_selectedNotchId,
+                                     n->widthHz + notchSteps * step);
+        }
+        event->accept();
+        return;
+    }
+
     // Wheel over dBm strip: adjust dynamic range in ±5 dB steps.
     // From AetherSDR SpectrumWidget.cpp:2630-2636 [@0cd4559]
     const int mx = static_cast<int>(event->position().x());
