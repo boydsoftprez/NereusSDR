@@ -1676,9 +1676,11 @@ void MainWindow::refreshPanVisualNotch()
 // TNF: minimum-notch-width fan-out (design sections 7.2 and 8.3).
 //
 // WDSP recomputes the minimum on every read as
-// 1600.0 / (nc / 256) * (rate / 48000) (third_party/wdsp/src/nbp.c:88, the
-// wintype-0 arm nbp0 is created with at RXA.c:103), so it moves whenever the
-// filter size or the channel rate does. Thetis has the same problem and
+// 1600.0 / (nc / 256) * (rate / 48000): the wintype-0 arm of
+// min_notch_width (third_party/wdsp/src/nbp.c:88), which is the arm that
+// governs because nbp0 is created with wintype 0 (RXA.c:103). So it moves
+// whenever the filter size or the channel rate does. Thetis has the same
+// problem and
 // solves it the same way, re-reading through UpdateMinimumNotchWidthRX and
 // firing MinimumRXNotchWidthChangedHandlers (console.cs:48787-48818
 // [v2.10.3.15]) from the DSP-options apply path at console.cs:39052-39053.
