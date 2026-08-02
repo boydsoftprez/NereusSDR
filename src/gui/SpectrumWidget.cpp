@@ -1313,7 +1313,7 @@ void SpectrumWidget::setAverageMode(AverageMode m)
     // carry stale averager state forward.  Mirrors WDSP analyzer.c:
     // SetDisplayAverageMode at :1854 [v2.10.3.13] which re-init's the
     // av_sum / av_buff accumulators on mode change.
-    m_spectrumAvenger.clear();
+    m_spectrumReducer.clearAveraging();
     scheduleSettingsSave();
     update();
 }
@@ -1337,7 +1337,7 @@ void SpectrumWidget::setSpectrumAveraging(SpectrumAveraging a)
     m_spectrumAveraging = a;
     // Reset avenger state so mode change doesn't carry stale history.
     // From WDSP analyzer.c:1854 [v2.10.3.13] SetDisplayAverageMode re-init.
-    m_spectrumAvenger.clear();
+    m_spectrumReducer.clearAveraging();
     scheduleSettingsSave();
     update();
 }
@@ -1355,7 +1355,7 @@ void SpectrumWidget::setWaterfallAveraging(SpectrumAveraging a)
     if (m_waterfallAveraging == a) { return; }
     m_waterfallAveraging = a;
     // Reset waterfall avenger state on mode change (analyzer.c:1854 [v2.10.3.13]).
-    m_waterfallAvenger.clear();
+    m_waterfallReducer.clearAveraging();
     scheduleSettingsSave();
     update();
 }
@@ -2315,7 +2315,7 @@ void SpectrumWidget::setWfAverageMode(AverageMode m)
     if (m_wfAverageMode == m) { return; }
     m_wfAverageMode = m;
     // Reset waterfall avenger on mode change (analyzer.c:1854 [v2.10.3.13]).
-    m_waterfallAvenger.clear();
+    m_waterfallReducer.clearAveraging();
     scheduleSettingsSave();
     update();
 }
@@ -2664,8 +2664,8 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
         } else {
             m_postReplanFrozenDb.clear();
         }
-        m_spectrumAvenger.clear();
-        m_waterfallAvenger.clear();
+        m_spectrumReducer.clearAveraging();
+        m_waterfallReducer.clearAveraging();
     }
 
     m_fullLinearBins = binsLinear;
@@ -2676,22 +2676,25 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // and :4993 nDecimatedWidth = W / m_nDecimation [v2.10.3.13].  Thetis
     // S16 display-side decimation (an additional W / N reduction) is a
     // Phase 2 follow-up; for now we use the full panel width.
+    //
+    // R1 Task 5: this is now computed to FILL IN ReducerConfig::pixels
+    // rather than being read from inside the reduction stage.  Local
+    // rendering is unchanged -- same expression, same value -- but the
+    // reducer no longer knows a widget exists, so nereusd can drive it
+    // with a client-requested pixel count instead (design section 9.4a).
     const int displayWidth = qMax(width() - effectiveStripW(), 800);
 
     // Visible bin slice -- CTUN zoom support.  visibleBinRange() maps the
     // current m_centerHz +/- m_bandwidthHz/2 window against m_ddcCenterHz
     // + m_sampleRateHz.  When zoomed out, slice == full FFT.
-    auto [firstBin, lastBin] = visibleBinRange(binsLinear.size());
+    //
+    // The reducer recomputes this internally; it stays here because the
+    // empty-slice case must skip the whole rest of the frame (peak hold,
+    // peak blobs, noise floor, waterfall push, spectrumFrameRendered),
+    // not just the reduction.
+    const auto [firstBin, lastBin] = visibleBinRange(binsLinear.size());
     const int sliceCount = lastBin - firstBin + 1;
     if (sliceCount <= 0) { return; }
-
-    const double pixPerBin = static_cast<double>(displayWidth) / sliceCount;
-    const double binPerPix = (pixPerBin > 0.0) ? 1.0 / pixPerBin : 1.0;
-    const double invEnb    = 1.0 / m_fftWindowEnb;
-    // dbmOffset folded into the avenger's power-domain scale so that
-    // 10·log10(linear · scale) == 10·log10(linear) + dbmOffset, matching
-    // FFTEngine.cpp:348 [v2.10.3.13] (binsDbm = 10·log10 + offset).
-    const double dbmScale  = std::pow(10.0, dbmOffset / 10.0);
 
     auto avengerMode = [](SpectrumAveraging m) -> int {
         // Wire-format integer codes per WDSP analyzer.c:464 [v2.10.3.13].
@@ -2704,34 +2707,21 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
         }
     };
 
-    const QVector<double> noCorrection;  // per-pixel sub-band gain compensation
+    // Crop window + stream geometry, identical for both planes.  These are
+    // the four members the reducer used to read directly off the widget.
+    NereusSDR::ReducerConfig cfg;
+    cfg.pixels         = displayWidth;
+    cfg.centreHz       = m_centerHz;
+    cfg.spanHz         = m_bandwidthHz;
+    cfg.streamCentreHz = m_ddcCenterHz;
+    cfg.sampleRateHz   = m_sampleRateHz;
 
     // --- Spectrum plane: detector -> avenger -> m_renderedPixels (dBm) ---
-    if (m_displayLinearPixels.size() != displayWidth) {
-        m_displayLinearPixels.resize(displayWidth);
-    }
-    if (m_spectrumAvenger.numPixels() != displayWidth) {
-        m_spectrumAvenger.resize(displayWidth);
-    }
-    NereusSDR::applySpectrumDetector(m_spectrumDetector,
-                                     sliceCount,
-                                     displayWidth,
-                                     pixPerBin,
-                                     binPerPix,
-                                     m_fullLinearBins.constData() + firstBin,
-                                     m_displayLinearPixels.data(),
-                                     invEnb,
-                                     0.0,
-                                     static_cast<double>(sliceCount),
-                                     0.0);
-    m_spectrumAvenger.apply(m_displayLinearPixels,
-                            avengerMode(m_spectrumAveraging),
-                            static_cast<double>(m_spectrumAverageAlpha),
-                            dbmScale,
-                            noCorrection,
-                            false,
-                            0.0,
-                            m_renderedPixels);
+    cfg.detector    = m_spectrumDetector;
+    cfg.averageMode = avengerMode(m_spectrumAveraging);
+    cfg.averageTau  = static_cast<double>(m_spectrumAverageAlpha);
+    m_spectrumReducer.setConfig(cfg);
+    m_renderedPixels = m_spectrumReducer.reduce(binsLinear, windowEnb, dbmOffset);
 
     // FFT-replan crossfade (Option A from the 2026-05-08 design).  For the
     // first kReplanFadeFrames after a resolution change, blend the
@@ -2757,32 +2747,14 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
 
     // --- Waterfall plane: own detector + avenger -> m_wfRenderedPixels ---
     // Thetis runs separate analyzer planes for spectrum and waterfall (see
-    // ANALYZER_INFO[] in analyzer.c).  DetType + AvMode are independent.
-    if (m_wfDisplayLinearPixels.size() != displayWidth) {
-        m_wfDisplayLinearPixels.resize(displayWidth);
-    }
-    if (m_waterfallAvenger.numPixels() != displayWidth) {
-        m_waterfallAvenger.resize(displayWidth);
-    }
-    NereusSDR::applySpectrumDetector(m_waterfallDetector,
-                                     sliceCount,
-                                     displayWidth,
-                                     pixPerBin,
-                                     binPerPix,
-                                     m_fullLinearBins.constData() + firstBin,
-                                     m_wfDisplayLinearPixels.data(),
-                                     invEnb,
-                                     0.0,
-                                     static_cast<double>(sliceCount),
-                                     0.0);
-    m_waterfallAvenger.apply(m_wfDisplayLinearPixels,
-                             avengerMode(m_waterfallAveraging),
-                             static_cast<double>(m_waterfallAverageAlpha),
-                             dbmScale,
-                             noCorrection,
-                             false,
-                             0.0,
-                             m_wfRenderedPixels);
+    // ANALYZER_INFO[] in analyzer.c).  DetType + AvMode are independent,
+    // which is why this is a second reducer and not a second call on the
+    // first: each carries its own avenger accumulators.
+    cfg.detector    = m_waterfallDetector;
+    cfg.averageMode = avengerMode(m_waterfallAveraging);
+    cfg.averageTau  = static_cast<double>(m_waterfallAverageAlpha);
+    m_waterfallReducer.setConfig(cfg);
+    m_wfRenderedPixels = m_waterfallReducer.reduce(binsLinear, windowEnb, dbmOffset);
 
     // Legacy per-pixel peak hold -- track running max in display-pixel
     // space.  Replaces the old per-bin m_peakHoldBins.
@@ -4060,27 +4032,18 @@ double SpectrumWidget::xToHz(int x, const QRect& r) const
 
 std::pair<int, int> SpectrumWidget::visibleBinRange(int binCount) const
 {
-    if (binCount <= 0 || m_sampleRateHz <= 0.0) {
-        return {0, -1};  // empty range — callers compute count = 0
-    }
-
-    double binWidth = m_sampleRateHz / binCount;
-    double fftLowHz = m_ddcCenterHz - m_sampleRateHz / 2.0;
-
-    double displayLowHz  = m_centerHz - m_bandwidthHz / 2.0;
-    double displayHighHz = m_centerHz + m_bandwidthHz / 2.0;
-
-    int firstBin = static_cast<int>(std::floor((displayLowHz - fftLowHz) / binWidth));
-    int lastBin  = static_cast<int>(std::ceil((displayHighHz - fftLowHz) / binWidth));
-
-    firstBin = std::clamp(firstBin, 0, binCount - 1);
-    lastBin  = std::clamp(lastBin, 0, binCount - 1);
-
-    if (firstBin > lastBin) {
-        firstBin = lastBin;
-    }
-
-    return {firstBin, lastBin};
+    // R1 Task 5: the arithmetic moved verbatim to
+    // NereusSDR::SpectrumReducer::visibleBinRange, which takes the same
+    // four values as explicit config instead of reading them off a widget.
+    // This overload stays as the widget-state-reading front end so both
+    // in-widget callers (updateSpectrumLinear's empty-slice guard and the
+    // spot-overlay mapping) keep running the one implementation.
+    NereusSDR::ReducerConfig cfg;
+    cfg.centreHz       = m_centerHz;
+    cfg.spanHz         = m_bandwidthHz;
+    cfg.streamCentreHz = m_ddcCenterHz;
+    cfg.sampleRateHz   = m_sampleRateHz;
+    return NereusSDR::SpectrumReducer::visibleBinRange(binCount, cfg);
 }
 
 int SpectrumWidget::bandPlanStripHeight() const

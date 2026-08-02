@@ -4358,6 +4358,24 @@ nereus_add_test(tst_detector_modes)
 # relocation, not a behavior change.
 nereus_add_test(tst_spectrum_detector_mode)
 
+# R1 Task 5 -- crop-and-reduce extracted from SpectrumWidget into
+# core/spectrum/SpectrumReducer.  Pins the bin-range arithmetic that used
+# to be SpectrumWidget::visibleBinRange (a private method reading widget
+# member state) and the detector -> avenger call sequence out of
+# updateSpectrumLinear, now driven by an explicit pixel count instead of
+# widget geometry.  The plan specified five tests; the rest pin guards and
+# clamping rules found by reading the implementation being extracted.
+nereus_add_test(tst_spectrum_reducer)
+
+# R1 Task 5 -- the standing guarantee behind the daemon split: what
+# SpectrumWidget renders must equal what a bare SpectrumReducer produces
+# from the same inputs, bit for bit, across widget widths / dBm-strip
+# visibility / crop windows / all 5 detectors x 4 averaging modes.  The
+# widget's only remaining contribution is filling ReducerConfig::pixels
+# from its geometry; anything else leaking back into the reduction path
+# fails here instead of shipping two different spectra.
+nereus_add_test(tst_spectrum_reducer_widget_parity)
+
 # R1 Task 4 -- guard test for the ISpectrumSink extraction.  Walks src/core
 # and src/models and fails on any "#include \"gui/" line.  This is the
 # property the whole R1 build split depends on: nereusd links NereusCore

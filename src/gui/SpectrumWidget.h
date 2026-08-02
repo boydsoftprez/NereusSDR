@@ -165,7 +165,7 @@ mw0lge@grange-lane.co.uk
 
 #include "spectrum/ActivePeakHoldTrace.h"
 #include "spectrum/PeakBlobDetector.h"
-#include "core/spectrum/SpectrumAvenger.h"
+#include "core/spectrum/SpectrumReducer.h"
 
 #include <utility>
 
@@ -1425,9 +1425,7 @@ private:
     // waterfall keep separate detector + avenger state per WDSP per-plane
     // model (each ANALYZER_INFO[] entry has its own DetType + AvMode).
     QVector<float> m_fullLinearBins;       // FFTEngine input cache (|X[k]|²)
-    QVector<float> m_displayLinearPixels;  // spectrum detector output (linear)
     QVector<float> m_renderedPixels;       // spectrum avenger output (dBm)
-    QVector<float> m_wfDisplayLinearPixels; // waterfall detector output (linear)
     QVector<float> m_wfRenderedPixels;     // waterfall avenger output (dBm)
 
     // Equivalent Noise Bandwidth of the current FFT window, in bins.
@@ -1436,12 +1434,20 @@ private:
     // just received.  No setter coordination needed.
     double m_fftWindowEnb{1.0};
 
-    // Per-channel WDSP-style frame averagers.  See SpectrumAvenger.h for
-    // the av_mode wire-format mapping (-1 peak / 0 none / 1 recursive /
-    // 2 window / 3 log-recursive); analyzer.c:464-554 [v2.10.3.13] is the
-    // verbatim port.
-    NereusSDR::SpectrumAvenger m_spectrumAvenger;
-    NereusSDR::SpectrumAvenger m_waterfallAvenger;
+    // R1 Task 5: the crop-and-reduce stage (visible-slice -> detector ->
+    // avenger) moved to core as NereusSDR::SpectrumReducer, which owns what
+    // used to be m_displayLinearPixels / m_wfDisplayLinearPixels and the two
+    // SpectrumAvenger instances.  One reducer per display plane, because
+    // WDSP gives each ANALYZER_INFO[] plane its own DetType + AvMode.
+    // See SpectrumAvenger.h for the av_mode wire-format mapping (-1 peak /
+    // 0 none / 1 recursive / 2 window / 3 log-recursive);
+    // analyzer.c:464-554 [v2.10.3.13] is the verbatim port.
+    //
+    // The widget still supplies ReducerConfig::pixels from its own geometry,
+    // so rendering is unchanged; the dependency is now explicit rather than
+    // baked into the reduction stage.
+    NereusSDR::SpectrumReducer m_spectrumReducer;
+    NereusSDR::SpectrumReducer m_waterfallReducer;
 
     // ---- Frequency range ----
     double m_centerHz{14225000.0};    // 14.225 MHz default

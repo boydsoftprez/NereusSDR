@@ -627,6 +627,11 @@ set(CORE_SOURCES
     # dependency, needed by the headless daemon build split.
     src/core/spectrum/SpectrumDetector.cpp
     src/core/spectrum/SpectrumAvenger.cpp
+    # R1 Task 5: crop-and-reduce extracted from SpectrumWidget.  Takes an
+    # explicit pixel count and an explicit (centreHz, spanHz) window rather
+    # than reading widget geometry and widget member state, so the daemon
+    # can run the same reduction with no widget in the process.
+    src/core/spectrum/SpectrumReducer.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the
