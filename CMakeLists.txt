@@ -41,6 +41,25 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)  # for clangd / IDE integration
 
+# NereusSDRLib is a SHARED library, and on ELF targets every object linked
+# into a shared object must be position-independent.  CMake sets -fPIC
+# automatically for the SHARED target's own sources, but NOT for the
+# vendored static libraries linked into it, which are separate targets.
+# Without this, x86-64 Linux fails at link with:
+#
+#   mold: error: libwdsp_static.a(iqc.c.o): R_X86_64_PC32 relocation
+#         against symbol `ch' can not be used; recompile with -fPIC
+#
+# r8brain, rnnoise and libspecbleach already set the property themselves;
+# wdsp_static, portaudio_static and the rade/opus/lpcnet targets did not.
+# Setting it globally covers all of them and any vendored lib added later,
+# rather than leaving a per-target trap for the next one.  Must precede
+# every target definition, hence its position here.
+#
+# No effect on macOS (arm64 Mach-O is always PIC) or Windows (PE has no
+# equivalent notion); the cost on x86-64 Linux is one reserved register.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # Windows: prevent windows.h from defining min/max preprocessor macros
 # (collides with std::min / std::max). Standard pattern for Qt apps;
 # applied globally so any TU that transitively pulls in <windows.h>
@@ -1008,21 +1027,42 @@ endif()
 # --------------------------------------------------------------------------
 # Shared-library plumbing
 # --------------------------------------------------------------------------
-# WINDOWS_EXPORT_ALL_SYMBOLS: the tree carries no __declspec annotations and
-# no export macro, so without this the DLL would export nothing and every
-# consumer would fail to link. Set on the target rather than via the global
-# CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS so the vendored third_party targets are
-# left alone.
+# The tree carries no __declspec annotations and no export macro, so the DLL
+# has to be told to export everything or no consumer can link against it.
+# That takes TWO mechanisms, because the two Windows toolchains differ:
 #
-# Known limit: this covers function symbols. Global *data* symbols still
-# require __declspec(dllimport) at the reference site, which nothing here
-# has. Qt's per-class staticMetaObject is the case to watch. This cannot be
-# caught by CI as currently configured because only the Linux job sets
-# NEREUS_BUILD_TESTS=ON, so the Windows job links the app but never the
-# test executables.
+#   MSVC  -- WINDOWS_EXPORT_ALL_SYMBOLS generates a .def from the object
+#            files. CMake implements this property "only for MS-compatible
+#            tools on Windows" (CMake docs), so it is exactly and only the
+#            MSVC path.
+#
+#   MinGW -- the property above is a silent no-op. GNU ld normally falls back
+#            to exporting everything, but ONLY while nothing has been exported
+#            explicitly; the moment any symbol is explicitly exported it
+#            switches to exporting just those. A dependency in this link does
+#            exactly that (zlib is built as a DLL on the Windows CI job and
+#            uses __declspec(dllexport)), so the fallback never engaged and
+#            libNereusSDRLib.dll.a came out with none of our symbols in it.
+#            The DLL itself links clean; the failure surfaces as every
+#            NereusSDR symbol being undefined when main.cpp links.
+#            --export-all-symbols asks for the behaviour unconditionally
+#            instead of depending on that fallback.
+#
+# Set on the target rather than via global CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS so
+# the vendored third_party targets are left alone.
+#
+# Known limit, both toolchains: this covers function symbols. Global *data*
+# symbols still require __declspec(dllimport) at the reference site, which
+# nothing here has. Qt's per-class staticMetaObject is the case to watch. CI
+# cannot catch that today because only the Linux job sets
+# NEREUS_BUILD_TESTS=ON, so the Windows job links the app but never the test
+# executables.
 set_target_properties(NereusSDRLib PROPERTIES
     WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
+if(MINGW)
+    target_link_options(NereusSDRLib PRIVATE "-Wl,--export-all-symbols")
+endif()
 
 # No VERSION/SOVERSION: this is an application-private library, never
 # consumed by anything outside this build, so the usual .so.MAJOR symlink
