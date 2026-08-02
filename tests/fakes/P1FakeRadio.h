@@ -51,6 +51,7 @@ public:
 
     int  ep2FramesReceived() const { return m_ep2Count; }
     bool isRunning()         const { return m_running; }
+    int  metisStopCount()    const { return m_stopCount; }
 
     // Override the firmware version reported in discovery replies (default: 72).
     void setFirmwareVersion(int fw) { m_firmwareVersion = fw; }
@@ -76,6 +77,7 @@ private:
     bool         m_silent{false};
     bool         m_autoStreamEnabled{true};
     int          m_ep2Count{0};
+    int          m_stopCount{0};
     quint32      m_ep6Seq{0};
     int          m_firmwareVersion{72};  // arbitrary default; any value is now valid
 };

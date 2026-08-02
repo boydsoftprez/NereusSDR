@@ -92,6 +92,66 @@ private slots:
         model.setHpsdrModelForTest(HPSDRModel::ANAN10E);
         QCOMPARE(model.receiverManager()->hpsdrModel(), HPSDRModel::ANAN10E);
     }
+
+    // ── §6 The same fan-out seeds the per-DDC ADC routing word ───────────
+    //
+    // Defect D2. Thetis's fresh-install default is `rx_adc_ctrl1 = 4`
+    // (console.cs:15099 [v2.10.3.15]) with `rx_adc_ctrl2 = 0`
+    // (console.cs:15135). setup.cs:16934 [v2.10.3.15] states the encoding:
+    //   if (radDDC1ADC1.Checked) val += 1 << 2; // bits 3 & 2 set to 01 => DDC1 to ADC1
+    // so 4 is "DDC1 on ADC1, everything else ADC0".
+    //
+    // On Protocol 2 NereusSDR never seeded it. Both halves of the diversity
+    // DDC0/DDC1 sync pair therefore sat on ADC0 -- one physical input
+    // sampled twice, which is not diversity. Two consumers read the seed
+    // (the codec context on the Phase 3F path, ReceiverManager's shadow on
+    // the Phase 3M-4 PureSignal path) and they must agree, so both are
+    // asserted here.
+    void applyHpsdrModel_seedsThetisAdcCtrlDefaultOnTwoAdcBoards() {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);   // Saturn, adcCount = 2
+        QCOMPARE(model.boardCapabilities().adcCount, 2);
+        QCOMPARE(model.currentCodecContextForTest().adcCtrl, quint16(0x0004));
+        QCOMPARE(model.receiverManager()->rxAdcCtrl1(), quint8(0x04));
+        QCOMPARE(model.receiverManager()->rxAdcCtrl2(), quint8(0x00));
+    }
+
+    // A 1-ADC board must never be told to use ADC1. Thetis leaves the global
+    // at 4 and relies on each 1-ADC UpdateDDCs branch hardcoding cntrl1
+    // (console.cs:8399 / 8443 / 8455 [v2.10.3.15]); NereusSDR gates at the
+    // seed so the value never enters the context at all.
+    void applyHpsdrModel_seedsZeroOnOneAdcBoards() {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANAN10E);   // HermesII, adcCount = 1
+        QCOMPARE(model.boardCapabilities().adcCount, 1);
+        QCOMPARE(model.currentCodecContextForTest().adcCtrl, quint16(0x0000));
+        QCOMPARE(model.receiverManager()->rxAdcCtrl1(), quint8(0x00));
+    }
+
+    // Moving between boards must re-seed, not latch. A G2 session followed
+    // by a 10E session in the same process must not leave the 10E holding
+    // the G2's ADC1 selector.
+    void applyHpsdrModel_reseedsWhenBoardChanges() {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        QCOMPARE(model.currentCodecContextForTest().adcCtrl, quint16(0x0004));
+        model.setHpsdrModelForTest(HPSDRModel::ANAN10E);
+        QCOMPARE(model.currentCodecContextForTest().adcCtrl, quint16(0x0000));
+        QCOMPARE(model.receiverManager()->rxAdcCtrl1(), quint8(0x00));
+    }
+
+    // The forced-state test seam (setDdcContextForTest) exists so the PS and
+    // diversity codec branches are reachable without a live radio. It must
+    // not also blank the ADC seed, or every diversity test would silently
+    // exercise the pre-fix single-ADC behaviour.
+    void ddcContextTestSeam_stillCarriesTheAdcSeed() {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        model.setDdcContextForTest(/*mox=*/false, /*ps=*/false, /*diversity=*/true);
+        const auto ctx = model.currentCodecContextForTest();
+        QCOMPARE(ctx.diversity, true);
+        QCOMPARE(ctx.adcCtrl, quint16(0x0004));
+    }
 };
 
 QTEST_MAIN(TestRadioModelHpsdrModelPush)

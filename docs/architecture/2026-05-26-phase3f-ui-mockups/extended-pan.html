@@ -1,0 +1,152 @@
+<h2>Extended pan: DDC center + wideband context as ONE pan</h2>
+<p class="subtitle">Your idea reframes wideband. It's not a separate pan type — it's what you see when you zoom a DDC pan out past its native ~1.5 MHz bandwidth. The listenable region stays in the middle, wideband fills the wings.</p>
+
+<h3>The concept in one sentence</h3>
+<div style="background:#1a2030;padding:16px;border-radius:6px;font-size:13px;color:#cde;line-height:1.7">
+  A DDC pan normally shows ±768 kHz of <strong>listenable I/Q</strong>. When the operator zooms out past that, instead of stretching the I/Q trace or going blank, the pan starts rendering <strong>wideband data on the wings</strong> while keeping the high-resolution I/Q trace in the center. One pan, two data sources, smooth zoom-out into context.<br><br>
+
+  <strong style="color:#fc9">In effect: every DDC pan becomes a wideband pan when you zoom out far enough.</strong> No mode switching. No separate pan type. Just a continuous zoom gesture from "I'm working this signal" to "where else is action on this antenna?"
+</div>
+
+<h3 style="margin-top:24px">Visualizing the zoom progression</h3>
+
+<div class="mockup">
+  <div class="mockup-header">Same pan, four zoom levels — Slice A on 14.225 MHz</div>
+  <div class="mockup-body" style="padding:12px;background:#0d1218">
+
+    <div style="margin-bottom:14px">
+      <div style="color:#8aa8c0;font-size:10px;font-weight:bold;margin-bottom:4px">ZOOM 1 · ±10 kHz · 14.215 – 14.235 · pure I/Q · listenable</div>
+      <div style="background:linear-gradient(180deg,#1a3548 0%,#0d1218 100%);height:60px;position:relative;border:1px solid #2a3548;border-radius:2px">
+        <svg viewBox="0 0 800 60" style="width:100%;height:100%">
+          <path d="M0,52 L80,48 L160,52 L200,42 L240,18 L260,32 L300,48 L340,52 L400,28 L420,38 L460,52 L520,48 L580,42 L640,48 L720,52 L800,55" stroke="#6acb6a" stroke-width="1.5" fill="none"/>
+        </svg>
+        <div style="position:absolute;top:0;bottom:0;left:50%;width:1px;background:#fc9"></div>
+        <div style="position:absolute;top:0;bottom:0;left:48%;width:4%;background:rgba(255,200,100,0.18)"></div>
+        <div style="position:absolute;bottom:4px;left:6px;background:#5cb85c;color:#0d1218;font-size:8px;padding:1px 4px;border-radius:2px;font-weight:bold">100% listenable</div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:14px">
+      <div style="color:#8aa8c0;font-size:10px;font-weight:bold;margin-bottom:4px">ZOOM 2 · ±768 kHz · 13.457 – 14.993 · pure I/Q · listenable · entire 20m band fits</div>
+      <div style="background:linear-gradient(180deg,#1a3548 0%,#0d1218 100%);height:60px;position:relative;border:1px solid #2a3548;border-radius:2px">
+        <svg viewBox="0 0 800 60" style="width:100%;height:100%">
+          <path d="M0,55 L40,50 L80,52 L120,48 L160,42 L180,28 L200,32 L240,48 L280,50 L320,52 L360,48 L380,32 L400,18 L420,28 L440,42 L480,48 L520,52 L560,48 L580,30 L600,38 L640,48 L680,52 L720,50 L760,52 L800,55" stroke="#6acb6a" stroke-width="1.5" fill="none"/>
+        </svg>
+        <div style="position:absolute;top:0;bottom:0;left:50%;width:1px;background:#fc9"></div>
+        <div style="position:absolute;top:0;bottom:0;left:49%;width:2%;background:rgba(255,200,100,0.15)"></div>
+        <div style="position:absolute;bottom:4px;left:6px;background:#5cb85c;color:#0d1218;font-size:8px;padding:1px 4px;border-radius:2px;font-weight:bold">100% listenable</div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:14px">
+      <div style="color:#8aa8c0;font-size:10px;font-weight:bold;margin-bottom:4px">ZOOM 3 · ±5 MHz · 9.2 – 19.2 MHz · <span style="color:#fc9">mixed</span> · center 15% listenable, wings show 40m / 30m / 17m via wideband</div>
+      <div style="background:#0d1218;height:60px;position:relative;border:1px solid #2a3548;border-radius:2px;overflow:hidden">
+        <!-- Wideband wings -->
+        <div style="position:absolute;top:0;bottom:0;left:0;right:0;background:linear-gradient(180deg,#1a2848 0%,#0d1218 100%);opacity:0.7"></div>
+        <svg viewBox="0 0 800 60" preserveAspectRatio="none" style="position:absolute;top:0;left:0;width:100%;height:100%;opacity:0.7">
+          <path d="M0,52 L40,48 L80,50 L120,38 L160,42 L200,52 L240,50 L280,48 L320,50 L360,52 L380,48 L420,50 L460,52 L500,42 L540,48 L580,52 L620,50 L660,38 L700,42 L740,52 L780,50 L800,55" stroke="#5a8a8a" stroke-width="1" fill="none" stroke-dasharray="1,1"/>
+        </svg>
+        <!-- Listenable I/Q overlay (center 15%) -->
+        <div style="position:absolute;top:0;bottom:0;left:42.5%;width:15%;background:linear-gradient(180deg,#1a3548 0%,#0d1218 100%);border-left:1px dashed #4a7a4a;border-right:1px dashed #4a7a4a"></div>
+        <svg viewBox="0 0 800 60" preserveAspectRatio="none" style="position:absolute;top:0;left:42.5%;width:15%;height:100%">
+          <path d="M0,52 L80,48 L160,52 L200,42 L240,18 L260,32 L300,48 L340,52 L400,28 L420,38 L460,52 L520,48 L580,42 L640,48 L720,52 L800,55" stroke="#6acb6a" stroke-width="1.5" fill="none"/>
+        </svg>
+        <div style="position:absolute;top:0;bottom:0;left:50%;width:1px;background:#fc9"></div>
+        <div style="position:absolute;top:6px;left:6px;background:#5a8a8a;color:#0d1218;font-size:8px;padding:1px 4px;border-radius:2px;font-weight:bold">wideband · context only</div>
+        <div style="position:absolute;bottom:4px;left:43%;background:#5cb85c;color:#0d1218;font-size:8px;padding:1px 4px;border-radius:2px;font-weight:bold">listenable</div>
+        <div style="position:absolute;top:6px;right:6px;background:#5a8a8a;color:#0d1218;font-size:8px;padding:1px 4px;border-radius:2px;font-weight:bold">wideband · context only</div>
+      </div>
+    </div>
+
+    <div>
+      <div style="color:#8aa8c0;font-size:10px;font-weight:bold;margin-bottom:4px">ZOOM 4 · ±30 MHz · 0 – 61.44 MHz · <span style="color:#fc9">fully extended</span> · center 2.5% listenable island, wings show all HF + 6m</div>
+      <div style="background:#0d1218;height:60px;position:relative;border:1px solid #2a3548;border-radius:2px;overflow:hidden">
+        <div style="position:absolute;top:0;bottom:0;left:0;right:0;background:linear-gradient(180deg,#1a2848 0%,#0d1218 100%);opacity:0.7"></div>
+        <svg viewBox="0 0 800 60" preserveAspectRatio="none" style="position:absolute;top:0;left:0;width:100%;height:100%;opacity:0.7">
+          <path d="M0,52 L10,42 L20,38 L40,28 L60,42 L80,52 L100,48 L130,42 L150,38 L170,32 L190,42 L210,48 L240,52 L260,48 L280,50 L300,42 L320,38 L340,42 L370,48 L380,38 L400,28 L420,38 L440,48 L460,52 L490,42 L520,48 L550,42 L580,38 L610,42 L640,52 L670,48 L700,50 L720,52 L750,48 L780,52 L800,55" stroke="#5a8a8a" stroke-width="1" fill="none" stroke-dasharray="1,1"/>
+        </svg>
+        <!-- Band markers under wideband -->
+        <div style="position:absolute;top:2px;left:0;right:0;font-size:7px;color:#557">
+          <span style="position:absolute;left:3%">160</span><span style="position:absolute;left:13%">80</span><span style="position:absolute;left:22%">60</span><span style="position:absolute;left:30%">40</span><span style="position:absolute;left:38%">30</span><span style="position:absolute;left:45%">20</span><span style="position:absolute;left:52%">17</span><span style="position:absolute;left:58%">15</span><span style="position:absolute;left:64%">12</span><span style="position:absolute;left:70%">10</span><span style="position:absolute;left:92%">6</span>
+        </div>
+        <!-- Listenable island (~2.5% wide centered on 20m) -->
+        <div style="position:absolute;top:0;bottom:0;left:43.75%;width:2.5%;background:linear-gradient(180deg,#1a3548 0%,#0d1218 100%);border-left:1px dashed #4a7a4a;border-right:1px dashed #4a7a4a"></div>
+        <svg viewBox="0 0 800 60" preserveAspectRatio="none" style="position:absolute;top:0;left:43.75%;width:2.5%;height:100%">
+          <path d="M0,30 L200,40 L300,18 L400,32 L500,40 L600,38 L800,40" stroke="#6acb6a" stroke-width="2" fill="none"/>
+        </svg>
+        <div style="position:absolute;top:0;bottom:0;left:45%;width:1px;background:#fc9"></div>
+        <div style="position:absolute;bottom:4px;left:43%;background:#5cb85c;color:#0d1218;font-size:7px;padding:1px 3px;border-radius:2px;font-weight:bold">A</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<h3 style="margin-top:24px">What happens when you click in each region</h3>
+<div class="mockup">
+  <div class="mockup-header">Click behavior follows region type</div>
+  <div class="mockup-body" style="font-family:monospace;font-size:11px;color:#cde;padding:10px;line-height:1.7">
+    <strong style="color:#5cb85c">Click inside listenable region</strong> (DDC's ±768 kHz):<br>
+    &nbsp;&nbsp;→ Slice retunes to that frequency within the existing DDC. No DDC change. Click-and-listen, no latency.<br>
+    <br>
+    <strong style="color:#5a8a8a">Click outside listenable region</strong> (wideband wing):<br>
+    &nbsp;&nbsp;→ DDC center retunes to that frequency. The "listenable island" jumps to the clicked position.<br>
+    &nbsp;&nbsp;→ Wideband wings reflow around the new center.<br>
+    &nbsp;&nbsp;→ Slight delay (DDC retune is a wire command, takes ~50-100 ms).<br>
+    <br>
+    <strong>Visual indicator</strong> — the listenable region has:<br>
+    &nbsp;&nbsp;• Brighter spectrum trace (full opacity, sharp)<br>
+    &nbsp;&nbsp;• Dashed vertical boundary lines on left + right edges<br>
+    &nbsp;&nbsp;• Slightly different background tint (subtle, not in-your-face)<br>
+    &nbsp;&nbsp;• Hover cursor changes from pointer to crosshair inside, normal arrow outside
+  </div>
+</div>
+
+<h3 style="margin-top:24px">Why this is better than wideband-as-a-separate-pan</h3>
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Separate wideband pan (what I proposed earlier)</div>
+    <div class="mockup-body" style="font-size:11px;color:#cde;padding:10px;line-height:1.6">
+      • Two pan types (DDC pan, Wideband pan)<br>
+      • Operator decides per pan slot which type to use<br>
+      • "12h" layout has 1 wideband + 2 DDC<br>
+      • Mental model: 2 different things sharing the screen<br>
+      • Workflow: glance at wideband strip → click → focus shifts to DDC pan below<br>
+      • CPU cost: separate FFT pipelines for each
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">Extended pan (your idea)</div>
+    <div class="mockup-body" style="font-size:11px;color:#cde;padding:10px;line-height:1.6">
+      • One pan type — DDC pan with optional wideband extension<br>
+      • Operator just zooms; transition is implicit<br>
+      • Any layout (1, 2v, 2h, 2x2) works with extended pans<br>
+      • Mental model: "one window into the spectrum, more or less zoomed"<br>
+      • Workflow: zoom out → see context → click → zoom back in stays where I clicked<br>
+      • CPU cost: same (wideband + DDC FFT both running), but no pan-mode-switch UI surface
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">Tradeoffs to be honest about</h3>
+<div style="background:#2a3548;padding:14px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  <span style="color:#fc9">●</span> <strong>Alex BPF must bypass when extended.</strong> The wideband wing data only exists if the ADC sees the full HF range — that requires Alex BPF in BYPASS. Same constraint as before. Per pan: "extended mode on" = "this pan's ADC needs BYPASS". AlexController's hybrid policy already handles this — same trigger as the separate wideband pan would have caused.<br><br>
+
+  <span style="color:#fc9">●</span> <strong>Bin density discontinuity at the boundary.</strong> Listenable region is ~375 Hz/bin, wideband wings are 7.5 kHz/bin (20× coarser). The trace visibly jumps in resolution at the boundary. We mitigate with: subtle visual treatment (different stroke weight / opacity) so it reads as intentional, not glitchy.<br><br>
+
+  <span style="color:#fc9">●</span> <strong>Refresh rate mismatch.</strong> Listenable region refreshes at DDC rate (~50 fps), wideband at 14 fps. The wings update slower than the center. Less jarring than it sounds in practice (your eye attends to the brighter listenable region).<br><br>
+
+  <span style="color:#fc9">●</span> <strong>Per-SKU still gated.</strong> Extended-pan capability requires the SKU's wideband path to be wired. P2 boards: straightforward. HL2: needs separate research (different P1 wideband mechanism). So extended pan is "all SKUs" for the listenable behavior (just don't extend out past DDC range) and "P2 SKUs in v1, HL2 follow-on" for the wideband extension.<br><br>
+
+  <span style="color:#fc9">●</span> <strong>Per-pan toggle for the extension.</strong> Operator can disable wideband extension on a specific pan if they want the BPF protection for weak signal work. Default: extension on. Right-click pan → "Extended view" toggle.
+</div>
+
+<h3 style="margin-top:24px">What this changes about Q7 and the design</h3>
+<div style="background:#1a2030;padding:14px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  <strong style="color:#8c8">●</strong> The "12h" layout loses its wideband-specific role. It becomes "wide + 2" for any general use (3-pan vertical with a featured top pane). Wideband is now a property of every DDC pan, not a separate pan type.<br><br>
+  <strong style="color:#8c8">●</strong> Per-pan source picker simplifies. "DDC pan (Slice A/B/C/D/E)" only. No "Wideband ADC0/ADC1" option in the source menu. Wideband enable is implicit (driven by whether any pan is zoomed out past its DDC range).<br><br>
+  <strong style="color:#8c8">●</strong> CmdRx <code>packetbuf[23]</code> wideband enable mask: bit N set when any pan is extended on ADC N. Automatic.<br><br>
+  <strong style="color:#8c8">●</strong> Bench matrix gains rows: zoom-out transitions, click-in-wing tunes correctly, BPF bypass triggers on extension enable.
+</div>
+
+<p class="subtitle" style="margin-top:24px;text-align:center">This is a much better model. It makes wideband "free" — every pan gets it implicitly when zoomed out — instead of a separate concept the operator has to think about. <strong>Does this match what you had in mind?</strong></p>

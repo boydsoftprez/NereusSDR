@@ -915,12 +915,34 @@ void PureSignal::processNewInfo(const int newInfo[16])
     // (~1 sec) so the bench can see whether calcc is progressing.
     static int diagCounter = 0;
     if (++diagCounter % 10 == 0) {
+        // hwPeak + maxTX added 2026-08-01 (J.J. Boyd, KG4VCF). PureSignal
+        // parks in LCOLLECT on a live HL2 with both PS streams measurably
+        // hot, so the question is no longer whether samples arrive but
+        // whether the binning can ever complete.
+        //
+        // LCOLLECT sorts by n = env * hw_scale * ints and needs all `ints`
+        // bins filled (calcc.c:733-775); hw_scale is 1/hwPeak. These two
+        // numbers decide it between them:
+        //
+        //   maxTX * (1/hwPeak) reaching ~1.0   the envelope spans the bins
+        //   much below 1.0                     only the low bins ever fill,
+        //                                      and full_ints resets every
+        //                                      4 seconds forever
+        //
+        // hwPeak is read back from the engine rather than from m_hwPeak, so
+        // a value that never reached WDSP shows up as the default instead of
+        // as the number we believe we pushed.
+        const double hwPeak = m_tx ? m_tx->getPSHWPeak() : -1.0;
+        const double maxTx  = m_tx ? m_tx->getPSMaxTX()  : -1.0;
         qCInfo(lcDsp).nospace()
             << "PureSignal info[]: state=" << newInfo[15]
             << " corrApplied=" << newInfo[14]
             << " calCount=" << newInfo[5]
             << " feedbackLevel=" << newInfo[4]
             << " dogCount=" << newInfo[13]
+            << " hwPeak=" << hwPeak
+            << " maxTX=" << maxTx
+            << " binReach=" << (hwPeak > 0.0 ? maxTx / hwPeak : -1.0)
             << " (mox=" << (m_mox && m_mox->isMox())
             << " autoCal=" << m_autoCalEnabled << ")";
     }

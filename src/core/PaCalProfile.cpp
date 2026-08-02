@@ -181,13 +181,23 @@ PaCalBoardClass paCalBoardClassFor(HPSDRModel model) noexcept {
         // Upstream tags preserved: //DH1KLM //G8NJJ (from cited upstream lines) [v2.10.3.15]
         //   default: interval = 10.0f; break;
         // The full set of HPSDRModel values that hit `default` is: HERMES,
-        // ANAN100, ANAN100B, ANAN200D, ORIONMKII (everything not explicitly
-        // listed in the switch and not ANAN10/10E/8000D).
+        // ANAN100, ANAN100B, ANAN200D, ORIONMKII, ANAN_G2E (everything not
+        // explicitly listed in the switch and not ANAN10/10E/8000D).
+        //
+        // From Thetis console.cs:6725-6760 [v2.10.3.15] the CalibratedPAPower
+        // switch enumerates ANAN100D, ANAN7000D, ANVELINAPRO3, ANAN_G2 //G8NJJ,
+        // ANAN_G2_1K //G8NJJ, REDPITAYA //DH1KLM, ANAN8000D, ANAN10 and ANAN10E
+        // only.  It carries no `case HPSDRModel.ANAN_G2E`, so the G2E SKU takes
+        // `default: interval = 10.0f`, i.e. this 10 W interval class.  That
+        // agrees with paMaxWattsFor(ANAN_G2E) == 100 in HpsdrModel.h.  Do NOT
+        // reach for the ANAN100D branch: that one carries a predetermined cal
+        // table (console.cs:6730-6740) that upstream applies to ANAN100D alone.
         case HPSDRModel::HERMES:
         case HPSDRModel::ANAN100:
         case HPSDRModel::ANAN100B:
         case HPSDRModel::ANAN200D:
         case HPSDRModel::ORIONMKII:
+        case HPSDRModel::ANAN_G2E:
             return PaCalBoardClass::Anan100;
 
         // Hermes Lite 2 — grouped with ANAN10/ANAN10E for PA cal.

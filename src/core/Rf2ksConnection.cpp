@@ -54,6 +54,17 @@ Rf2ksConnection::Rf2ksConnection(QObject* parent)
     qRegisterMetaType<RfKitTunerSnapshot>("NereusSDR::RfKitTunerSnapshot");
     qRegisterMetaType<RfKitAntenna>("NereusSDR::RfKitAntenna");
     qRegisterMetaType<QList<RfKitAntenna>>("QList<NereusSDR::RfKitAntenna>");
+
+    // Own the reconnect timer so disconnect() can cancel a pending retry.
+    // Review blocker [P1] on PR #291: scheduleReconnect() previously called
+    // m_reconnectTimer.singleShot(...), which is the STATIC
+    // QTimer::singleShot invoked through an instance.  That compiles and
+    // reads as if it arms this timer, but it creates a detached one-shot,
+    // so m_reconnectTimer.stop() in disconnect() was a no-op and a queued
+    // reconnect could fire after the operator disabled RF-Kit.
+    m_reconnectTimer.setSingleShot(true);
+    connect(&m_reconnectTimer, &QTimer::timeout,
+            this, &Rf2ksConnection::onReconnectTimeout);
 }
 
 Rf2ksConnection::~Rf2ksConnection() = default;
@@ -188,26 +199,65 @@ void Rf2ksConnection::parseData(const QByteArray& body)
 
 void Rf2ksConnection::connectToAmp(const QString& host, quint16 port)
 {
+    // Every explicit target selection is a complete connection-generation
+    // boundary, including A -> B without an intervening disconnect().
+    m_pollTimer.stop();
+    m_reconnectTimer.stop();
+    ++m_generation;
+
+    // Abort and detach every old-target request before issuing B's /info.
+    // Generation checking in onReplyFinished remains the second line of
+    // defence if an abort races a queued finished delivery.
+    const auto priorReplies = m_inFlight;
+    m_inFlight.clear();
+    for (QNetworkReply* reply : priorReplies) {
+        if (reply) {
+            reply->abort();
+        }
+    }
+
+    if (m_connected) {
+        m_connected = false;
+        m_connectedSinceMs = 0;
+        emit disconnected();
+    } else {
+        m_connectedSinceMs = 0;
+    }
+
+    m_operatorDisconnected = false;
     m_host = host;
     m_port = port;
     m_consecutiveFailures = 0;
+    m_reconnectAttempts = 0;
     m_reconnectBackoffMs = 500;  // doubled to 1000 ms on first scheduleReconnect()
 
     connect(&m_pollTimer, &QTimer::timeout, this, &Rf2ksConnection::pollOnce,
             Qt::UniqueConnection);
-    m_pollTimer.start(m_pollIntervalMs);
 
-    // Probe /info immediately to establish connection.
+    // Probe /info immediately. Periodic polling begins only after this
+    // generation proves itself with a successful probe response.
     issueGet(QStringLiteral("/info"));
 }
 
 void Rf2ksConnection::disconnect()
 {
+    m_operatorDisconnected = true;
+    ++m_generation;
     m_pollTimer.stop();
     m_reconnectTimer.stop();
+    const auto replies = m_inFlight;
+    for (QNetworkReply* reply : replies) {
+        if (reply) {
+            reply->abort();
+        }
+    }
+    m_inFlight.clear();
     if (m_connected) {
         m_connected = false;
+        m_connectedSinceMs = 0;
         emit disconnected();
+    } else {
+        m_connectedSinceMs = 0;
     }
 }
 
@@ -215,12 +265,34 @@ void Rf2ksConnection::setPollIntervalMs(int ms)
 {
     m_pollIntervalMs = qBound(250, ms, 5000);
     if (m_pollTimer.isActive()) {
-        m_pollTimer.start(m_pollIntervalMs);
+        // See connectToAmp(): the timer fires per-path, not per-cycle,
+        // so the interval is one-sixth of the configured cycle period.
+        m_pollTimer.start(qMax(1, m_pollIntervalMs / 6));
     }
 }
 
 void Rf2ksConnection::pollOnce()
 {
+    if (m_operatorDisconnected || !m_connected) {
+        return;
+    }
+
+    // 2026-05-25 KG4VCF bench fix: stagger the 6 hot-path GETs across
+    // the poll interval instead of firing them all at once.
+    //
+    // Original behavior: 6 parallel GETs every 1000 ms.  All 6 QNetworkReply
+    // finished callbacks deliver back to the main thread within a few ms;
+    // the resulting paint-event starvation produced a visible ~1 Hz hitch
+    // in the waterfall scroll (bench report: "still seems to have about a
+    // 1 second hitch in the flow").
+    //
+    // New behavior: pollOnce fires ONE path per tick, round-robin.  The
+    // timer interval is divided by 6 so each path still gets sampled at
+    // the same overall rate.  Replies arrive spread out -> no
+    // main-thread spike.
+    //
+    // The slow-rotation /antennas + /info refresh now also rides this
+    // schedule (counter wraps every 60 hot-path ticks).
     static const QStringList kHotPaths{
         QStringLiteral("/power"),
         QStringLiteral("/tuner"),
@@ -229,14 +301,18 @@ void Rf2ksConnection::pollOnce()
         QStringLiteral("/operate-mode"),
         QStringLiteral("/operational-interface"),
     };
-    for (const auto& p : kHotPaths) {
-        issueGet(p);
-    }
-    // Slow rotation: every 10 polls, refresh /antennas and /info.
-    static int tick = 0;
-    if (++tick % 10 == 0) {
-        issueGet(QStringLiteral("/antennas"));
-        issueGet(QStringLiteral("/info"));
+    static int hotIdx = 0;
+    static int slowTick = 0;
+    issueGet(kHotPaths.at(hotIdx));
+    hotIdx = (hotIdx + 1) % kHotPaths.size();
+    // Slow rotation: once per full hot-path cycle (~ once per poll
+    // interval), advance the slow-tick counter and refresh /antennas
+    // + /info every 10 cycles.
+    if (hotIdx == 0) {
+        if (++slowTick % 10 == 0) {
+            issueGet(QStringLiteral("/antennas"));
+            issueGet(QStringLiteral("/info"));
+        }
     }
 }
 
@@ -251,9 +327,30 @@ void Rf2ksConnection::issueGet(const QString& path)
     url.setPort(m_port);
     url.setPath(path);
     QNetworkRequest req(url);
+    // Disable HTTP keep-alive on the polling path.  Without this, QNAM caches
+    // the TCP connection for ~120 s; when the amp closes a kept-alive socket
+    // after its idle timeout, Qt's macOS CFSocket source can fire into a
+    // QSocketNotifier whose private has already been torn down, crashing in
+    // qt_mac_socket_callback -> QCoreApplication::sendEvent with a wild
+    // receiver pointer.  Forcing connection close after each reply costs ~1
+    // ms on LAN and eliminates the stale-socket race.
+    req.setRawHeader("Connection", "close");
     auto* reply = m_nam->get(req);
     reply->setProperty("rfkitPath", path);
     reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
+    trackReply(reply);
+}
+
+void Rf2ksConnection::trackReply(QNetworkReply* reply)
+{
+    if (!reply) {
+        return;
+    }
+    reply->setProperty("rfkitGeneration", QVariant::fromValue(m_generation));
+    m_inFlight.insert(reply);
+    connect(reply, &QObject::destroyed, this, [this, reply] {
+        m_inFlight.remove(reply);
+    });
     connect(reply, &QNetworkReply::finished,
             this, &Rf2ksConnection::onReplyFinished);
 }
@@ -264,25 +361,77 @@ void Rf2ksConnection::onReplyFinished()
     if (!reply) {
         return;
     }
+    m_inFlight.remove(reply);
+
+    // Drop replies belonging to a retired session.  disconnect() and
+    // connectToAmp() both bump the generation, so a request still in
+    // flight when the operator disables RF-Kit -- or switches to a
+    // different amp -- lands here with a stale tag.  Neither its state
+    // nor its liveness proof applies any more: counting it as a success
+    // would set m_connected back to true and revive a link the operator
+    // just shut down, and counting it as a failure would charge the new
+    // session for the old one's error.  Codex review, PR #291.
+    //
+    // The abort() sweep in disconnect()/connectToAmp() is the first line of
+    // defence and this tag is the second: an abort cannot un-queue a
+    // `finished` already sitting in the event loop.
+    const quint64 replyGeneration =
+        reply->property("rfkitGeneration").toULongLong();
+    if (replyGeneration != m_generation || m_operatorDisconnected) {
+        reply->deleteLater();
+        return;
+    }
     const QString path    = reply->property("rfkitPath").toString();
     const qint64 started  = reply->property("startedMs").toLongLong();
+    const bool isWrite    = reply->property("rfkitIsWrite").toBool();
     const int rttMs       = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - started);
 
     if (reply->error() != QNetworkReply::NoError) {
         markPollFailure();
+        if (!m_connected && path == QStringLiteral("/info")) {
+            scheduleReconnect();
+        }
         reply->deleteLater();
         return;
     }
     const QByteArray body = reply->readAll();
     reply->deleteLater();
 
-    handleResponse(path, body);
+    // Review blocker [P2] on PR #291: only GET replies carry state.  The amp
+    // answers a write with Content-Length: 0, and QJsonDocument::fromJson("")
+    // yields an empty object -- so parsing a write ack as state published
+    // operateModeUpdated("") and antenna number 0, clobbering the cached
+    // values with the reply to the very command that had just changed them.
+    // A write ack is still proof of liveness, so it keeps feeding
+    // markPollSuccess() and the connected transition below.
+    if (!isWrite) {
+        handleResponse(path, body);
+    }
     markPollSuccess(rttMs);
 
-    if (!m_connected) {
+    if (!m_connected && path == QStringLiteral("/info")) {
         m_connected = true;
         m_connectedSinceMs = QDateTime::currentMSecsSinceEpoch();
+        // Resume polling here, on the proven-live transition, and nowhere
+        // else.  onReconnectTimeout() used to restart the poll timer as
+        // soon as it issued the probe, without waiting to see whether the
+        // probe answered.  With m_connected still false, every subsequent
+        // failure hit markPollFailure()'s `m_consecutiveFailures >= 3 &&
+        // m_connected` guard and fell straight through, so the timer was
+        // never stopped again and no further reconnect was ever scheduled:
+        // the backoff froze at whatever delay it had reached while the
+        // poller hammered a dead amp at the full configured cadence
+        // forever.  Codex review, PR #291.
+        if (!m_pollTimer.isActive() && !m_host.isEmpty()) {
+            // See connectToAmp(): timer fires per-path, one-sixth of cycle.
+            m_pollTimer.start(qMax(1, m_pollIntervalMs / 6));
+        }
         emit connected();
+    }
+    if (m_connected && !m_pollTimer.isActive()) {
+        // pollOnce emits one of six hot paths per tick, preserving the
+        // configured per-path cycle while avoiding a six-reply burst.
+        m_pollTimer.start(qMax(1, m_pollIntervalMs / 6));
     }
 }
 
@@ -299,8 +448,26 @@ void Rf2ksConnection::markPollFailure()
 {
     m_pollsFailed++;
     m_consecutiveFailures++;
-    if (m_consecutiveFailures >= 3 && m_connected) {
+
+    if (!m_connected) {
+        // A reconnect probe failed.  Nothing else is in flight while we are
+        // down (the poll timer is stopped below and stays stopped until the
+        // connected transition in onReplyFinished restarts it), so this is
+        // the only place that can keep the retry schedule alive.  Without
+        // it the amp would be probed exactly once and then never again.
+        // Codex review, PR #291.
+        scheduleReconnect();
+        return;
+    }
+
+    if (m_consecutiveFailures >= 3) {
         m_connected = false;
+        // Stop polling the amp we just declared down.  Without this the
+        // poll timer kept firing at the configured cadence against a dead
+        // endpoint, which made the exponential backoff decorative -- the
+        // retry schedule stretched to 60 s while the poller carried on
+        // hammering every few hundred ms.  Codex review, PR #291.
+        m_pollTimer.stop();
         emit disconnected();
         scheduleReconnect();
     }
@@ -308,19 +475,37 @@ void Rf2ksConnection::markPollFailure()
 
 void Rf2ksConnection::scheduleReconnect()
 {
+    // Review blocker [P2] on PR #291: the operator's "Auto-reconnect" choice
+    // was persisted by RfKitPage and never consulted here, so the connection
+    // retried unconditionally regardless of the checkbox.
+    if (!m_autoReconnect || m_reconnectTimer.isActive()) {
+        return;
+    }
     m_reconnectAttempts++;
     // Double first, then schedule - so the member always holds the delay
     // that was just used.  testCurrentBackoffMs() reads this value and the
     // test verifies the 1 s / 2 s / 4 s / 8 s ... 60 s sequence.
     m_reconnectBackoffMs = qMin(m_reconnectBackoffMs * 2, 60000);
-    m_reconnectTimer.singleShot(m_reconnectBackoffMs, this, [this]{
-        // Re-issue /info as the connection probe; success path will set
-        // m_connected back to true via onReplyFinished.
-        issueGet(QStringLiteral("/info"));
-        if (!m_pollTimer.isActive() && !m_host.isEmpty()) {
-            m_pollTimer.start(m_pollIntervalMs);
-        }
-    });
+    m_reconnectTimer.start(m_reconnectBackoffMs);
+}
+
+void Rf2ksConnection::onReconnectTimeout()
+{
+    // A direct invocation is also used by the focused tests; mirror a real
+    // single-shot timeout by clearing the owned timer before issuing a probe.
+    m_reconnectTimer.stop();
+    if (m_operatorDisconnected || !m_autoReconnect || m_host.isEmpty()) {
+        return;
+    }
+    // Reconnect is a probe-only state. A successful current-generation /info
+    // reply starts periodic polling in onReplyFinished().
+    //
+    // Deliberately nothing else here. Restarting the poller alongside the
+    // probe is what defeated the backoff: the poll timer would fire against a
+    // dead amp and reset the schedule, so the delay never grew. A probe that
+    // fails just runs markPollFailure() -> scheduleReconnect() and the delay
+    // keeps doubling. Reasoning carried over from PR #291.
+    issueGet(QStringLiteral("/info"));
 }
 
 void Rf2ksConnection::testForceBackoffSequence()
@@ -335,12 +520,84 @@ void Rf2ksConnection::testForceBackoffReset()
     m_consecutiveFailures = 0;
 }
 
-// Stubs for control / IO - filled in Task 5.
-void Rf2ksConnection::setActiveAntenna(RfKitAntenna::Type, int) {}
-void Rf2ksConnection::setOperateMode(const QString&) {}
-void Rf2ksConnection::setOperationalInterface(const QString&) {}
-void Rf2ksConnection::resetError() {}
-void Rf2ksConnection::issuePut(const QString&, const QByteArray&) {}
-void Rf2ksConnection::issuePost(const QString&) {}
+// Control / IO verbs (Task 5).
+
+void Rf2ksConnection::setActiveAntenna(RfKitAntenna::Type type, int number)
+{
+    const QString typeStr = (type == RfKitAntenna::Type::Internal)
+                              ? QStringLiteral("INTERNAL")
+                              : QStringLiteral("EXTERNAL");
+    const QJsonObject o{
+        { QStringLiteral("type"),   typeStr },
+        { QStringLiteral("number"), number  },
+    };
+    issuePut(QStringLiteral("/antennas/active"),
+             QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+
+void Rf2ksConnection::setOperateMode(const QString& mode)
+{
+    const QJsonObject o{ { QStringLiteral("operate_mode"), mode } };
+    issuePut(QStringLiteral("/operate-mode"),
+             QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+
+void Rf2ksConnection::setOperationalInterface(const QString& iface)
+{
+    const QJsonObject o{ { QStringLiteral("operational_interface"), iface } };
+    issuePut(QStringLiteral("/operational-interface"),
+             QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+
+void Rf2ksConnection::resetError()
+{
+    issuePost(QStringLiteral("/error/reset"));
+}
+
+void Rf2ksConnection::issuePut(const QString& path, const QByteArray& body)
+{
+    if (m_host.isEmpty()) {
+        return;
+    }
+    QUrl url;
+    url.setScheme(QStringLiteral("http"));
+    url.setHost(m_host);
+    url.setPort(m_port);
+    url.setPath(path);
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader,
+                  QStringLiteral("application/json"));
+    // See issueGet() for the rationale on disabling HTTP keep-alive.
+    req.setRawHeader("Connection", "close");
+    auto* reply = m_nam->sendCustomRequest(req, "PUT", body);
+    reply->setProperty("rfkitPath", path);
+    reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
+    // See onReplyFinished(): write acks carry no state body and must not be
+    // fed to handleResponse().
+    reply->setProperty("rfkitIsWrite", true);
+    trackReply(reply);
+}
+
+void Rf2ksConnection::issuePost(const QString& path)
+{
+    if (m_host.isEmpty()) {
+        return;
+    }
+    QUrl url;
+    url.setScheme(QStringLiteral("http"));
+    url.setHost(m_host);
+    url.setPort(m_port);
+    url.setPath(path);
+    QNetworkRequest req(url);
+    // See issueGet() for the rationale on disabling HTTP keep-alive.
+    req.setRawHeader("Connection", "close");
+    auto* reply = m_nam->post(req, QByteArray());
+    reply->setProperty("rfkitPath", path);
+    reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
+    // See onReplyFinished(): write acks carry no state body and must not be
+    // fed to handleResponse().
+    reply->setProperty("rfkitIsWrite", true);
+    trackReply(reply);
+}
 
 } // namespace NereusSDR

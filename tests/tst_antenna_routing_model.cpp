@@ -154,7 +154,7 @@ private slots:
         RadioModel model;
         model.setCapsForTest(/*hasAlex=*/true);
         model.addSlice();
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
         QVERIFY(slice);
 
         // Store antenna 3 for 40m in the controller but NOT on the slice
@@ -341,7 +341,7 @@ private slots:
         model.setBoardForTest(HPSDRHW::OrionMKII);  // ANAN-7000D family — SKU labels BYPS/EXT1/XVTR
         model.setCapsForTest(/*hasAlex=*/true);
         model.addSlice();
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
         QVERIFY(slice);
 
         auto* mock = new MockConnection();
@@ -376,7 +376,7 @@ private slots:
         model.setBoardForTest(HPSDRHW::OrionMKII);  // ANAN-7000D family
         model.setCapsForTest(/*hasAlex=*/true);
         model.addSlice();
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
         QVERIFY(slice);
 
         auto* mock = new MockConnection();

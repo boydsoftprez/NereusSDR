@@ -930,11 +930,13 @@ void CatMidiControlPage::buildUI()
 // Phase 3P-II Task 17: Setup > Network > Peripherals.
 // Two device rows (TGXL, PGXL) with six columns each:
 //   Name | Host IP | Port | Scan LAN | Connect | Status
-// AppSettings keys (global, not per-MAC):
-//   TGXL_ManualIp (string, default ""), TGXL_ManualPort (int, default 9010)
-//   PGXL_ManualIp (string, default ""), PGXL_ManualPort (int, default 9008)
-// Connect/Disconnect button is a stub until Task 19 wires RadioModel
-// accessors for PgxlConnection and TgxlConnection.
+//
+// Per-radio peripherals refactor (2026-05-26): the four connection keys
+// (TGXL_ManualIp / TGXL_ManualPort / PGXL_ManualIp / PGXL_ManualPort) now
+// scope under hardware/<mac>/peripherals/ via RadioModel::peripheralValue /
+// setPeripheralValue.  Reads return defaults when no radio is connected;
+// writes log a qCWarning and are a no-op.  The page grays itself out
+// in that state so the operator can't reach a dead write path.
 // ---------------------------------------------------------------------------
 
 PeripheralsPage::PeripheralsPage(RadioModel* model, QWidget* parent)
@@ -1097,12 +1099,16 @@ void PeripheralsPage::buildRow(int row, const QString& name,
     // Map grid row to m_statusLabels / m_connectBtns index (row 1 -> 0, row 2 -> 1).
     const int idx = row - 1;
 
-    auto& s = AppSettings::instance();
-
     // Column 0: device name label.
     auto* nameLabel = new QLabel(name, this);
     nameLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
     m_grid->addWidget(nameLabel, row, 0);
+
+    // Per-radio peripherals refactor (2026-05-26): host/port keys are
+    // scoped under hardware/<mac>/peripherals/ via the RadioModel
+    // helpers.  When no radio is connected the reads return defaults
+    // and the writes are a no-op + qCWarning.
+    RadioModel* model = m_model;
 
     // Column 1: host IP line edit.
     auto* ipEdit = new QLineEdit(this);
@@ -1110,11 +1116,16 @@ void PeripheralsPage::buildRow(int row, const QString& name,
     ipEdit->setPlaceholderText(QStringLiteral("192.168.1.42"));
     ipEdit->setToolTip(tr("IP address or hostname of the %1 on your LAN. "
                           "Leave blank to disable auto-connect.").arg(name));
-    const QString savedIp = s.value(ipKey, QStringLiteral("")).toString();
+    const QString savedIp = model
+        ? model->peripheralValue(ipKey)
+        : QString{};
     ipEdit->setText(savedIp);
-    connect(ipEdit, &QLineEdit::textChanged, this, [ipKey](const QString& text) {
-        AppSettings::instance().setValue(ipKey, text);
-    });
+    connect(ipEdit, &QLineEdit::textChanged, this,
+            [model, ipKey](const QString& text) {
+                if (model) {
+                    model->setPeripheralValue(ipKey, text);
+                }
+            });
     m_grid->addWidget(ipEdit, row, 1);
 
     // Column 2: port spinbox.
@@ -1123,10 +1134,16 @@ void PeripheralsPage::buildRow(int row, const QString& name,
     portSpin->setRange(1, 65535);
     portSpin->setToolTip(tr("TCP port the %1 listens on (default %2).")
                              .arg(name).arg(defaultPort));
-    portSpin->setValue(s.value(portKey, static_cast<int>(defaultPort)).toInt());
+    const int savedPort = model
+        ? model->peripheralValue(portKey,
+                                 QString::number(static_cast<int>(defaultPort))).toInt()
+        : static_cast<int>(defaultPort);
+    portSpin->setValue(savedPort);
     connect(portSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
-            [portKey](int v) {
-                AppSettings::instance().setValue(portKey, v);
+            [model, portKey](int v) {
+                if (model) {
+                    model->setPeripheralValue(portKey, QString::number(v));
+                }
             });
     m_grid->addWidget(portSpin, row, 2);
 

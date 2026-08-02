@@ -2,6 +2,11 @@
 #include <QtTest/QtTest>
 #include <array>
 #include "core/codec/P1CodecHl2.h"
+#include "core/DdcAssignment.h"
+#include "core/codec/CodecContext.h"
+#include "core/P1RadioConnection.h"
+#include "core/HpsdrModel.h"
+#include "core/codec/P1CodecStandard.h"
 
 using namespace NereusSDR;
 
@@ -292,6 +297,229 @@ private slots:
                  "bank 10 C2 bit 3 (HL2 PA enable) must coexist with mic_boost / line_in");
         QVERIFY2((out[2] & 0x40) != 0,
                  "bank 10 C2 bit 6 (always-on) must remain set");
+    }
+
+    // Phase 3F: HL2 supports a second receiver on DDC1.
+    // From mi0bot console.cs:8425-8429 [v2.10.3.13-beta2], inside
+    // case HPSDRModel.HERMESLITE, the !mox && !diversity arm:
+    //   if (rx2_enabled)
+    //   {
+    //       DDCEnable += DDC1;
+    //       Rate[1] = rx2_rate;
+    //   }
+    void ddc_assignment_plain_rx_gives_stream1_ddc1() {
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        ctx.mox = false;
+        ctx.diversity = false;
+        ctx.puresignalRun = false;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].sampleRateHz = 192000;
+        slices[1].live = true;
+        slices[1].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.streamDdc[0], 0);
+        QCOMPARE(a.streamDdc[1], 1);
+        QCOMPARE(a.ddcEnable, 1 + 2);          // DDC0 + DDC1
+        QCOMPARE(a.rate[0], 192000);
+        QCOMPARE(a.rate[1], 192000);
+        QCOMPARE(a.p1DdcConfig, 4);
+        QCOMPARE(a.syncEnable, 0);
+    }
+
+    // From mi0bot console.cs:8453-8457 [v2.10.3.13-beta2], the
+    // mox && !diversity && !puresignal arm, same rx2 block.
+    void ddc_assignment_mox_no_ps_gives_stream1_ddc1() {
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        ctx.mox = true;
+        ctx.diversity = false;
+        ctx.puresignalRun = false;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].sampleRateHz = 192000;
+        slices[1].live = true;
+        slices[1].sampleRateHz = 96000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.streamDdc[1], 1);
+        QCOMPARE(a.ddcEnable, 1 + 2);
+        QCOMPARE(a.rate[1], 96000);
+    }
+
+    // Slice B alone must still get a DDC. The old early return dropped the
+    // whole assignment when slices[0] was dormant.
+    void ddc_assignment_stream1_only_still_assigns() {
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[1].live = true;
+        slices[1].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.streamDdc[0], -1);
+        QCOMPARE(a.streamDdc[1], 1);
+    }
+
+    // PureSignal reclaims DDC0+DDC1 as a sync pair, so stream 1 is
+    // suppressed rather than left bound to a repurposed DDC.
+    // From mi0bot console.cs:8469-8488 [v2.10.3.13-beta2].
+    //MI0BOT  [that span also carries the HL2 high-sample-rate marker at
+    //         console.cs:8476, already reproduced at P1CodecHl2.cpp's
+    //         PS-MOX arm; unrelated to the suppression asserted here]
+    void ddc_assignment_ps_mox_suppresses_stream1() {
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        ctx.mox = true;
+        ctx.puresignalRun = true;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].sampleRateHz = 192000;
+        slices[1].live = true;
+        slices[1].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.streamDdc[1], -1);
+        QCOMPARE(a.syncEnable, 2);             // DDC1 is the sync partner
+
+        // Deliberately NOT asserting psFwdDdc / psRevDdc here. See the
+        // note below this task: the two are inconsistent with
+        // applyPureSignalDdcConfig today and pinning either value in a test
+        // would freeze a question that belongs to the maintainer.
+    }
+
+    // No arm of the mi0bot HERMESLITE case enables anything above DDC1.
+    // DDC2 and DDC3 are the PureSignal pair (console.cs:8757-8762 GetDDC:
+    // rx1 = 0; rx2 = 1; psrx = 2; pstx = 3).
+    void ddc_assignment_never_assigns_above_ddc1() {
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        for (int i = 0; i < 5; ++i) {
+            slices[i].live = true;
+            slices[i].sampleRateHz = 192000;
+        }
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.streamDdc[2], -1);
+        QCOMPARE(a.streamDdc[3], -1);
+        QCOMPARE(a.streamDdc[4], -1);
+    }
+
+    // ── Approved deviation from mi0bot, 2026-07-31 ──────────────────────
+    // mi0bot announces nddc = 4 unconditionally for the HL2
+    // (console.cs:8412-8413 [v2.10.3.13-beta2]). NereusSDR announces 2 when
+    // PureSignal is off, halving the ep6 datagram rate: about 23 Mbit/s
+    // rather than 44 at 192 kHz. PureSignal needs four DDCs (DDC0+DDC1 as
+    // the sync pair, DDC2 feedback, DDC3 TX monitor, console.cs:8757-8762
+    // GetDDC), so the count stays 4 whenever PS is enabled.
+    // See docs/architecture/2026-07-31-hl2-slice-cap-design.md section 6.2.
+    void announced_count_is_two_with_puresignal_off() {
+        P1CodecHl2 codec;
+        const PsDdcConfig cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::HERMESLITE,
+            /*psEnabled=*/false, /*diversityEnabled=*/false,
+            /*moxState=*/false, /*rx1Rate=*/192000, /*rx2Rate=*/0,
+            /*rx2Enabled=*/false, /*adcCtrl1=*/0, /*adcCtrl2=*/0);
+        QCOMPARE(cfg.p1RxCount, 2);
+        QCOMPARE(cfg.nDdc, 4);          // PS freq-override gate, unchanged
+    }
+
+    void announced_count_is_four_with_puresignal_on() {
+        P1CodecHl2 codec;
+        const PsDdcConfig cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::HERMESLITE,
+            /*psEnabled=*/true, /*diversityEnabled=*/false,
+            /*moxState=*/false, /*rx1Rate=*/192000, /*rx2Rate=*/0,
+            /*rx2Enabled=*/false, /*adcCtrl1=*/0, /*adcCtrl2=*/0);
+        QCOMPARE(cfg.p1RxCount, 4);
+    }
+
+    // The central claim of the policy: MOX must not move the count. If this
+    // ever regresses to keying on the run state, the ep6 slot layout would
+    // change on every key-down.
+    void announced_count_does_not_move_on_mox() {
+        P1CodecHl2 codec;
+        for (bool ps : {false, true}) {
+            const PsDdcConfig rx = codec.applyPureSignalDdcConfig(
+                HPSDRModel::HERMESLITE, ps, false, /*moxState=*/false,
+                192000, 192000, /*rx2Enabled=*/true, 0, 0);
+            const PsDdcConfig tx = codec.applyPureSignalDdcConfig(
+                HPSDRModel::HERMESLITE, ps, false, /*moxState=*/true,
+                192000, 192000, /*rx2Enabled=*/true, 0, 0);
+            QCOMPARE(rx.p1RxCount, tx.p1RxCount);
+        }
+    }
+
+    // NOT the load-bearing test for this deviation. P1RadioConnection::
+    // composeCcBank0 has zero production callers; every live HL2 connection
+    // composes bank 0 through P1CodecHl2::composeCcForBank case 0 instead
+    // (see bank0_c4_encodes_the_announced_count_in_the_live_composer below),
+    // which independently encodes ((ctx.activeRxCount - 1) & 0x0F) << 3. This
+    // test exists only to document that the two formulas agree for 2 and 4
+    // today. C4 bits 3-5 carry nddc - 1.
+    // Source: mi0bot networkproto1.c:968 [v2.10.3.13-beta2]
+    //   C4 |= (nddc - 1) << 3;   // number of DDCs to run
+    void bank0_c4_encodes_the_announced_count() {
+        quint8 out[5] = {};
+        P1RadioConnection::composeCcBank0(out, 192000, /*mox=*/false,
+                                          /*activeRxCount=*/2);
+        QCOMPARE(int(out[4]), (2 - 1) << 3);   // 0x08
+
+        P1RadioConnection::composeCcBank0(out, 192000, /*mox=*/false,
+                                          /*activeRxCount=*/4);
+        QCOMPARE(int(out[4]), (4 - 1) << 3);   // 0x18
+    }
+
+    // THE load-bearing wire-byte test. Every live HL2 connection composes
+    // bank 0 through P1CodecHl2::composeCcForBank case 0 (this codec, above),
+    // not through the composeCcBank0 stub pinned above, which nothing in
+    // production calls. Confirmed by reading the case-0 body: the DDC-count
+    // field is a single expression,
+    //   out[4] = ... | (((ctx.activeRxCount - 1) & 0x0F) << 3) | ...
+    // with mask 0x0F and shift 3, and nothing else in the case writes out[4]
+    // afterward. ctx.duplex defaults to true (CodecContext.h, mirroring
+    // mi0bot's unconditional "C4 |= 0b00000100; // duplex bit" at
+    // networkproto1.c:967 [v2.10.3.13-beta2]) and lands in C4 bit 2, so it is
+    // cleared here to isolate the DDC-count field under test; antennaIdx and
+    // diversity already default to 0 / false and do not need clearing.
+    void bank0_c4_encodes_the_announced_count_in_the_live_composer() {
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        ctx.duplex = false;
+
+        ctx.activeRxCount = 2;
+        quint8 out[5] = {};
+        codec.composeCcForBank(0, ctx, out);
+        QCOMPARE(int(out[4]), 0x08);
+
+        ctx.activeRxCount = 4;
+        std::fill_n(out, 5, quint8{0});
+        codec.composeCcForBank(0, ctx, out);
+        QCOMPARE(int(out[4]), 0x18);
+    }
+
+    // The deviation is HL2-only. P1CodecStandard serves ramdor's HERMES-class
+    // arm, a different SKU family with no approval attached to it, and it must
+    // keep announcing 4 unconditionally (console.cs:8391-8392 [v2.10.3.15]).
+    void deviation_does_not_leak_into_the_hermes_class_codec() {
+        P1CodecStandard codec;
+        for (bool ps : {false, true}) {
+            const PsDdcConfig cfg = codec.applyPureSignalDdcConfig(
+                HPSDRModel::HERMES, ps, /*diversityEnabled=*/false,
+                /*moxState=*/false, 192000, 0, /*rx2Enabled=*/false, 0, 0);
+            QCOMPARE(cfg.p1RxCount, 4);
+        }
     }
 };
 

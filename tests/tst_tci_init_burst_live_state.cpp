@@ -16,8 +16,13 @@
 //   - tst_tci_init_burst_typo_divergence.cpp (design doc §7 row 1 typo fix)
 
 #include <QtTest>
+#include <QSignalSpy>
+#include <QWebSocket>
 #include "core/TciProtocol.h"
+#include "core/TciServer.h"
 #include "core/AppSettings.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
 #include "TestMockRadioModel.h"
 
 using namespace NereusSDR;
@@ -53,7 +58,9 @@ private slots:
     // RED #11 -- per-RX calibration values F6 format.
     void calibration_drives_lines();
     // RED #12 -- rx_volume lines use audioGainToDb (LOG curve) not the
-    // linear tciLinearToDbVolume used for the global volume line.
+    // linear tciLinearToDbVolume used for the global volume line. Extended
+    // by Phase 3F Sub-Epic J Task 10 to also prove rx_volume is per-slice
+    // (afGain), decoupled from the radio-global afLinear it used to share.
     void rx_volume_uses_audio_gain_to_db_log_curve();
     // RED #13 -- tune flag flows into trx-side tune lines.
     void tune_drives_tune_lines();
@@ -77,6 +84,7 @@ private slots:
     // thetis frame emitted after a VFO tune does not flip RX2 from
     // true (init) to false (live) between the two frames.
     void live_vfo_broadcast_reads_rx2_enabled_live();
+    void existing_slice_after_deletion_gap_uses_stable_receiver_id();
 };
 
 void TestTciInitBurstLiveState::pinAppSettingsToCaptureConditions()
@@ -404,21 +412,38 @@ void TestTciInitBurstLiveState::rx_volume_uses_audio_gain_to_db_log_curve()
 {
     pinAppSettingsToCaptureConditions();
     TestMockRadioModel mock;
-    // afLinear=50 maps via tciAudioGainToDb(50/100) = 20*log10(0.5) ~= -6.02 dB.
-    // This is DIFFERENT from tciLinearToDbVolume(50) = -30.0 dB (linear curve)
-    // used by the global "volume:" line.  Thetis convention:
+    // Phase 3F Sub-Epic J Task 10: rx_volume now reads PER-SLICE AF gain
+    // (RadioModel::afGain(rx), backed by SliceModel::afGain on production)
+    // rather than the radio-global afLinear master volume this test used to
+    // seed exclusively.  Seed the two independently, with DIFFERENT values,
+    // to prove both the LOG-curve conversion AND that the two are decoupled
+    // (afLinear no longer drives rx_volume -- that was the bug: every
+    // rx_volume slot used to echo afLinear, so receiver 1 read receiver 0's
+    // value).
+    //   afGain(0)=50  -> tciAudioGainToDb(50/100) = 20*log10(0.5)  ~= -6.02 dB
+    //   afGain(1)=25  -> tciAudioGainToDb(25/100) = 20*log10(0.25) ~= -12.04 dB
+    //   afLinear=50   -> tciLinearToDbVolume(50)  = -30.0 dB (LINEAR curve,
+    //                    global "volume:" line only)
+    // Thetis convention:
     //   rx_volume:* uses audioGainToDb (TCIServer.cs:4778-4787 [v2.10.3.15])
     //   volume:     uses linearToDbVolume (TCIServer.cs:4110-4120 [v2.10.3.13])
-    // The format is "F2" so we expect "-6.02".
+    // The format is "F2" so we expect "-6.02" / "-12.04".
     mock.setAfLinear(50);
+    mock.setRxAfGain(0, 50);
+    mock.setRxAfGain(1, 25);
 
     TciProtocol p(&mock);
     const QStringList burst = p.buildInitBurst();
 
     QVERIFY2(burst.contains(QStringLiteral("rx_volume:0,0,-6.02;")),
-             "rx_volume should use audioGainToDb LOG curve (-6.02 dB for "
-             "afLinear=50), not linearToDbVolume (-30.0 dB).");
-    // The global volume: line keeps the linear curve.
+             "rx_volume:0 should use audioGainToDb LOG curve (-6.02 dB for "
+             "afGain=50), not linearToDbVolume (-30.0 dB).");
+    QVERIFY2(burst.contains(QStringLiteral("rx_volume:1,0,-12.04;")),
+             "rx_volume:1 must reflect receiver 1's OWN afGain (-12.04 dB "
+             "for afGain=25), not receiver 0's afGain or the radio-global "
+             "afLinear -- this is the bug Task 10 fixed.");
+    // The global volume: line keeps the linear curve and stays sourced from
+    // afLinear, unaffected by the per-slice rx_volume fix.
     QVERIFY2(burst.contains(QStringLiteral("volume:-30.0;")),
              "volume: should use linearToDbVolume LINEAR curve (-30.0 dB "
              "for afLinear=50), separate from rx_volume's log curve.");
@@ -616,7 +641,7 @@ void TestTciInitBurstLiveState::live_vfo_broadcast_reads_rx2_enabled_live()
         TciProtocol p(&mock);
 
         // Trigger the live broadcast path (rotary tune simulated).
-        p.enqueueLocalBroadcastVfo(/*rxIndex=*/0, /*hz=*/14250000LL);
+        p.enqueueLocalBroadcastVfo(/*rxIndex=*/0, /*hz=*/14250000LL, /*isTxBound=*/true);
 
         // Drain the coalescer into the pending-notifications queue so
         // we can inspect emitted frames.
@@ -650,7 +675,7 @@ void TestTciInitBurstLiveState::live_vfo_broadcast_reads_rx2_enabled_live()
         TestMockRadioModel mock;
         mock.setRx2Enabled(false);
         TciProtocol p(&mock);
-        p.enqueueLocalBroadcastVfo(/*rxIndex=*/0, /*hz=*/7100000LL);
+        p.enqueueLocalBroadcastVfo(/*rxIndex=*/0, /*hz=*/7100000LL, /*isTxBound=*/true);
         p.drainCoalescedNotifications();
 
         QStringList frames;
@@ -672,5 +697,89 @@ void TestTciInitBurstLiveState::live_vfo_broadcast_reads_rx2_enabled_live()
     }
 }
 
-QTEST_GUILESS_MAIN(TestTciInitBurstLiveState)
+void TestTciInitBurstLiveState::
+    existing_slice_after_deletion_gap_uses_stable_receiver_id()
+{
+    pinAppSettingsToCaptureConditions();
+    RadioModel radio;
+    radio.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5, 192000);
+    const int a = radio.addSlice(QStringLiteral("pan-0"));
+    const int b = radio.addSlice(QStringLiteral("pan-0"));
+    const int c = radio.addSlice(QStringLiteral("pan-0"));
+    QCOMPARE(a, 0);
+    QCOMPARE(b, 1);
+    QCOMPARE(c, 2);
+    SliceModel* const sliceB = radio.sliceById(b);
+    SliceModel* const sliceC = radio.sliceById(c);
+    QVERIFY(sliceB != nullptr);
+    QVERIFY(sliceC != nullptr);
+
+    // Delete the FIRST slice, not the middle one. Codex review round 6,
+    // PR #293 changed which gap this case can use.
+    //
+    // The property under test is unchanged: a surviving slice broadcasts its
+    // stable id, never its current list position. Removing A leaves B at
+    // list position 0 while B's id stays 1, which demonstrates exactly that
+    // and does it inside the two receivers this server advertises.
+    //
+    // It used to remove B and assert on C, at id 2. That id is outside
+    // trx_count:2, so the server was asserting it would send a client frames
+    // for a receiver the client had not allocated and could never address
+    // back: RadioModel resolves inbound `vfo:N` straight through
+    // sliceById(N) (the mapping decision documented in TciProtocol.cpp), so
+    // a client that was told about two receivers has no way to reply about a
+    // third. Outbound was the only place that id leaked, and it now stops at
+    // the advertised count.
+    radio.removeSlice(a);
+    QCOMPARE(radio.slices().size(), 2);
+    QCOMPARE(radio.slices().at(0), sliceB);
+    QCOMPARE(sliceB->sliceIndex(), 1);
+
+    // Attach TCI only after the deletion gap exists, so B takes the
+    // hookSliceBroadcasts() existing-slice path rather than sliceAdded().
+    TciServer server(&radio);
+    QVERIFY(server.start(0));
+    QWebSocket client;
+    QStringList frames;
+    connect(&client, &QWebSocket::textMessageReceived,
+            this, [&frames](const QString& frame) { frames.append(frame); });
+    QSignalSpy connectedSpy(&client, &QWebSocket::connected);
+    client.open(QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(server.port())));
+    QVERIFY(connectedSpy.wait(2000));
+    QTRY_VERIFY(frames.contains(QStringLiteral("ready;")));
+
+    // Once the initial state burst establishes the client, B's first
+    // one-shot announcement and its subsequent coalesced VFO update must both
+    // carry B's stable id (1), never its current list position (0).
+    frames.clear();
+    sliceB->setDspMode(DSPMode::CWU);
+    sliceB->setFrequency(18123456.0);
+    QTRY_VERIFY(frames.contains(QStringLiteral("modulation:1,CWU;")));
+    QTRY_VERIFY(frames.contains(QStringLiteral("vfo:1,0,18123456;")));
+    QVERIFY2(!frames.contains(QStringLiteral("modulation:0,CWU;")),
+             "the surviving slice must not adopt the departed slice's id");
+    QVERIFY2(!frames.contains(QStringLiteral("vfo:0,0,18123456;")),
+             "nor its list position");
+
+    // And the slice past the advertised count stays off the wire entirely,
+    // however live it is locally. Design doc §1.2: Slice C/D exist
+    // internally and are not exposed via TCI.
+    frames.clear();
+    sliceC->setDspMode(DSPMode::CWL);
+    sliceC->setFrequency(21050000.0);
+    QTest::qWait(250);
+    for (const QString& f : std::as_const(frames)) {
+        QVERIFY2(!f.startsWith(QStringLiteral("modulation:2,")),
+                 qPrintable(QStringLiteral("slice id 2 is past trx_count:2 "
+                     "and must not be broadcast: %1").arg(f)));
+        QVERIFY2(!f.startsWith(QStringLiteral("vfo:2,")),
+                 qPrintable(QStringLiteral("slice id 2 is past trx_count:2 "
+                     "and must not be broadcast: %1").arg(f)));
+    }
+
+    client.close();
+    server.stop();
+}
+
+QTEST_MAIN(TestTciInitBurstLiveState)
 #include "tst_tci_init_burst_live_state.moc"

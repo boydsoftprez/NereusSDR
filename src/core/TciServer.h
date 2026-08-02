@@ -153,6 +153,14 @@ public:
     // the AlwaysStreamIQ override path).
     int activeIqSubscriberCount(int receiver) const;
 
+    // Test-only: the shared TciProtocol whose pending-notification queue every
+    // broadcast lands in before the 5 ms drain timer hands it to clients.
+    // Exposed so broadcast tests can assert on frame CONTENT (which receiver a
+    // frame addresses) rather than on signal-receiver counts, which cannot
+    // distinguish "wired to the right slice" from "wired at all".  Same
+    // unguarded test-hook convention as injectAudioFrameForTest above.
+    TciProtocol* protocolForTest() const { return m_protocol.get(); }
+
 signals:
     // Emitted after the server begins listening.  port is the actual bound port
     // (useful when start() was called with port=0).
@@ -268,6 +276,13 @@ private slots:
     void hookSliceBroadcasts();
     void wireSliceForBroadcast(SliceModel* slice, int rxIndex);
 
+    /// Does this slice currently drive the transmitter?
+    ///
+    /// Codex review round 6, PR #293. tx_frequency must come from the slice
+    /// TxSliceArbiter has bound TX to, not from slice 0. Before 3F they were
+    /// always the same slice and the distinction did not exist.
+    bool sliceDrivesTx(int sliceId) const;
+
     // hookGlobalBroadcasts wires the radio-global signals that aren't tied to
     // a specific slice: MOX, TUN, AF volume, MON enable/volume, IQ sample
     // rate, connection state (Power on/off).  Mirrors the radio-global
@@ -374,7 +389,7 @@ public:
 
     // Phase 3J-1 closeout Items 11+13 (2026-05-12): forwarders to TxChannel
     // so TciApplet doesn't have to traverse RadioModel -> WdspEngine ->
-    // txChannel(1).  Safe before WDSP init; setter is a no-op, getter
+    // txChannel(kTxChannelId).  Safe before WDSP init; setter is a no-op, getter
     // returns 0 if the TX channel isn't up yet.
     void setTciTxGainLinear(float lin);
     float tciTxPeakAbs() const;

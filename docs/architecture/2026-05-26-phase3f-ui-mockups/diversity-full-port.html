@@ -1,0 +1,286 @@
+<style>
+.real-app-bg { background: #0f0f1a; color: #c8d8e8; font-family: -apple-system, "Segoe UI", "Helvetica Neue", sans-serif; }
+.real-pill { display: inline-flex; align-items: center; justify-content: center; height: 14px; padding: 0 5px; border-radius: 2px; font-size: 9px; font-weight: bold; letter-spacing: 0.3px; }
+.pill-div { background: #006040; color: #00ff88; border: 1px solid #00a060; }
+.nereus-btn {
+  background: #1a2a3a; border: 1px solid #205070; border-radius: 3px;
+  color: #c8d8e8; font-size: 10px; font-weight: bold; padding: 3px 10px;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.nereus-btn-sm { padding: 2px 6px; font-size: 9px; min-width: 32px; height: 20px; }
+.nereus-btn-blue { background: #0070c0; color: #fff; border: 1px solid #0090e0; }
+.nereus-btn-green { background: #006040; color: #00ff88; border: 1px solid #00a060; }
+.nereus-btn-red { background: #cc2222; color: #fff; border: 1px solid #ff4444; }
+.nereus-groupbox {
+  border: 1px solid #304050; border-radius: 4px;
+  margin-top: 10px; padding: 10px 10px 8px 10px; position: relative;
+}
+.nereus-groupbox-title {
+  position: absolute; top: -8px; left: 10px; padding: 0 4px;
+  background: #0f0f1a; color: #8aa8c0; font-size: 11px; font-weight: bold;
+}
+.nereus-spinbox {
+  background: #1a2a3a; border: 1px solid #304050; border-radius: 3px;
+  color: #c8d8e8; font-size: 11px; padding: 2px 6px;
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 6px;
+  min-width: 60px; height: 20px;
+}
+.nereus-slider {
+  height: 6px; background: #203040; border-radius: 3px; position: relative; flex: 1;
+}
+.nereus-slider-h {
+  position: absolute; top: -3px; width: 12px; height: 12px; background: #00b4d8; border-radius: 50%;
+}
+.nereus-mem-btn {
+  background: #1a2a3a; border: 1px solid #205070; border-radius: 3px;
+  color: #c8d8e8; padding: 4px; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  font-size: 10px;
+}
+.nereus-mem-btn-filled { background: #2a3548; border-color: #00b4d8; }
+.nereus-checkbox {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  color: #c8d8e8; font-size: 11px;
+}
+.nereus-checkbox input { accent-color: #00b4d8; width: 13px; height: 13px; }
+.nereus-radio {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  color: #c8d8e8; font-size: 11px;
+}
+.nereus-radio input { accent-color: #00b4d8; width: 13px; height: 13px; }
+</style>
+
+<div class="real-app-bg" style="padding:18px;border-radius:6px">
+
+<h2 style="color:#c8d8e8;margin-top:0">Diversity: full Thetis port (Option C)</h2>
+<p style="color:#8090a0;font-size:12px">Every control, the radar viz, the direction finding math. Where Thetis-RX1/RX2 concepts don't map to N-slice, translated honestly to our slice model.</p>
+
+<h3 style="color:#8aa8c0;margin-top:18px">§1 Complete control inventory (ported 1:1 from Thetis DiversityForm.cs)</h3>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;padding:12px;font-size:11px;color:#c8d8e8;line-height:1.65">
+  <strong style="color:#8aa8c0">Enable / state:</strong> chkEnableDiversity, "DIV" badge on Slice A's flag<br>
+  <strong style="color:#8aa8c0">Phase controls:</strong> udAngle (radians, -π to +π), udAngle0 (degrees 0-359), udFineNull (precision adjustment, separate spinner)<br>
+  <strong style="color:#8aa8c0">Gain controls:</strong> udR (amplitude scale 0.0 to 10.0)<br>
+  <strong style="color:#8aa8c0">Mode toggles:</strong> chkAuto (auto-adjust), chkCrossFire (+π phase shift), chkLockAngle (prevent drift on memory recall)<br>
+  <strong style="color:#8aa8c0">Quick-nudge buttons:</strong> Shift -10°, -45°, -90°, +45°, +90°, +10°, 180° flip (7 buttons total per Thetis btnShift*)<br>
+  <strong style="color:#8aa8c0">Memories:</strong> M1-M8 per band (8 slots × 14 bands × {phase + gain} = 224 persisted values)<br>
+  <strong style="color:#8aa8c0">Reference ADC picker:</strong> Radio buttons "ADC 0" / "ADC 1" (translated from Mercury1/Mercury2 — see §4)<br>
+  <strong style="color:#8aa8c0">Direction finding:</strong> udAntSpacing (meters), udCalib (calibration constant), labelDirection (computed direction-of-arrival in degrees), grpAntSpacing group box around them<br>
+  <strong style="color:#8aa8c0">Radar visualization:</strong> picRadar custom paint widget — animated polar plot showing antenna sensitivity vs azimuth (the curve shifts as phase/gain change, showing where nulls form)<br>
+  <strong style="color:#8aa8c0">Slice integration:</strong> chkSliceSync (Slice A ↔ Slice B freq lock — translated from chkVFOSync), chkNoSliceAttLink (translated from chkNoAttLink — controls whether ATT changes propagate)<br>
+  <strong style="color:#8aa8c0">Window behavior:</strong> chkAlwaysOnTop<br>
+  <strong style="color:#8aa8c0">Status:</strong> labelDirection (text readout of current angle/direction)
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:18px">§2 The full dialog mockup (real StyleConstants colors, near-actual size)</h3>
+
+<div style="background:#000a;padding:24px;border-radius:6px;display:flex;justify-content:center;min-height:780px">
+  <div style="background:#0a0a18;border:1px solid #205070;border-radius:4px;box-shadow:0 8px 32px rgba(0,0,0,0.8);width:680px">
+    <div style="background:linear-gradient(180deg,#3a4a5a 0%,#2a3a4a 50%,#1a2a38 100%);border-bottom:1px solid #0a1a28;height:22px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:bold;color:#8aa8c0">
+      <span>Diversity — Slice A · 14.225 MHz · 20m</span>
+      <span style="color:#607080;font-size:14px;cursor:pointer">×</span>
+    </div>
+
+    <div style="padding:12px 14px;display:flex;gap:14px;color:#c8d8e8;font-size:11px">
+
+      <!-- Left column: radar + status -->
+      <div style="flex:0 0 280px">
+        <div class="nereus-groupbox">
+          <div class="nereus-groupbox-title">Sensitivity pattern</div>
+          <!-- Radar widget mockup -->
+          <div style="width:100%;aspect-ratio:1/1;background:radial-gradient(circle at center, #002848 0%, #001020 70%, #000810 100%);border:1px solid #205070;border-radius:50%;position:relative;margin-top:4px">
+            <!-- compass labels -->
+            <div style="position:absolute;top:3px;left:50%;transform:translateX(-50%);color:#607080;font-size:9px">N</div>
+            <div style="position:absolute;right:3px;top:50%;transform:translateY(-50%);color:#607080;font-size:9px">E</div>
+            <div style="position:absolute;bottom:3px;left:50%;transform:translateX(-50%);color:#607080;font-size:9px">S</div>
+            <div style="position:absolute;left:3px;top:50%;transform:translateY(-50%);color:#607080;font-size:9px">W</div>
+            <!-- range rings -->
+            <div style="position:absolute;top:25%;left:25%;width:50%;height:50%;border:1px dashed #1a4060;border-radius:50%"></div>
+            <div style="position:absolute;top:35%;left:35%;width:30%;height:30%;border:1px dashed #1a4060;border-radius:50%"></div>
+            <!-- sensitivity lobe (SVG) -->
+            <svg viewBox="-100 -100 200 200" style="position:absolute;top:0;left:0;width:100%;height:100%">
+              <path d="M 0,-80 C 50,-75 70,-30 50,10 C 30,40 -10,55 -40,30 C -70,5 -60,-50 -20,-70 C -5,-78 0,-80 0,-80 Z"
+                    fill="rgba(0,255,255,0.2)" stroke="#00ffff" stroke-width="1.5"/>
+              <circle cx="0" cy="0" r="3" fill="#fc9"/>
+              <line x1="0" y1="0" x2="50" y2="-50" stroke="#fc9" stroke-width="1" stroke-dasharray="2,2"/>
+            </svg>
+            <!-- direction label inside -->
+            <div style="position:absolute;bottom:12px;left:50%;transform:translateX(-50%);color:#c8d8e8;font-family:monospace;font-size:10px;background:rgba(0,0,0,0.6);padding:1px 6px;border-radius:2px">47.5° NE</div>
+          </div>
+          <div style="margin-top:6px;display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:10px">
+            <span style="color:#8090a0">Direction:</span><span style="color:#c8d8e8;font-family:monospace">047.5° (NE)</span>
+            <span style="color:#8090a0">Null at:</span><span style="color:#fc9;font-family:monospace">227.5° (SW)</span>
+            <span style="color:#8090a0">Pattern:</span><span style="color:#c8d8e8;font-family:monospace">cardioid</span>
+          </div>
+        </div>
+
+        <div class="nereus-groupbox" style="margin-top:12px">
+          <div class="nereus-groupbox-title">Direction finding</div>
+          <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:11px;align-items:center;margin-top:4px">
+            <span style="color:#8090a0">Antenna spacing</span>
+            <div style="display:flex;gap:4px;align-items:center"><div class="nereus-spinbox" style="flex:1">5.5</div><span style="color:#8090a0;font-size:10px">m</span></div>
+            <span style="color:#8090a0">Calibration</span>
+            <div class="nereus-spinbox">0.000</div>
+            <span style="color:#8090a0">d/λ</span>
+            <div class="nereus-spinbox" style="background:#0a0a14;color:#607080">0.257</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right column: all controls -->
+      <div style="flex:1;min-width:0">
+
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <label class="nereus-checkbox">
+            <input type="checkbox" checked>
+            <strong style="color:#c8d8e8;font-size:13px">Enable diversity</strong>
+          </label>
+          <span class="real-pill pill-div">DIV</span>
+        </div>
+
+        <div class="nereus-groupbox">
+          <div class="nereus-groupbox-title">Phase &amp; Gain (per band)</div>
+          <div style="display:grid;grid-template-columns:54px 1fr 60px;gap:8px 10px;align-items:center;margin-top:4px">
+            <span style="color:#8090a0">Angle</span>
+            <div class="nereus-slider"><div class="nereus-slider-h" style="left:62%"></div></div>
+            <div class="nereus-spinbox">+47.5°</div>
+
+            <span style="color:#8090a0">Angle 0</span>
+            <div class="nereus-slider"><div class="nereus-slider-h" style="left:25%"></div></div>
+            <div class="nereus-spinbox">089°</div>
+
+            <span style="color:#8090a0">Fine null</span>
+            <div class="nereus-slider"><div class="nereus-slider-h" style="left:50%"></div></div>
+            <div class="nereus-spinbox">0.000</div>
+
+            <span style="color:#8090a0">Gain (R)</span>
+            <div class="nereus-slider"><div class="nereus-slider-h" style="left:32%"></div></div>
+            <div class="nereus-spinbox">0.85</div>
+          </div>
+          <div style="display:flex;gap:3px;margin-top:10px;justify-content:space-between">
+            <button class="nereus-btn nereus-btn-sm">−10°</button>
+            <button class="nereus-btn nereus-btn-sm">−45°</button>
+            <button class="nereus-btn nereus-btn-sm">−90°</button>
+            <button class="nereus-btn nereus-btn-sm">+45°</button>
+            <button class="nereus-btn nereus-btn-sm">+90°</button>
+            <button class="nereus-btn nereus-btn-sm">+10°</button>
+            <button class="nereus-btn nereus-btn-sm" style="background:#1a6030;color:#80ff80;border-color:#20a040">180°</button>
+          </div>
+        </div>
+
+        <div class="nereus-groupbox" style="margin-top:12px">
+          <div class="nereus-groupbox-title">Mode</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px">
+            <label class="nereus-checkbox"><input type="checkbox"> Auto adjust</label>
+            <label class="nereus-checkbox"><input type="checkbox"> Cross-fire (+180°)</label>
+            <label class="nereus-checkbox"><input type="checkbox"> Lock angle</label>
+            <label class="nereus-checkbox"><input type="checkbox"> Always on top</label>
+          </div>
+        </div>
+
+        <div class="nereus-groupbox" style="margin-top:12px">
+          <div class="nereus-groupbox-title">Memories (per band — currently 20m)</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:4px">
+            <button class="nereus-mem-btn nereus-mem-btn-filled"><span style="font-weight:bold">M1</span><span style="color:#8090a0;font-size:9px">+12° 1.00</span></button>
+            <button class="nereus-mem-btn nereus-mem-btn-filled"><span style="font-weight:bold;color:#00ff88">M2 ●</span><span style="color:#00ff88;font-size:9px">+47° 0.85</span></button>
+            <button class="nereus-mem-btn nereus-mem-btn-filled"><span style="font-weight:bold">M3</span><span style="color:#8090a0;font-size:9px">−25° 1.20</span></button>
+            <button class="nereus-mem-btn"><span style="font-weight:bold">M4</span><span style="color:#607080;font-size:9px">empty</span></button>
+            <button class="nereus-mem-btn"><span style="font-weight:bold">M5</span><span style="color:#607080;font-size:9px">empty</span></button>
+            <button class="nereus-mem-btn"><span style="font-weight:bold">M6</span><span style="color:#607080;font-size:9px">empty</span></button>
+            <button class="nereus-mem-btn"><span style="font-weight:bold">M7</span><span style="color:#607080;font-size:9px">empty</span></button>
+            <button class="nereus-mem-btn"><span style="font-weight:bold">M8</span><span style="color:#607080;font-size:9px">empty</span></button>
+          </div>
+          <div style="margin-top:6px;font-size:10px;color:#8090a0">Click to recall · Right-click to store current · Bold green = active</div>
+        </div>
+
+        <div class="nereus-groupbox" style="margin-top:12px">
+          <div class="nereus-groupbox-title">Reference ADC</div>
+          <div style="display:flex;gap:14px;margin-top:4px">
+            <label class="nereus-radio"><input type="radio" name="refadc" checked> ADC 0 (primary)</label>
+            <label class="nereus-radio"><input type="radio" name="refadc"> ADC 1 (secondary)</label>
+          </div>
+        </div>
+
+        <div class="nereus-groupbox" style="margin-top:12px">
+          <div class="nereus-groupbox-title">Slice integration</div>
+          <div style="display:flex;flex-direction:column;gap:5px;margin-top:4px">
+            <label class="nereus-checkbox"><input type="checkbox"> Sync Slice A → Slice B frequency <span style="color:#607080;font-size:10px">(Slice B required)</span></label>
+            <label class="nereus-checkbox"><input type="checkbox" checked> Link ATT between Slice A and Slice B</label>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div style="padding:10px 16px;background:#0f0f1a;border-top:1px solid #203040;display:flex;justify-content:space-between;align-items:center">
+      <span style="color:#8090a0;font-size:11px;font-family:monospace">EXTDIVOutput: 0 (combined) · EXTDIVRun: 1 · WDSP ch 0</span>
+      <div style="display:flex;gap:8px">
+        <button class="nereus-btn nereus-btn-blue">Auto-find null</button>
+        <button class="nereus-btn">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:20px">§3 The radar widget — what it actually does</h3>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;padding:12px;font-size:11px;color:#c8d8e8;line-height:1.65">
+  Ported from Thetis <code>picRadar_Paint</code> + the inner <code>SensitivityAtAngle(angle, steering)</code> math at <code>DiversityForm.cs:2390-2440</code>. Computes the polar sensitivity pattern of a 2-element phased array using:<br>
+  &nbsp;&nbsp;• Current VFO frequency (drives wavelength λ)<br>
+  &nbsp;&nbsp;• Antenna spacing in meters (d)<br>
+  &nbsp;&nbsp;• Current phase setting<br>
+  &nbsp;&nbsp;• Current gain ratio<br>
+  &nbsp;&nbsp;• Cross-fire flag<br>
+  Renders the sensitivity lobe + null direction + cardioid/figure-8/etc pattern shape live as the operator dials. Drag the cursor on the radar to retune phase/gain interactively (Thetis lets you click-and-drag the sensitivity peak — useful for null-on-interference workflow).<br><br>
+
+  Implementation in Qt6: <code>DiversityRadarWidget</code> QWidget subclass with custom <code>paintEvent</code>, ~500 lines including the math (which is ~30 lines, the rest is paint chrome). Source-first port preserves the existing math 1:1.
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:20px">§4 Thetis-RX1/RX2 concepts → NereusSDR N-slice translation</h3>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;padding:12px;font-size:11px;color:#c8d8e8;line-height:1.65">
+  Some Thetis controls assume a fixed RX1/RX2 pair. Honest translations for our slice model:<br><br>
+
+  <strong style="color:#fc9">radioButtonMerc1/Merc2 → "Reference ADC" radio (ADC 0 / ADC 1).</strong> Thetis picks between the two Mercury boards. We pick between the two ADCs directly — same outcome, NereusSDR-native naming.<br><br>
+
+  <strong style="color:#fc9">chkVFOSync → "Sync Slice A → Slice B frequency".</strong> Only enabled when Slice B exists. When checked, Slice B's freq follows Slice A's (one-way). Useful for A/B comparison ("listen with diversity on Slice A, listen without on Slice B, switch between to hear the difference"). Greyed out when no Slice B.<br><br>
+
+  <strong style="color:#fc9">chkNoAttLink → "Link ATT between Slice A and Slice B".</strong> Renamed for positive semantics (Thetis's double-negative was confusing). Checked = changes to one slice's ATT/preamp propagate to the other.<br><br>
+
+  <strong style="color:#fc9">Andromeda diversity form landscape</strong> (Thetis console UI feature) — skip. Andromeda is a Thetis-specific touch-console mode that doesn't apply to NereusSDR's desktop-first UI.
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:20px">§5 Persistence schema</h3>
+<div style="background:#1a2030;padding:10px;border-radius:3px;font-size:11px;color:#c8d8e8;line-height:1.65;font-family:monospace">
+  SliceA_Band_&lt;band&gt;_DiversityEnabled = True/False  (14 bands)<br>
+  SliceA_Band_&lt;band&gt;_DiversityPhase = degrees  (14 bands)<br>
+  SliceA_Band_&lt;band&gt;_DiversityGain = ratio  (14 bands)<br>
+  SliceA_Band_&lt;band&gt;_DiversityFineNull = radians  (14 bands)<br>
+  SliceA_Band_&lt;band&gt;_DiversityCrossFire = True/False  (14 bands)<br>
+  SliceA_Band_&lt;band&gt;_DiversityLockAngle = True/False  (14 bands)<br>
+  SliceA_Band_&lt;band&gt;_DiversityMemoryN_Phase = degrees  (14 bands × 8 mems)<br>
+  SliceA_Band_&lt;band&gt;_DiversityMemoryN_Gain = ratio  (14 bands × 8 mems)<br>
+  Diversity_ReferenceAdc = 0 or 1  (global)<br>
+  Diversity_AntSpacingMeters = double  (global)<br>
+  Diversity_Calibration = double  (global)<br>
+  Diversity_SyncSliceB = True/False  (global)<br>
+  Diversity_LinkAtt = True/False  (global)<br>
+  Diversity_AlwaysOnTop = True/False  (global)<br>
+  Diversity_AutoAdjust = True/False  (global)<br>
+  Diversity_DialogGeometry = "x,y,w,h"  (global)
+</div>
+<p style="color:#8090a0;font-size:11px;margin-top:4px">Per-band keys: 6 controls × 14 bands = 84 + 8 memories × 14 bands × 2 fields = 224 = ~308 persisted values. Global: ~9 keys. Substantial but mechanical.</p>
+
+<h3 style="color:#8aa8c0;margin-top:20px">§6 Scope estimate</h3>
+<div style="background:#1a2030;padding:10px;border-radius:3px;font-size:11px;color:#c8d8e8;line-height:1.65">
+  <strong>~10 working days inside 3F:</strong><br>
+  &nbsp;&nbsp;• Day 1-2: WDSP wrappers (SetEXTDIVRun/Nr/Output/Rotate) + RxChannel integration<br>
+  &nbsp;&nbsp;• Day 2-3: SliceModel diversity properties + per-band persistence schema<br>
+  &nbsp;&nbsp;• Day 3-4: DiversityDialog QWidget — basic controls (enable, phase, gain, mode checkboxes, quick-nudge buttons)<br>
+  &nbsp;&nbsp;• Day 5-6: DiversityRadarWidget custom paint (port picRadar_Paint + SensitivityAtAngle math)<br>
+  &nbsp;&nbsp;• Day 6-7: Memory slots (M1-M8 per band, store/recall logic)<br>
+  &nbsp;&nbsp;• Day 7-8: Direction finding (antenna spacing math, direction label)<br>
+  &nbsp;&nbsp;• Day 8-9: Slice integration (sync, ATT link), DDC topology hook (Slice A migrates DDC2 → DDC0+1), PS conflict handling<br>
+  &nbsp;&nbsp;• Day 9-10: Bench verification matrix (per SKU: G2, G2E, MkII, Saturn, Andromeda, AnvelinaPro3, Angelia, Orion, OrionMkII), polish, tooltips
+</div>
+
+</div>
+
+<p class="subtitle" style="margin-top:18px;text-align:center;color:#8090a0">Full Thetis parity for diversity. Operators coming from Thetis see every control they know. Translations for the few Thetis-RX1/RX2 concepts are honest and documented. Push back on any detail.</p>

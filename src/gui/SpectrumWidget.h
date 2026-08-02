@@ -153,6 +153,8 @@ mw0lge@grange-lane.co.uk
 #include <QWidget>
 #include <QVector>
 #include <QImage>
+#include <QPainterPath>
+#include <QPixmap>
 #include <QColor>
 #include <QPoint>
 #include <QMap>
@@ -191,6 +193,7 @@ class BandPlanManager;
 class SpectrumOverlayMenu;
 class VfoWidget;
 class ImdOverlay;  // Phase 3M-4 Task 12 — two-tone IMD overlay analytical core
+class WaterfallTicker;  // src/gui/spectrum/WaterfallTicker.h
 
 // Waterfall color scheme presets.
 // Default matches AetherSDR/SmartSDR style.
@@ -317,6 +320,14 @@ public:
     void setCenterFrequency(double centerHz);
     double centerFrequency() const { return m_centerHz; }
     double bandwidth() const { return m_bandwidthHz; }
+
+    /// Width the dBm scale strip reserves along the right edge, 0 when hidden.
+    ///
+    /// Public so a parent laying widgets over this one can keep clear of it.
+    /// PanadapterApplet's status strip is pinned to the top-right and was
+    /// landing on top of the strip's range up/down arrows, which made them
+    /// hard to see and hard to hit.
+    int reservedRightEdgeWidth() const { return effectiveStripW(); }
 
     // Re-fire the auto-zoom replan with the current bandwidth.  Used by
     // setup pages (e.g. when the user changes the Hz/bin target) to kick
@@ -616,6 +627,13 @@ public:
 
     void setShowFps(bool on);
     bool showFps() const { return m_showFps; }
+
+    // 2026-05-26 KG4VCF perf instrumentation: toggle the in-spectrum
+    // perf overlay (paint/gap/fft/overlay timings + audio underruns
+    // + UDP drops + memory pressure).  Persisted via AppSettings
+    // "ShowPerfOverlay"; View -> Performance Overlay wires here.
+    void setShowPerfOverlay(bool on);
+    bool showPerfOverlay() const { return m_showPerfOverlay; }
 
     // B8 Task 21: cursor frequency readout visibility.
     // Default true (matches the previously always-on behavior).
@@ -935,6 +953,54 @@ public slots:
     VfoWidget* vfoWidget(int sliceIndex) const;
     void updateVfoPositions();
 
+    /// Pin sliceIndex's flag to the front of this pan's stacking order.
+    ///
+    /// Bench-reported 2026-07-28 (Sub-Epic J): with Slice A selected, Slice
+    /// B's flag still covered A's, clipping A's frequency readout to
+    /// ".955.300". z-order was creation order -- addVfoWidget's one-shot
+    /// raise() -- crossed with updateVfoPositions()'s own per-frame raise()
+    /// over m_vfoWidgets (a QMap sorted by slice index), which puts whichever
+    /// slice has the HIGHER index on top after every single position pass,
+    /// with no regard for which one the operator selected.
+    ///
+    /// A one-shot raise() here would not survive that: updateVfoPositions()
+    /// runs every render frame (see its own comment) and would re-apply the
+    /// raw ascending order on the very next pass. m_frontSliceIndex is the
+    /// pin updateVfoPositions() re-asserts at the end of its own loop so the
+    /// front flag survives the next frame too, and every one after it, until
+    /// this is called again.
+    ///
+    /// A sliceIndex this pan does not host (not yet built, or hosted by a
+    /// different pan) leaves the pin set but is a harmless no-op here: only
+    /// the pan that actually hosts the active slice re-orders, exactly as
+    /// PanadapterStack::setActiveSliceOnHostingPan already scopes the rest of
+    /// the active-slice machinery to the hosting pan alone.
+    void setFrontSliceIndex(int sliceIndex);
+
+// Plain public, not public slots: the enclosing section above is a slots
+// block and moc rejects a nested struct inside one.
+public:
+    // ---- RX marker geometry (Phase 3F) ----
+
+    /// One RX marker's inputs: a slice centre, that slice's own signed filter
+    /// edges, and the flag whose bottom edge its triangle hangs from (null
+    /// when the pan is drawing its own VFO with no flag created yet).
+    struct SliceMarkerGeometry {
+        double centreHz{0.0};
+        int    filterLowHz{0};
+        int    filterHighHz{0};
+        const VfoWidget* flag{nullptr};
+    };
+
+    /// Every RX marker this pan must paint, one per hosted slice, in slice
+    /// order.
+    ///
+    /// This is drawVfoMarker()'s whole decision, split out so it is reachable
+    /// without a live QPainter or a shown QRhiWidget: the harness cannot
+    /// render this widget, so the geometry is what gets pinned and the pixel
+    /// emission is what does not. See tests/tst_pan_flag_positions.cpp.
+    QVector<SliceMarkerGeometry> sliceMarkerGeometry() const;
+
 public slots:
     // Phase 3Q-8: update connection state for the disconnect overlay.
     void setConnectionState(NereusSDR::ConnectionState s);
@@ -972,6 +1038,27 @@ public slots:
     // through MainWindow rather than embedded in resizeEvent).
     // From AetherSDR SpectrumWidget.cpp:740-756 [@0cd4559]
     void clearWaterfallHistory();
+
+    /// Phase 3F Sub-Epic F Task 6: receive wideband bins for the active-ADC
+    /// extended pan. Bins are stored per-ADC; actual painting wires in F
+    /// polish (T7-T10). Setter alone enables Sub-Epic H bench operators to
+    /// confirm the wideband data path is flowing without UI rendering.
+    void setWidebandBins(int adcIndex, const QVector<float>& dbmBins);
+    QVector<float> widebandBinsForTest(int adcIndex) const
+    {
+        return adcIndex == 0 ? m_widebandBinsAdc0 : m_widebandBinsAdc1;
+    }
+
+    /// Phase 3F Sub-Epic F Tasks 7-10: allow extended-pan rendering.
+    /// The actual state is on only when allowed AND the visible bandwidth
+    /// exceeds a known positive DDC sample rate. paintEvent
+    /// will render wideband bins as a background fill behind the
+    /// listenable DDC island. Full visual polish (dashed boundary lines,
+    /// palette-aware bin draw) lands in a post-bench iteration; for now
+    /// extendedMode is the derived actual state that drives the signal.
+    void setExtendedViewAllowed(bool allowed);
+    bool extendedViewAllowed() const { return m_extendedViewAllowed; }
+    bool extendedMode() const { return m_extendedMode; }
 
 public:
     // ── Spot overlay (Phase 3J-2 Task E1) ─────────────────────────────────
@@ -1127,6 +1214,21 @@ signals:
     // Emitted when user scrolls to change bandwidth
     void bandwidthChangeRequested(double newBandwidthHz);
 
+    /// Phase 3F Sub-Epic F Task 10: emitted when zoom-state or operator
+    /// toggle changes extended-mode. Consumers (RadioModel via MainWindow)
+    /// flip the active slice's widebandExtensionRequested property,
+    /// which in turn auto-bypasses Alex BPF + enables the wideband
+    /// stream (Task 11 wiring already in place).
+    void widebandExtensionStateChanged(bool extensionRequested);
+
+    /// Phase 3F Sub-Epic F Task 12: emitted when the operator clicks
+    /// in the extended-pan "wing" (outside the DDC listenable island).
+    /// Consumer (MainWindow) retunes the active slice's frequency so
+    /// the clicked Hz becomes the new DDC center. Only ever fires when
+    /// m_extendedMode is true; click-inside-island routes through the
+    /// existing frequencyClicked signal (slice retune in place).
+    void ddcRetuneRequested(double frequencyHz);
+
     // Emitted when user-visible dBm range changes via the scale strip
     // (arrow click, drag-pan on strip body, wheel zoom). Args are the
     // new floor (min) and ceiling (max) in dBm.
@@ -1165,6 +1267,17 @@ protected:
     void leaveEvent(QEvent* event) override;
 
 private:
+    // Phase 3F Sub-Epic F Task 6: latest wideband bins per ADC.  Each entry
+    // is sized 8192 (kOutputBins from WidebandFftEngine) when populated;
+    // empty until the first widebandSpectrumReady arrives.  m_extendedMode
+    // gates whether the bins are actually painted; the storage is silent
+    // until F polish (T7-T10) wires the paint path.
+    QVector<float> m_widebandBinsAdc0;
+    QVector<float> m_widebandBinsAdc1;
+    bool           m_extendedViewAllowed{true};
+    bool           m_extendedMode{false};
+    void recomputeExtendedMode();
+
     // ---- Phase 3Q-8: disconnect overlay state ----
     // The CPU paintEvent path can paint a QPainter overlay, but the GPU
     // (QRhi) path early-returns and refuses QPainter. To work in both modes
@@ -1244,7 +1357,13 @@ private:
                              double newCenterHz, double newBandwidthHz);
     // (clearWaterfallHistory moved to public slots: in sub-epic E task 4 review.)
 
+    // drawVfoMarker walks sliceMarkerGeometry() and hands each entry to
+    // drawSliceMarker, which paints one slice's passband fill, filter edges,
+    // VFO centre line and triangle. Split in Phase 3F so a pan hosting several
+    // slices paints one marker per slice instead of one per pan.
     void drawVfoMarker(QPainter& p, const QRect& specRect, const QRect& wfRect);
+    void drawSliceMarker(QPainter& p, const QRect& specRect, const QRect& wfRect,
+                         const SliceMarkerGeometry& g);
     void drawCursorInfo(QPainter& p, const QRect& specRect);
 
     // ---- Spot overlay (Phase 3J-2 Task E1) ----
@@ -1495,6 +1614,30 @@ private:
     QColor m_peakBlobColor{0xFF, 0x45, 0x00, 0xFF};
     // From Thetis display.cs:8435 [v2.10.3.13] m_bDX2_PeakBlobText = Color.Chartreuse
     QColor m_peakBlobTextColor{0x7F, 0xFF, 0x00, 0xFF};
+    // 2026-05-26 KG4VCF perf polish: pre-rendered blob marker pixmap.
+    // paintPeakBlobs blits this instead of calling QPainter::drawEllipse
+    // each blob; drawEllipse went through Qt's parallel raster span
+    // path and the main thread blocked in QLatch::waitInternal waiting
+    // for QThreadPool workers (starved under build load).  Pixmap blit
+    // is a memcpy-style operation that skips the raster engine.
+    // Rebuilt when m_peakBlobColor changes.
+    QPixmap m_blobMarkerPixmap;
+    void rebuildBlobMarkerPixmap();
+
+    // 2026-05-26 KG4VCF perf polish: pre-allocated scratch vectors
+    // for the CPU spectrum / peak-hold paint paths.  Previously
+    // drawSpectrum() allocated `QVector<QPointF> points(n)` (~16 KB)
+    // and `QVector<QPointF> peakPoints(n)` (~16 KB) per paint.  GPU
+    // path is hot on macOS so these don't run there, but on CPU
+    // fallback they are the dominant per-paint allocation source.
+    // Hoisted to members; drawSpectrum resizes (no-op when same n).
+    QVector<QPointF> m_specPointsScratch;
+    QVector<QPointF> m_specPeakPointsScratch;
+    // QPainterPath is also re-constructed per paint in the fill +
+    // peak-hold blocks; caching as a member + clear()-and-reuse
+    // amortises its internal QVector allocation.
+    QPainterPath m_specFillPathScratch;
+    QPainterPath m_specPeakPathScratch;
 
     float       m_lineWidth{1.5f};
     bool        m_gradientEnabled{false};
@@ -1531,6 +1674,25 @@ private:
 
     // Rate-limit waterfall pushes per m_wfUpdatePeriodMs.
     qint64 m_wfLastPushMs{0};
+
+    // 2026-05-25 KG4VCF bench fix: timer-driven waterfall row push.
+    // Decouples row push cadence from FFT arrival cadence so network-
+    // burst FFT delivery (multiple FFTs in 10 ms then nothing for
+    // 50 ms) does not produce visible scroll stutter.  FFT arrivals
+    // overwrite m_pendingWfPixelsDbm; the ticker fires at
+    // m_wfUpdatePeriodMs and the consumer slot consumes the latest
+    // cached value.
+    //
+    // The ticker lives on its own thread (m_waterfallTickerThread) so
+    // any main-thread delay (focus event, layout pass, system
+    // notification) cannot delay the tick firing -- only the
+    // queued-slot delivery into the main thread's event queue.  This
+    // is the "first-class waterfall" option-A fix from the 2026-05-25
+    // bench session.
+    QVector<float>     m_pendingWfPixelsDbm;
+    bool               m_pendingWfPixelsDbmDirty{false};
+    QThread*           m_waterfallTickerThread{nullptr};
+    WaterfallTicker*   m_waterfallTicker{nullptr};
 
     // 1 Hz overlay repaint tick for the waterfall timestamp; started on
     // demand when the user selects a non-None timestamp position.
@@ -1576,6 +1738,17 @@ private:
 
     // ---- VFO flag widgets ----
     QMap<int, VfoWidget*> m_vfoWidgets;
+
+    // Which slice's flag stays on top -- see setFrontSliceIndex(). -1 = no
+    // pin; updateVfoPositions() falls back to its own ascending-index order.
+    int m_frontSliceIndex{-1};
+
+    // Re-applies the m_frontSliceIndex pin. Called by setFrontSliceIndex()
+    // for an immediate effect, and again at the end of every
+    // updateVfoPositions() pass, because that loop unconditionally raises
+    // every visible flag once per frame and would otherwise undo the pin on
+    // the very next frame.
+    void raiseFrontVfoWidget();
 
     // ---- CTUN mode ----
     bool   m_ctunEnabled{true};  // true = SmartSDR-style (pan independent of VFO)
@@ -1890,6 +2063,29 @@ private:
     bool   m_overlayStaticDirty{true};
     bool   m_overlayNeedsUpload{true};
 
+    // 2026-05-26 KG4VCF dual-layer overlay split.
+    //
+    // The static texture above carries chrome (grid, scales, bandplan,
+    // VFO marker, spot markers, freq/time scale, waterfall chrome,
+    // perf overlay, etc.) that only changes on operator interaction.
+    // The dynamic texture below carries the per-frame features --
+    // peak hold trace, peak blobs, noise-floor line + text -- so
+    // those can animate at display rate without forcing a full chrome
+    // repaint each tick.
+    //
+    // Both textures alpha-composite onto the spectrum trace.  Same
+    // pipeline + sampler + UBO + VBO as the static layer -- only the
+    // SRB and texture differ.  The dynamic image is the SAME size as
+    // the static one (full window) for code simplicity; in practice
+    // it stays mostly transparent except for the spectrum-area
+    // overlays, so the GPU sampler reads through to spectrum
+    // un-tinted for the rest of the widget.
+    QRhiShaderResourceBindings* m_ovDynSrb{nullptr};
+    QRhiTexture*                m_ovDynGpuTex{nullptr};
+    QImage m_overlayDynamic;
+    bool   m_overlayDynamicDirty{true};
+    bool   m_overlayDynamicNeedsUpload{true};
+
     // 2026-05-25 perf fix: timestamp of the last per-frame "dynamic
     // overlay" force-dirty in updateSpectrumLinear.  Rate-limits the
     // overlay rebuild for Active Peak Hold / Peak Blobs / Noise Floor
@@ -1897,6 +2093,21 @@ private:
     // 30 Hz spectrum frame, defeating the cache).  See the rationale
     // at SpectrumWidget.cpp around the "perf fix" comment block.
     qint64 m_overlayDynamicDirtyMs{0};
+
+    // 2026-05-26 KG4VCF perf instrumentation: wall-clock timestamp
+    // of the previous renderGpuFrame entry.  Used to feed
+    // PerfMonitor::recordInterFrameGap(now - m_lastPaintWallMs) so the
+    // perf overlay can show if paint events are arriving on time.
+    // A gap > the display period == main thread was blocked.
+    qint64 m_lastPaintWallMs{0};
+    // Toggle for the in-spectrum perf overlay (drawn in a corner
+    // showing paint/gap/fft/overlay-rebuild timings + audio underruns
+    // + memory pressure).  Persisted via AppSettings key
+    // "ShowPerfOverlay"; View menu wires the setter.
+    bool m_showPerfOverlay{false};
+    // 1 Hz timer that polls memory pressure + drives perf overlay
+    // refresh.  Owned by SpectrumWidget via Qt parent ownership.
+    QTimer* m_perfPollTimer{nullptr};
 
     // ---- FFT spectrum GPU resources ----
     QRhiGraphicsPipeline*       m_fftLinePipeline{nullptr};

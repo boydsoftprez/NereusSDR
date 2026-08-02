@@ -105,7 +105,7 @@ void TestRadeChannelModelWiring::wireRadeChannelConnectsSnrToSlice()
     RadioModel model;
     const int sliceId = model.addSlice();
     QVERIFY(sliceId >= 0);
-    SliceModel* slice = model.sliceAt(sliceId);
+    SliceModel* slice = model.sliceById(sliceId);
     QVERIFY(slice != nullptr);
 
     TestableRadeChannel channel;
@@ -131,7 +131,7 @@ void TestRadeChannelModelWiring::wireRadeChannelEmitsRadioModelSync()
 {
     RadioModel model;
     const int sliceId = model.addSlice();
-    SliceModel* slice = model.sliceAt(sliceId);
+    SliceModel* slice = model.sliceById(sliceId);
     QVERIFY(slice != nullptr);
 
     TestableRadeChannel channel;
@@ -152,7 +152,7 @@ void TestRadeChannelModelWiring::repeatedSyncEmitsOnlyOnceUntilChange()
 {
     RadioModel model;
     const int sliceId = model.addSlice();
-    SliceModel* slice = model.sliceAt(sliceId);
+    SliceModel* slice = model.sliceById(sliceId);
     QVERIFY(slice != nullptr);
 
     TestableRadeChannel channel;
@@ -178,7 +178,7 @@ void TestRadeChannelModelWiring::rxTextDecodedAddsRxDecodeRow()
 {
     RadioModel model;
     const int sliceId = model.addSlice();
-    SliceModel* slice = model.sliceAt(sliceId);
+    SliceModel* slice = model.sliceById(sliceId);
     QVERIFY(slice != nullptr);
     slice->setFrequency(14225000.0);  // 14.225 MHz
 
@@ -208,7 +208,7 @@ void TestRadeChannelModelWiring::rxTextWithEmptyGridStoresCallsignOnly()
 {
     RadioModel model;
     const int sliceId = model.addSlice();
-    SliceModel* slice = model.sliceAt(sliceId);
+    SliceModel* slice = model.sliceById(sliceId);
     QVERIFY(slice != nullptr);
 
     RxDecodeModel* decodes = model.rxDecodeModel();
@@ -230,14 +230,14 @@ void TestRadeChannelModelWiring::wiringWithNullChannelIsNoOp()
 {
     RadioModel model;
     const int sliceId = model.addSlice();
-    SliceModel* slice = model.sliceAt(sliceId);
+    SliceModel* slice = model.sliceById(sliceId);
     QVERIFY(slice != nullptr);
 
     // Null channel: must not crash, must not emit anything.
     model.wireRadeChannel(sliceId, nullptr, slice);
 
     // Null slice with a valid channel: must not crash either. Slot bodies
-    // look the slice up via sliceAt(sliceId) at signal time, so a null
+    // look the slice up via sliceById(sliceId) at signal time, so a null
     // slice pointer at wire time is harmless as long as the helper does
     // not dereference it.
     TestableRadeChannel channel;
@@ -255,7 +255,7 @@ void TestRadeChannelModelWiring::txModemReadyEmissionDoesNotCrash()
 {
     RadioModel model;
     const int sliceId = model.addSlice();
-    SliceModel* slice = model.sliceAt(sliceId);
+    SliceModel* slice = model.sliceById(sliceId);
     QVERIFY(slice != nullptr);
 
     TestableRadeChannel channel;

@@ -91,7 +91,7 @@ private slots:
         QVERIFY(cfg.deviceName.isEmpty());
         QCOMPARE(cfg.sampleRate,     48000);
         QCOMPARE(cfg.channels,       2);
-        QCOMPARE(cfg.bufferSamples,  128);
+        QCOMPARE(cfg.bufferSamples,  128);  // PR #286 lowered default 256 -> 128
         QCOMPARE(cfg.exclusiveMode,  false);
         QCOMPARE(cfg.eventDriven,    false);
         QCOMPARE(cfg.bypassMixer,    false);

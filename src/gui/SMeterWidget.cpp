@@ -40,6 +40,12 @@
 //                 existing public setters so the widget starts in the saved
 //                 state across restarts.
 //                 NereusSDR-native (AetherSDR has no AppSettings persistence).
+//   2026-05-24  Task 13 (Phase 3P-III): RadioModel* constructor overload +
+//                 connectToRadioModel() helper + txScaleIs2kWForTesting() seam.
+//                 SMeterWidget now subscribes to RadioModel::externalAmpOperateChanged
+//                 (cross-vendor aggregator) rather than PgxlConnection::statusUpdated
+//                 directly when constructed via the RadioModel* overload.
+//                 Existing QWidget* constructor and MainWindow wiring unchanged.
 // =================================================================
 #include "SMeterWidget.h"
 
@@ -53,6 +59,7 @@
 #include <QFontMetrics>
 
 #include "core/AppSettings.h"
+#include "models/RadioModel.h"
 
 namespace NereusSDR {
 
@@ -120,6 +127,39 @@ SMeterWidget::SMeterWidget(QWidget* parent)
 
     const QString decayRate = s.value("PeakDecayRate", QString("Medium")).toString();
     setPeakDecayRate(decayRate);
+}
+
+// RadioModel* overload: delegates to the QWidget* constructor then wires the
+// cross-vendor external-amp aggregator signals.
+// NereusSDR-native. Task 13 (Phase 3P-III).
+SMeterWidget::SMeterWidget(RadioModel* model, QWidget* parent)
+    : SMeterWidget(parent)
+{
+    if (model) {
+        connectToRadioModel(model);
+    }
+}
+
+// Subscribe to RadioModel's cross-vendor external-amp signals.
+// Called from the RadioModel* constructor overload only.
+// NereusSDR-native; no upstream equivalent. Task 13.
+void SMeterWidget::connectToRadioModel(RadioModel* model)
+{
+    // externalAmpOperateChanged(bool): flip the TX power scale to 2 kW when
+    // any external amp enters OPERATE; revert to barefoot scale when all amps
+    // leave OPERATE. Mirrors the logic MainWindow wires for the PGXL path.
+    connect(model, &RadioModel::externalAmpOperateChanged, this,
+            [this](bool inOp) {
+        setPowerScale(/*maxWatts=*/0, inOp);
+    });
+
+    // externalAmpFwdSwrUpdated(int, float): forward RF-Kit power telemetry to
+    // the TX needle. Mirrors how MainWindow feeds ampMetersChanged to the
+    // PGXL-sourced S-meter needle.
+    connect(model, &RadioModel::externalAmpFwdSwrUpdated, this,
+            [this](int fwd, float swr) {
+        setTxMeters(static_cast<float>(fwd), swr);
+    });
 }
 
 // --- Public interface --------------------------------------------------------

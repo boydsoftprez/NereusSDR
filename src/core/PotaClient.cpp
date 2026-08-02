@@ -196,6 +196,13 @@ void PotaClient::onPollTimer()
 {
     QNetworkRequest req{QUrl{ApiUrl}};
     req.setHeader(QNetworkRequest::UserAgentHeader, "NereusSDR");
+    // Disable HTTP keep-alive to avoid a known Qt6/macOS bug where the
+    // CFSocket source for a kept-alive socket fires into a destroyed
+    // QSocketNotifier after the server's idle-close, crashing in
+    // qt_mac_socket_callback -> QCoreApplication::sendEvent.  POTA polling
+    // is once per minute over the public internet, so the extra TCP
+    // handshake is negligible.
+    req.setRawHeader("Connection", "close");
     auto* reply = m_nam->get(req);
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         reply->deleteLater();

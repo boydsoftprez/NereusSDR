@@ -239,11 +239,32 @@ public:
     void setNbTauMs(double ms);
     void setNbLeadMs(double advMs);    // "lead" ≡ advtime
     void setNbLagMs(double hangMs);    // "lag"  ≡ hangtime
+    void setNb2Mode(int mode);         // comboDSPNOBmode, 0..4
+
+    // SNB per-knob setters. Same WDSP calls seedSnbFromSettings makes, but
+    // with a caller-supplied value instead of a re-read of the old global
+    // AppSettings keys, so SliceModel can own SNB tuning per slice. Same
+    // post-OpenChannel precondition: rxa[channelId].snba must exist.
+    void setSnbK1(double k1);
+    void setSnbK2(double k2);
+    void setSnbOutputBandwidthHz(int bandwidthHz);
+
+    // Live sample-rate + buffer-size propagation. Mirrors the missing chunk
+    // of Thetis cmaster.c:464-470 SetXcmInrate [v2.10.3.13] case 0 receiver:
+    //   SetRCVRANBBuffsize / SetRCVRANBSamplerate / SetRCVRNOBBuffsize /
+    //   SetRCVRNOBSamplerate.
+    // NereusSDR created NB via create_anbEXT/create_nobEXT so the matching
+    // EXT-keyed setters are equivalent (nob.c:249 vs nob.c:366 both do
+    // a->samplerate=rate; initBlanker(a); — identical bodies).
+    // Without this propagation, NB stays configured for the original rate
+    // and WDSP's blanker time constants become wrong after setSampleRateLive
+    // → metallic ringing artifacts at higher rates.
+    void setSampleRate(int newRateHz, int newBufferSize);
 
 private:
     const int m_channelId;
-    const int m_sampleRate;
-    const int m_bufferSize;
+    int m_sampleRate;
+    int m_bufferSize;
 
     // 2026-05-13 (Linux CI #238): true when m_channelId is outside
     // WDSP's [0, MAX_CHANNELS) range so all WDSP calls (in ctor, dtor,

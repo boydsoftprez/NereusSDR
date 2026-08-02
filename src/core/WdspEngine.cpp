@@ -75,13 +75,23 @@ namespace NereusSDR {
 WdspEngine::WdspEngine(QObject* parent)
     : QObject(parent)
 {
+#ifdef HAVE_WDSP
+    m_extDivCreate = &create_divEXT;
+    m_extDivDestroy = &destroy_divEXT;
+    m_extDivProcess = &xdivEXT;
+    m_extDivSetRun = &SetEXTDIVRun;
+    m_extDivSetNr = &SetEXTDIVNr;
+    m_extDivSetOutput = &SetEXTDIVOutput;
+    m_extDivSetRotate = &SetEXTDIVRotate;
+#endif
 }
 
 WdspEngine::~WdspEngine()
 {
-    if (m_initialized) {
-        shutdown();
-    }
+    // shutdown() also owns the process-wide external-diversity slots and
+    // deliberately cleans them even when asynchronous wisdom initialization
+    // never completed.
+    shutdown();
 }
 
 // Check if wisdom file needs generation (first run detection).
@@ -279,6 +289,12 @@ void WdspEngine::finishInitialization(bool wisdomWasRebuilt)
 
 void WdspEngine::shutdown()
 {
+    // External diversity accepts samples outside the RXA channel map, so it
+    // must be stopped and destroyed before any channel teardown. This also
+    // runs when m_initialized is false: a test seam or a partially completed
+    // startup can own pdiv[] without owning a finished WDSP engine.
+    destroyAllExternalDiversity();
+
     if (!m_initialized) {
         return;
     }
@@ -468,6 +484,166 @@ RxChannel* WdspEngine::rxChannel(int channelId) const
     }
     return nullptr;
 }
+
+// ---------------------------------------------------------------------------
+// External Diversity lifecycle
+// ---------------------------------------------------------------------------
+//
+// Thetis owns pdiv[0] at ChannelMaster scope, not inside an RXA channel:
+// CreateRadio -> create_sync -> create_divEXT, InboundBlock -> xdivEXT, and
+// DestroyRadio -> destroy_sync -> destroy_divEXT. From Thetis
+// ChannelMaster/cmsetup.c:89-102 and sync.c:32-51
+// [v2.10.3.15 @501e3f5].
+//
+// The WDSP C API performs no id or lifetime validation and dereferences
+// pdiv[id] directly (div.c:104-186), so every public method below validates
+// the two-slot range and the created/running state before crossing the ABI.
+
+bool WdspEngine::createExternalDiversity(int id, int inputs,
+                                         int complexSamples)
+{
+    if (!validExternalDiversityId(id) || inputs <= 0 || inputs > 8
+        || complexSamples <= 0 || !m_extDivCreate) {
+        return false;
+    }
+
+    ExternalDiversitySlot& slot =
+        m_externalDiversity[static_cast<size_t>(id)];
+    if (slot.created.load(std::memory_order_acquire)) {
+        return true;
+    }
+
+    // Upstream create_sync creates stopped, then configuration/run are
+    // applied later by the console. Preserve that ordering.
+    m_extDivCreate(id, 0, inputs, complexSamples);
+    slot.inputs = inputs;
+    slot.complexSamples = complexSamples;
+    slot.running.store(false, std::memory_order_relaxed);
+    slot.created.store(true, std::memory_order_release);
+    return true;
+}
+
+void WdspEngine::configureExternalDiversity(int id, int output,
+                                            const double* iRotate,
+                                            const double* qRotate,
+                                            int inputs)
+{
+    if (!validExternalDiversityId(id) || inputs <= 0 || inputs > 8
+        || output < 0 || output > inputs || !iRotate || !qRotate
+        || !m_extDivSetNr || !m_extDivSetOutput || !m_extDivSetRotate) {
+        return;
+    }
+
+    ExternalDiversitySlot& slot =
+        m_externalDiversity[static_cast<size_t>(id)];
+    if (!slot.created.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    // output == nr selects WDSP's mixed output (div.c:166-174). Nr must be
+    // installed first so the output selector and rotation length describe
+    // the same input set.
+    m_extDivSetNr(id, inputs);
+    m_extDivSetOutput(id, output);
+    m_extDivSetRotate(id, inputs, const_cast<double*>(iRotate),
+                      const_cast<double*>(qRotate));
+    slot.inputs = inputs;
+}
+
+bool WdspEngine::processExternalDiversity(int id, int complexSamples,
+                                          double** inputs, double* output)
+{
+    if (!validExternalDiversityId(id) || complexSamples <= 0 || !inputs
+        || !output || !m_extDivProcess) {
+        return false;
+    }
+
+    ExternalDiversitySlot& slot =
+        m_externalDiversity[static_cast<size_t>(id)];
+    if (!slot.created.load(std::memory_order_acquire)
+        || !slot.running.load(std::memory_order_acquire)) {
+        return false;
+    }
+    for (int input = 0; input < slot.inputs; ++input) {
+        if (!inputs[input]) {
+            return false;
+        }
+    }
+
+    m_extDivProcess(id, complexSamples, inputs, output);
+    return true;
+}
+
+void WdspEngine::setExternalDiversityRunning(int id, bool running)
+{
+    if (!validExternalDiversityId(id) || !m_extDivSetRun) {
+        return;
+    }
+
+    ExternalDiversitySlot& slot =
+        m_externalDiversity[static_cast<size_t>(id)];
+    if (!slot.created.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    const bool current = slot.running.load(std::memory_order_acquire);
+    if (current == running) {
+        return;
+    }
+
+    if (running) {
+        m_extDivSetRun(id, 1);
+        slot.running.store(true, std::memory_order_release);
+    } else {
+        // Close the process gate before touching the C object so no new
+        // worker call enters xdivEXT while the slot is being stopped.
+        slot.running.store(false, std::memory_order_release);
+        m_extDivSetRun(id, 0);
+    }
+}
+
+void WdspEngine::destroyExternalDiversity(int id)
+{
+    if (!validExternalDiversityId(id) || !m_extDivDestroy) {
+        return;
+    }
+
+    ExternalDiversitySlot& slot =
+        m_externalDiversity[static_cast<size_t>(id)];
+    if (!slot.created.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    if (slot.running.exchange(false, std::memory_order_acq_rel)
+        && m_extDivSetRun) {
+        m_extDivSetRun(id, 0);
+    }
+    slot.created.store(false, std::memory_order_release);
+    m_extDivDestroy(id);
+    slot.inputs = 0;
+    slot.complexSamples = 0;
+}
+
+void WdspEngine::destroyAllExternalDiversity()
+{
+    for (int id = 0; id < kExternalDiversitySlots; ++id) {
+        destroyExternalDiversity(id);
+    }
+}
+
+#ifdef NEREUS_BUILD_TESTS
+void WdspEngine::setExternalDiversityApiForTest(
+    const ExternalDiversityApiForTest& api)
+{
+    m_extDivCreate = api.create;
+    m_extDivDestroy = api.destroy;
+    m_extDivProcess = api.process;
+    m_extDivSetRun = api.setRun;
+    m_extDivSetNr = api.setNr;
+    m_extDivSetOutput = api.setOutput;
+    m_extDivSetRotate = api.setRotate;
+}
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────
 // Phase 3R Task J2: RadeChannel lifecycle.

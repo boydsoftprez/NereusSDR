@@ -648,6 +648,7 @@ preferences. OpenHPSDR radios don't store per-slice state.
 | **3J-2: Spot System + FreeDV Reporter + PSK Reporter** | **DX cluster + RBN + WSJT-X UDP + SpotCollector + POTA + FreeDV Reporter + PSK Reporter spot ingest. SpotHubDialog (9 tabs, AetherSDR-faithful). FreeDVReporterDialog (14-col live view, TX/RX highlights, QSY support, idle auto-delete). Panadapter spot overlay with collision-avoidance multi-level stacking + cluster badges. DXCC color priority via cty.dat + ADIF worked-status. Tools menu (Ctrl+Shift+S / Ctrl+Shift+R). Auto-connect on launch. Display knob persistence.** | **Complete (shipped v0.5.0)** |
 | **3R: RADE as a True Peer Mode** | **Vendored radae_nopy (BSD-2-Clause SHA b289102) + Opus (LPCNet/FARGAN) at `third_party/rade/` (~9 MB embedded weights, no external model file). `DSPMode::RADE_U` / `DSPMode::RADE_L` peer mode + RadeChannel (RX + TX paths). Task I4 Option B: native callsign-over-EOO API via thin RadeText wrapper (avoids ~1500 lines of codec2 deps). Mode dispatch swaps RxChannel <-> RadeChannel; band changes inside RADE keep channel alive. VFO flag mode-aware SNR row + EOO-decoded speaker callsign. RadeApplet (profile combo + sync indicator + Reset Vocoder). Mode menu RADE entry. MicProfileManager RADE factory profile (22 total). RxDecodeModel sources from WSJT-X + RADE. RADE TX confirmed on-air on ANAN-G2 via remote receivers (K-bench deferral retired).** | **Complete (shipped v0.5.0; HL2 row + multi-slice deferred)** |
 | **3P-II: External RF Accessories (PGXL + TGXL + Analog S-Meter)** | **Phase 1 PGXL/TGXL baseline (`PgxlConnection` + `TgxlConnection` V/R/S frame parsers + `TunerModel` + `LanDiscovery` + `AmpApplet` + `TunerApplet` rewire + `RelayBar` + Peripherals page). Phase 2 analog S-Meter port from Thetis (`SMeterWidget`: 180° needle arc, 4 RX modes: Signal / Sig Avg `RXA_S_AV` / Signal Peak / Max Bin `SetupDetectMaxBin`+`GetDetectMaxBin`; right-click context menu; PGXL 2 kW snap; peak hold Fast/Medium/Slow). Phase 3 connection robustness (exponential auto-reconnect, keepalive, RTT-correlated ping, full PGXL pairing flow with serial capture, band-change notifications, `ConnectionDiagnostics`, PeripheralsPage live status). Phase 4 advanced UI (`PgxlAdvancedPage` + `TgxlAdvancedPage` Setup pages, `FaultLog` ring buffer with likelyCause heuristic, `TuneMemoryStore` per-(antenna, band) auto-recall, `TxInterlockPolicy` Disabled/Warn/Block + SWR gate + grace, antenna label persistence, power-cap toast, applet right-click navigation).** | **Complete (pending bench in v0.5.2)** |
+| **3P-III: RF-Kit RF2K-S** | Applet + Setup pages + SMeter generalization + 8 new tests. REST polling, TCI band tracking via existing TciServer. TUNE/BYPASS greyed pending firmware. | **Complete (pending bench)** |
 | **ANAN-G2E (HermesC10) SKU Port** | **Tasks A3-A4 + B4'-B7' + D1-D5 + E1-E5 + F1-F6: new board enum + capability row, hardware profile init (verified against Thetis v2.10.3.15), codec wrappers (`SetADCSupply` + `LRAudioSwap`), discovery byte 0x14 → HPSDRHW::HermesC10, BPF1 algorithm family (`setAlex1HPF`), Hermes-class DDC4 + DDC0 + PS-DDC, PA telemetry (fwd-power triplet, current / supply-volts), per-model preamp items, `SkuUiProfile` EXT label overrides, AddCustomRadioDialog wiring, G2E P2 RX unblock (mask dither/random for HermesC10, zero rate on disabled DDCs, retry SendStop + bounds-check I/Q batch).** | **Complete (pending G2E bench in v0.5.2; F2/F3/F4/F6 documented as DONE_WITH_CONCERNS)** |
 | 3M-2: CW TX (was 3I-CW) | Sidetone, firmware keyer, QSK/break-in. Deferred until after 3M-3 ships AND the HL2 ATT/filter audit closes (so an HL2 can be CW-bench'd safely). Absorbs the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-1252 [@c26a8a4]` — desk-review B3). | Planned |
 | **3M-4: PureSignal** | **Feedback DDC plumbing on P1 + P2, `calcc.c` + `iqc.c` vendored verbatim from Thetis, `PureSignal` coordinator + `PsccPump` + per-board `PsDdcConfig`, `PsForm` modeless dialog (Tools → PureSignal), `AmpView` modeless dialog, two-tone IMD overlay, `PsaIndicatorWidget` bottom-banner FB+PS pair. Enabled on every supported P1 + P2 SKU including HL2 (negative-ATT support, AutoAtt convergence, ATT-on-TX master force-enable, psSampleRate=0 sentinel resolution) and plain Hermes.** | **Complete (shipped v0.4.0)** |
@@ -682,3 +683,44 @@ preferences. OpenHPSDR radios don't store per-slice state.
 6. **r8brain-free-src** - `https://github.com/avaneev/r8brain-free-src`
    * MIT-licensed 24-bit polyphase resampler vendored at `third_party/r8brain/`
    * Used by the RADE 48-to-16 kHz TX audio chain and reserved for future general resampling needs
+7. **n1gp-Anvelina_PROIII (FPGA gateware)** - `https://github.com/n1gp/Anvelina_PROIII`
+   * **Clone to `../n1gp-Anvelina_PROIII/` relative to NereusSDR root.** Pinned at
+     SHA `8e86a61` ("Version 2.2.14 Final", 2026-07-06). Do not `git pull`.
+   * Verilog FPGA gateware for an OpenHPSDR Protocol 2 board. This is the
+     **hardware** authority for facts Thetis can only report second-hand:
+     receiver/DDC count, board-type identification byte, protocol version,
+     master clock. Added 2026-07-25 after discovering every row in
+     `BoardCapabilities.cpp` cited only Thetis client code.
+   * Key facts (`Orion.v` @ `8e86a61`):
+     - `Orion.v:958` — `localparam NR = 8; // number of receivers to implement`
+     - `Orion.v:956-957` — fabric fits up to 14 RX; bootloader's 2 MB file-size
+       limit caps the practical build at 10
+     - `Orion.v:964` — `board_type = 8'h05` with the authoritative ID list
+       (00 Metis, 01 Hermes, 02 Griffin, 03 Angelia, 05 Orion)
+     - `Orion.v:632` — NR=8 runs 8 receivers at 192 kHz, but only 2 at 1536 kHz
+   * **`NR` is a compile-time constant that changes between firmware releases**
+     (shipped as 2, 4, 7 and 8 at different times on the same board). No static
+     per-board DDC count can be correct across firmware versions — see the
+     Radio-Authoritative Settings Policy.
+
+### Gateware citations — cite facts, don't port logic
+
+The gateware is **GPLv3**, the same licence NereusSDR itself ships under (root
+`LICENSE`), so there is **no licence conflict** — unlike a GPLv2-only or
+proprietary upstream, this can be used freely. The constraint below is about
+scope and correctness, not legal risk:
+
+* **Normal use** — cite a *fact* the gateware establishes: a receiver count, a
+  board-type byte, a clock rate, a register width. A cite like
+  `// From n1gp-Anvelina_PROIII Orion.v:958 [@8e86a61] — NR = 8` records where a
+  hardware number actually came from, the same standing as citing a datasheet.
+  Prefer this over a Thetis cite whenever the claim is about *hardware*.
+* **Stop and ask first** — translating Verilog *logic* into NereusSDR. It is
+  licence-compatible but almost always the wrong move: gateware logic runs on
+  the radio, not in the client, so needing it usually means the design took a
+  wrong turn. If a task genuinely calls for it, the full port protocol applies
+  (verbatim header, PROVENANCE row as kind `port`, author tags preserved).
+* Fact-only citations use PROVENANCE kind `reference`, not `port`.
+* The gateware carries its own author tags (`Yurij-eu2av` in `Orion.v`). If a
+  gateware comment is ever quoted verbatim, the inline-comment-preservation rule
+  applies to it exactly as it does to Thetis tags.

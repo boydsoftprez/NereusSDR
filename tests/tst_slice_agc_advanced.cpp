@@ -108,14 +108,56 @@
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 #include <QtTest/QtTest>
+#include "core/AppSettings.h"
+#include "core/RadioConnection.h"
+#include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
 using namespace NereusSDR;
+
+class AgcMockConnection : public RadioConnection {
+    Q_OBJECT
+public:
+    explicit AgcMockConnection(QObject* parent = nullptr)
+        : RadioConnection(parent)
+    {
+        setState(ConnectionState::Connected);
+    }
+
+    void init() override {}
+    void connectToRadio(const NereusSDR::RadioInfo&) override {}
+    void disconnect() override {}
+    void setReceiverFrequency(int, quint64) override {}
+    void setTxFrequency(quint64) override {}
+    void setActiveReceiverCount(int) override {}
+    void setSampleRate(int) override {}
+    void setAttenuator(int) override {}
+    void setPreamp(bool) override {}
+    void setTxDrive(int) override {}
+    void setMox(bool) override {}
+    void setAntennaRouting(AntennaRouting) override {}
+    void setAlexRxBpf(AlexRxBpf) override {}
+    void setWatchdogEnabled(bool enabled) override { m_watchdogEnabled = enabled; }
+    void sendTxIq(const float*, int) override {}
+    void setTrxRelay(bool) override {}
+    void setMicBoost(bool) override {}
+    void setLineIn(bool) override {}
+    void setMicTipRing(bool) override {}
+    void setMicBias(bool) override {}
+    void setLineInGain(int) override {}
+    void setUserDigOut(quint8) override {}
+    void setPuresignalRun(bool) override {}
+    void setMicPTTDisabled(bool) override {}
+    void setMicXlr(bool) override {}
+};
 
 class TestSliceAgcAdvanced : public QObject {
     Q_OBJECT
 
 private slots:
+    void initTestCase() { AppSettings::instance().clear(); }
+    void cleanup()      { AppSettings::instance().clear(); }
+
     // ── agcThreshold ─────────────────────────────────────────────────────────
 
     void agcThresholdDefaultIsMinusTwenty() {
@@ -263,6 +305,37 @@ private slots:
         QSignalSpy spy(&s, &SliceModel::agcDecayChanged);
         s.setAgcDecay(250);
         QCOMPARE(spy.count(), 0);
+    }
+
+    void inactive_slice_agc_and_rf_edits_do_not_mutate_the_active_slice()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+        auto* connection = new AgcMockConnection;
+        model.injectConnectionForTest(connection);
+        SliceModel* activeA = model.sliceById(model.addSlice());
+        model.addSlice();
+        SliceModel* inactiveC = model.sliceById(model.addSlice());
+        QVERIFY(activeA);
+        QVERIFY(inactiveC);
+        QCOMPARE(model.activeSlice(), activeA);
+
+        activeA->setAgcThreshold(-65);
+        activeA->setAutoAgcEnabled(true);
+        const int activeThreshold = activeA->agcThreshold();
+
+        inactiveC->setAgcThreshold(-95);
+        QCOMPARE(activeA->autoAgcEnabled(), true);
+        QCOMPARE(activeA->agcThreshold(), activeThreshold);
+        QCOMPARE(inactiveC->agcThreshold(), -95);
+
+        inactiveC->setRfGain(37);
+        QCOMPARE(activeA->autoAgcEnabled(), true);
+        QCOMPARE(activeA->agcThreshold(), activeThreshold);
+        QCOMPARE(inactiveC->rfGain(), 37);
+
+        model.injectConnectionForTest(nullptr);
+        delete connection;
     }
 };
 

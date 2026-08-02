@@ -59,6 +59,17 @@ public:
     // Resample mono float32 PCM. Returns resampled mono float32.
     QByteArray process(const float* in, int numSamples);
 
+    // Non-allocating mono float32 resample.  Writes up to `outCapacity`
+    // samples into `out` and returns the number written.  Safe to call
+    // from a real-time audio callback because the only heap activity
+    // is the one-time resize of the internal double scratch buffer in
+    // the constructor / first call -- subsequent calls reuse it.
+    // Used by the macOS mic-input path in PortAudioBus where we open
+    // the device at its native rate and resample to 48 kHz on our own
+    // clock to bypass CoreAudio AUHAL's sample-rate converter.
+    int processInto(const float* in, int numSamples,
+                    float* out, int outCapacity);
+
     // Convenience: stereo float32 -> mono downsample -> resampled mono float32
     QByteArray processStereoToMono(const float* stereoIn, int numStereoFrames);
 

@@ -125,6 +125,105 @@ private slots:
         QCOMPARE(forwarded.first().at(0).toInt(), 0);   // logical 0, not 1
     }
 
+    // ── Phase 3F Sub-Epic I closeout, defect C2 ───────────────────────────
+    //
+    // setDdcMapping had no change gate. Before Sub-Epic I it ran once per
+    // connect; RadioModel::publishDdcAssignment now calls it for every
+    // active stream on every requestDdcAssignment, which fires on every
+    // slice frequencyChanged. Each redundant call rebuilt the hardware
+    // mapping, and rebuildHardwareMapping re-emits every active receiver's
+    // STORED frequency — so a spun encoder produced a stream of duplicate
+    // P2 command frames, and under CTUN it retuned the DDC back to the
+    // pre-drag centre, yanking the pan out from under the operator.
+
+    void redundantDdcMappingDoesNotRetuneTheDdc()
+    {
+        ReceiverManager rm;
+        rm.setMaxReceivers(2);
+
+        const int rx = rm.createReceiver();
+        rm.setDdcMapping(rx, 2);
+        rm.activateReceiver(rx);
+        rm.setReceiverFrequency(rx, 14200000);
+
+        // Spy AFTER setup so only the redundant republish is observed.
+        QSignalSpy hwFreq(&rm, &ReceiverManager::hardwareFrequencyChanged);
+
+        // publishDdcAssignment pushing the same mapping on a VFO tick.
+        rm.setDdcMapping(rx, 2);
+        rm.setDdcMapping(rx, 2);
+        rm.setDdcMapping(rx, 2);
+
+        QCOMPARE(hwFreq.count(), 0);
+    }
+
+    // A real mapping change must still rebuild and re-emit.
+    void changedDdcMappingStillRebuilds()
+    {
+        ReceiverManager rm;
+        rm.setMaxReceivers(2);
+
+        const int rx = rm.createReceiver();
+        rm.setDdcMapping(rx, 2);
+        rm.activateReceiver(rx);
+        rm.setReceiverFrequency(rx, 14200000);
+
+        QSignalSpy hwFreq(&rm, &ReceiverManager::hardwareFrequencyChanged);
+
+        rm.setDdcMapping(rx, 3);
+
+        QCOMPARE(rm.receiverConfig(rx).hardwareRx, 3);
+        QVERIFY(hwFreq.count() >= 1);
+        QCOMPARE(hwFreq.last().at(0).toInt(), 3);
+        QCOMPARE(hwFreq.last().at(1).toULongLong(), quint64(14200000));
+    }
+
+    // The CTUN pan drag goes through forceHardwareFrequency, which bypasses
+    // the DDC lock. It now stores the frequency too, so a rebuild triggered
+    // later (a genuine mapping change, a receiver activation) re-emits the
+    // dragged-to centre rather than the stale pre-drag one.
+    void forcedFrequencySurvivesALaterRebuild()
+    {
+        ReceiverManager rm;
+        rm.setMaxReceivers(2);
+
+        const int rx = rm.createReceiver();
+        rm.setDdcMapping(rx, 2);
+        rm.activateReceiver(rx);
+        rm.setReceiverFrequency(rx, 14200000);
+
+        // CTUN on: a VFO move inside the pinned window must not retune.
+        rm.setDdcFrequencyLocked(true);
+
+        // Operator drags the pan.
+        rm.forceHardwareFrequency(rx, 14250000);
+
+        QSignalSpy hwFreq(&rm, &ReceiverManager::hardwareFrequencyChanged);
+
+        // Anything that rebuilds must re-assert the dragged-to centre.
+        rm.setDdcMapping(rx, 3);
+
+        QVERIFY(hwFreq.count() >= 1);
+        QCOMPARE(hwFreq.last().at(1).toULongLong(), quint64(14250000));
+    }
+
+    // forceHardwareFrequency must not start announcing a logical retune:
+    // the DDC moved, the receiver's tuning did not.
+    void forcedFrequencyDoesNotEmitReceiverFrequencyChanged()
+    {
+        ReceiverManager rm;
+        rm.setMaxReceivers(2);
+
+        const int rx = rm.createReceiver();
+        rm.setDdcMapping(rx, 2);
+        rm.activateReceiver(rx);
+
+        QSignalSpy logical(&rm, &ReceiverManager::receiverFrequencyChanged);
+        rm.forceHardwareFrequency(rx, 14250000);
+
+        QCOMPARE(logical.count(), 0);
+    }
+
     // P1 path is unaffected by the bug — auto hw assignment avoids
     // collision even without reset — but reset() must not break it.
     void resetPreservesAutoAssignForP1()

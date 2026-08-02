@@ -409,6 +409,86 @@ void NbFamily::setNbLagMs(double hangMs)
 #endif
 }
 
+void NbFamily::setNb2Mode(int mode)
+{
+    m_tuning.nb2Mode = mode;
+#ifdef HAVE_WDSP
+    if (m_skipWdsp) return;
+    // From Thetis wdsp/nobII.c:658-663 [v2.10.3.15] — SetEXTNOBMode writes
+    // NOB a = pnob[id], the per-receiver noise blanker II instance.
+    SetEXTNOBMode(m_channelId, mode);
+#endif
+}
+
+// SNB per-knob setters. Same three WDSP calls seedSnbFromSettings makes, but
+// driven by a value the caller supplies rather than re-read from the old
+// radio-global AppSettings keys, so SliceModel can own this state per slice.
+// Same post-OpenChannel precondition applies: rxa[m_channelId].snba must
+// exist or these null-deref (see the seedSnbFromSettings note above).
+void NbFamily::setSnbK1(double k1)
+{
+#ifdef HAVE_WDSP
+    if (m_skipWdsp) return;
+    // From Thetis setup.cs:17609 [v2.10.3.13] — raw pass-through.
+    SetRXASNBAk1(m_channelId, k1);
+#else
+    Q_UNUSED(k1);
+#endif
+}
+
+void NbFamily::setSnbK2(double k2)
+{
+#ifdef HAVE_WDSP
+    if (m_skipWdsp) return;
+    // From Thetis setup.cs:17617 [v2.10.3.13] — raw pass-through.
+    SetRXASNBAk2(m_channelId, k2);
+#else
+    Q_UNUSED(k2);
+#endif
+}
+
+void NbFamily::setSnbOutputBandwidthHz(int bandwidthHz)
+{
+#ifdef HAVE_WDSP
+    if (m_skipWdsp) return;
+    // Symmetric around DC, matching seedSnbFromSettings and the setup page
+    // this replaced. No Thetis Setup control: Thetis picks SNB output
+    // bandwidth per mode at rxa.cs:112-124 [v2.10.3.13].
+    const double half = static_cast<double>(bandwidthHz) / 2.0;
+    SetRXASNBAOutputBandwidth(m_channelId, -half, half);
+#else
+    Q_UNUSED(bandwidthHz);
+#endif
+}
+
+// Live sample-rate change. Re-ports the receiver branch of Thetis
+// cmaster.c:464-470 SetXcmInrate [v2.10.3.13]:
+//   SetRCVRANBBuffsize  (0, rx, pcm->xcm_insize[in_id]);
+//   SetRCVRANBSamplerate(0, rx, rate);
+//   SetRCVRNOBBuffsize  (0, rx, pcm->xcm_insize[in_id]);
+//   SetRCVRNOBSamplerate(0, rx, rate);
+// Ordering preserved (buffsize before samplerate) per upstream. The EXT
+// setters are bodily identical to the RCVR setters (nob.c:240-255 vs
+// nob.c:357-373; nobII.c same) — they take a critical section, write the
+// field, call init_nob/initBlanker, release.
+void NbFamily::setSampleRate(int newRateHz, int newBufferSize)
+{
+    if (newRateHz == m_sampleRate && newBufferSize == m_bufferSize) {
+        return;
+    }
+    m_sampleRate = newRateHz;
+    m_bufferSize = newBufferSize;
+#ifdef HAVE_WDSP
+    if (m_skipWdsp) return;
+    // NB1 (anb)
+    SetEXTANBBuffsize  (m_channelId, m_bufferSize);
+    SetEXTANBSamplerate(m_channelId, m_sampleRate);
+    // NB2 (nob)
+    SetEXTNOBBuffsize  (m_channelId, m_bufferSize);
+    SetEXTNOBSamplerate(m_channelId, m_sampleRate);
+#endif
+}
+
 void NbFamily::pushAllTuning()
 {
 #ifdef HAVE_WDSP

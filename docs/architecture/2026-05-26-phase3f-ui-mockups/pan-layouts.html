@@ -1,0 +1,131 @@
+<h2>Q7: Pan layout templates (with wideband + overlay model)</h2>
+<p class="subtitle">AetherSDR has 12 templates + floating windows. Original NereusSDR plan had 5. Wideband adds a new pan type. Let's decide the template set, the per-pan source selector, and floating window support.</p>
+
+<h3>What AetherSDR has (source-verified, PanLayoutDialog.cpp + PanadapterStack.cpp)</h3>
+<div style="background:#1a2030;padding:14px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7;font-family:monospace">
+  <strong style="color:#8aa8c0">PanLayoutDialog visible templates</strong> (the operator-picker dialog):<br>
+  &nbsp;&nbsp;"1" Single &nbsp;·&nbsp; "2v" A/B &nbsp;·&nbsp; "2h" A|B &nbsp;·&nbsp; "12h" A/B|C &nbsp;·&nbsp; "2x2" A|B/C|D<br><br>
+
+  <strong style="color:#8aa8c0">PanadapterStack::rearrangeLayout supports 12 templates</strong> (some via API, not all in dialog):<br>
+  &nbsp;&nbsp;"1", "2v", "2h", "2h1", "12h", "3v", "2x2", "4v", "3h2", "2x3", "4h3", "2x4"<br><br>
+
+  <strong style="color:#8aa8c0">PanFloatingWindow.h / .cpp:</strong> any pan can detach into its own QWidget top-level window. Operator drags it to a second monitor. <code>floatPanadapter(panId)</code> + <code>dockRequested</code> signal.
+</div>
+
+<h3 style="margin-top:24px">What's new in NereusSDR 3F</h3>
+<div style="background:#2a3548;padding:12px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  <span style="color:#8aa8c0">●</span> <strong>Per-pan source type:</strong> each pan slot is either a <strong>DDC pan</strong> (one of 5 user DDCs) or a <strong>Wideband pan</strong> (one of 2 ADCs).<br>
+  <span style="color:#8aa8c0">●</span> <strong>Source-vs-layout independence:</strong> layout templates define geometry, per-pan source picker assigns content.<br>
+  <span style="color:#8aa8c0">●</span> <strong>AetherSDR doesn't have wideband</strong>, so this is genuinely additive — we port AetherSDR's layout shapes 1:1 and add the wideband source option.
+</div>
+
+<h3 style="margin-top:24px">Three approaches to the template set</h3>
+
+<div class="options">
+  <div class="option" data-choice="full-aether" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Match AetherSDR's full 12-template set</h3>
+      <p>Port all of "1", "2v", "2h", "2h1", "12h", "3v", "2x2", "4v", "3h2", "2x3", "4h3", "2x4". Plus PanFloatingWindow for detach-to-second-monitor.</p>
+      <p style="font-size:11px;color:#8aa"><strong>Pros:</strong> 100% AetherSDR muscle memory. Power users with 7-pan / 8-pan setups (matters for big multi-band contest stations) get full capability.<br><strong>Cons:</strong> 12 buttons in the layout dialog is busy. Some templates (4h3, 2x4) overflow normal screen sizes. Most users use ≤4 pans.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="trim-8" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Trim to 8 ham-relevant templates (recommended)</h3>
+      <p>Keep "1", "2v", "2h", "12h", "2x2", "3v", "4v", "3h2". Drop the 6/7/8-pan templates (operators with those use floating windows on extra monitors instead). All AetherSDR layout shapes that matter for typical operation, none of the overload.</p>
+      <div class="mockup" style="margin:8px 0;background:#0d1218;padding:6px;border-radius:4px;font-family:monospace;font-size:10px;color:#cde">
+        Layout buttons in dialog:<br>
+        ┌─────┬─────┬─────┬─────┐<br>
+        │ &nbsp;1 &nbsp;│ 2v &nbsp;│ 2h &nbsp;│ 12h │<br>
+        ├─────┼─────┼─────┼─────┤<br>
+        │ 2x2 │ 3v &nbsp;│ 4v &nbsp;│ 3h2 │<br>
+        └─────┴─────┴─────┴─────┘
+      </div>
+      <p style="font-size:11px;color:#8aa"><strong>Pros:</strong> Covers ≤4-pan needs. Includes 12h (wide top + 2 below) which is perfect for wideband-on-top + 2 DDC panes. Includes 4v (4 stacked) for HF chasers. Plus floating windows for multi-monitor overflow.<br><strong>Cons:</strong> Contest stations with 5+ panes on one monitor need to use floating windows instead of a one-shot template.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="original-5" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Keep original NereusSDR plan's 5 templates</h3>
+      <p>"1", "2v", "2h", "2x2", "12h" only. Drop everything else.</p>
+      <p style="font-size:11px;color:#8aa"><strong>Pros:</strong> Smallest UI surface. Matches the 2026-04-09 plan exactly.<br><strong>Cons:</strong> Loses 3v / 4v which are common HF use cases (3 bands monitored vertically on a portrait monitor). Loses 3h2 for the "wide HF + 6m" workflow. Under-shoots AetherSDR's coverage.</p>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">Per-pan source picker (new, additive)</h3>
+<div class="mockup">
+  <div class="mockup-header">Right-click any pan → "Source" submenu</div>
+  <div class="mockup-body" style="font-family:monospace;font-size:11px;color:#cde;padding:10px;line-height:1.6">
+    ┌────────────────────────────────────────────┐<br>
+    │ &nbsp;Source &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ▶ &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; │<br>
+    │ &nbsp;Move to layout slot &nbsp; ▶ &nbsp; <strong style="color:#8aa8c0">DDC pan (slice A)</strong> &nbsp; │<br>
+    │ &nbsp;Float pan &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; DDC pan (slice B) &nbsp; │<br>
+    │ &nbsp;Close pan &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; DDC pan (slice C) &nbsp; │<br>
+    │ &nbsp;Equalize sizes &nbsp; &nbsp; &nbsp; &nbsp; DDC pan (slice D) &nbsp; │<br>
+    └─────────────────────────── DDC pan (slice E) &nbsp; │<br>
+    &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; ─────────────────────┤<br>
+    &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; <strong style="color:#fc9">Wideband ADC0</strong> &nbsp; &nbsp; &nbsp; &nbsp; │<br>
+    &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; Wideband ADC1 &nbsp; &nbsp; &nbsp; &nbsp; │<br>
+    &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; <em>(grays out if SKU has 1 ADC)</em> │<br>
+    &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; ───────────────────────┘<br>
+    <br>
+    <strong style="color:#8aa8c0">Constraints:</strong><br>
+    • A single DDC's pan can appear multiple times (different zoom levels of same data)<br>
+    • Wideband pane choices auto-enable wideband on that ADC (sets <code>packetbuf[23]</code> bit)<br>
+    • Disabling the last wideband pane for an ADC disables wideband on that ADC<br>
+    • Slice deleted while its DDC is shown in a pan → pan goes to "DDC pan (no slice)" state (idle FFT) until reassigned
+  </div>
+</div>
+
+<h3 style="margin-top:24px">Wideband-on-top workflow with "12h" layout</h3>
+<div class="mockup">
+  <div class="mockup-header">The "12h" layout becomes the killer wideband layout</div>
+  <div class="mockup-body" style="background:#0d1218;padding:8px;border-radius:4px;font-family:monospace;font-size:10px;color:#cde">
+    <div style="background:#1a2030;border:1px solid #2a3548;padding:6px;margin-bottom:4px">
+      <strong style="color:#8aa8c0">Slot A (wide top)</strong> — Wideband ADC0 — 0..61.44 MHz<br>
+      <span style="color:#aac">▒▓░░░▒▒█░░░▓░▒░░░░░░░░░░░░░▒░░░░ &nbsp;[band markers and slice flags overlaid]</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
+      <div style="background:#1a2030;border:1px solid #2a3548;padding:6px">
+        <strong style="color:#8aa8c0">Slot B</strong> — DDC2 (Slice A) — 14.225 ± 96 kHz
+      </div>
+      <div style="background:#1a2030;border:1px solid #2a3548;padding:6px">
+        <strong style="color:#8aa8c0">Slot C</strong> — DDC3 (Slice B) — 7.150 ± 48 kHz
+      </div>
+    </div>
+  </div>
+  <p style="font-size:11px;color:#8aa;text-align:center;margin-top:8px">Workflow: scan wideband for activity → click a hot spot → DDC pan retunes there → audio reveals signal. Classic SmartSDR/AetherSDR pattern, finally with the wideband visibility OpenHPSDR hardware always had.</p>
+</div>
+
+<h3 style="margin-top:24px">Floating windows (multi-monitor)</h3>
+<div style="background:#1a2030;padding:12px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  <strong style="color:#8aa8c0">Port from AetherSDR</strong> <code>PanFloatingWindow.{h,cpp}</code> + <code>floatPanadapter()</code> / <code>dockRequested</code>:<br>
+  &nbsp;&nbsp;• Right-click any pan → "Float pan"<br>
+  &nbsp;&nbsp;• Pan detaches into a top-level QWidget, draggable to any monitor<br>
+  &nbsp;&nbsp;• Floating window has a "Dock back" button that returns it to its previous layout slot<br>
+  &nbsp;&nbsp;• Persistence: floating window geometry per-pan-id, dock/float state restored on launch<br>
+  &nbsp;&nbsp;• Use case: 8-band monitoring station, primary 4 pans on main monitor, extra 4 floated to second/third monitors
+</div>
+
+<h3 style="margin-top:24px">Persistence schema (additions)</h3>
+<div style="background:#1a2030;padding:12px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7;font-family:monospace">
+  PanLayoutId = "12h"<br>
+  Pan0_Source = "ddc:0"          # slot A: DDC pan, slice 0 = A<br>
+  Pan1_Source = "ddc:1"          # slot B: DDC pan, slice 1 = B<br>
+  Pan2_Source = "wideband:adc0"  # slot C: wideband, ADC 0<br>
+  Pan0_Floating = False          # docked<br>
+  Pan2_Floating = True           # detached<br>
+  Pan2_FloatGeometry = "1920,200,800,400"   # x,y,w,h on the second monitor<br>
+  Pan0_CenterMhz = 14.225        # client-side display state<br>
+  Pan0_BandwidthMhz = 0.192      # client-side display state<br>
+  Pan0_FftSize = 4096            # client-side display state<br>
+  Wideband_Adc0_Enabled = True   # derived: any pan has wideband:adc0 source
+</div>
+
+<p class="subtitle" style="margin-top:24px;text-align:center">My recommendation: <strong>B (8 templates)</strong> + per-pan source picker + AetherSDR PanFloatingWindow port. Covers all reasonable single-monitor layouts plus multi-monitor via floating. Wideband-on-top via "12h" is the headline use case.</p>

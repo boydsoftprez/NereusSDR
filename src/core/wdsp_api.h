@@ -562,6 +562,14 @@ void SetEXTANBAdvtime(int id, double time);
 void SetEXTANBBacktau(int id, double tau);
 void SetEXTANBThreshold(int id, double thresh);
 
+// Live buffer/rate setters — called from the SetXcmInrate-equivalent path
+// (NbFamily::setSampleRate) when the channel input rate or buffer size
+// changes without re-create. Each updates the internal field then calls
+// initBlanker() to recompute time-domain constants.
+// From Thetis specHPSDR.cs (declared) + WDSP nob.c:354-373.
+void SetEXTANBBuffsize(int id, int size);
+void SetEXTANBSamplerate(int id, int rate);
+
 // ---------------------------------------------------------------------------
 // Noise blanker II — external (nobII.h, nobII.c)
 // ---------------------------------------------------------------------------
@@ -612,6 +620,12 @@ void SetEXTNOBThreshold(int id, double thresh);
 // From Thetis specHPSDR.cs:931 — SetEXTNOBBacktau(int id, double tau)
 // WDSP: third_party/wdsp/src/nobII.c
 void SetEXTNOBBacktau(int id, double tau);
+
+// Live buffer/rate setters — companion to the NB1 pair above.
+// From Thetis specHPSDR.cs (declared) + WDSP nobII.c:666-683. Each updates
+// the internal field then calls init_nob() to recompute time-domain constants.
+void SetEXTNOBBuffsize(int id, int size);
+void SetEXTNOBSamplerate(int id, int rate);
 
 // ---------------------------------------------------------------------------
 // APF — Audio Peak Filter (apfshadow.c / apfshadow.h)
@@ -1298,6 +1312,45 @@ void PSRestoreCorr(int channel, char* filename);
 // feedback / Stream1 for TX feedback" — mi0bot HL2 fork unchanged.
 void SetPSRxIdx(int id, int idx);
 void SetPSTxIdx(int id, int idx);
+
+// =====================================================================
+// External Diversity (WDSP div.c, Warren Pratt NR0V).
+// From Thetis Project Files/Source/Console/dsp.cs:609-619 [v2.10.3.15]
+// P/Invoke declarations + wdsp/src/div.c:138-187 [v2.10.3.15] definitions.
+//
+// Keyed off pdiv[id] (MAX_EXT_DIVS=2) — create_divEXT() must run first.
+// id here is the External Diversity id, NOT the RXA channel id used
+// elsewhere in this header.  Caller is responsible for the lifetime.
+// =====================================================================
+
+// Allocate one of WDSP's two process-wide external-diversity slots.
+// From Thetis ChannelMaster/sync.c:32-35 and wdsp/div.c:108 [v2.10.3.15] [@501e3f5].
+void create_divEXT(int id, int run, int nr, int size);
+
+// Release a slot allocated by create_divEXT.
+// From Thetis ChannelMaster/sync.c:38-41 and wdsp/div.c:114 [v2.10.3.15] [@501e3f5].
+void destroy_divEXT(int id);
+
+// Combine nsamples complex samples from the configured inputs.
+// From Thetis ChannelMaster/sync.c:45-51 and wdsp/div.c:126 [v2.10.3.15] [@501e3f5].
+void xdivEXT(int id, int nsamples, double** in, double* out);
+
+// 0 - does nothing; 1 - operates
+// From Thetis wdsp/div.c:138 [v2.10.3.15].
+void SetEXTDIVRun(int id, int run);
+
+// Number of receivers being used for diversity.
+// From Thetis wdsp/div.c:158 [v2.10.3.15].
+void SetEXTDIVNr(int id, int nr);
+
+// Number of which receiver to output. If output == nr, mixing occurs.
+// From Thetis wdsp/div.c:169 [v2.10.3.15].
+void SetEXTDIVOutput(int id, int output);
+
+// I and Q "rotate" multipliers for each receiver. Can be set to
+// 1.0 / 0.0 for the "reference receiver".
+// From Thetis wdsp/div.c:180 [v2.10.3.15].
+void SetEXTDIVRotate(int id, int nr, double* Irotate, double* Qrotate);
 
 } // extern "C"
 

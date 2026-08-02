@@ -314,7 +314,7 @@ void VaxApplet::connectSliceTagsTracking()
     // (QObject destructor semantics), so no explicit bookkeeping is needed
     // on slice removal.
     connect(m_model, &RadioModel::sliceAdded, this, [this](int index) {
-        SliceModel* s = m_model->sliceAt(index);
+        SliceModel* s = m_model->sliceById(index);
         if (!s) {
             return;
         }

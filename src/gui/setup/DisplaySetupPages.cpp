@@ -575,6 +575,13 @@ void SpectrumDefaultsPage::buildUI()
         if (fe) {
             fe->setFftSizeBaseline(newSize);
             fe->setFftSize(newSize);
+            // 2026-05-26 KG4VCF bench fix: persist the FFT size so it
+            // survives restart.  Previously the slider drove the engine
+            // but never wrote to AppSettings, so launch always reverted
+            // to the FFTEngine ctor default (typically 4096).
+            AppSettings::instance().setValue(
+                QStringLiteral("DisplayFftSize"),
+                QString::number(newSize));
         }
 
         // Bin-width readout, fresh from newSize.  Format "N3" = 3 decimal
@@ -619,6 +626,13 @@ void SpectrumDefaultsPage::buildUI()
             static_cast<int>(WindowFunction::Count) - 1);
         model()->fftEngine()->setWindowFunction(
             static_cast<WindowFunction>(clamped));
+        // 2026-05-26 KG4VCF bench fix: persist the window choice so it
+        // survives restart.  Previously the combo drove the engine but
+        // never wrote to AppSettings, so launch always reverted to the
+        // FFTEngine ctor default.
+        AppSettings::instance().setValue(
+            QStringLiteral("DisplayFftWindow"),
+            QString::number(clamped));
     });
 
     contentLayout()->addWidget(fftGroup);

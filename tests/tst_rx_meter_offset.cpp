@@ -43,6 +43,10 @@ private slots:
     void factoryCalOffset_anan100B();
     void factoryCalOffset_anan100D();
     void factoryCalOffset_anan200D();
+    void factoryCalOffset_ananG2E();
+
+    // Invariant: no SKU may return a value Thetis never defines.
+    void factoryCalOffset_everyModelReturnsAThetisDefinedValue();
 
     // Preamp-mode offsets — Thetis console.cs:1991-2001 [v2.10.3.13].
     void preampOffset_off();
@@ -138,6 +142,55 @@ void TestRxMeterOffset::factoryCalOffset_anan100D()
 void TestRxMeterOffset::factoryCalOffset_anan200D()
 {
     QCOMPARE(rxMeterCalOffsetDefaultFor(HPSDRModel::ANAN200D), 0.98f);
+}
+
+void TestRxMeterOffset::factoryCalOffset_ananG2E()
+{
+    // From Thetis clsHardwareSpecific.cs:408-423 [v2.10.3.15]
+    // (RXMeterCalbrationOffsetDefaults switch).  Re-read at the pinned
+    // v2.10.3.15 / 3759d096 tree: that switch enumerates ANAN7000D,
+    // ANAN8000D, ORIONMKII, ANVELINAPRO3, REDPITAYA (//DH1KLM, preserved
+    // verbatim from clsHardwareSpecific.cs:416 per the GPL inline-tag
+    // rule), ANAN_G2 and ANAN_G2_1K only.  There is NO
+    // `case HPSDRModel.ANAN_G2E`, so the G2E SKU takes
+    // `default: return 0.98f`.
+    //
+    // The N1GP G2E port added `case HPSDRModel.ANAN_G2E: //N1GP G2E added`
+    // at seven other sites in that same file (:129, :250, :260, :358, :385,
+    // :699, :794) and left this switch untouched, so the omission is
+    // upstream intent rather than an upstream oversight.
+    //
+    // Guard against a future "G2E is a G2, give it the G2 number" edit:
+    // ANAN-G2E must NOT inherit the ANAN_G2 / ANAN_G2_1K value.
+    QCOMPARE(rxMeterCalOffsetDefaultFor(HPSDRModel::ANAN_G2E), 0.98f);
+    QVERIFY(rxMeterCalOffsetDefaultFor(HPSDRModel::ANAN_G2E)
+            != rxMeterCalOffsetDefaultFor(HPSDRModel::ANAN_G2));
+}
+
+void TestRxMeterOffset::factoryCalOffset_everyModelReturnsAThetisDefinedValue()
+{
+    // Invariant guard for the next SKU that lands.  Thetis
+    // RXMeterCalbrationOffsetDefaults can only ever yield one of three
+    // values, so every model NereusSDR knows about must hit one of them.
+    // A new HPSDRModel enumerator that silently picks up a fabricated
+    // number (or a compiler-default 0.0f) fails here even if nobody
+    // remembers to add a per-SKU case above.
+    for (int i = static_cast<int>(HPSDRModel::HPSDR);
+         i < static_cast<int>(HPSDRModel::LAST); ++i) {
+        const HPSDRModel m = static_cast<HPSDRModel>(i);
+        const float offset = rxMeterCalOffsetDefaultFor(m);
+        const bool known = (offset == 4.841644f)
+                        || (offset == -4.476f)
+                        || (offset == 0.98f);
+        QVERIFY2(known,
+                 qPrintable(QStringLiteral(
+                     "HPSDRModel %1 (%2) returned %3, which is not one of the "
+                     "three Thetis RXMeterCalbrationOffsetDefaults values "
+                     "(4.841644 / -4.476 / 0.98)")
+                     .arg(i)
+                     .arg(QString::fromLatin1(displayName(m)))
+                     .arg(static_cast<double>(offset))));
+    }
 }
 
 // 2. Preamp-mode offset table.

@@ -150,6 +150,11 @@ public:
     void setAutoCalEnabled(bool on);
     bool isAutoCalEnabled() const noexcept { return m_autoCalEnabled; }
 
+    // Effective radio/DDC run state. This follows the cmd-state machine's
+    // PSEnabled transitions (Auto Cal, Single Cal, restore, and teardown),
+    // unlike isAutoCalEnabled(), which is only the user's auto-cal preference.
+    bool isPsEnabled() const noexcept { return m_psEnabled; }
+
     // ForcePS body — PSForm.cs:924-954 [v2.10.3.13].  Re-issues
     // SetPSControl based on _autoON (single 1,0,0,0 vs auto 0,0,1,0)
     // plus all the state-transfer setter calls (LoopDelay / TXDelay /

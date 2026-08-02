@@ -246,14 +246,26 @@ warren@wpratt.com
 #include "SupportDialog.h"
 #include "AboutDialog.h"
 #include "SpectrumWidget.h"
+// Phase 3F Sub-Epic D Task 10: +PAN bottom-bar dropdown reads slice
+// state + drives PanadapterStack layout/float actions.
+#include "PanadapterStack.h"
+#include "PanadapterApplet.h"
+#include "PanLayoutDialog.h"
+#include "core/FFTRouter.h"
+#include "StyleConstants.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "widgets/VfoWidget.h"
 #include "widgets/RxDashboard.h"
+#include "widgets/AntennaSwitchToast.h"
+#include "widgets/StatusToast.h"
+#include "widgets/FilterPolicyDialog.h"
+#include "widgets/TxBoundConfirmDialog.h"
 #include "core/RxChannel.h"
 #include "core/TxChannel.h"  // H.2: setTxChannel wiring
 #include "core/ReceiverManager.h"
 #include "core/AppSettings.h"
+#include "core/BuildIdentity.h"
 #include "core/PaTempUnit.h"
 #include "core/RadioStatus.h"
 #include "core/RadioDiscovery.h"
@@ -265,6 +277,7 @@ warren@wpratt.com
 #include "core/MoxController.h"  // 3M-1a G.1: F.2 connect (hardwareFlipped → onMoxHardwareFlipped)
 #include "core/NoiseFloorTracker.h"
 #include "core/BoardCapabilities.h"
+#include "core/TxSliceArbiter.h"  // Phase 3F Sub-Epic C Task 9: TX-handoff routing
 #include "models/PanadapterModel.h"
 #include "models/Band.h"
 #include "models/TransmitModel.h"
@@ -280,18 +293,21 @@ warren@wpratt.com
 #include "applets/AppletPanelWidget.h"
 #include "SMeterWidget.h"            // Task 41 (Phase 3P-II): SMeterWidget header wiring
 #include "applets/AmpApplet.h"
+#include "applets/Rf2ksApplet.h"
 #include "applets/AppletVisibilityController.h"
 #include "applets/RxApplet.h"
 #include "core/PgxlConnection.h"
 #include "core/TgxlConnection.h"
+#include "core/Rf2ksConnection.h"
 #include "core/SmartSdrApiListener.h"
 #include "applets/TxApplet.h"
 #include "applets/TxEqDialog.h"
 // Phase 3J-2 H1: Tools menu modeless singletons (Spot Hub + FreeDV Reporter).
 #include "SpotHubDialog.h"
 #include "FreeDVReporterDialog.h"
+// Phase 3F Sub-Epic G T4: bench-minimum Diversity dialog (Tools menu).
+#include "DiversityDialog.h"
 #include "models/SpotModel.h"
-#include "models/SpotTableModel.h"
 #include "models/FreeDVStationModel.h"
 #include "core/DxccColorProvider.h"
 #include "core/FreeDVReporterClient.h"
@@ -340,6 +356,7 @@ warren@wpratt.com
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
 #include "core/audio/VirtualCableDetector.h"
+#include "core/audio/RealtimeAudioPriority.h"
 
 #include <QApplication>
 #include <QGuiApplication>
@@ -353,6 +370,8 @@ warren@wpratt.com
 #include <QToolTip>
 #include <QMenuBar>
 #include <QMenu>
+#include <QMetaMethod>
+#include <QMetaProperty>
 #include <QAction>
 #include <QSignalBlocker>
 #include <QActionGroup>
@@ -370,6 +389,7 @@ warren@wpratt.com
 #include <QThread>
 #include <QFile>          // /proc/stat reader for Linux system-CPU path
 #include <QPushButton>
+#include <QCursor>
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QUrl>
@@ -461,7 +481,7 @@ MainWindow::MainWindow(QWidget* parent)
                     // narrative on why the two-source race corrupts on-air
                     // audio at the I/Q ring buffer.
                     if (auto* wdsp = m_radioModel ? m_radioModel->wdspEngine() : nullptr) {
-                        if (auto* txCh = wdsp->txChannel(1)) {
+                        if (auto* txCh = wdsp->txChannel(WdspEngine::kTxChannelId)) {
                             txCh->setTciAudioActive(owner != nullptr);
                         }
                     }
@@ -619,9 +639,7 @@ MainWindow::MainWindow(QWidget* parent)
     // Prevents silent failure — the user sees why nothing happened.
     connect(m_radioModel, &RadioModel::bandClickIgnored,
             this, [this](Band /*band*/, const QString& reason) {
-        if (QStatusBar* sb = statusBar()) {
-            sb->showMessage(reason, 3000);
-        }
+        showToast(reason, ToastSeverity::Warning, 3000);
     });
 
     // Phase 3Q Task 10: auto-connect failure / ambiguity surface.
@@ -642,10 +660,10 @@ MainWindow::MainWindow(QWidget* parent)
             (reason == NereusSDR::ConnectFailure::Timeout)
                 ? QStringLiteral("isn't reachable from this network")
                 : QStringLiteral("returned an error");
-        statusBar()->showMessage(
+        showToast(
             QStringLiteral("Auto-connect target %1 %2. Pick a different radio or update the address.")
                 .arg(name, reasonText),
-            8000);
+            ToastSeverity::Warning, 8000);
     });
 
     // autoConnectAmbiguous — multiple radios have AutoConnect = true.
@@ -656,11 +674,11 @@ MainWindow::MainWindow(QWidget* parent)
         const auto saved = AppSettings::instance().savedRadio(chosenMac);
         const QString name = (saved.has_value() && !saved->info.name.isEmpty())
             ? saved->info.name : chosenMac;
-        statusBar()->showMessage(
+        showToast(
             QStringLiteral("%1 radios marked Auto-connect on launch. Using %2 (most recent). "
                            "Adjust in Manage Radios.")
                 .arg(count).arg(name),
-            6000);
+            ToastSeverity::Info, 6000);
     });
 
     // WDSP wisdom progress dialog — shown as a modal window during first-run
@@ -743,8 +761,8 @@ MainWindow::MainWindow(QWidget* parent)
     // inside openSpotHub() is now a defensive guard kept for the case
     // where the spectrum widget races construction; see lines below.
     QTimer::singleShot(0, this, [this] {
-        if (m_spectrumWidget) {
-            m_spectrumWidget->loadSpotDisplaySettings();
+        if (activeSpectrumWidget()) {
+            activeSpectrumWidget()->loadSpotDisplaySettings();
         }
         if (m_radioModel) {
             m_radioModel->restoreSpotClientAutoStartState();
@@ -843,6 +861,1374 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow() = default;
 
+// Phase 3F Sub-Epic D Task 12: resolve the active pan's SpectrumWidget.
+// Used as a backward-compat shim for call sites that still address "the"
+// spectrum widget; long-term these should migrate to per-pan addressing.
+// Returns nullptr if m_panStack isn't constructed yet (during early init)
+// or if the active pan has no widget.
+SpectrumWidget* MainWindow::activeSpectrumWidget() const
+{
+    if (!m_panStack) { return nullptr; }
+    auto* applet = m_panStack->panadapter(m_panStack->activePanId());
+    return applet ? applet->spectrumWidget() : nullptr;
+}
+
+// Phase 3F multi-pan: resolve the SpectrumWidget that owns this slice's
+// panadapter from the slice's panKey(), falling back to the active pan when
+// the key is empty (Slice A pre-seed) or the pan was removed.
+// Ported from AetherSDR MainWindow::spectrumForSlice (MainWindow.cpp:14856
+// [@6a142807]); AetherSDR uses s->panId() (a string), NereusSDR uses
+// s->panKey().
+SpectrumWidget* MainWindow::spectrumForSlice(SliceModel* s) const
+{
+    if (s && m_panStack) {
+        if (auto* sw = m_panStack->spectrum(s->panKey())) {
+            return sw;
+        }
+    }
+    return activeSpectrumWidget();  // fallback to active pan
+}
+
+SliceModel* MainWindow::sliceForAddedIdForTest(RadioModel* model, int sliceId)
+{
+    return model ? model->sliceById(sliceId) : nullptr;
+}
+
+void MainWindow::applyAntennaChangeForTest(RadioModel* model, int sliceId,
+                                            const QString& antennaName)
+{
+    if (SliceModel* slice = sliceForAddedIdForTest(model, sliceId)) {
+        slice->setRxAntenna(antennaName);
+    }
+}
+
+void MainWindow::wireRadeFlagForTest(RadioModel* model, VfoWidget* flag,
+                                     int sliceId)
+{
+    if (!model || !flag) { return; }
+    const QPointer<VfoWidget> flagRef(flag);
+    connect(model, &RadioModel::radeSyncChanged, flag,
+            [flagRef, sliceId](int changedSliceId, bool synced) {
+        if (!flagRef || changedSliceId != sliceId) { return; }
+        if (!synced) {
+            flagRef->setRadeSynced(false);
+        }
+    });
+    connect(model, &RadioModel::radeFreqOffsetChanged, flag,
+            [flagRef, sliceId](int changedSliceId, float hz) {
+        if (flagRef && changedSliceId == sliceId) {
+            flagRef->setRadeFreqOffset(hz);
+        }
+    });
+}
+
+void MainWindow::configureSpectrumForPanForTest(SpectrumWidget* spectrum,
+                                                 const QString& panId)
+{
+    if (!spectrum) { return; }
+    bool ok = false;
+    const int parsed = panId.startsWith(QStringLiteral("pan-"))
+        ? panId.mid(4).toInt(&ok) : 0;
+    spectrum->setPanIndex(ok && parsed >= 0 ? parsed : 0);
+    spectrum->loadSettings();
+}
+
+void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
+                                              RadioModel* model,
+                                              PanadapterStack* stack,
+                                              const QString& panId)
+{
+    if (!spectrum || !model || !stack) { return; }
+    const QPointer<RadioModel> modelRef(model);
+    const QPointer<PanadapterStack> stackRef(stack);
+    const auto resolve = [modelRef, stackRef, panId]() -> SliceModel* {
+        if (!modelRef || !stackRef) { return nullptr; }
+        PanadapterApplet* applet = stackRef->panadapter(panId);
+        if (!applet) { return nullptr; }
+        if (SliceModel* active =
+                modelRef->sliceById(applet->activeSliceIndex())) {
+            return active;
+        }
+        for (SliceModel* slice : modelRef->slices()) {
+            if (slice
+                && applet->associatedSlices().contains(slice->sliceIndex())) {
+                return slice;
+            }
+        }
+        return nullptr;
+    };
+    connect(spectrum, &SpectrumWidget::widebandExtensionStateChanged,
+            spectrum, [resolve](bool on) {
+        if (SliceModel* slice = resolve()) {
+            slice->setWidebandExtensionRequested(on);
+        }
+    });
+    connect(spectrum, &SpectrumWidget::ddcRetuneRequested,
+            spectrum, [resolve](double freqHz) {
+        if (SliceModel* slice = resolve()) {
+            slice->setFrequency(freqHz);
+        }
+    });
+    // Settings restore and rate seeding may have derived the actual state
+    // before this bridge existed, so seed the resolved slice immediately.
+    if (SliceModel* slice = resolve()) {
+        slice->setWidebandExtensionRequested(spectrum->extendedMode());
+    }
+}
+
+void MainWindow::fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
+                                        const QVector<float>& bins)
+{
+    if (!stack) { return; }
+    for (PanadapterApplet* applet : stack->allApplets()) {
+        if (applet && applet->spectrumWidget()) {
+            applet->spectrumWidget()->setWidebandBins(adcIndex, bins);
+        }
+    }
+}
+
+// Phase 3F: create + fully wire a secondary slice's VfoWidget on the given
+// SpectrumWidget. Factored out of the sliceAdded handler so the same wiring
+// is reused on panKeyChanged migration. Slice A (index 0) keeps its own
+// dedicated path in wireSliceToSpectrum(); this helper is for B+ flags.
+//
+// What's intentionally NOT done here: per-slice rxChannel/CTUN/MaxBin/NR/ANF
+// DSP wiring (those hardcode rxChannel(0) today and are the actual Phase 3F
+// multi-slice DSP epic). This is "make the flag appear + let the operator
+// interact + keep it in sync with its SliceModel".
+//
+// Mirrors AetherSDR's addVfoWidget()+wireVfoWidget() pair (MainWindow.cpp:
+// 11583 + 13968 [@6a142807]).
+VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
+{
+    if (!slice || !sw || !m_radioModel) { return nullptr; }
+    const int sliceIndex = slice->sliceIndex();
+    if (m_vfoWidgetsBySlice.contains(sliceIndex)) {
+        return m_vfoWidgetsBySlice.value(sliceIndex);
+    }
+
+    VfoWidget* newFlag = sw->addVfoWidget(sliceIndex);
+    if (!newFlag) { return nullptr; }
+    m_vfoWidgetsBySlice.insert(sliceIndex, newFlag);
+
+    // Initial slice state push so the flag paints the right freq/mode/filter
+    // on first show (mirrors wireSliceToSpectrum for Slice A).
+    newFlag->setSlice(slice);
+    newFlag->setFrequency(slice->frequency());
+    // Seed the HOSTING widget's VFO marker too, not just the flag's own text.
+    // These are separate state: the flag paints the digits, but the pan places
+    // the flag from its own VFO frequency. setVfoFrequency was only ever
+    // called on activeSpectrumWidget(), so a slice on any other pan left that
+    // pan's marker at its 0 Hz default -- the flag was positioned off the left
+    // edge and the pan showed the "<| 0.0000" off-screen-VFO chevron instead.
+    // Bench-caught 2026-07-26: looked exactly like the flag was never created.
+    sw->setVfoFrequency(slice->frequency());
+    newFlag->setMode(slice->dspMode());
+
+    // AUTO AGC-T on this flag. The toggle and its visual feedback were wired
+    // only in wireSliceToSpectrum -- Slice A's path -- so the AUTO button on
+    // every other flag did nothing when clicked and never lit. Bench-caught
+    // 2026-07-26 on a four-slice layout.
+    //
+    // Noise floor comes from THIS slice's stream, matching the auto-AGC tick:
+    // the visual would otherwise report stream 0's floor next to a threshold
+    // computed from the slice's own.
+    connect(newFlag, &VfoWidget::autoAgcToggled,
+            slice, &SliceModel::setAutoAgcEnabled);
+    connect(slice, &SliceModel::autoAgcEnabledChanged, this,
+            [this, flagRef = QPointer<VfoWidget>(newFlag), slice](bool on) {
+        if (!flagRef) { return; }
+        NoiseFloorTracker* nft = m_radioModel->noiseFloorTrackerForSlice(slice);
+        const float nf = nft ? nft->noiseFloor() : -200.0f;
+        flagRef->updateAgcAutoVisuals(on, nf, slice->autoAgcOffset());
+    });
+
+    // Per-slice S-meter. The unqualified MeterPoller::smeterUpdated is wired
+    // to Slice A's flag only (wireSliceToSpectrum), because the poller reads
+    // one channel; every other flag's level bar sat dead. Filter the
+    // slice-qualified signal for this flag's own slice.
+    if (m_meterPoller) {
+        const int myIdx = sliceIndex;
+        connect(m_meterPoller, &MeterPoller::sliceSmeterUpdated, newFlag,
+                [flagRef = QPointer<VfoWidget>(newFlag), myIdx](int idx, double dbm) {
+            if (flagRef && idx == myIdx) { flagRef->setSmeter(dbm); }
+        });
+    }
+    newFlag->setFilter(slice->filterLow(), slice->filterHigh());
+    newFlag->setAgcMode(slice->agcMode());
+    newFlag->setAfGain(slice->afGain());
+    newFlag->setRfGain(slice->rfGain());
+    newFlag->setRxAntenna(slice->rxAntenna());
+    newFlag->setTxAntenna(slice->txAntenna());
+    newFlag->setStepHz(slice->stepHz());
+    newFlag->setBoardCapabilities(m_radioModel->boardCapabilities());
+    newFlag->setHpsdrSku(m_radioModel->hardwareProfile().model);
+    newFlag->setRxBypassActive(m_radioModel->alexController().rxOutOnTx());
+    newFlag->setFilterPresetStore(m_radioModel->filterPresetStore());
+    // Phase 3F closeout — give the per-slice VfoWidget the RadioModel pointer
+    // so its right-click antenna submenu builds AntennaPickerMenu with live
+    // caps + alex + slice (instead of the stub ANT1/ANT2 list).
+    newFlag->setRadioModel(m_radioModel);
+    wireRadeFlagForTest(m_radioModel, newFlag, sliceIndex);
+    if (TxSliceArbiter* arb = m_radioModel->txSliceArbiter()) {
+        newFlag->setTxSlice(arb->txBoundSliceId() == sliceIndex);
+    }
+
+    // --- Intent signals (Sub-Epic C T9 + Sub-Epic E T4 mirror) ---
+    connect(newFlag, &VfoWidget::txHandoffRequested, this,
+            [this](int idx) {
+        if (m_radioModel && m_radioModel->txSliceArbiter()) {
+            m_radioModel->requestTxHandoffToSlice(idx);
+        }
+    });
+    // Phase 3F Sub-Epic I closeout, defect G2: route to the slice's DDC
+    // stream. This used to write SliceModel::setSampleRateHz, which stopped
+    // reaching the wire once buildStreamConfigsForCodec began sourcing the
+    // rate from the allocator, so the menu did nothing. requestSliceSampleRate
+    // also resolves by slice ID rather than list position, which is what
+    // VfoWidget actually carries.
+    connect(newFlag, &VfoWidget::sampleRateRequested, this,
+            [this](int sliceId, int hz) {
+        if (!m_radioModel) { return; }
+        m_radioModel->requestSliceSampleRate(sliceId, hz);
+    });
+    connect(newFlag, &VfoWidget::filterPolicyRequested, this,
+            [this](int chainIdx) {
+        if (!m_radioModel) { return; }
+        auto* alex = &m_radioModel->alexControllerMutable();
+        FilterPolicyDialog dlg(chainIdx, alex, this);
+        dlg.exec();
+    });
+    connect(newFlag, &VfoWidget::removeSliceRequested, this,
+            [this](int idx) {
+        if (m_radioModel) { m_radioModel->removeSlice(idx); }
+    });
+    // Phase 3F (Bug 2): the floating ✕ close button emits closeRequested.
+    // Wire it to removeSlice so operators can dismiss a flag they opened.
+    // (removeSliceRequested above is the right-click-menu path; this is the
+    // dedicated button. Both land on RadioModel::removeSlice, which refuses
+    // to remove the last remaining slice.)
+    connect(newFlag, &VfoWidget::closeRequested, this,
+            [this](int idx) {
+        if (m_radioModel) { m_radioModel->removeSlice(idx); }
+    });
+    // Phase 3F (Bug 3): clicking this flag activates its slice so the RX
+    // applet, the pan the flag sits on, and every other active-slice surface
+    // follow it. Every flag runs through here, Slice A's included, since the
+    // flag-path unification made createSliceFlag the one builder. Mirrors
+    // AetherSDR's VfoWidget::sliceActivationRequested -> setActiveSlice
+    // (wireVfoWidget, MainWindow.cpp:14076 [@6a142807]).
+    //
+    // setActiveSliceById, not setActiveSlice: VfoWidget carries the value
+    // createSliceFlag stamped from SliceModel::sliceIndex(), a stable slice
+    // ID, while setActiveSlice indexes m_slices positionally. With A(0) B(1)
+    // C(2), closing B leaves C at id 2 / position 1, and the unconverted call
+    // asked for position 2 of a two-element list -- so clicking flag C
+    // selected nothing at all.
+    connect(newFlag, &VfoWidget::sliceActivationRequested, this,
+            [this](int sliceId) {
+        if (m_radioModel) { m_radioModel->setActiveSliceById(sliceId); }
+    });
+    // Phase 3F closeout — AntennaPickerMenu selection forwards to
+    // SliceModel::setRxAntenna. Sub-Epic E Task 5 consumer wire-up.
+    connect(newFlag, &VfoWidget::antennaChangeRequested, this,
+            [this](int idx, const QString& antName) {
+        applyAntennaChangeForTest(m_radioModel, idx, antName);
+    });
+
+    // --- VfoWidget -> SliceModel (user click propagates to model) ---
+    connect(newFlag, &VfoWidget::frequencyChanged, this,
+            [slice](double hz) { slice->setFrequency(hz); });
+    connect(newFlag, &VfoWidget::modeChanged, this,
+            [slice](DSPMode mode) { slice->setDspMode(mode); });
+    connect(newFlag, &VfoWidget::filterChanged, this,
+            [slice](int low, int high) { slice->setFilter(low, high); });
+    connect(newFlag, &VfoWidget::agcModeChanged, this,
+            [slice](AGCMode mode) { slice->setAgcMode(mode); });
+    connect(newFlag, &VfoWidget::afGainChanged, this,
+            [slice](int gain) { slice->setAfGain(gain); });
+    connect(newFlag, &VfoWidget::rfGainChanged, this,
+            [slice](int gain) { slice->setRfGain(gain); });
+    connect(newFlag, &VfoWidget::rxAntennaChanged, this,
+            [slice](const QString& ant) { slice->setRxAntenna(ant); });
+    connect(newFlag, &VfoWidget::txAntennaChanged, this,
+            [slice](const QString& ant) { slice->setTxAntenna(ant); });
+
+    // --- SliceModel -> VfoWidget (model updates repaint the flag) ---
+    QPointer<VfoWidget> flagPtr(newFlag);
+    connect(slice, &SliceModel::frequencyChanged, this,
+            [this, flagPtr, slice](double hz) {
+        if (flagPtr) { flagPtr->setFrequency(hz); }
+        if (m_handlingBandJump) { return; }
+        // Keep the hosting pan's VFO marker on this slice as it tunes.
+        // Resolved per-call rather than captured, because a slice can migrate
+        // to another pan and the flag follows it there.
+        SpectrumWidget* host = spectrumForSlice(slice);
+        if (!host) { return; }
+
+        // Band jump: the slice moved outside what this pan is showing, so the
+        // pan has to follow it. Restored after the flag-path unification
+        // dropped the handler that carried it -- nothing set m_handlingBandJump
+        // afterwards, so a slice tuned to another band left its pan behind.
+        //
+        // Per pan now, and using this slice's own WDSP channel rather than the
+        // hardcoded rxChannel(0) the single-pan version used. The DDC retune
+        // itself lives in RadioModel::bindSliceToStream (Sub-Epic I) and is not
+        // duplicated here; this is the DISPLAY half.
+        const double center = host->centerFrequency();
+        const double halfBw = host->bandwidth() / 2.0;
+        const bool offScreen = (hz < center - halfBw) || (hz > center + halfBw);
+        if (!host->ctunEnabled() || offScreen) {
+            m_handlingBandJump = true;
+            const bool wasCtun = host->ctunEnabled();
+            if (m_radioModel->receiverManager()) {
+                m_radioModel->receiverManager()->setDdcFrequencyLocked(false);
+            }
+            host->setCenterFrequency(hz);
+            host->setDdcCenterFrequency(hz);
+            // Phase 3F Sub-Epic J Task 11: resolved through RadioModel's
+            // accessor rather than wdspEngine()->rxChannel() directly --
+            // src/gui/ no longer reaches into WdspEngine for a channel.
+            if (RxChannel* ch = m_radioModel->rxChannelForSlice(slice->sliceIndex())) {
+                ch->setShiftFrequency(0.0);
+            }
+            if (wasCtun && m_radioModel->receiverManager()) {
+                m_radioModel->receiverManager()->setDdcFrequencyLocked(true);
+            }
+            m_handlingBandJump = false;
+        } else {
+            // CTUN, still on-screen: the DDC stays put and WDSP shifts.
+            if (RxChannel* ch = m_radioModel->rxChannelForSlice(slice->sliceIndex())) {
+                ch->setShiftFrequency(hz - center);
+            }
+        }
+        host->setVfoFrequency(hz);
+    });
+    // Mode and filter drive the flag's LABELS and this pan's PASSBAND.
+    //
+    // The passband half was lost when the two flag-wiring paths were unified:
+    // wireSliceToSpectrum had `activeSpectrumWidget()->setFilterOffset(low,
+    // high)` and `setTxMode(mode)`, and the shared path only ever set the
+    // flag's text -- so the shaded passband stopped following the filter and
+    // never flipped to the other side of the dial on a USB/LSB change.
+    // Bench-caught immediately, 2026-07-26.
+    //
+    // Resolved through spectrumForSlice per call, so the passband lands on the
+    // pan hosting this slice rather than on whichever pan is active.
+    connect(slice, &SliceModel::dspModeChanged, this,
+            [this, flagPtr, slice](DSPMode mode) {
+        if (flagPtr) { flagPtr->setMode(mode); }
+        if (SpectrumWidget* host = spectrumForSlice(slice)) {
+            // TX filter overlay maps audio Hz to the right sideband from this.
+            host->setTxMode(mode);
+            // Re-push the passband: the sideband, and therefore the sign of
+            // the offsets, changes with the mode.
+            host->setFilterOffset(slice->filterLow(), slice->filterHigh());
+        }
+    });
+    connect(slice, &SliceModel::filterChanged, this,
+            [this, flagPtr, slice](int low, int high) {
+        if (flagPtr) { flagPtr->setFilter(low, high); }
+        if (SpectrumWidget* host = spectrumForSlice(slice)) {
+            host->setFilterOffset(low, high);
+        }
+    });
+    connect(slice, &SliceModel::agcModeChanged, this,
+            [flagPtr](AGCMode mode) {
+        if (flagPtr) { flagPtr->setAgcMode(mode); }
+    });
+    connect(slice, &SliceModel::afGainChanged, this,
+            [flagPtr](int gain) {
+        if (flagPtr) { flagPtr->setAfGain(gain); }
+    });
+    connect(slice, &SliceModel::rfGainChanged, this,
+            [flagPtr](int gain) {
+        if (flagPtr) { flagPtr->setRfGain(gain); }
+    });
+    connect(slice, &SliceModel::stepHzChanged, this,
+            [flagPtr](int hz) {
+        if (flagPtr) { flagPtr->setStepHz(hz); }
+    });
+    connect(slice, &SliceModel::rxAntennaChanged, this,
+            [flagPtr](const QString& ant) {
+        if (flagPtr) { flagPtr->setRxAntenna(ant); }
+    });
+    connect(slice, &SliceModel::txAntennaChanged, this,
+            [flagPtr](const QString& ant) {
+        if (flagPtr) { flagPtr->setTxAntenna(ant); }
+    });
+
+
+    // ---- Moved from wireSliceToSpectrum (Slice A's private path) ----
+    //
+    // These were wired only for Slice A, so on every other flag Mute, BIN,
+    // SQL, the AGC-T slider, Pan, RIT/XIT, NR, NB, SNB, ANF, APF, Lock and
+    // the setup shortcuts did nothing at all: the flag never reached the
+    // model, so the per-slice model->WDSP work could not help them.
+    // createSliceFlag is now the single place a flag is wired.
+    connect(newFlag, &VfoWidget::rxBypassToggled,
+            &m_radioModel->alexControllerMutable(), &AlexController::setRxOutOnTx);
+    connect(slice, &SliceModel::lastRadeRxCallsignChanged,
+            newFlag, &VfoWidget::setRadeCallsign);
+    connect(slice, &SliceModel::ritEnabledChanged, this, [newFlag](bool on) {
+        newFlag->setRitEnabled(on);
+    });
+    connect(slice, &SliceModel::ritHzChanged, this, [newFlag](int hz) {
+        newFlag->setRitHz(hz);
+    });
+    connect(slice, &SliceModel::xitEnabledChanged, this, [newFlag](bool on) {
+        newFlag->setXitEnabled(on);
+    });
+    connect(slice, &SliceModel::xitHzChanged, this, [newFlag](int hz) {
+        newFlag->setXitHz(hz);
+    });
+    connect(slice, &SliceModel::nbModeChanged, newFlag, &VfoWidget::setNbMode);
+    newFlag->setNbMode(slice->nbMode());   // initial sync
+    connect(slice, &SliceModel::snbEnabledChanged, this, [newFlag](bool v) {
+        newFlag->setSnbEnabled(v);
+    });
+    connect(slice, &SliceModel::apfEnabledChanged, this, [newFlag](bool v) {
+        newFlag->setApfEnabled(v);
+    });
+    connect(slice, &SliceModel::apfTuneHzChanged, this, [newFlag](int hz) {
+        newFlag->setApfTuneHz(hz);
+    });
+    connect(newFlag, &VfoWidget::txFilterMatchRequested, this,
+            [this](int audioLow, int audioHigh) {
+        m_radioModel->transmitModel().setFilterLow(audioLow);
+        m_radioModel->transmitModel().setFilterHigh(audioHigh);
+    });
+    connect(newFlag, &VfoWidget::nbModeCycled, this, [slice] {
+        slice->setNbMode(NereusSDR::cycleNbMode(slice->nbMode()));
+    });
+    connect(newFlag, &VfoWidget::anfChanged, this, [slice](bool on) {
+        slice->setAnfEnabled(on);
+    });
+    connect(newFlag, &VfoWidget::nr2Changed, this, [slice](bool on) {
+        // NR2 = EMNR in Thetis naming. Toggle: NR2→active clears any other slot.
+        slice->setActiveNr(on ? NereusSDR::NrSlot::NR2 : NereusSDR::NrSlot::Off);
+    });
+    connect(newFlag, &VfoWidget::snbChanged, this, [slice](bool on) {
+        slice->setSnbEnabled(on);
+    });
+    connect(newFlag, &VfoWidget::apfChanged, this, [slice](bool on) {
+        slice->setApfEnabled(on);
+    });
+    connect(newFlag, &VfoWidget::apfTuneHzChanged, this, [slice](int hz) {
+        slice->setApfTuneHz(hz);
+    });
+    connect(slice, &SliceModel::mutedChanged, this, [newFlag](bool v) {
+        newFlag->setMuted(v);
+    });
+    connect(slice, &SliceModel::audioPanChanged, this, [newFlag](double p) {
+        newFlag->setAudioPan(p);
+    });
+    connect(slice, &SliceModel::ssqlEnabledChanged, this, [newFlag](bool v) {
+        newFlag->setSsqlEnabled(v);
+    });
+    connect(slice, &SliceModel::ssqlThreshChanged, this, [newFlag](double d) {
+        newFlag->setSsqlThresh(d);
+    });
+    connect(slice, &SliceModel::agcThresholdChanged, this, [newFlag](int v) {
+        newFlag->setAgcThreshold(v);
+    });
+    connect(slice, &SliceModel::binauralEnabledChanged, this, [newFlag](bool v) {
+        newFlag->setBinauralEnabled(v);
+    });
+    connect(newFlag, &VfoWidget::muteChanged, this, [slice](bool v) {
+        slice->setMuted(v);
+    });
+    connect(newFlag, &VfoWidget::panChanged, this, [slice](double p) {
+        slice->setAudioPan(p);
+    });
+    connect(newFlag, &VfoWidget::squelchEnabledChanged, this, [slice](bool v) {
+        slice->setSsqlEnabled(v);
+    });
+    connect(newFlag, &VfoWidget::squelchThreshChanged, this, [slice](int v) {
+        slice->setSsqlThresh(static_cast<double>(v));
+    });
+    connect(newFlag, &VfoWidget::agcThreshChanged, this, [slice](int v) {
+        slice->setAgcThreshold(v);
+    });
+    connect(newFlag, &VfoWidget::binauralChanged, this, [slice](bool v) {
+        slice->setBinauralEnabled(v);
+    });
+    connect(newFlag, &VfoWidget::quickModeRequested, this, [slice](int index) {
+        // Quick-mode buttons: 0=USB, 1=CW, 2=DIG (matching AetherSDR defaults)
+        static constexpr DSPMode kQuickModes[] = {DSPMode::USB, DSPMode::CWU, DSPMode::DIGU};
+        if (index >= 0 && index < 3) {
+            slice->setDspMode(kQuickModes[index]);
+        }
+    });
+    connect(newFlag, &VfoWidget::openSetupRequested, this, [this]() {
+        auto* dialog = new SetupDialog(m_radioModel, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        wireSetupDialog(dialog);
+        dialog->selectPage(QStringLiteral("AGC/ALC"));
+        dialog->show();
+    });
+    connect(newFlag, &VfoWidget::openNbSetupRequested, this, [this]() {
+        auto* dialog = new SetupDialog(m_radioModel, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        wireSetupDialog(dialog);
+        dialog->selectPage(QStringLiteral("NB/SNB"));
+        dialog->show();
+    });
+    connect(newFlag, &VfoWidget::openNrSetupRequested, this,
+            [this](NereusSDR::NrSlot slot) {
+        auto* dialog = new SetupDialog(m_radioModel, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        wireSetupDialog(dialog);
+        dialog->selectPage(QStringLiteral("NR/ANF"));
+        // Deep-link to the sub-tab matching the NR slot the user clicked
+        // (Task 18 polish 2026-04-23 — previously always opened NR1).
+        if (auto* nrPage = dialog->findChild<NrAnfSetupPage*>()) {
+            nrPage->selectSubtab(slot);
+        }
+        dialog->show();
+    });
+    connect(newFlag, &VfoWidget::ritEnabledChanged, this, [slice](bool on) {
+        slice->setRitEnabled(on);
+    });
+    connect(newFlag, &VfoWidget::ritHzChanged, this, [slice](int hz) {
+        slice->setRitHz(hz);
+    });
+    connect(newFlag, &VfoWidget::xitEnabledChanged, this, [slice](bool on) {
+        slice->setXitEnabled(on);
+    });
+    connect(newFlag, &VfoWidget::xitHzChanged, this, [slice](int hz) {
+        slice->setXitHz(hz);
+    });
+    connect(newFlag, &VfoWidget::stepCycleRequested, this, [slice]() {
+        int current = slice->stepHz();
+        int next = kStageOneStepLadder[0];
+        for (int i = 0; i < kStageOneStepLadderSize; ++i) {
+            if (kStageOneStepLadder[i] == current) {
+                next = kStageOneStepLadder[(i + 1) % kStageOneStepLadderSize];
+                break;
+            }
+        }
+        // setStepHz emits stepHzChanged which the :1626-1629 handler uses to
+        // propagate to activeSpectrumWidget()->setStepSize and newFlag->setStepHz.
+        slice->setStepHz(next);
+    });
+    connect(newFlag, &VfoWidget::lockChanged, this, [slice](bool locked) {
+        slice->setLocked(locked);
+    });
+    connect(slice, &SliceModel::lockedChanged, this, [newFlag](bool v) {
+        newFlag->setLocked(v);
+    });
+    return newFlag;
+}
+
+// ── Phase 3F Sub-Epic I Task 8: one FFTEngine per DDC stream ────────────────
+//
+// The panadapter belongs to the DDC, not to the sub-receiver: ChannelMaster
+// holds a single `volatile long run_pan` per `_rcvr` alongside
+// `audio[cmMAXSubRcvr]` (cmaster.h:75-82 [v2.10.3.15]).  So slices that share
+// a DDC share one spectrum and appear as separate flags on it, and the engine
+// pool is sized by stream, not by slice.
+FFTEngine* MainWindow::createFftEngineForStream(int streamIndex)
+{
+    if (streamIndex < 0) { return nullptr; }
+    if (FFTEngine* existing = m_fftEngines.value(streamIndex, nullptr)) {
+        return existing;
+    }
+    // m_fftThread must exist before an engine can be parked on it, and
+    // m_radioModel before the I/Q feed can be wired; buildUI has both in
+    // place ahead of the first createFftEngineForStream call.
+    if (!m_fftThread || !m_radioModel) { return nullptr; }
+
+    // No QObject parent: ownership is the deleteLater below, fired when the
+    // FFT thread finishes.  Matches the pre-pool single-engine lifecycle.
+    auto* engine = new FFTEngine(streamIndex);
+    engine->setSampleRate(768000.0);
+    engine->setFftSize(4096);
+
+    auto& s = AppSettings::instance();
+    const int persistedFps = qBound(1,
+        s.value(QStringLiteral("DisplaySpectrumFps"),
+                QStringLiteral("30")).toString().toInt(),
+        60);
+    engine->setOutputFps(persistedFps);
+
+    const int persistedFftSize = s.value(
+        QStringLiteral("DisplayFftSize"),
+        QString::number(engine->fftSize())).toString().toInt();
+    engine->setFftSizeBaseline(persistedFftSize);
+    engine->setFftSize(persistedFftSize);
+
+    const int defaultWin = static_cast<int>(engine->windowFunction());
+    const int persistedWin = qBound(0,
+        s.value(QStringLiteral("DisplayFftWindow"),
+                QString::number(defaultWin)).toString().toInt(),
+        static_cast<int>(WindowFunction::Count) - 1);
+    engine->setWindowFunction(static_cast<WindowFunction>(persistedWin));
+
+    engine->setHzPerBinTarget(
+        s.value(QStringLiteral("DisplayHzPerBinTarget"),
+                QStringLiteral("0")).toString().toDouble());
+
+    engine->moveToThread(m_fftThread);
+    connect(m_fftThread, &QThread::finished, engine, &QObject::deleteLater);
+
+    // Raw I/Q for this stream -> this engine.  The context object is the
+    // ENGINE, not MainWindow, deliberately: RadioModel emits
+    // rawIqDataForStream from the Connection thread (Lever 2, 2026-05-24,
+    // RadioModel.cpp Step 2a), and an engine-scoped connection resolves to a
+    // queued delivery straight onto the FFT thread.  Routing through a
+    // MainWindow-scoped lambda instead would put every I/Q packet through the
+    // main thread's event loop (~3200/s per stream at 768 kHz), silently
+    // undoing that fix.  The index filter costs one compare on the FFT
+    // thread; the alternative -- reading m_fftEngines from the Connection
+    // thread -- would need synchronisation AND lose Qt's automatic
+    // disconnect-on-destroy, which is what makes this safe at shutdown.
+    connect(m_radioModel, &RadioModel::rawIqDataForStream, engine,
+            [engine, streamIndex](int idx, const QVector<float>& samples) {
+        if (idx != streamIndex) { return; }
+        engine->feedIQ(samples);
+    });
+
+    // Linear-power frame -> every pan subscribed to this stream.
+    connect(engine, &FFTEngine::fftReadyLinear,
+            this, &MainWindow::dispatchFftFrameToPans);
+
+    // One NoiseFloorTracker per stream, fed by that stream's own FFT.
+    //
+    // Auto AGC-T derives its threshold from the noise floor, so a slice must
+    // measure the band it is actually on. There used to be a single tracker
+    // fed only by primaryFftEngine(), i.e. stream 0 -- fine while one slice
+    // existed, but it would set a 20m slice's threshold from 40m's noise
+    // floor once auto-AGC ran for every slice.
+    auto* nf = new NoiseFloorTracker;
+    m_streamNoiseFloors.insert(streamIndex, nf);
+    if (m_radioModel) { m_radioModel->setStreamNoiseFloorTracker(streamIndex, nf); }
+    connect(engine, &FFTEngine::fftReady, this,
+            [nf](int, const QVector<float>& binsDbm) {
+        static constexpr float kFrameIntervalMs = 33.0f;
+        nf->feed(binsDbm, kFrameIntervalMs);
+    });
+
+    m_fftEngines.insert(streamIndex, engine);
+    return engine;
+}
+
+void MainWindow::applyStreamWindowToPan(const QString& panId, int streamIndex)
+{
+    if (!m_panStack) { return; }
+    const auto it = m_streamWindows.constFind(streamIndex);
+    if (it == m_streamWindows.constEnd()) { return; }
+    SpectrumWidget* sw = m_panStack->spectrum(panId);
+    if (!sw) { return; }
+    sw->setDdcCenterFrequency(it->centreHz);
+    if (it->sampleRateHz > 0) {
+        sw->setSampleRate(static_cast<double>(it->sampleRateHz));
+    }
+
+    // Move the DISPLAY window onto the stream too, not just the DDC centre.
+    //
+    // setDdcCenterFrequency only tells the widget where the DDC sits for
+    // bin-to-frequency mapping; the visible span is separate state, and a pan
+    // created after startup keeps SliceModel's 14.225 MHz default. Bench-caught
+    // 2026-07-26 on a 2v layout: pan-1 was correctly subscribed to a 7.265 MHz
+    // stream while still displaying 14.2258 MHz, which
+    //   - made visibleBinRange() select bins entirely outside the stream, so
+    //     the waterfall rendered saturated (solid red), and
+    //   - put the slice's flag at an x position far off the left edge, so the
+    //     pan looked like it had no flag at all.
+    //
+    // Both symptoms are the same missing line. Recentre, preserving the pan's
+    // current span so an operator's zoom is not thrown away -- only a pan that
+    // has never been placed is actually moved, because pan-0 already sits on
+    // its stream and this is a no-op there.
+    // Span is clamped to the stream's own width. Preserving a wider one would
+    // reintroduce the same failure at the edges: a pan left at the 192 kHz
+    // default over a 48 kHz DDC has three quarters of its window outside the
+    // data, which is exactly the out-of-range saturation this is fixing.
+    const double streamWidthHz = static_cast<double>(it->sampleRateHz);
+    double spanHz = sw->bandwidth();
+    if (spanHz <= 0.0 || (streamWidthHz > 0.0 && spanHz > streamWidthHz)) {
+        spanHz = streamWidthHz;
+    }
+    if (spanHz > 0.0) {
+        sw->setFrequencyRange(it->centreHz, spanHz);
+    }
+}
+
+// Phase 3F: WIDE badge fan-out. See RadioModel::panBypassState for the
+// routing (pan -> slices -> stream -> ADC -> BpfEffective) and for the
+// per-cause reason strings.
+//
+// Every pan is refreshed on every pass, not just the ones that changed. A
+// bypass is a property of the CHAIN, so one slice crossing a band edge can
+// flip the badge on pans that do not host it and never saw an event of
+// their own. Rechecking all of them is one query per pan against
+// single-digit slice and pan counts.
+void MainWindow::refreshPanWideBadges()
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        const RadioModel::PanBypassState st =
+            m_radioModel->panBypassState(applet->associatedSlices());
+        applet->setWideBpf(st.bypassed, st.reason);
+    }
+}
+
+// Phase 3F: status-overlay fan-out. Sibling of refreshPanWideBadges above,
+// and deliberately the same shape: ask the model per pan, push the answer at
+// that pan, never reach into the widget tree.
+//
+// Which slice a pan shows is its OWN activeSliceIndex, not the globally
+// active slice -- per Sub-Epic E plan Task 2 Step 4. A pan hosting several
+// slices has one of them active (PanadapterApplet::addSlice seeds it,
+// removeSlice re-picks), and a global read would make every pan on a
+// multi-pan layout paint identical text, which is the one thing a per-pan
+// overlay exists not to do.
+//
+// updateStatusOverlay had zero callers before this, so every pan painted the
+// widget's construction-time placeholders -- slice "A", "0.000", "USB",
+// "CH 0" -- on a live radio.
+void MainWindow::refreshPanStatusOverlays()
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        const int sliceId = applet->activeSliceIndex();
+        SliceModel* slice = m_radioModel->sliceById(sliceId);
+        // A pan with no slices keeps whatever it last painted rather than
+        // being blanked: the operator is mid-drag between pans and a flash
+        // to placeholder text reads as a fault.
+        if (!slice) { continue; }
+        applet->updateStatusOverlay(slice, m_radioModel->sliceChainIndex(sliceId));
+    }
+}
+
+void MainWindow::wirePanStatusOverlayTriggers()
+{
+    if (!m_panStack) { return; }
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        connect(applet, &PanadapterApplet::activeSliceChanged,
+                this, &MainWindow::refreshPanStatusOverlays,
+                Qt::UniqueConnection);
+    }
+}
+
+// Phase 3F: badge-click fan-out. Third sibling of refreshPanWideBadges and
+// wirePanStatusOverlayTriggers above, on the same hook and for the same
+// reason: a pan that comes into existence after startup has to be wired
+// without anyone remembering to wire it.
+//
+// The connects name member slots rather than lambdas on purpose. This runs
+// again on every countChanged, so it has to be idempotent, and
+// Qt::UniqueConnection is silently ignored for lambda targets in Qt6 -- a
+// lambda here would stack one extra connection per layout switch and open
+// that many FilterPolicyDialogs on a single click.
+// ---------------------------------------------------------------------------
+// ensureOverlayPanels — one control strip per panadapter.
+//
+// The strip used to be a single instance parented to pan-0's SpectrumWidget,
+// so every other pan had no BAND / ANT / Display / +RX at all, and the one
+// button that did exist had to guess which pan the operator meant. A control
+// drawn on a pan acts on that pan: each strip now owns its panId and emits it,
+// the same shape as AetherSDR's SpectrumOverlayMenu (SpectrumOverlayMenu.cpp:
+// 292-315 [@c6481cbf], where +RX emits addRxClicked(m_panId)).
+//
+// Idempotent and re-armed from PanadapterStack::countChanged, so pans created
+// by a layout switch or an Add Panadapter get their strip by construction
+// rather than by remembering. Panels for pans that went away are dropped --
+// the widget itself dies with its parent SpectrumWidget.
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// wireSpectrumForPan — mouse interaction for one panadapter.
+//
+// Every SpectrumWidget signal used to be connected exactly once, to whatever
+// activeSpectrumWidget() returned during startup -- pan-0's widget. The connect
+// binds the OBJECT, not the expression, so it never re-resolved: on any other
+// pan, click-to-tune, filter-edge drag, pan drag, zoom-replan and the dBm strip
+// were all inert. The flag stayed live because it is wired per slice, which is
+// why tuning appeared to work only with the pointer over the flag's digits.
+//
+// Resolves the slice per call through sliceForPan, so each pan drives its own
+// slice, and uses that slice's WDSP channel rather than the hardcoded
+// rxChannel(0) the single-pan path used.
+// ---------------------------------------------------------------------------
+// Push the live connection state into every pan's spectrum widget. Safe to
+// call at any time; a pan created later is seeded by wireSpectrumForPan.
+void MainWindow::pushConnectionStateToPans()
+{
+    if (!m_radioModel || !m_panStack) { return; }
+    const ConnectionState st = m_radioModel->connectionState();
+    const bool live = m_radioModel->isConnected();
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        if (SpectrumWidget* sw = m_panStack->spectrum(applet->panId())) {
+            sw->setConnectionState(st);
+            // Clearing stale history on disconnect was pan-0 only, so every
+            // other pan kept painting the waterfall it had when the radio went
+            // away -- indistinguishable from live data.
+            if (!live) { sw->clearWaterfallHistory(); }
+        }
+    }
+}
+
+void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
+{
+    if (!sw || !m_radioModel) { return; }
+
+    configureSpectrumForPanForTest(sw, panId);
+
+    // Seed the new pan with the CURRENT connection state. Without this a pan
+    // created after connect sits at the Disconnected default until the next
+    // state change, and its disconnected guard swallows every mouse press.
+    sw->setConnectionState(m_radioModel->connectionState());
+
+    // Band plan too: setBandPlanManager was another activeSpectrumWidget()
+    // one-shot, so the band-segment bar ("PHONE General" and friends) drew on
+    // pan-0 only and every other pan showed a bare spectrum.
+    sw->setBandPlanManager(&m_radioModel->bandPlanManagerMutable());
+
+    // Right-click a spot on THIS pan to remove it. Was pan-0 only, so spots
+    // could be dismissed from one pan and were inert on every other.
+    if (SpotModel* spots = m_radioModel->spotModel()) {
+        connect(sw, &SpectrumWidget::spotRemoveRequested,
+                spots, &SpotModel::removeSpot);
+    }
+
+    // Hovering a spot on any pan drives the Spot Hub highlight.
+    if (m_spotHubDialog) {
+        connect(sw, &SpectrumWidget::spotHoverIndexChanged,
+                m_spotHubDialog.data(),
+                &SpotHubDialog::setHoveredPanadapterSpot);
+    }
+
+    // Clicking a disconnected pan opens the connection panel, from any pan.
+    connect(sw, &SpectrumWidget::disconnectedClickRequest,
+            this, &MainWindow::showConnectionPanel);
+
+    // CTUN max-bin offset follows THIS pan's slice rather than the globally
+    // active one, so a max-bin readout on a background pan is not measured
+    // against a slice sitting on some other pan's stream.
+    connect(sw, &SpectrumWidget::ddcCenterFrequencyChanged, this,
+            [this, panId](double ddcCenter) {
+        if (!m_radioModel || !m_radioModel->wdspEngine()) { return; }
+        if (SliceModel* s = sliceForPan(panId)) {
+            m_radioModel->wdspEngine()->setMaxBinSliceOffsetHz(
+                /*disp=*/0, s->frequency() - ddcCenter);
+        }
+    });
+
+    // NOT wired here: bandwidthChangeRequested. Zoom itself already works on
+    // every pan (SpectrumWidget narrows its own visible bin range), but the
+    // auto-replan that keeps bins-per-pixel constant across zoom levels runs
+    // against primaryFftEngine() -- one engine, pan-0's. Routing it per pan
+    // needs the FFT engine looked up by the pan's stream, which is a bigger
+    // change than this function. Until then a deep zoom on another pan stays
+    // visually correct but does not gain FFT resolution.
+}
+
+// ---------------------------------------------------------------------------
+// wireSpectrumSliceControls: the four spectrum controls that act on a slice.
+//
+// Bench 2026-07-28: "when I click to tune it always tunes flag A, not the last
+// selected." Proven with per-hop instrumentation rather than by reading: a
+// synthetic frequencyClicked on pan-0 fired exactly one handler, the copy in
+// wireSliceToSpectrum, and sliceForPan was never called in the whole session.
+//
+// These four used to exist twice. wireSpectrumForPan held the per-pan version,
+// and ensureOverlayPanels skips that function for pan-0 (its spot, connection
+// and MaxBin hooks are wired elsewhere in this file and would double), so pan-0
+// ran an older copy in wireSliceToSpectrum whose lambdas closed over
+//
+//     SliceModel* slice = m_radioModel->activeSlice();
+//
+// by value. connect() binds the object, and the lambda binds the pointer, so
+// that copy was Slice A for the life of the session. On the single pan almost
+// every operator uses, click-to-tune, the filter-edge drag, the pan drag and
+// the CTUN toggle all drove Slice A and never consulted the pan at all. The
+// per-pan active slice this epic added was correct and simply unread.
+//
+// One home now, called for every pan including pan-0, so the two cannot drift
+// apart again. verify-no-captured-slice-spectrum-wiring.py fails the build if
+// any of the four is connected to a sender other than `sw`; it is listed in
+// the pre-commit hook and in CI's compliance job beside
+// verify-no-gui-dsp-access.py, which guards the same class of mistake one
+// layer down.
+//
+// Every handler resolves its slice through sliceForPan(panId) on each signal.
+// That is the whole fix: resolving late is what lets the answer change when
+// the operator selects a different flag.
+// ---------------------------------------------------------------------------
+void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
+                                           const QString& panId)
+{
+    if (!sw || !m_radioModel) { return; }
+
+    // Click on the spectrum tunes this pan's slice.
+    connect(sw, &SpectrumWidget::frequencyClicked, this,
+            [this, panId](double hz) {
+        if (SliceModel* s = sliceForPan(panId)) { s->setFrequency(hz); }
+    });
+
+    // Drag a filter edge on this pan.
+    connect(sw, &SpectrumWidget::filterEdgeDragged, this,
+            [this, panId](int low, int high) {
+        if (SliceModel* s = sliceForPan(panId)) { s->setFilter(low, high); }
+    });
+
+    // Drag the pan. Non-CTUN moves the VFO; CTUN pins the DDC to the pan centre
+    // and offsets WDSP so audio stays on the VFO (Thetis radio.cs:1417 --
+    // SetRXAShiftFreq receives +(freq - center)).
+    connect(sw, &SpectrumWidget::centerChanged, this,
+            [this, panId, sw](double centerHz) {
+        if (m_handlingBandJump) { return; }
+        SliceModel* s = sliceForPan(panId);
+        if (!s) { return; }
+        if (!sw->ctunEnabled()) {
+            s->setFrequency(centerHz);
+            return;
+        }
+        const int stream = s->streamIndex();
+        if (stream >= 0 && m_radioModel->receiverManager()) {
+            m_radioModel->receiverManager()->forceHardwareFrequency(
+                stream, static_cast<quint64>(centerHz));
+        }
+        sw->setDdcCenterFrequency(centerHz);
+        // Re-shift the WHOLE stream, not just this pan's slice. Addressing the
+        // dragged slice's own channel fixed the hardcoded rxChannel(0), but a
+        // shared DDC window still has one centre and N slices at their own
+        // offsets inside it, so a co-host on the same stream kept the offset it
+        // had before the drag and demodulated the wrong signal with its flag
+        // still reading right.
+        //
+        // From Thetis radio.cs:1417 [v2.10.3.15]: SetRXAShiftFreq receives
+        // +(freq - center). reshiftSlicesOnStream applies that per member.
+        m_radioModel->reshiftSlicesOnStream(stream, centerHz);
+    });
+
+    // CTUN toggle restores this pan's whole stream rather than channel 0.
+    //
+    // Unpinning does not retune the DDC, so the members are still offset from
+    // an unmoved centre; zeroing the shift would drop the demodulator onto the
+    // DDC centre. Restore against where the DDC actually sits (the drag above
+    // bypasses the allocator via forceHardwareFrequency and writes the centre
+    // into this widget), and let the next VFO move settle the offsets to zero
+    // through the now-unpinned allocator.
+    connect(sw, &SpectrumWidget::ctunEnabledChanged, this,
+            [this, panId, sw](bool enabled) {
+        if (m_radioModel->receiverManager()) {
+            m_radioModel->receiverManager()->setDdcFrequencyLocked(enabled);
+        }
+        if (enabled) { return; }
+        if (SliceModel* s = sliceForPan(panId)) {
+            m_radioModel->reshiftSlicesOnStream(s->streamIndex(),
+                                                sw->ddcCenterFrequency());
+        }
+    });
+}
+
+// Keep the S-meter poller's channel list in step with the live slices.
+//
+// Slice id == WDSP RX channel id, so this is also the set of channels it reads
+// for the per-slice pass that drives each flag's level bar.
+//
+// Hung off sliceAdded / sliceRemoved, NOT off the pan-count hook. It first
+// lived inside ensureOverlayPanels, which only runs on
+// PanadapterStack::countChanged -- so adding a slice to an EXISTING pan never
+// refreshed the list and that slice's flag bar stayed dead. Bench-caught
+// 2026-07-26.
+void MainWindow::refreshMeterPollerSlices()
+{
+    if (!m_meterPoller || !m_radioModel) { return; }
+    QList<int> ids;
+    for (SliceModel* s : m_radioModel->slices()) {
+        if (s) { ids << s->sliceIndex(); }
+    }
+    m_meterPoller->setSliceChannels(ids);
+}
+
+void MainWindow::ensureOverlayPanels()
+{
+    if (!m_panStack || !m_radioModel) { return; }
+
+    refreshMeterPollerSlices();
+
+    // Drop entries whose pan (and therefore whose parent widget) is gone.
+    for (auto it = m_overlayPanels.begin(); it != m_overlayPanels.end(); ) {
+        if (it.value().isNull() || !m_panStack->panadapter(it.key())) {
+            it = m_overlayPanels.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        const QString panId = applet->panId();
+        if (m_overlayPanels.contains(panId)) { continue; }
+
+        SpectrumWidget* sw = m_panStack->spectrum(panId);
+        if (!sw) { continue; }
+
+        // Same one-shot-per-pan guard as the strip below: this loop only runs
+        // for pans that have no entry yet, so the interaction connects cannot
+        // stack on a layout switch.
+        //
+        // The slice controls go to EVERY pan, pan-0 included. pan-0 used to be
+        // excluded from the whole of wireSpectrumForPan and left running an
+        // older copy of these four in wireSliceToSpectrum, whose lambdas held
+        // a captured Slice A pointer -- which is the 2026-07-28 bench defect
+        // where click-to-tune always retuned flag A. Those copies are gone, so
+        // this is the only wiring for them and nothing doubles.
+        wireSpectrumSliceControls(sw, panId);
+        wireWidebandExtensionForTest(sw, m_radioModel, m_panStack, panId);
+
+        if (panId != QStringLiteral("pan-0")) {
+            // Still pan-0-excluded: its spot, connection and MaxBin hooks are
+            // wired one-shot elsewhere in this file (the activeSpectrumWidget()
+            // connects near the spot / ConnectionPanel / MaxBin sections), so
+            // running them again here would double every one. Unifying those
+            // the way the slice controls just were is a separate change with
+            // its own regression surface.
+            wireSpectrumForPan(sw, panId);
+        }
+
+        auto* panel = new SpectrumOverlayPanel(sw);
+        panel->setPanId(panId);
+        panel->setSliceResolver([this, panId]() {
+            return sliceForPan(panId);
+        });
+        panel->move(4, 4);
+        panel->show();
+        m_overlayPanels.insert(panId, panel);
+
+        // Phase 3O Sub-Phase 9 Task 9.2c — bind the VAX Ch combo to the model.
+        panel->setRadioModel(m_radioModel);
+        connect(applet, &PanadapterApplet::activeSliceChanged, panel,
+                [panel](const QString&, int) {
+            panel->bindToPanSlice();
+        });
+
+        // Phase 3P-I-a T18 — board caps drive the antenna combos, and are
+        // re-pushed on every radio swap.
+        panel->setBoardCapabilities(m_radioModel->boardCapabilities());
+        connect(m_radioModel, &RadioModel::currentRadioChanged, panel,
+                [this, panel]() {
+            panel->setBoardCapabilities(m_radioModel->boardCapabilities());
+        });
+
+        // +RX adds a slice on the pan this strip belongs to. The id comes from
+        // the signal, so this never consults an "active" pan.
+        connect(panel, &SpectrumOverlayPanel::addRxClicked, this,
+                [this](const QString& id) {
+            if (!m_radioModel || id.isEmpty()) { return; }
+            m_radioModel->addSliceOnPan(id);
+        });
+
+        // Band clicks act on this pan's active slice rather than the globally
+        // active one, for the same reason (#118 fixed the mode-vs-frequency
+        // half of this; the pan-targeting half arrives with per-pan strips).
+        //
+        // sliceIndex() is a stable slice ID, so it goes through
+        // setActiveSliceById rather than the positional setActiveSlice --
+        // otherwise a band click on a pan whose slice had a higher id than the
+        // list is long (any mid-list removal) left the active slice where it
+        // was and onBandButtonClicked retuned the wrong slice.
+        connect(panel, &SpectrumOverlayPanel::bandSelected, this,
+                [this, panId](const QString& name, double, const QString&) {
+            if (!m_radioModel) { return; }
+            if (SliceModel* s = sliceForPan(panId)) {
+                m_radioModel->setActiveSliceById(s->sliceIndex());
+            }
+            m_radioModel->onBandButtonClicked(bandFromName(name));
+        });
+
+        // Pan-0's strip stays the one the display-settings wiring targets.
+        if (m_overlayPanel == nullptr || panId == QStringLiteral("pan-0")) {
+            m_overlayPanel = panel;
+        }
+    }
+}
+
+// The slice this pan hosts: its own active slice if it has one, else the first
+// slice associated with it. Returns nullptr for a pan with no slices.
+SliceModel* MainWindow::sliceForPan(const QString& panId) const
+{
+    if (!m_panStack || !m_radioModel) { return nullptr; }
+    auto* applet = m_panStack->panadapter(panId);
+    if (!applet) { return nullptr; }
+    const int active = applet->activeSliceIndex();
+    if (active >= 0) {
+        if (SliceModel* s = m_radioModel->sliceById(active)) { return s; }
+    }
+    for (SliceModel* s : m_radioModel->slices()) {
+        if (s && applet->associatedSlices().contains(s->sliceIndex())) {
+            return s;
+        }
+    }
+    return nullptr;
+}
+
+void MainWindow::wirePanBadgeHandlers()
+{
+    if (!m_panStack) { return; }
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        connect(applet, &PanadapterApplet::wideBadgeClicked,
+                this, &MainWindow::onPanWideBadgeClicked,
+                Qt::UniqueConnection);
+        connect(applet, &PanadapterApplet::chainTagClicked,
+                this, &MainWindow::onPanChainTagClicked,
+                Qt::UniqueConnection);
+        connect(applet, &PanadapterApplet::txBadgeClicked,
+                this, &MainWindow::onPanTxBadgeClicked,
+                Qt::UniqueConnection);
+        // Phase 3F: clicking a pan makes it the active pan. Straight to the
+        // stack's setter, exactly as AetherSDR MainWindow.cpp:12964 [@6a142807]
+        // does it:
+        //   connect(applet, &PanadapterApplet::activated,
+        //           m_panStack, &PanadapterStack::setActivePan);
+        // Member-pointer target on both ends, so Qt::UniqueConnection is
+        // actually honoured here (it is silently dropped for lambdas -- see
+        // RadioModel.cpp:5666), which matters because this re-runs on every
+        // countChanged.
+        connect(applet, &PanadapterApplet::activated,
+                m_panStack, &PanadapterStack::setActivePan,
+                Qt::UniqueConnection);
+    }
+}
+
+int MainWindow::panChainIndex(const QString& panId) const
+{
+    if (!m_panStack || !m_radioModel) { return -1; }
+    auto* applet = m_panStack->panadapter(panId);
+    if (!applet) { return -1; }
+
+    const int chain = m_radioModel->sliceChainIndex(applet->activeSliceIndex());
+    if (chain >= 0) { return chain; }
+
+    // The slice is bound to no stream, so the model has no chain to give.
+    // updateStatusOverlay holds the CH tag at its last known-good value in
+    // exactly this case rather than claiming chain 0, so following it keeps
+    // the dialog on the chain the operator can see. statusChainIndex() is the
+    // read-back 0896b4f3 added for the overlay.
+    return applet->statusChainIndex();
+}
+
+void MainWindow::onPanWideBadgeClicked(const QString& panId)
+{
+    onPanChainTagClicked(panId, -1);
+}
+
+// chainIdx is what the CH tag was painting when it was clicked; it is passed
+// so the two entry points stay one function, but the live resolution wins.
+// The tag is refreshed from the same call panChainIndex makes, so they agree
+// in every case except a stale repaint, and the live answer is the honest one
+// to open a dialog on.
+void MainWindow::onPanChainTagClicked(const QString& panId, int chainIdx)
+{
+    if (!m_radioModel) { return; }
+
+    int chain = panChainIndex(panId);
+    if (chain < 0) { chain = chainIdx; }
+    if (chain < 0) { return; }
+
+    auto* alex = &m_radioModel->alexControllerMutable();
+    FilterPolicyDialog dlg(chain, alex, this);
+    dlg.exec();
+}
+
+// The TX pill hands the transmitter to the slice THIS pan is showing, which
+// is the pan's own activeSliceIndex -- a slice ID, so it goes through
+// RadioModel::requestTxHandoffToSlice, which converts to the list position
+// TxSliceArbiter indexes by and drops MOX before flipping. The MOX drop stays
+// the arbiter's; nothing here reproduces or bypasses it.
+//
+// Reachable only while this pan's slice already holds TX, because
+// SpectrumStatusOverlay paints and hit-tests the pill on m_txBound. The
+// handoff is therefore a no-op today, and is wired to the correct target so
+// that it stays correct if the pill is ever given an unlit clickable state --
+// a visual decision, not one to make here.
+void MainWindow::onPanTxBadgeClicked(const QString& panId)
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    auto* applet = m_panStack->panadapter(panId);
+    if (!applet) { return; }
+    m_radioModel->requestTxHandoffToSlice(applet->activeSliceIndex());
+}
+
+void MainWindow::wireSliceStatusOverlayTriggers(SliceModel* slice)
+{
+    if (!slice) { return; }
+
+    // Connect the NOTIFY signal of every property the overlay reads, resolved
+    // through the metaobject from the list PanadapterApplet publishes. Naming
+    // the signals here instead would put the trigger set in a second place
+    // that has to be remembered -- which is how updateStatusOverlay came to
+    // have no callers at all.
+    const QMetaObject* sliceMeta = slice->metaObject();
+    const int refreshIdx =
+        MainWindow::staticMetaObject.indexOfSlot("refreshPanStatusOverlays()");
+    if (refreshIdx < 0) {
+        // Renaming the slot without updating this string would otherwise
+        // strand every overlay silently -- the exact failure this change
+        // exists to fix. tst_pan_status_overlay pins the lookup so it cannot
+        // reach a release, and this keeps a debug build loud if it ever does.
+        qWarning("MainWindow: refreshPanStatusOverlays() slot not found; "
+                 "per-pan status overlays will not follow slice state");
+        return;
+    }
+    const QMetaMethod refresh = MainWindow::staticMetaObject.method(refreshIdx);
+
+    for (const QByteArray& name : PanadapterApplet::statusOverlaySliceProperties()) {
+        const int propIdx = sliceMeta->indexOfProperty(name.constData());
+        if (propIdx < 0) { continue; }
+        const QMetaProperty prop = sliceMeta->property(propIdx);
+        if (!prop.hasNotifySignal()) { continue; }
+        connect(slice, prop.notifySignal(), this, refresh, Qt::UniqueConnection);
+    }
+}
+
+void MainWindow::rebuildFftRouting()
+{
+    if (!m_radioModel) { return; }
+
+    // The WIDE badges ride this pass rather than getting their own connects
+    // at each of the four call sites. The trigger set is identical -- any
+    // change to which slices feed which pan through which stream moves both
+    // answers -- so hanging the refresh here means every present and future
+    // topology trigger reaches the badge by construction. Same reasoning the
+    // Alex republish uses for hanging off bpfStateChanged (RadioModel.cpp:
+    // 596-601). Ahead of the router guard on purpose: the badge is a model
+    // question and stays correct with no FFTRouter present.
+    refreshPanWideBadges();
+
+    // The status overlay rides the same pass, for the same reason: every
+    // topology trigger (slice add / remove, pan migration, stream rebind,
+    // chain reassignment) moves which slice a pan shows and which chain feeds
+    // it, so hanging the refresh here means present and future triggers reach
+    // the overlay by construction rather than by remembering. The per-slice
+    // frequency / mode triggers and each pan's activeSliceChanged are wired
+    // separately, since those move the overlay without moving the topology.
+    refreshPanStatusOverlays();
+
+    auto* router = m_radioModel->fftRouter();
+    if (!router) { return; }
+
+    // Wholesale rebuild, not an incremental edit. A pan can host several
+    // slices and FFTRouter::removePan drops a pan from EVERY receiver, so a
+    // remove-then-add on one slice's migration would silently unsubscribe
+    // its co-hosted neighbours. Binding signals also fire before sliceAdded
+    // (plan discovery item 7), so only a rebuild-from-model consumer is
+    // safe.
+    //
+    // Snapshot the pre-rebuild topology first so a brand-new subscription
+    // can be told apart from one that merely survived. Only new ones get
+    // the stream window pushed: streamBindingsChanged fires on every bind,
+    // so on every VFO tick, and re-pushing the allocator's centre each time
+    // would yank a CTUN pan back after an operator pan-drag (that path
+    // retunes the DDC through forceHardwareFrequency without going through
+    // the allocator).
+    QHash<QString, QList<int>> before;
+    if (m_panStack) {
+        // PanadapterStack::allApplets (PanadapterStack.h:70) and
+        // PanadapterApplet::panId (PanadapterApplet.h:65) both already exist.
+        for (auto* applet : m_panStack->allApplets()) {
+            if (!applet) { continue; }
+            const QString panId = applet->panId();
+            before.insert(panId, router->receiversForPan(panId));
+            router->removePan(panId);
+        }
+    }
+
+    for (SliceModel* slice : m_radioModel->slices()) {
+        if (!slice) { continue; }
+        const int stream = slice->streamIndex();
+        if (stream < 0) { continue; }          // unbound slice feeds nothing
+
+        // Resolving the pan is not just slice->panKey(). Slice A never has
+        // one: RadioModel::addSlice stamps panKey only when it is given one
+        // and connectToRadio calls the no-argument overload
+        // (RadioModel.cpp:4137), so Slice A's panKey is permanently empty.
+        // Skipping empties (as the Task 9 spec had it) would leave pan 0
+        // with no subscription and no trace at all.
+        //
+        // Fall back to the pan that actually hosts the slice, recorded by
+        // the sliceAdded handler through PanadapterApplet::addSlice. That
+        // record is stable; activePanId() is not, and using it alone would
+        // migrate Slice A's subscription (and darken pan 0) the moment the
+        // operator made another pan active. activePanId() stays as the last
+        // resort, matching spectrumForSlice (MainWindow.cpp:880).
+        if (!m_panStack) { continue; }
+        QString panId = slice->panKey();
+        if (panId.isEmpty() || !m_panStack->panadapter(panId)) {
+            panId.clear();
+            for (auto* applet : m_panStack->allApplets()) {
+                if (applet
+                    && applet->associatedSlices().contains(slice->sliceIndex())) {
+                    panId = applet->panId();
+                    break;
+                }
+            }
+        }
+        if (panId.isEmpty()) { panId = m_panStack->activePanId(); }
+        if (panId.isEmpty()) { continue; }
+
+        const bool isNewSubscription = !before.value(panId).contains(stream);
+        // mapPanToReceiver de-duplicates (FFTRouter.cpp:17), so two slices
+        // sharing a stream and a pan produce one subscription, not two.
+        router->mapPanToReceiver(panId, stream);
+        if (isNewSubscription) {
+            applyStreamWindowToPan(panId, stream);
+        }
+    }
+}
+
+void MainWindow::dispatchFftFrameToPans(int streamIndex,
+                                        const QVector<float>& binsLinear,
+                                        double windowEnb,
+                                        double dbmOffset)
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    auto* router = m_radioModel->fftRouter();
+    if (!router) { return; }
+
+    // FFTRouter is the topology oracle rather than a signal hop:
+    // pansForReceiver is public and unit-tested, and routing through its
+    // own signal would add a queued hop on the render path for no gain.
+    // One stream can feed N pans (different zoom levels of the same I/Q),
+    // which is the AetherSDR overlay model the router was designed for.
+    for (const QString& panId : router->pansForReceiver(streamIndex)) {
+        if (SpectrumWidget* sw = m_panStack->spectrum(panId)) {
+            sw->updateSpectrumLinear(streamIndex, binsLinear,
+                                     windowEnb, dbmOffset);
+        }
+    }
+}
+
+// Phase 3F Sub-Epic D Task 16: disconnect-before-removal for safe pan teardown.
+// AetherSDR issue #242: deleting a widget with active connections to lambdas
+// can race with queued signal delivery and crash. Disconnect first, then
+// remove.
+void MainWindow::disconnectPanadapter(const QString& panId)
+{
+    if (!m_panStack) { return; }
+    auto* applet = m_panStack->panadapter(panId);
+    if (!applet) { return; }
+
+    if (auto* sw = applet->spectrumWidget()) {
+        sw->disconnect(this);
+    }
+    applet->disconnect(this);
+
+    if (m_radioModel) {
+        if (auto* router = m_radioModel->fftRouter()) {
+            router->removePan(panId);
+        }
+    }
+}
+
 // Issue #206 — main-window geometry persistence. Qt's saveGeometry()
 // returns a versioned QByteArray that already encodes position, size,
 // AND window state (Normal/Maximized/FullScreen) plus screen identity
@@ -889,16 +2275,36 @@ bool MainWindow::restoreMainWindowGeometry()
 
 void MainWindow::buildUI()
 {
-    // Issue #100: suffix the title with the active profile so users
-    // running two instances against different radios can tell the
-    // windows apart.
-    const QString profile = AppSettings::profileOverride();
-    if (profile.isEmpty()) {
-        setWindowTitle(QStringLiteral("NereusSDR %1").arg(NEREUSSDR_VERSION));
-    } else {
-        setWindowTitle(QStringLiteral("NereusSDR %1 [%2]")
-                           .arg(NEREUSSDR_VERSION, profile));
+    // Title: name, version, then whatever else the operator needs to tell
+    // this window apart from another one.
+    //
+    // Issue #100 added the active profile, so two instances against
+    // different radios are distinguishable. The build tag is the same idea
+    // for the same reason: a smoke build under test has to be
+    // distinguishable from a release and from another worktree's build.
+    // Standing rule (JJ, KG4VCF, 2026-07-30), earned when a session spent
+    // real time proving by pgrep which binary was on screen.
+    //
+    // The tag is empty on release artifacts, which are built from a tag ref,
+    // so their title stays exactly as it was. main() fills BuildIdentity in
+    // from a header regenerated on every build, so the sha here is the sha
+    // that was compiled, not the one that was current at the last configure.
+    QString title = QStringLiteral("NereusSDR %1").arg(NEREUSSDR_VERSION);
+
+    const QString buildTag = BuildIdentity::buildTag();
+    if (!buildTag.isEmpty()) {
+        title += QStringLiteral(" · %1").arg(buildTag);
     }
+
+    // Profile stays last: it is per-run operator state, whereas the build
+    // tag is a property of the binary, and the binary identity reads better
+    // next to the version it belongs to.
+    const QString profile = AppSettings::profileOverride();
+    if (!profile.isEmpty()) {
+        title += QStringLiteral(" [%1]").arg(profile);
+    }
+
+    setWindowTitle(title);
     setMinimumSize(800, 600);
     resize(1280, 800);
 
@@ -924,30 +2330,165 @@ void MainWindow::buildUI()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    m_spectrumWidget = new SpectrumWidget(spectrumPane);
-    m_spectrumWidget->loadSettings();
-    m_spectrumWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    layout->addWidget(m_spectrumWidget, 1);
+    // Phase 3F Sub-Epic D Task 12: replace the single SpectrumWidget with
+    // a PanadapterStack. PanadapterStack's constructor pre-creates
+    // "pan-0" containing a PanadapterApplet whose embedded SpectrumWidget
+    // becomes the new single-pan default. activeSpectrumWidget() resolves
+    // to that widget for backward-compat call sites.
+    m_panStack = new PanadapterStack(spectrumPane);
+    m_panStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    layout->addWidget(m_panStack, 1);
 
-    // Left overlay panel (SpectrumOverlayPanel) — child of spectrum widget
-    m_overlayPanel = new SpectrumOverlayPanel(m_spectrumWidget);
-    m_overlayPanel->move(4, 4);
-    m_overlayPanel->show();
+    SpectrumWidget* const initialSpectrum = activeSpectrumWidget();
+    if (initialSpectrum) {
+        configureSpectrumForPanForTest(initialSpectrum,
+                                       QStringLiteral("pan-0"));
+    }
 
-    // Phase 3O Sub-Phase 9 Task 9.2c — bind the overlay's VAX Ch combo to
-    // the RadioModel. The combo stays disabled until slice 0 exists
-    // (setRadioModel listens to sliceAdded), then flips live.
-    m_overlayPanel->setRadioModel(m_radioModel);
-
-    // Phase 3P-I-a T18 — push board caps into the overlay's antenna
-    // combos on connect and on every radio swap. Hides both RX/TX
-    // rows on HL2/Atlas and reseeds from slice 0's rxAntenna/txAntenna
-    // so persisted per-band state is visible in the combo label.
-    m_overlayPanel->setBoardCapabilities(m_radioModel->boardCapabilities());
-    connect(m_radioModel, &RadioModel::currentRadioChanged, m_overlayPanel,
-            [this]() {
-        m_overlayPanel->setBoardCapabilities(m_radioModel->boardCapabilities());
+    // Task 13 wires per-pan rebinding when the active pan changes; for
+    // now we just log/no-op.  Future polish: re-attach overlay panel,
+    // peak-detector, spot bridges, etc. to the new active pan's widget.
+    // Point the Setup dialog's Display pages at the pan the operator is on.
+    //
+    // Bench report 2026-07-30 (JJ, KG4VCF): "the second-N panadapters seem
+    // not to honour the settings for display, pan 1 does, seems no way to
+    // adjust the others."
+    //
+    // RadioModel::m_spectrumWidget is the single hook every Display setup
+    // page pushes through (82 call sites across DisplaySetupPages,
+    // AppearanceSetupPages and SpectrumPeaksPage). It was assigned once
+    // during wiring from activeSpectrumWidget() and never again, so it kept
+    // whichever widget happened to be active at startup for the whole
+    // session. Every display control in Setup therefore acted on one pan and
+    // silently did nothing for the others.
+    //
+    // Following the active pan is the smallest thing that makes the controls
+    // reachable at all, and it suits the per-pan model: SpectrumWidget
+    // already persists every display preference under
+    // settingsKey(key, m_panIndex), so the pans genuinely have their own
+    // settings and Setup just needs to say which one it means. Selecting a
+    // pan and opening Setup now adjusts that pan.
+    //
+    // Not an activePanId indirection of the kind that rule forbids: this is
+    // a global dialog choosing a target, not a control drawn on one pan
+    // reaching sideways into another. A per-pan selector inside Setup, the
+    // way Thetis splits RX1 and RX2 display settings, is the fuller answer.
+    connect(m_panStack, &PanadapterStack::activePanChanged, this,
+            [this](const QString& panId) {
+        if (!m_radioModel || !m_panStack) { return; }
+        if (SpectrumWidget* sw = m_panStack->spectrum(panId)) {
+            m_radioModel->setSpectrumWidget(sw);
+        }
     });
+
+    // Phase 3F: the status overlay's non-slice trigger. countChanged fires
+    // from addPanadapter / removePanadapter, including the ones applyLayout
+    // makes when the operator switches template, so this catches every pan
+    // that comes into existence after startup -- which is every pan except
+    // pan-0. Re-arming is safe: the connects inside are UniqueConnection.
+    connect(m_panStack, &PanadapterStack::countChanged, this, [this](int) {
+        wirePanStatusOverlayTriggers();
+        wirePanBadgeHandlers();
+        ensureOverlayPanels();
+        refreshPanStatusOverlays();
+    });
+
+    // The S-meter poller's slice list keys off SLICE lifetime, not pan count.
+    // Adding a slice to an existing pan moves no pan count, so hanging this on
+    // countChanged alone left the new slice's flag bar dead.
+    connect(m_radioModel, &RadioModel::sliceAdded, this,
+            [this](int) { refreshMeterPollerSlices(); });
+    connect(m_radioModel, &RadioModel::sliceRemoved, this,
+            [this](int) { refreshMeterPollerSlices(); });
+    wirePanStatusOverlayTriggers();
+    wirePanBadgeHandlers();
+
+    // ── Bench 2026-07-28: click-to-tune always tuned flag A ────────────────
+    //
+    // The pan a slice lives on has to follow the operator's selection.
+    // RadioModel::activeSlice() (global) and
+    // PanadapterApplet::activeSliceIndex() (per pan) are independent, and
+    // only the global one had a writer once addSlice had seeded the pan --
+    // so a pan latched onto the first slice added to it and stayed there.
+    // MainWindow::sliceForPan reads the per-pan value, which is what
+    // click-to-tune, the filter-edge drag, the CH tag and the pan TX pill
+    // all act on, so selecting flag B moved every global surface and left
+    // all four still driving A. This is the missing writer.
+    //
+    // Direction is one way, pan follows global, and deliberately so:
+    //
+    //   * Every route the operator has for selecting a slice (a VfoWidget
+    //     flag press, an RxApplet slice tab, a band button, TCI) already
+    //     lands on RadioModel::setActiveSlice, so following it here covers
+    //     all of them in one wire instead of one per entry point.
+    //   * The reverse -- a pan's own re-pick promoting itself to the global
+    //     active slice -- is NOT wired. PanadapterApplet::removeSlice
+    //     re-picks silently when a pan loses its active slice, and letting a
+    //     background pan's bookkeeping steal the RX applet, the container
+    //     S-meter and the DSP menu out from under the operator is a change
+    //     to what they see, not to what tunes. RadioModel::removeSlice
+    //     already re-seats the global active slice on its own when the
+    //     removed one held it.
+    //
+    // Only the pan hosting the slice moves; setActiveSliceOnHostingPan is
+    // where that rule lives. activeSliceChanged carries a LIST POSITION, so
+    // the id is resolved through activeSlice()->sliceIndex() rather than
+    // used as it arrives.
+    connect(m_radioModel, &RadioModel::activeSliceChanged, this,
+            [this](int) {
+        if (!m_panStack || !m_radioModel) { return; }
+        if (SliceModel* active = m_radioModel->activeSlice()) {
+            m_panStack->setActiveSliceOnHostingPan(active->sliceIndex());
+        }
+    });
+
+    // Phase 3F Sub-Epic D Task 15: restore persisted pan layout + splitter
+    // sizes. Reads PanLayoutId from AppSettings (default "1") and asks the
+    // stack to materialise that many pans before restoring per-splitter
+    // QByteArray state. Operators get their last layout back on launch.
+    {
+        auto& s = AppSettings::instance();
+        const QString restoredLayout = s.value(QStringLiteral("PanLayoutId"),
+                                                QStringLiteral("1")).toString();
+        // Shares the template table with applyPanLayout, but deliberately not
+        // the rest of it: this runs at startup, before a radio is connected
+        // and before any slice exists, so there is nothing to rehome and the
+        // slice add-loop would manufacture a slice pre-connect.
+        // (Codex review round 3, PR #293.)
+        m_panStack->applyLayout(restoredLayout, panIdsForLayout(restoredLayout));
+        m_panStack->restoreSplitterState();
+
+        // ...and finish the job once there IS a radio. Skipping the slice
+        // add-loop above is right, but nothing used to pick it up afterwards,
+        // so a persisted 2v layout came back with pan-1 permanently dead: no
+        // trace, no waterfall, a 0.0000 flag, and no way forward except
+        // noticing you have to add Slice B by hand (bench, 2026-08-01,
+        // J.J. Boyd KG4VCF).
+        //
+        // Queued so it lands after the connect handlers that size the stream
+        // pool and bind Slice A have run; addSliceOnPan needs a sized pool to
+        // bind what it creates.
+        connect(m_radioModel, &RadioModel::connectionStateChanged, this,
+                [this](ConnectionState s) {
+            if (s != ConnectionState::Connected) { return; }
+            QMetaObject::invokeMethod(this, [this]() { populateEmptyPans(); },
+                                      Qt::QueuedConnection);
+        });
+    }
+
+    // Phase 3F Sub-Epic E Task 3: the badge clicks are armed for every pan
+    // from the countChanged hook above, alongside the status-overlay
+    // triggers. See wirePanBadgeHandlers.
+
+    // Left overlay panel (SpectrumOverlayPanel) — child of the active
+    // pan's SpectrumWidget. Construction is deferred when the active
+    // pan has no widget (shouldn't happen because the stack ctor
+    // creates pan-0, but be defensive).
+    // One strip per pan, created here for the pans that exist at startup and
+    // re-armed from the countChanged hook for every pan created later.
+    // m_overlayPanel stays pointing at pan-0's so the display-settings and
+    // band wiring further down keeps a stable target.
+    ensureOverlayPanels();
 
     // ── 2026-05-12 bench fix: SpotModel → SpectrumWidget bridge ───────────
     //
@@ -971,7 +2512,7 @@ void MainWindow::buildUI()
     // DxccColorProvider the SpotTableModel queries.
     if (auto* spotModel = m_radioModel->spotModel()) {
         auto refreshSpots = [this]() {
-            if (!m_spectrumWidget || !m_radioModel) { return; }
+            if (!activeSpectrumWidget() || !m_radioModel) { return; }
             auto* spotModel = m_radioModel->spotModel();
             if (!spotModel) { return; }
             auto* dxccColor = m_radioModel->dxccColorProvider();
@@ -1006,7 +2547,7 @@ void MainWindow::buildUI()
                 }
                 markers.append(m);
             }
-            m_spectrumWidget->setSpotMarkers(markers);
+            activeSpectrumWidget()->setSpotMarkers(markers);
         };
 
         connect(spotModel, &SpotModel::spotAdded,
@@ -1024,7 +2565,7 @@ void MainWindow::buildUI()
         // Spot on the panadapter emits spotRemoveRequested(idx) → purge
         // the spot from SpotModel → spotRemoved fires → refreshSpots
         // above repaints the overlay without it.
-        connect(m_spectrumWidget, &SpectrumWidget::spotRemoveRequested,
+        connect(activeSpectrumWidget(), &SpectrumWidget::spotRemoveRequested,
                 spotModel, &SpotModel::removeSpot);
     }
 
@@ -1041,8 +2582,8 @@ void MainWindow::buildUI()
     layout->addWidget(zoomBar);
     connect(zoomBar, &QSlider::valueChanged, this, [this](int val) {
         double bwHz = val * 1000.0;
-        m_spectrumWidget->setFrequencyRange(m_spectrumWidget->centerFrequency(), bwHz);
-        emit m_spectrumWidget->bandwidthChangeRequested(bwHz);
+        activeSpectrumWidget()->setFrequencyRange(activeSpectrumWidget()->centerFrequency(), bwHz);
+        emit activeSpectrumWidget()->bandwidthChangeRequested(bwHz);
     });
 
     m_mainSplitter->addWidget(spectrumPane);
@@ -1089,6 +2630,70 @@ void MainWindow::buildUI()
     };
     connect(m_radioModel, &RadioModel::currentRadioChanged, this,
             rescaleAllPowerMeters);
+
+    // Phase 3F Sub-Epic D Task 11: gate the bottom-bar CH 1 stacked
+    // indicator widget on whether the connected radio drives a second RX
+    // filter chain. buildStatusBar() ships chain1Widget hidden by default;
+    // this slot toggles it on/off as the user switches radios.
+    //
+    // Defect D4: this used to read adcCount, which names the wrong thing. The
+    // indicator reports a CHAIN's band-pass state, and ANAN-100D / ANAN-200D
+    // have two ADCs behind one filter bank: the setAlex2HPF model list at
+    // Thetis console.cs:15435-15443 [v2.10.3.15] never hands them a second
+    // filter word. Showing CH 1 there offered the operator a second chain to
+    // reason about, and a Filter Policy override to set on it, that the radio
+    // does not have.
+    // Upstream inline attribution preserved verbatim (console.cs:15441):
+    //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    auto updateChain1Visibility = [this]() {
+        if (!m_chain1IndicatorWidget) { return; }
+        const auto caps = m_radioModel->boardCapabilities();
+        m_chain1IndicatorWidget->setVisible(caps.rxFilterChainCount >= 2);
+    };
+    connect(m_radioModel, &RadioModel::currentRadioChanged, this,
+            updateChain1Visibility);
+
+    // Phase 3F Sub-Epic D Task 11: drive the CH 0 / CH 1 bottom-bar
+    // indicator text + colour from AlexController's per-ADC BPF state.
+    // Filtered = green; WidebandLocked / Bypass = amber. reasonText
+    // (set by AlexController::recomputeBpf) drives the body label.
+    connect(&m_radioModel->alexController(),
+            &AlexController::bpfStateChanged, this,
+            [this](int adc, const AlexController::AlexAdcState& state) {
+                auto* lbl = findChild<QLabel*>(
+                    QStringLiteral("chainIndicator%1").arg(adc));
+                if (!lbl) { return; }
+                lbl->setText(state.reasonText);
+                const QString color =
+                    (state.effective == AlexController::BpfEffective::Filtered)
+                        ? Style::kGreenText
+                        : Style::kAmberWarn;
+                lbl->setStyleSheet(
+                    QStringLiteral("color: %1; font-size: 9px; font-weight: bold;")
+                        .arg(color));
+            });
+
+    // Phase 3F: and drive the per-pan WIDE pill from the same signal.
+    //
+    // A separate connect rather than a line inside the lambda above: the two
+    // surfaces answer different questions. The bottom-bar label reports one
+    // chain by number, and this reports every pan that chain happens to feed,
+    // which on a multi-pan layout is what tells the operator WHICH of their
+    // receivers is exposed.
+    //
+    // The signal's own adc argument is deliberately unused. A recompute on
+    // chain 1 can leave a pan straddling both chains bypassed for a reason
+    // that now belongs to chain 0, so the refresh re-asks per pan rather than
+    // trying to patch only the pans on the chain that moved.
+    //
+    // This covers the state-change half of the trigger set (band crossings,
+    // wideband toggles, Filter Policy edits); rebuildFftRouting covers the
+    // topology half (slice add / remove / pan migration / stream rebind).
+    connect(&m_radioModel->alexController(),
+            &AlexController::bpfStateChanged, this,
+            [this](int, const AlexController::AlexAdcState&) {
+                refreshPanWideBadges();
+            });
 
     // Issue #118 — helper: wire a container's bandClicked signal through
     // the RadioModel handler. Invoked from the containerAdded callback,
@@ -1196,7 +2801,7 @@ void MainWindow::buildUI()
     // display" step on power-on.
     connect(m_radioModel, &RadioModel::sliceStateRestored, this,
             [this](int index) {
-        if (index != 0 || !m_spectrumWidget) {
+        if (index != 0 || !activeSpectrumWidget()) {
             return;
         }
         SliceModel* slice = m_radioModel->activeSlice();
@@ -1204,10 +2809,10 @@ void MainWindow::buildUI()
             return;
         }
         const double freq = slice->frequency();
-        m_spectrumWidget->setCenterFrequency(freq);
-        m_spectrumWidget->setDdcCenterFrequency(freq);
-        m_spectrumWidget->setVfoFrequency(freq);
-        m_spectrumWidget->setFilterOffset(slice->filterLow(), slice->filterHigh());
+        activeSpectrumWidget()->setCenterFrequency(freq);
+        activeSpectrumWidget()->setDdcCenterFrequency(freq);
+        activeSpectrumWidget()->setVfoFrequency(freq);
+        activeSpectrumWidget()->setFilterOffset(slice->filterLow(), slice->filterHigh());
         if (m_vfoWidget) {
             m_vfoWidget->setFrequency(freq);
             m_vfoWidget->setMode(slice->dspMode());
@@ -1218,37 +2823,245 @@ void MainWindow::buildUI()
     // Phase 3Q Sub-PR-6 (F.1): bind RxDashboard to slice(0) once it exists.
     // buildStatusBar() runs before connectToRadio() so slices().isEmpty() at
     // construction time; defer binding to sliceAdded.
-    connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
-        if (index == 0 && m_rxDashboard) {
-            m_rxDashboard->bindSlice(m_radioModel->slices().at(0));
+    // Resolved by id, not list position. sliceAdded carries the stable slice
+    // id and addSlice reuses the lowest free one, so after Slice A is closed
+    // and a new slice takes id 0 it is APPENDED to m_slices -- id 0 at some
+    // other position. slices().at(0) then bound the dashboard to whichever
+    // slice happened to be first. Same class of defect as the one closed in
+    // requestSliceSampleRate (Sub-Epic I closeout, defect G2).
+    connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int sliceId) {
+        if (sliceId == 0 && m_rxDashboard) {
+            if (SliceModel* s = m_radioModel->sliceById(0)) {
+                m_rxDashboard->bindSlice(s);
+            }
         }
     });
 
-    // Create FFTEngine on a worker thread (spectrum thread from architecture).
-    // Sample rate starts at P2 default (768k); RadioModel::wireSampleRateChanged
-    // updates it to the actual wire rate on each connect (P1=192k, P2=768k).
-    m_fftEngine = new FFTEngine(0);  // receiver 0
-    m_fftEngine->setSampleRate(768000.0);
+    // Phase 3F: the status overlay's per-slice triggers. Topology changes
+    // reach the overlay through rebuildFftRouting, but a retune or a mode
+    // change moves no topology at all, so those need their own wire -- and
+    // they are the ones an operator exercises on every VFO detent.
+    //
+    // Resolved by id, not list position: sliceAdded carries the stable slice
+    // id (RadioModel.cpp addSlice hands out the lowest free one), which is a
+    // position only until the operator removes a slice from the middle.
+    connect(m_radioModel, &RadioModel::sliceAdded, this,
+            [this](int sliceId) {
+        wireSliceStatusOverlayTriggers(m_radioModel->sliceById(sliceId));
+        refreshPanStatusOverlays();
+    });
+    // Slices that already exist. RadioModel creates Slice A at connect, so on
+    // a reconnect this loop is what re-arms it; sliceAdded has already fired.
+    for (SliceModel* existing : m_radioModel->slices()) {
+        wireSliceStatusOverlayTriggers(existing);
+    }
+
+    // Phase 3F Sub-Epic D Task 13: bind newly-created slices to a pan
+    // and register pan-to-receiver routing in the FFTRouter.
+    //
+    // RadioModel::addSlice stamps the requested pan id on the SliceModel via
+    // setPanKey() (and the transitional initialPanId property) so this handler
+    // knows where to dock the slice. If the slice was added by some other path
+    // (no pan key), we fall back to the active pan. If the requested pan does
+    // not exist yet (e.g. Add Panadapter ran between addSliceOnPan emit and
+    // this slot), we create it on the fly via PanadapterStack::addPanadapter.
+    connect(m_radioModel, &RadioModel::sliceAdded, this,
+            [this](int sliceIndex) {
+        if (!m_panStack) { return; }
+        SliceModel* slice = sliceForAddedIdForTest(m_radioModel, sliceIndex);
+        if (!slice) { return; }
+
+        const QString panKey = slice->panKey();
+        const QString targetPan = panKey.isEmpty()
+                                      ? m_panStack->activePanId()
+                                      : panKey;
+
+        auto* applet = m_panStack->panadapter(targetPan);
+        if (!applet) {
+            applet = m_panStack->addPanadapter(targetPan);
+        }
+        if (applet) {
+            applet->addSlice(sliceIndex);
+        }
+
+        // Phase 3F Sub-Epic I Task 9: re-derive the whole topology instead
+        // of mapping this one pan. The old call keyed the router on
+        // slice->ddcIndex(), which is the hardware DDC number (2..6 on
+        // Saturn-class), while the FFTEngine pool is keyed on stream index
+        // (0..userDdcCount-1) -- plan invariant 3. It also ran too early for
+        // Slice A: the pool is not sized until connect, so Slice A's
+        // addSlice-time bind is a no-op and its streamIndex is still -1 here.
+        // The streamBindingsChanged rebuild picks it up once it binds.
+        rebuildFftRouting();
+
+        // Phase 3F hotfix 2026-05-27: create a per-slice VfoWidget so
+        // operators can see + interact with the new slice.  The existing
+        // wireSliceToSpectrum() above runs for slice 0 (Slice A) and
+        // creates m_vfoWidget; Slice B+ never had a flag, so multi-slice
+        // was invisible.  We add the UI surface here and wire the same
+        // intent signals (Sub-Epic C Task 9 + Sub-Epic E Task 4) plus
+        // the bidirectional freq/mode/filter/AGC/gain/antenna/step state
+        // signals so the new flag stays in sync with its SliceModel and
+        // user clicks on the new flag propagate back to the model.
+        //
+        // What's intentionally NOT done here: per-slice rxChannel/CTUN/
+        // MaxBin/NR/ANF DSP wiring (those hardcode rxChannel(0) today
+        // and are the actual Phase 3F multi-slice DSP epic).  This hotfix
+        // is "make the flag appear + let the operator interact"; the
+        // DSP-side per-slice fanout is the next sub-epic.
+        if (sliceIndex == 0) {
+            // Slice A is handled by wireSliceToSpectrum() which already
+            // ran via the index==0 handler at the top of this file.
+            return;
+        }
+        if (m_vfoWidgetsBySlice.contains(sliceIndex)) {
+            return;
+        }
+        // Phase 3F: route the new flag to the SpectrumWidget that hosts the
+        // slice's pan (resolved from slice->panKey() by spectrumForSlice),
+        // NOT the active pan. This is Bug 1's fix: previously the flag landed
+        // on the active pan and stacked on pan-0 instead of the pan showing
+        // the slice's band. Ported from AetherSDR's sliceAdded path
+        // (MainWindow.cpp:11581 [@6a142807]).
+        SpectrumWidget* sw = spectrumForSlice(slice);
+        if (!sw) { return; }
+        createSliceFlag(slice, sw);
+
+        // Phase 3F: migrate the flag when the slice's owning pan changes.
+        // Remove the VfoWidget from every pan's SpectrumWidget, then re-add
+        // + re-wire it on the new pan resolved by spectrumForSlice(). This
+        // is the panKeyChanged half of Bug 1's fix (the sliceAdded path
+        // above handles initial placement). Ported from AetherSDR's
+        // panIdChanged migration (MainWindow.cpp:11560 [@6a142807]).
+        connect(slice, &SliceModel::panKeyChanged, this,
+                [this, slice](const QString& newPanKey) {
+            const int idx = slice->sliceIndex();
+            // The pan-to-slice association has to move with the flag. Without
+            // this the pan the slice left kept listing it in
+            // associatedSlices() and could keep it as that pan's active
+            // slice, so the old pan went on tuning, and painting the CH tag
+            // for, a slice now shown somewhere else. Ahead of the flag
+            // rebuild's early return below so the association is corrected on
+            // any path that reaches this handler.
+            if (m_panStack) {
+                m_panStack->moveSliceToPan(idx, newPanKey);
+            }
+            if (idx == 0) { return; }  // Slice A flag is the dedicated path
+            if (m_panStack) {
+                for (auto* applet : m_panStack->allApplets()) {
+                    if (applet && applet->spectrumWidget()) {
+                        applet->spectrumWidget()->removeVfoWidget(idx);
+                    }
+                }
+            }
+            m_vfoWidgetsBySlice.remove(idx);
+            SpectrumWidget* dest = spectrumForSlice(slice);
+            if (dest) { createSliceFlag(slice, dest); }
+            // Phase 3F Sub-Epic I Task 9: the slice now feeds a different
+            // pan, so the FFT topology has to follow. Unconditional: the
+            // model changed even when the destination pan does not exist
+            // yet and no flag could be built.
+            rebuildFftRouting();
+        });
+    });
+
+    // Phase 3F Sub-Epic D Task 13: detach a removed slice index from
+    // every pan. The associatedSlices set is small (single-digit) so a
+    // linear scan across all applets is fine.
+    connect(m_radioModel, &RadioModel::sliceRemoved, this,
+            [this](int sliceIndex) {
+        if (m_panStack) {
+            for (auto* applet : m_panStack->allApplets()) {
+                if (applet) { applet->removeSlice(sliceIndex); }
+            }
+        }
+        // Phase 3F hotfix 2026-05-27: remove the per-slice VfoWidget
+        // when its slice goes away.  Slice A's m_vfoWidget is owned by
+        // SpectrumWidget via Qt parent and tied to the singleton slice
+        // lifecycle; the cleanup path for it is fragile (m_vfoWidget is
+        // referenced by lambdas captured in wireSliceToSpectrum), so
+        // skip it here.  Only secondary slice flags are torn down.
+        //
+        // Phase 3F (Bug 1 follow-up): the flag may live on a non-active pan
+        // now that flags route to spectrumForSlice(). Remove from EVERY pan's
+        // SpectrumWidget (removeVfoWidget on a pan that doesn't host it is a
+        // no-op) instead of just the active pan, which would leak the flag.
+        if (sliceIndex != 0 && m_vfoWidgetsBySlice.contains(sliceIndex)) {
+            VfoWidget* victim = m_vfoWidgetsBySlice.take(sliceIndex);
+            if (victim && victim != m_vfoWidget) {
+                bool removed = false;
+                if (m_panStack) {
+                    for (auto* applet : m_panStack->allApplets()) {
+                        if (applet && applet->spectrumWidget()) {
+                            applet->spectrumWidget()->removeVfoWidget(sliceIndex);
+                            removed = true;
+                        }
+                    }
+                }
+                if (!removed) {
+                    // Same orphan hazard as removeVfoWidget: the flag's
+                    // floating buttons belong to the SpectrumWidget, so they
+                    // outlive a bare delete and stay painted on the pan.
+                    victim->destroyFloatingButtons();
+                    victim->deleteLater();
+                }
+            }
+        }
+        // Phase 3F Sub-Epic I Task 9: the removed slice may have been the
+        // last one feeding its pan, or the last one on its stream. Rebuild
+        // from the surviving slice set rather than unsubscribing this pan,
+        // which would also drop any co-hosted slices still showing on it.
+        rebuildFftRouting();
+    });
+
+    // Phase 3F Sub-Epic F Task 6: route wideband bins from RadioModel into
+    // the active pan's SpectrumWidget.  RadioModel emits one
+    // widebandSpectrumReady per ADC per assembled frame; we forward the
+    // bins to the currently-active SpectrumWidget which silently stores
+    // them per ADC.  Per-pan ADC routing (so extended-pan views on the
+    // correct ADC's bins) lands in Sub-Epic F polish (T7-T10).
+    connect(m_radioModel, &RadioModel::widebandSpectrumReady, this,
+            [this](int adcIdx, const QVector<float>& dbmBins) {
+        fanWidebandBinsForTest(m_panStack, adcIdx, dbmBins);
+    });
+
+    // Create the FFTEngine pool on a worker thread (spectrum thread from
+    // architecture).  Sample rate starts at P2 default (768k);
+    // RadioModel::wireSampleRateChanged updates it to the actual wire rate on
+    // each connect (P1=192k, P2=768k).
+    //
+    // Phase 3F Sub-Epic I Task 8: the thread is created BEFORE the engines
+    // now, because createFftEngineForStream parks each engine on it.  Only
+    // stream 0's engine is built here: the SKU's stream count is not known
+    // until connect, and the rest are built on demand as the allocator
+    // claims their DDCs (see the streamCentreChanged handler below).
+    m_fftThread = new QThread(this);
+    m_fftThread->setObjectName(QStringLiteral("SpectrumThread"));
+    createFftEngineForStream(0);
+
     connect(m_radioModel, &RadioModel::wireSampleRateChanged,
             this, [this](double rateHz) {
-        if (m_fftEngine) {
-            QMetaObject::invokeMethod(m_fftEngine, [engine = m_fftEngine, rateHz]() {
+        // Every stream on a P1 radio shares the wire rate, and on P2 the
+        // per-stream rate published by streamCentreChanged is derived from
+        // the same value, so the whole pool follows this signal.
+        for (FFTEngine* engine : std::as_const(m_fftEngines)) {
+            if (!engine) { continue; }
+            QMetaObject::invokeMethod(engine, [engine, rateHz]() {
                 engine->setSampleRate(rateHz);
             });
         }
-        if (m_spectrumWidget) {
-            m_spectrumWidget->setSampleRate(rateHz);
+        if (activeSpectrumWidget()) {
+            activeSpectrumWidget()->setSampleRate(rateHz);
             // Phase 3G-12: preserve the user's current zoom level across
             // sample rate changes. Only reset the visible span if the
             // current bandwidth would now exceed the new DDC sample rate
             // (in which case we clamp to full-span).
-            const double freq = m_spectrumWidget->centerFrequency();
-            const double currentBw = m_spectrumWidget->bandwidth();
+            const double freq = activeSpectrumWidget()->centerFrequency();
+            const double currentBw = activeSpectrumWidget()->bandwidth();
             const double clampedBw = (currentBw > rateHz) ? rateHz : currentBw;
-            m_spectrumWidget->setFrequencyRange(freq, clampedBw);
+            activeSpectrumWidget()->setFrequencyRange(freq, clampedBw);
         }
     });
-    m_fftEngine->setFftSize(4096);
     // Spectrum/waterfall FPS — load persisted value (default 30), apply to
     // BOTH the FFT engine (row production cadence) and the SpectrumWidget
     // display timer (paint cadence) so the two stay locked.  Without this
@@ -1256,67 +3069,115 @@ void MainWindow::buildUI()
     // own 30 fps constructor value, but Setup -> Display -> Spectrum
     // changes did not survive restart.  Persistence write side is in
     // SpectrumDefaultsPage::pushFps.
+    //
+    // Phase 3F Sub-Epic I Task 8: the engine half of this (setOutputFps),
+    // plus the persisted FFT size / window / Hz-per-bin target that used to
+    // follow it, now live in createFftEngineForStream so every pooled engine
+    // comes up on the same display knobs.  Only the SpectrumWidget half is
+    // left here.
     {
         const int persistedFps = qBound(1,
             AppSettings::instance().value(
                 QStringLiteral("DisplaySpectrumFps"),
                 QStringLiteral("30")).toString().toInt(),
             60);
-        m_fftEngine->setOutputFps(persistedFps);
-        if (m_spectrumWidget) {
-            m_spectrumWidget->setDisplayFps(persistedFps);
+        if (activeSpectrumWidget()) {
+            activeSpectrumWidget()->setDisplayFps(persistedFps);
         }
     }
-    // Hz/bin target — persisted in Setup → Display → Spectrum Defaults.
-    // 0 = bins-in-window default (2026-05-08 Option 3).
-    m_fftEngine->setHzPerBinTarget(
-        AppSettings::instance().value(QStringLiteral("DisplayHzPerBinTarget"),
-                                      QStringLiteral("0")).toString().toDouble());
 
-    m_fftThread = new QThread(this);
-    m_fftThread->setObjectName(QStringLiteral("SpectrumThread"));
-    m_fftEngine->moveToThread(m_fftThread);
+    // 2026-05-25 KG4VCF bench fix: elevate the spectrum FFT thread.
+    // 2026-05-26 KG4VCF revisit: bumped from USER_INITIATED to
+    // USER_INTERACTIVE -- the INITIATED tier still let compile workers
+    // preempt the FFT pass during build kickoff, producing visible
+    // waterfall stutter even though the WaterfallTicker had its own
+    // worker thread.  USER_INTERACTIVE puts the FFT thread in the
+    // same scheduling class as audio + GUI so compile workers (DEFAULT)
+    // consistently lose the time-slice race.  See
+    // src/core/audio/RealtimeAudioPriority.h.
+    // The lambda elevates the thread it runs on, so it is thread-scoped, not
+    // engine-scoped: one connection using stream 0's engine as context is
+    // enough for the whole pool.  Engines created later (at connect, when the
+    // SKU's stream count is known) land on an already-elevated thread.
+    connect(m_fftThread, &QThread::started, primaryFftEngine(),
+            []() { NereusSDR::elevateLatencyCriticalThreadPriority(); });
 
-    // Clean up FFTEngine when thread finishes
-    connect(m_fftThread, &QThread::finished, m_fftEngine, &QObject::deleteLater);
-
-    // Wire: RadioModel raw I/Q → FFTEngine (auto-queued: main → spectrum thread)
-    connect(m_radioModel, &RadioModel::rawIqData,
-            m_fftEngine, &FFTEngine::feedIQ);
-
-    // Wire: FFTEngine linear-power frame -> SpectrumWidget render pipeline
-    // (auto-queued: spectrum thread -> main thread).  fftReadyLinear carries
-    // the raw |X[k]|² bins plus windowEnb + dbmOffset metadata so the
+    // Per-engine cleanup (QThread::finished -> deleteLater) and the raw I/Q
+    // feed are wired inside createFftEngineForStream, so engines added after
+    // this point get both.
+    //
+    // The linear-power frame no longer goes straight to activeSpectrumWidget()
+    // -- that resolved to pan 0 permanently and was the reason a secondary pan
+    // never animated.  Each engine's fftReadyLinear now lands in
+    // MainWindow::dispatchFftFrameToPans, which consults the FFTRouter and
+    // pushes the frame to every pan subscribed to that stream.  fftReadyLinear
+    // carries the raw |X[k]|² bins plus windowEnb + dbmOffset metadata so the
     // detector + avenger pipeline reproduces the legacy fftReady dBm output
     // (FFTEngine.cpp:348 [v2.10.3.13]) at display-pixel resolution.  fftReady
     // (full-bin dBm) is kept as a separate signal for chrome / AGC consumers
-    // (ClarityController, NoiseFloorTracker) wired below.
-    connect(m_fftEngine, &FFTEngine::fftReadyLinear,
-            m_spectrumWidget, &SpectrumWidget::updateSpectrumLinear);
+    // (ClarityController, NoiseFloorTracker) wired below; those stay on the
+    // primary engine because each is a single global consumer.
 
     // Phase 3G-8: expose view hooks on RadioModel so Display setup pages can
     // reach the renderer / FFT engine without depending on MainWindow.
-    m_radioModel->setSpectrumWidget(m_spectrumWidget);
-    m_radioModel->setFftEngine(m_fftEngine);
+    m_radioModel->setSpectrumWidget(activeSpectrumWidget());
+    m_radioModel->setFftEngine(primaryFftEngine());
+
+    // Phase 3F Sub-Epic I Task 8: follow each stream's DDC centre + rate.
+    //
+    // RadioModel::bindSliceToStream emits this whenever the allocator claims
+    // or moves a DDC.  The pans showing the stream must recentre with it, or
+    // SpectrumWidget::visibleBinRange maps the incoming bins against a stale
+    // window.  Also cached, because at emit time the router may not yet know
+    // which pan shows the stream (see m_streamWindows in the header).
+    connect(m_radioModel, &RadioModel::streamCentreChanged, this,
+            [this](int streamIndex, double centreHz, int sampleRateHz) {
+        m_streamWindows.insert(streamIndex, StreamWindow{centreHz, sampleRateHz});
+        // This signal is emitted exactly when the allocator claims or moves
+        // a DDC, which is the only way a stream starts producing I/Q, so it
+        // is also the right moment to build that stream's engine. No-op
+        // after the first time.
+        if (FFTEngine* engine = createFftEngineForStream(streamIndex)) {
+            QMetaObject::invokeMethod(engine, [engine, sampleRateHz]() {
+                engine->setSampleRate(static_cast<double>(sampleRateHz));
+            }, Qt::QueuedConnection);
+        }
+        if (m_radioModel) {
+            if (auto* router = m_radioModel->fftRouter()) {
+                for (const QString& panId : router->pansForReceiver(streamIndex)) {
+                    applyStreamWindowToPan(panId, streamIndex);
+                }
+            }
+        }
+    });
+
+    // Phase 3F Sub-Epic I Task 9: any change to which slices sit on which
+    // stream re-derives the FFT topology. This is the authoritative trigger:
+    // it fires from bindSliceToStream AFTER SliceModel::streamIndex is set,
+    // including for Slice A's deferred bind at connect (the pool is not
+    // sized when Slice A is created, so its addSlice-time bind is a no-op
+    // and the sliceAdded rebuild sees streamIndex == -1).
+    connect(m_radioModel, &RadioModel::streamBindingsChanged, this,
+            [this](int, const QVector<int>&) { rebuildFftRouting(); });
 
     // Sub-epic E: flush the rewind ring buffer when the radio disconnects so
     // a new session starts with a clean history. AetherSDR's clearDisplay()
     // did this implicitly; NereusSDR has no equivalent single-call reset, so
     // we plumb the connection-state signal through here. See
     // docs/architecture/phase3g-rx-epic-e-waterfall-scrollback-plan.md task 4.
-    connect(m_radioModel, &RadioModel::connectionStateChanged, m_spectrumWidget,
+    connect(m_radioModel, &RadioModel::connectionStateChanged, activeSpectrumWidget(),
             [this]() {
-        if (!m_radioModel->isConnected() && m_spectrumWidget) {
-            m_spectrumWidget->clearWaterfallHistory();
+        if (!m_radioModel->isConnected() && activeSpectrumWidget()) {
+            activeSpectrumWidget()->clearWaterfallHistory();
         }
     });
 
     // Phase 3Q-8: clicking the spectrum while disconnected opens ConnectionPanel.
-    connect(m_spectrumWidget, &SpectrumWidget::disconnectedClickRequest,
+    connect(activeSpectrumWidget(), &SpectrumWidget::disconnectedClickRequest,
             this, &MainWindow::showConnectionPanel);
 
     // Wire BandPlanManager → SpectrumWidget so the bandplan strip renders on launch.
-    m_spectrumWidget->setBandPlanManager(&m_radioModel->bandPlanManagerMutable());
+    activeSpectrumWidget()->setBandPlanManager(&m_radioModel->bandPlanManagerMutable());
 
     // Phase 3G-9b: no first-launch auto-apply of smooth defaults. Per
     // user decision 2026-04-15, the out-of-box waterfall stays on
@@ -1356,9 +3217,9 @@ void MainWindow::buildUI()
         // Qt::QueuedConnection: MoxController and SpectrumWidget both live on
         // the main thread but a queued connection is used to match the deferred
         // pattern established for the hardwareFlipped connect above.
-        if (m_spectrumWidget) {
+        if (activeSpectrumWidget()) {
             connect(mox, &MoxController::moxStateChanged,
-                    m_spectrumWidget, &SpectrumWidget::setMoxOverlay,
+                    activeSpectrumWidget(), &SpectrumWidget::setMoxOverlay,
                     Qt::QueuedConnection);
         }
 
@@ -1375,10 +3236,10 @@ void MainWindow::buildUI()
         //                              (mirrors Thetis Display.ShowIMDMeasurments,
         //                              display.cs:304-311 [v2.10.3.13])
         // displayduplex stays at SpectrumWidget's default (true) — see header.
-        if (m_spectrumWidget) {
+        if (activeSpectrumWidget()) {
             if (auto* tt = m_radioModel->twoToneController()) {
                 connect(tt, &TwoToneController::twoToneActiveChanged,
-                        m_spectrumWidget, &SpectrumWidget::setTestingIMD);
+                        activeSpectrumWidget(), &SpectrumWidget::setTestingIMD);
             }
             // Phase 3M-4 bench-fix: PureSignal coordinator is late-bound
             // during WDSP-init — at MainWindow build time it's typically
@@ -1390,9 +3251,9 @@ void MainWindow::buildUI()
             // Mirrors the pattern in PureSignalApplet.cpp:118-123 +
             // PsaIndicatorWidget bench-fix.
             auto wireSpectrumToPs = [this](PureSignal* ps) {
-                if (!ps || !m_spectrumWidget) { return; }
+                if (!ps || !activeSpectrumWidget()) { return; }
                 connect(ps, &PureSignal::show2ToneMeasurementsChanged,
-                        m_spectrumWidget,
+                        activeSpectrumWidget(),
                         &SpectrumWidget::setShowIMDMeasurements,
                         Qt::UniqueConnection);
             };
@@ -1456,11 +3317,14 @@ void MainWindow::buildUI()
         bool clarityOn = s.value(QStringLiteral("ClarityEnabled"), QStringLiteral("True"))
                             .toString() == QStringLiteral("True");
         m_clarityController->setEnabled(clarityOn);
-        m_spectrumWidget->setClarityActive(clarityOn);
+        activeSpectrumWidget()->setClarityActive(clarityOn);
     }
 
-    // Feed FFT bins to Clarity (auto-queued: spectrum thread → main)
-    connect(m_fftEngine, &FFTEngine::fftReady,
+    // Feed FFT bins to Clarity (auto-queued: spectrum thread → main).
+    // Primary engine only: ClarityController holds one adaptive-display
+    // state, so it tracks stream 0 rather than whichever stream last
+    // produced a frame. Per-stream Clarity is Phase 3F follow-up work.
+    connect(primaryFftEngine(), &FFTEngine::fftReady,
             m_clarityController, [this](int /*rxId*/, const QVector<float>& binsDbm) {
         m_clarityController->feedBins(binsDbm);
     });
@@ -1469,7 +3333,7 @@ void MainWindow::buildUI()
     auto* nfTracker = new NoiseFloorTracker;
     m_radioModel->setNoiseFloorTracker(nfTracker);
 
-    connect(m_fftEngine, &FFTEngine::fftReady,
+    connect(primaryFftEngine(), &FFTEngine::fftReady,
             this, [nfTracker](int /*rxId*/, const QVector<float>& binsDbm) {
         static constexpr float kFrameIntervalMs = 33.0f;
         nfTracker->feed(binsDbm, kFrameIntervalMs);
@@ -1482,9 +3346,12 @@ void MainWindow::buildUI()
     // the dBm bins emitted here).
     //
     // Algorithm from Thetis wdsp/analyzer.c:800-822 [@501e3f5].
+    //
+    // Primary engine only: setupMaxBinDetector is called with disp=0 (single
+    // display channel), so the detector reads stream 0's bins.
     if (auto* eng = (m_radioModel ? m_radioModel->wdspEngine() : nullptr)) {
-        connect(m_fftEngine, &FFTEngine::fftReady,
-                eng,         &WdspEngine::onSpectrumBinsForMaxBin);
+        connect(primaryFftEngine(), &FFTEngine::fftReady,
+                eng,               &WdspEngine::onSpectrumBinsForMaxBin);
     }
 
     // 2026-05-22 bench fix: MaxBin meter accuracy. The raw FFT bin path
@@ -1495,12 +3362,12 @@ void MainWindow::buildUI()
     // render frame, push the slice's passband peak (from m_renderedPixels,
     // post detector + avenger) into the MaxBin detector so the analog
     // S-meter reads what the operator actually sees on the trace.
-    if (m_spectrumWidget && m_radioModel) {
-        connect(m_spectrumWidget, &SpectrumWidget::spectrumFrameRendered,
+    if (activeSpectrumWidget() && m_radioModel) {
+        connect(activeSpectrumWidget(), &SpectrumWidget::spectrumFrameRendered,
                 this, [this]() {
             auto* eng = m_radioModel ? m_radioModel->wdspEngine() : nullptr;
-            if (!eng || !m_spectrumWidget) { return; }
-            const double dbm = m_spectrumWidget->peakDbmInSlicePassband();
+            if (!eng || !activeSpectrumWidget()) { return; }
+            const double dbm = activeSpectrumWidget()->peakDbmInSlicePassband();
             if (dbm > -400.0) {
                 eng->setMaxBinDbmFromSpectrum(/*disp=*/0, dbm);
             }
@@ -1544,13 +3411,13 @@ void MainWindow::buildUI()
     // Plan 4 D9 (Cluster E): TX filter audio range → spectrum overlay.
     // TransmitModel::filterChanged carries (low, high) audio Hz; SpectrumWidget
     // converts to IQ-space at draw time using m_txMode (set below via slice).
-    if (m_spectrumWidget) {
+    if (activeSpectrumWidget()) {
         connect(&m_radioModel->transmitModel(), &TransmitModel::filterChanged,
-                m_spectrumWidget, &SpectrumWidget::setTxFilterRange);
+                activeSpectrumWidget(), &SpectrumWidget::setTxFilterRange);
 
         // Initial sync from current TransmitModel state.
         const auto& txModel = m_radioModel->transmitModel();
-        m_spectrumWidget->setTxFilterRange(txModel.filterLow(), txModel.filterHigh());
+        activeSpectrumWidget()->setTxFilterRange(txModel.filterLow(), txModel.filterHigh());
     }
 
     // Clarity → SpectrumWidget threshold update + clarityActive flag.
@@ -1562,9 +3429,9 @@ void MainWindow::buildUI()
     // calls were silently overwriting the user's saved thresholds via
     // scheduleSettingsSave() on every Clarity tick.
     connect(m_clarityController, &ClarityController::waterfallThresholdsChanged,
-            m_spectrumWidget, [this](float low, float high) {
-        m_spectrumWidget->setClarityActive(true);
-        m_spectrumWidget->setClarityWaterfallThresholds(low, high);
+            activeSpectrumWidget(), [this](float low, float high) {
+        activeSpectrumWidget()->setClarityActive(true);
+        activeSpectrumWidget()->setClarityWaterfallThresholds(low, high);
     });
 
     // Clarity → SpectrumWidget NF-aware grid (Task 2.9).
@@ -1572,7 +3439,7 @@ void MainWindow::buildUI()
     // noiseFloorChanged fires after EWMA smoothing but before the deadband
     // gate so the grid tracks the floor at every cadence tick.
     connect(m_clarityController, &ClarityController::noiseFloorChanged,
-            m_spectrumWidget, &SpectrumWidget::onNoiseFloorChanged);
+            activeSpectrumWidget(), &SpectrumWidget::onNoiseFloorChanged);
 
     // Task 2.10: per-band NF priming — settle detector.
     // NereusSDR-original — no Thetis equivalent.
@@ -1651,10 +3518,10 @@ void MainWindow::buildUI()
             // still settling.  Auto-clear is internal to the setter (see
             // SpectrumWidget::setNoiseFloorFastAttack — 1000ms timer
             // matching Thetis display.cs:5906 minimum delay).
-            if (m_spectrumWidget) {
+            if (activeSpectrumWidget()) {
                 connect(pan0, &PanadapterModel::bandChanged,
                         this, [this](NereusSDR::Band) {
-                    m_spectrumWidget->setNoiseFloorFastAttack(true);
+                    activeSpectrumWidget()->setNoiseFloorFastAttack(true);
                 });
             }
         }
@@ -1668,7 +3535,7 @@ void MainWindow::buildUI()
     // Stores the last-trigger frequency as a QObject dynamic property on
     // the slice itself — Qt cleans it up when the slice is destroyed, and
     // the same wiring works for slices added later via RadioModel::sliceAdded.
-    if (m_spectrumWidget) {
+    if (activeSpectrumWidget()) {
         // 500 kHz threshold matches Thetis display.cs:905: > 0.5 MHz.
         constexpr double kFastAttackFreqJumpHz = 500000.0;
         constexpr const char* kLastFreqProp = "nfLastFastAttackFreq";
@@ -1681,7 +3548,7 @@ void MainWindow::buildUI()
                 const double last =
                     slice->property(kLastFreqProp).toDouble();
                 if (std::abs(last - freq) > kFastAttackFreqJumpHz) {
-                    m_spectrumWidget->setNoiseFloorFastAttack(true);
+                    activeSpectrumWidget()->setNoiseFloorFastAttack(true);
                 }
                 slice->setProperty(kLastFreqProp, freq);
             });
@@ -1691,10 +3558,130 @@ void MainWindow::buildUI()
         }
         connect(m_radioModel, &RadioModel::sliceAdded, this,
                 [this, subscribeSlice](int index) {
-            const auto slices = m_radioModel->slices();
-            if (index >= 0 && index < slices.size()) {
-                subscribeSlice(slices.at(index));
+            subscribeSlice(sliceForAddedIdForTest(m_radioModel, index));
+        });
+    }
+
+    // Phase 3F Sub-Epic C Task 8: toast on slice-add rejection.
+    // RadioModel::addSliceOnPan() emits sliceAddRejected(reason) when the
+    // SKU cap blocks a +RX click (e.g. "Hermes Lite 2 supports a maximum
+    // of 1 slices"). Surface that for 4 seconds so the operator sees why
+    // the click did nothing.
+    connect(m_radioModel, &RadioModel::sliceAddRejected, this,
+            [this](const QString& reason) {
+        showToast(reason, ToastSeverity::Warning, 4000);
+    });
+
+    // Phase 3F Sub-Epic I closeout, defect F4.
+    //
+    // The operator turned the knob to somewhere no DDC can reach. The VFO has
+    // already snapped back to the last frequency that bound, so the message
+    // has to explain the snap rather than talk about adding a slice, which is
+    // what the rejection used to say. 6 s: it names a frequency the operator
+    // needs time to read.
+    connect(m_radioModel, &RadioModel::sliceRetuneRejected, this,
+            [this](int, const QString& reason) {
+        showToast(reason, ToastSeverity::Warning, 6000);
+    });
+
+    // Phase 3F Sub-Epic I closeout, defect F3.
+    //
+    // The 1-ADC HERMES class drops every extra receiver the moment PureSignal
+    // transmits or diversity engages. That is what Thetis does and it stays,
+    // but Thetis says nothing about it either, so on the bench a slice simply
+    // stopped producing audio with no explanation. Same surface as the
+    // rejection message above; 6 s because it names slice letters the
+    // operator has to map back to their flags.
+    //
+    // This is the notice that produced the 2026-07-30 bench report: it fires
+    // on MOX with PureSignal running, which is exactly when the operator most
+    // needs the PureSignal indicator and the TX badge it used to cover. It is
+    // a toast for that reason and must stay one.
+    connect(m_radioModel, &RadioModel::streamsSuspended, this,
+            [this](const QVector<int>& streams, const QString& reason) {
+        if (streams.isEmpty()) {
+            // Everything is back. Take the notice down rather than leaving a
+            // stale one on screen for its full timeout: on unkey the streams
+            // return in well under six seconds.
+            if (m_suspendToast) { m_suspendToast->close(); }
+            return;
+        }
+        m_suspendToast = showToast(reason, ToastSeverity::Warning, 6000);
+    });
+
+    // Phase 3F closeout — Sub-Epic E Task 6 consumer wire-up.
+    // antennaAutoSwitched(sliceIdx, oldAnt, newAnt) is emitted when an
+    // AlexController conflict-policy re-route moves a slice off its old
+    // antenna onto a new one. MainWindow constructs an AntennaSwitchToast
+    // anchored to the MainWindow bottom-right corner, 8 s auto-dismiss,
+    // UNDO button logs (real undo wires when the conflict-detection state
+    // machine lands).
+    connect(m_radioModel, &RadioModel::antennaAutoSwitched, this,
+            [this](int sliceIdx, const QString& oldAnt, const QString& newAnt) {
+        const QString msg = QStringLiteral("Slice %1 moved from %2 to %3.")
+                                .arg(QChar(QLatin1Char('A' + sliceIdx)),
+                                     oldAnt, newAnt);
+        auto* toast = new AntennaSwitchToast(msg, this);
+        toast->setAttribute(Qt::WA_DeleteOnClose);
+        const QRect mwGeom = frameGeometry();
+        toast->move(mwGeom.right() - toast->width() - 20,
+                     mwGeom.bottom() - toast->height() - 50);
+        toast->show();
+        connect(toast, &AntennaSwitchToast::undoRequested, this,
+                [sliceIdx, oldAnt]() {
+            qCInfo(lcContainer) << "AntennaSwitchToast: undo requested for slice"
+                                 << sliceIdx << "(would revert to" << oldAnt
+                                 << ")  -  real undo wires when conflict-detection lands";
+        });
+    });
+
+    // Phase 3F closeout — Sub-Epic E Task 7 consumer wire-up.
+    // txBoundReRouteRequested(proposedAntenna, existingAntenna) opens a
+    // modal TxBoundConfirmDialog with three outcomes (Cancelled /
+    // UseExistingAntenna / ConfirmReroute). Today we log the outcome;
+    // outcome routing to AlexController lands when the conflict-detection
+    // state machine in addSliceOnPan ships in a follow-up.
+    connect(m_radioModel, &RadioModel::txBoundReRouteRequested, this,
+            [this](const QString& proposed, const QString& existing) {
+        if (!m_radioModel) { return; }
+        TxBoundConfirmDialog dlg(proposed, existing,
+                                  m_radioModel->slices(), this);
+        dlg.exec();
+        qCInfo(lcContainer) << "TxBoundConfirmDialog: outcome="
+                             << int(dlg.outcome())
+                             << "(0=Cancelled, 1=UseExistingAntenna, 2=ConfirmReroute)";
+    });
+
+    // Phase 3F Sub-Epic C Task 10: TxSliceArbiter state → UI updates.
+    // When the TX-bound slice flips (via VfoWidget badge click in T9, or
+    // any future programmatic path), update the matching VfoWidget badge
+    // and post a 2-second "TX > Slice X" status toast.
+    //
+    // Sub-Epic D expands this single-VfoWidget update to iterate the full
+    // per-pan flag collection (one VfoWidget per slice on multi-pan
+    // layouts).  Phase 3F hotfix 2026-05-27 made that fanout live: every
+    // VfoWidget tracked in m_vfoWidgetsBySlice (Slice A + any Slice B+
+    // flags auto-created on sliceAdded) now gets its TX badge updated
+    // to reflect the arbiter's current bound slice.
+    if (TxSliceArbiter* arb = m_radioModel->txSliceArbiter()) {
+        connect(arb, &TxSliceArbiter::txBoundSliceChanged, this,
+                [this](int oldId, int newId) {
+            for (auto it = m_vfoWidgetsBySlice.constBegin();
+                 it != m_vfoWidgetsBySlice.constEnd(); ++it) {
+                VfoWidget* flag = it.value();
+                if (flag) {
+                    flag->setTxSlice(flag->sliceIndex() == newId);
+                }
             }
+            // oldId < 0 is the arbiter's initial bind (TxSliceArbiter::
+            // syncToSliceList), not an operator handoff: the transmitter
+            // did not move, it acquired its first home when the first slice
+            // appeared. Announcing "TX > Slice A" on every connect would be
+            // noise about something that did not happen.
+            if (oldId < 0) { return; }
+            showToast(QStringLiteral("TX > Slice %1")
+                          .arg(QChar(QLatin1Char('A' + newId))),
+                      ToastSeverity::Info, 2000);
         });
     }
 
@@ -1702,18 +3689,18 @@ void MainWindow::buildUI()
     //   if (rx == 1) FastAttackNoiseFloorRX1 = true;
     // Fires on both RX→TX and TX→RX transitions; the buffer-clear pulse on
     // either edge resets the noise-floor settling window.
-    if (m_spectrumWidget) {
+    if (activeSpectrumWidget()) {
         connect(&m_radioModel->transmitModel(), &TransmitModel::moxChanged,
                 this, [this](bool) {
-            m_spectrumWidget->setNoiseFloorFastAttack(true);
+            activeSpectrumWidget()->setNoiseFloorFastAttack(true);
         });
     }
 
     // When Clarity pauses or is disabled, let legacy AGC resume.
     connect(m_clarityController, &ClarityController::pausedChanged,
-            m_spectrumWidget, [this](bool paused) {
+            activeSpectrumWidget(), [this](bool paused) {
         if (paused) {
-            m_spectrumWidget->setClarityActive(false);
+            activeSpectrumWidget()->setClarityActive(false);
         }
     });
 
@@ -1736,31 +3723,31 @@ void MainWindow::buildUI()
         // These three signals were emitted but never connected — moving the
         // WF Gain / WF Black Level sliders and the Scheme combo did nothing.
         connect(m_overlayPanel, &SpectrumOverlayPanel::wfColorGainChanged,
-                m_spectrumWidget, &SpectrumWidget::setWfColorGain);
+                activeSpectrumWidget(), &SpectrumWidget::setWfColorGain);
         connect(m_overlayPanel, &SpectrumOverlayPanel::wfBlackLevelChanged,
-                m_spectrumWidget, &SpectrumWidget::setWfBlackLevel);
+                activeSpectrumWidget(), &SpectrumWidget::setWfBlackLevel);
         connect(m_overlayPanel, &SpectrumOverlayPanel::colorSchemeChanged,
-                m_spectrumWidget, [this](int idx) {
+                activeSpectrumWidget(), [this](int idx) {
             // colorSchemeChanged carries a raw combo index (int); setWfColorScheme
             // takes the WfColorScheme enum — adapt with a bounds-checked cast.
             const int schemeCount = static_cast<int>(WfColorScheme::Count);
-            m_spectrumWidget->setWfColorScheme(
+            activeSpectrumWidget()->setWfColorScheme(
                 static_cast<WfColorScheme>(qBound(0, idx, schemeCount - 1)));
         });
 
         // B8 Task 21: wire Cursor Freq toggle to SpectrumWidget visibility guard.
         connect(m_overlayPanel, &SpectrumOverlayPanel::cursorFreqVisibleChanged,
-                m_spectrumWidget, &SpectrumWidget::setCursorFreqVisible);
+                activeSpectrumWidget(), &SpectrumWidget::setCursorFreqVisible);
 
         // B8 Task 22: wire Fill Color button to SpectrumWidget::setFillColor.
         connect(m_overlayPanel, &SpectrumOverlayPanel::fillColorChanged,
-                m_spectrumWidget, &SpectrumWidget::setFillColor);
+                activeSpectrumWidget(), &SpectrumWidget::setFillColor);
 
         // B8 fix-up: wire Fill Alpha slider to SpectrumWidget::setFillAlpha.
         // The slider emitted fillAlphaChanged but had no connect — opacity
         // never reached the renderer.
         connect(m_overlayPanel, &SpectrumOverlayPanel::fillAlphaChanged,
-                m_spectrumWidget, &SpectrumWidget::setFillAlpha);
+                activeSpectrumWidget(), &SpectrumWidget::setFillAlpha);
 
         // B8 Task 24: wire "More Display Options →" link to Setup → Display.
         connect(m_overlayPanel, &SpectrumOverlayPanel::openSetupRequested,
@@ -1797,14 +3784,19 @@ void MainWindow::buildUI()
     //
     // Hysteresis: only replan when computed/current is outside
     // [0.66, 1.5].  Avoids replan thrash on smooth zoom drag.
+    //
+    // Phase 3F Sub-Epic I Task 8: the primary engine, because this lambda is
+    // wired to pan 0's SpectrumWidget (the signal is per-pan). Per-pan
+    // auto-zoom on secondary pans is Phase 3F follow-up work.
     constexpr int kAutoZoomMaxFftSize = 65536;
-    connect(m_spectrumWidget, &SpectrumWidget::bandwidthChangeRequested,
+    connect(activeSpectrumWidget(), &SpectrumWidget::bandwidthChangeRequested,
             this, [this, kAutoZoomMaxFftSize](double bwHz) {
-        if (!m_fftEngine || !m_spectrumWidget) { return; }
-        const double sampleRate = m_spectrumWidget->sampleRate();
+        FFTEngine* engine = primaryFftEngine();
+        if (!engine || !activeSpectrumWidget()) { return; }
+        const double sampleRate = activeSpectrumWidget()->sampleRate();
         if (sampleRate <= 0.0 || bwHz <= 0.0) { return; }
 
-        const int baseline = m_fftEngine->fftSizeBaseline();
+        const int baseline = engine->fftSizeBaseline();
 
         // Hz/bin override (Option 3 from the 2026-05-08 design).  When the
         // user has set a non-zero target Hz/bin in
@@ -1816,7 +3808,7 @@ void MainWindow::buildUI()
         // still applies, so the FFT slider remains a minimum-FFT-size
         // knob.  When hzPerBinTarget == 0 we use the original
         // bins-in-window default (constant K = baseline).
-        const double hzPerBinTarget = m_fftEngine->hzPerBinTarget();
+        const double hzPerBinTarget = engine->hzPerBinTarget();
         double desired;
         if (hzPerBinTarget > 0.0) {
             desired = sampleRate / hzPerBinTarget;
@@ -1838,7 +3830,7 @@ void MainWindow::buildUI()
         targetSize = (std::min)(targetSize, (std::max)(baseline, kAutoZoomMaxFftSize));
 
         // Hysteresis: only replan if outside [current * 2/3, current * 3/2].
-        const int currentSize = m_fftEngine->fftSize();
+        const int currentSize = engine->fftSize();
         if (currentSize > 0) {
             const double ratio = static_cast<double>(targetSize)
                                  / static_cast<double>(currentSize);
@@ -1847,7 +3839,7 @@ void MainWindow::buildUI()
             }
         }
 
-        m_fftEngine->setFftSize(targetSize);
+        engine->setFftSize(targetSize);
     });
 
     m_fftThread->start();
@@ -1871,7 +3863,12 @@ void MainWindow::buildUI()
             this, [this](bool ok) {
         if (!ok) { return; }
         QTimer::singleShot(0, this, [this]() {
-            RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
+            // Phase 3F Sub-Epic J Task 11: RadioModel::rxChannelForSlice()
+            // replaces the direct wdspEngine()->rxChannel() reach. Still
+            // channel 0 here on purpose -- this is the boot-time seed, before
+            // any slice but A exists, and the activeSliceChanged handler
+            // below immediately supersedes it once other slices are added.
+            RxChannel* rxCh = m_radioModel->rxChannelForSlice(0);
             if (rxCh) {
                 m_meterPoller->setRxChannel(rxCh);
                 m_meterPoller->start();
@@ -1891,6 +3888,26 @@ void MainWindow::buildUI()
         });
     });
 
+    // Phase 3F Sub-Epic J Task 4: the container S-meter is attached to no
+    // flag, so it must show the active slice, not always slice A. The
+    // WDSP-init binding above is only the seed for the first slice --
+    // MeterPoller::pollSMeter() (which drives the analog SMeterWidget
+    // installed as AppletPanelWidget's fixed header, i.e. the widget this
+    // wiring targets) reads m_rxChannel exclusively and that pointer never
+    // moved after the seed, so the container meter showed RxChannel 0
+    // whatever the operator was working. The per-flag mini S-meters do not
+    // have this bug: they already resolve their own channel per slice via
+    // MeterPoller::pollSliceSMeters() (wdspEngine()->rxChannel(sliceId)), so
+    // they are untouched here.
+    connect(m_radioModel, &RadioModel::activeSliceChanged, this, [this](int) {
+        SliceModel* slice = m_radioModel->activeSlice();
+        if (!slice) { return; }
+        // Phase 3F Sub-Epic J Task 11: RadioModel::rxChannelForSlice()
+        // replaces the direct wdspEngine()->rxChannel() reach.
+        RxChannel* rxCh = m_radioModel->rxChannelForSlice(slice->sliceIndex());
+        if (rxCh) { m_meterPoller->setRxChannel(rxCh); }
+    });
+
     // H.2 (Phase 3M-1a): wire MoxController::moxStateChanged → MeterPoller::setInTx.
     // Switches the poll set between RX meters (TX off) and TX meters (TX on).
     // From Thetis dsp.cs:995-1050 [v2.10.3.13] CalculateTXMeter dispatch.
@@ -1901,18 +3918,15 @@ void MainWindow::buildUI()
                 m_meterPoller, &MeterPoller::setInTx,
                 Qt::QueuedConnection);
 
-        // ── Phase 3M-1b K.2: MOX rejection → status-bar toast ───────────────
+        // ── Phase 3M-1b K.2: MOX rejection → toast ──────────────────────────
         // moxRejected fires when BandPlanGuard::checkMoxAllowed() rejects a
         // setMox(true) request (wrong mode, out-of-band freq, cross-band TX).
-        // showMessage(reason, 3000) presents the rejection reason for 3 seconds
-        // in the Qt status bar, matching the bandClickIgnored toast pattern
-        // wired at MainWindow.cpp:418.  The toast is transient — it clears
-        // automatically and does not affect status-bar layout or persistence.
+        // Presented for 3 seconds, matching the bandClickIgnored pattern.
+        // The toast is transient: it clears automatically and does not affect
+        // bottom-bar layout or persistence.
         connect(mox, &MoxController::moxRejected,
                 this, [this](const QString& reason) {
-            if (QStatusBar* sb = statusBar()) {
-                sb->showMessage(reason, 3000);
-            }
+            showToast(reason, ToastSeverity::Warning, 3000);
         });
     }
 
@@ -2152,10 +4166,10 @@ void MainWindow::populateDefaultMeter()
     // floor will still differ by 10*log10(NBP_BW/bin_BW) which is physics
     // (S-meter is passband-integrated; spectrum is per-bin) and matches
     // Thetis behavior.
-    if (m_spectrumWidget && m_radioModel) {
+    if (activeSpectrumWidget() && m_radioModel) {
         auto pushSpectrumCal = [this](double db) {
-            if (m_spectrumWidget) {
-                m_spectrumWidget->setDbmCalOffset(static_cast<float>(db));
+            if (activeSpectrumWidget()) {
+                activeSpectrumWidget()->setDbmCalOffset(static_cast<float>(db));
             }
         };
         connect(m_radioModel, &RadioModel::rxMeterOffsetChanged,
@@ -2174,8 +4188,8 @@ void MainWindow::populateDefaultMeter()
     // window stays at the OLD DDC-relative bin range until the next
     // slice retune (or CTUN toggle).  Observable as "MaxBin meter
     // drifts off the carrier when I pan the panadapter."
-    if (m_spectrumWidget) {
-        connect(m_spectrumWidget, &SpectrumWidget::ddcCenterFrequencyChanged,
+    if (activeSpectrumWidget()) {
+        connect(activeSpectrumWidget(), &SpectrumWidget::ddcCenterFrequencyChanged,
                 this, [this](double ddcCenter) {
             if (!m_radioModel) { return; }
             auto* eng = m_radioModel->wdspEngine();
@@ -2217,9 +4231,16 @@ void MainWindow::populateDefaultMeter()
         // Connect 2: radio barefoot/Aurora TX meters (STANDBY or no amp).
         // RadioStatus::powerChanged carries (fwdWatts, revWatts, swr); we
         // take fwdWatts (arg 1) and swr (arg 3) to match setTxMeters() signature.
+        //
+        // 2026-05-25 KG4VCF bench fix: gate on isAnyExternalAmpInOperate
+        // (cross-vendor) instead of just PGXL state.  RadioStatus::powerChanged
+        // fires much faster than RF-Kit's 1 Hz REST poll, so when RF-Kit
+        // (without PGXL) is in OPERATE, the radio's barefoot reading was
+        // overwriting the RF-Kit amp reading at ~20 Hz.  Now barefoot only
+        // feeds when no external amp is amplifying.
         connect(&m_radioModel->radioStatus(), &RadioStatus::powerChanged,
                 this, [this, sm](double fwd, double /*rev*/, double swr) {
-            if (!m_radioModel->hasAmplifier() || !m_radioModel->ampOperate()) {
+            if (!m_radioModel->isAnyExternalAmpInOperate()) {
                 sm->setTxMeters(static_cast<float>(fwd), static_cast<float>(swr));
             }
         });
@@ -2233,11 +4254,14 @@ void MainWindow::populateDefaultMeter()
         // Connect 4: OPERATE/STANDBY state change re-evaluates scale.
         // When STANDBY: hasAmplifier()=true but we want barefoot scale,
         // so pass false (treat as absent) until OPERATE resumes.
+        //
+        // 2026-05-25 KG4VCF bench fix: use the cross-vendor predicate so
+        // PGXL going STANDBY does not flip the SMeterWidget back to
+        // barefoot scale if RF-Kit is still amplifying (and vice versa).
         connect(m_radioModel, &RadioModel::ampStateChanged, this,
                 [this, sm]() {
-            const bool amplifying = m_radioModel->hasAmplifier()
-                                    && m_radioModel->ampOperate();
-            sm->setPowerScale(/*maxWatts=*/0, amplifying);
+            sm->setPowerScale(/*maxWatts=*/0,
+                              m_radioModel->isAnyExternalAmpInOperate());
         });
 
         // Connect 5: 2026-05-20 bench fix -- SMeterWidget::setTransmitting
@@ -2253,6 +4277,55 @@ void MainWindow::populateDefaultMeter()
             connect(mox, &MoxController::moxStateChanged,
                     sm, &SMeterWidget::setTransmitting);
         }
+    }
+
+    // Phase 3P-III review fix C1: wire the production SMeterWidget to the
+    // cross-vendor RF-Kit aggregate signals.
+    //
+    // The displayed SMeterWidget is constructed via the QWidget-only ctor in
+    // AppletPanelWidget, so the SMeterWidget(RadioModel*, QWidget*) overload +
+    // connectToRadioModel() added in Task 13 are dead code in production.
+    // externalAmpOperateChanged and externalAmpFwdSwrUpdated fire correctly
+    // from RadioModel but the displayed widget never subscribed, leaving the
+    // 2 kW scale switch silent on RF-Kit OPERATE and the TX needle frozen.
+    //
+    // Wire here, immediately after the analogous PGXL SMeterWidget block,
+    // so all SMeterWidget signal connections live in one place. PGXL paths
+    // (Connect 1..5 above) remain unchanged; these two add RF-Kit on top.
+    if (SMeterWidget* sm = m_appletPanel->smeterWidget()) {
+        // RF-Kit Connect A: snap 2 kW scale on RF-Kit OPERATE.
+        // externalAmpOperateChanged is now transition-gated (fix I2) so this
+        // fires only when the amp enters or leaves OPERATE, not every poll.
+        //
+        // 2026-05-25 KG4VCF bench fix: use the cross-vendor predicate so
+        // RF-Kit going STANDBY does not flip back to barefoot scale if
+        // PGXL is still amplifying.
+        connect(m_radioModel, &RadioModel::externalAmpOperateChanged, this,
+                [this, sm](bool /*inOp*/) {
+            sm->setPowerScale(/*maxWatts=*/0,
+                              m_radioModel->isAnyExternalAmpInOperate());
+        });
+
+        // RF-Kit Connect B: feed RF-Kit forward power + SWR to the TX needle.
+        // externalAmpFwdSwrUpdated carries watts (int) and SWR (float);
+        // setTxMeters takes (float fwdPower, float swr).
+        //
+        // 2026-05-25 KG4VCF bench fix: gate so a STANDBY amp doesn't push
+        // 0 W into the needle while the radio's barefoot reading is also
+        // wanting the meter.  Only fire when the amp is actually amplifying.
+        //
+        // The gate is RF-Kit's own OPERATE state, not the cross-vendor
+        // isAnyExternalAmpInOperate(): this signal carries RF-Kit telemetry
+        // exclusively, so the cross-vendor form let a PGXL in OPERATE pass
+        // RF-Kit /power polls through from an RF2K-S sitting in STANDBY,
+        // clobbering the live PGXL reading with RF-Kit's 0 W once per poll.
+        // Codex review, PR #291.
+        connect(m_radioModel, &RadioModel::externalAmpFwdSwrUpdated, this,
+                [this, sm](int fwd, float swr) {
+            if (m_radioModel->isRfKitInOperate()) {
+                sm->setTxMeters(static_cast<float>(fwd), swr);
+            }
+        });
     }
 
     // Connect 5: Phase 3P-II Phase 4 Task 97 -- PGXL power cap soft-alert.
@@ -2286,6 +4359,58 @@ void MainWindow::populateDefaultMeter()
         m_rxApplet->setBoardCapabilities(m_radioModel->boardCapabilities());
         m_rxApplet->setHpsdrSku(m_radioModel->hardwareProfile().model);
     });
+
+    // ── Phase 3F (Bug 3): per-slice RX applet + active-slice switching ──────
+    //
+    // Clicking a slice tab in the RX applet, or clicking a VfoWidget flag,
+    // routes to RadioModel::setActiveSlice. RadioModel::activeSliceChanged
+    // then rebinds the RX applet to the new active slice, refreshes the tab
+    // row highlight, and updates the static badge. The slice tab row is also
+    // refreshed whenever the slice list changes (add/remove). Workflow ported
+    // from AetherSDR (RxApplet::sliceActivationRequested ->
+    // MainWindow::setActiveSlice at MainWindow.cpp:3277, and the
+    // setActiveSliceInternal rebind at MainWindow.cpp:12132 [@6a142807]).
+    //
+    // setActiveSliceById for the same reason the flag path uses it:
+    // updateSliceButtons keys each tab's button-group id to the slice's own
+    // sliceIndex() rather than its list position, so the id has to be
+    // converted rather than indexed with.
+    connect(m_rxApplet, &RxApplet::sliceActivationRequested, this,
+            [this](int sliceId) {
+        if (m_radioModel) { m_radioModel->setActiveSliceById(sliceId); }
+    });
+
+    auto refreshSliceTabs = [this]() {
+        if (m_rxApplet && m_radioModel) {
+            m_rxApplet->updateSliceButtons(
+                m_radioModel->slices(),
+                m_radioModel->activeSlice()
+                    ? m_radioModel->activeSlice()->sliceIndex()
+                    : -1);
+        }
+    };
+
+    connect(m_radioModel, &RadioModel::activeSliceChanged, this,
+            [this](int sliceIndex) {
+        if (!m_radioModel) { return; }
+        SliceModel* active = m_radioModel->activeSlice();
+        // Rebind the RX applet to the new active slice + refresh its badge.
+        if (m_rxApplet) {
+            m_rxApplet->setSlice(active);
+            if (active) { m_rxApplet->setSliceIndex(active->sliceIndex()); }
+        }
+        // Refresh the tab row highlight (uses sliceIndex param for the
+        // checked state even if activeSlice() is briefly stale).
+        if (m_rxApplet) {
+            m_rxApplet->updateSliceButtons(m_radioModel->slices(), sliceIndex);
+        }
+    });
+
+    // Keep the tab row in sync with the slice population.
+    connect(m_radioModel, &RadioModel::sliceAdded, this,
+            [refreshSliceTabs](int) { refreshSliceTabs(); });
+    connect(m_radioModel, &RadioModel::sliceRemoved, this,
+            [refreshSliceTabs](int) { refreshSliceTabs(); });
 
     // TxApplet — NYI shell (Phase 3I-1)
     // 3M-3a-ii Batch 6: cache pointer in m_txApplet so SetupDialog
@@ -2391,10 +4516,8 @@ void MainWindow::populateDefaultMeter()
         }
         connect(m_radioModel, &RadioModel::sliceAdded, txApplet,
                 [this, subscribeToSlice](int index) {
-                    const auto slices = m_radioModel->slices();
-                    if (index >= 0 && index < slices.size()) {
-                        subscribeToSlice(slices[index]);
-                    }
+                    subscribeToSlice(
+                        sliceForAddedIdForTest(m_radioModel, index));
                 });
     }
 
@@ -2526,6 +4649,129 @@ void MainWindow::populateDefaultMeter()
         });
     }
 
+    // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
+    // Constructed unconditionally alongside the other peripheral applets.
+    // Visibility is gated on rfKitEnabled() via the AppletVisibilityController
+    // availability axis (set below, live-updated via rfKitEnabledChanged).
+    //
+    // Data-flow and context-menu signals are wired once here in buildUI()
+    // because rfKitConnection() returns the same permanent object for the
+    // app lifetime (RadioModel creates it in its ctor, never destroys it).
+    // This differs from the AmpApplet/TunerApplet pattern (wired in
+    // onConnectionStateChanged) because PGXL/TGXL use PGX-specific
+    // auto-connect logic gated on fourO3AEnabled; the RF-Kit connects
+    // independently at startup when rfKitEnabled is true.
+    m_rfKitApplet = new Rf2ksApplet(m_radioModel, nullptr);
+    panel->addApplet(m_rfKitApplet);
+
+    {
+        // Connection -> applet data flow.
+        Rf2ksConnection* rfKitConn = m_radioModel->rfKitConnection();
+        if (rfKitConn) {
+            connect(rfKitConn, &Rf2ksConnection::powerUpdated,
+                    m_rfKitApplet, &Rf2ksApplet::setPower);
+            connect(rfKitConn, &Rf2ksConnection::tunerUpdated,
+                    m_rfKitApplet, &Rf2ksApplet::setTuner);
+            connect(rfKitConn, &Rf2ksConnection::antennasUpdated,
+                    m_rfKitApplet, &Rf2ksApplet::setAntennas);
+            connect(rfKitConn, &Rf2ksConnection::activeAntennaUpdated,
+                    m_rfKitApplet, &Rf2ksApplet::setActiveAntenna);
+            connect(rfKitConn, &Rf2ksConnection::operateModeUpdated,
+                    m_rfKitApplet, &Rf2ksApplet::setOperateMode);
+            connect(rfKitConn, &Rf2ksConnection::connected,
+                    this, [this]() {
+                if (m_rfKitApplet) {
+                    m_rfKitApplet->setConnectedState(true);
+                }
+            });
+            connect(rfKitConn, &Rf2ksConnection::disconnected,
+                    this, [this]() {
+                if (m_rfKitApplet) {
+                    m_rfKitApplet->setConnectedState(false);
+                }
+            });
+            connect(rfKitConn, &Rf2ksConnection::infoUpdated,
+                    this, [this](const QString& /*deviceName*/,
+                                 const QString& softwareVersion,
+                                 const QString& nicknameFromAmp) {
+                if (m_rfKitApplet) {
+                    m_rfKitApplet->setNicknameAndVersion(nicknameFromAmp, softwareVersion);
+                }
+            });
+
+            // Applet -> connection (antenna click, operate toggle).
+            connect(m_rfKitApplet, &Rf2ksApplet::antennaRequested,
+                    rfKitConn, &Rf2ksConnection::setActiveAntenna);
+            connect(m_rfKitApplet, &Rf2ksApplet::operateToggled,
+                    this, [this](bool wantOperate) {
+                Rf2ksConnection* conn = m_radioModel->rfKitConnection();
+                if (!conn) { return; }
+                conn->setOperateMode(wantOperate
+                    ? QStringLiteral("OPERATE")
+                    : QStringLiteral("STANDBY"));
+            });
+        }
+
+        // Context menu signals (always wired regardless of connection state).
+        connect(m_rfKitApplet, &Rf2ksApplet::navigationRequested,
+                this, &MainWindow::openSetup);
+
+        connect(m_rfKitApplet, &Rf2ksApplet::connectionToggleRequested,
+                this, [this]() {
+            Rf2ksConnection* conn = m_radioModel->rfKitConnection();
+            if (!conn) { return; }
+            if (conn->isConnected()) {
+                conn->disconnect();
+            } else {
+                // Per-radio peripherals refactor (2026-05-26): host/port
+                // live under hardware/<mac>/peripherals/.  When no radio
+                // is connected, peripheralValue() returns the default and
+                // the empty-host gate below makes this a safe no-op.
+                const QString host = m_radioModel->peripheralValue(
+                    QStringLiteral("RfKit_ManualIp"));
+                const quint16 port = static_cast<quint16>(
+                    m_radioModel->peripheralValue(
+                        QStringLiteral("RfKit_ManualPort"),
+                        QStringLiteral("8080")).toUInt());
+                if (!host.isEmpty()) {
+                    conn->connectToAmp(host, port);
+                }
+            }
+        });
+
+        connect(m_rfKitApplet, &Rf2ksApplet::diagnosticsCopyRequested,
+                this, [this]() {
+            Rf2ksConnection* conn = m_radioModel->rfKitConnection();
+            QString diag;
+            diag += QStringLiteral("RF-Kit RF2K-S diagnostics\n");
+            if (conn) {
+                diag += QStringLiteral("Host: %1:%2\n")
+                            .arg(conn->peerAddress()).arg(conn->peerPort());
+                diag += QStringLiteral("Version: %1\n")
+                            .arg(conn->softwareVersion());
+                diag += QStringLiteral("Polls OK/failed: %1/%2\n")
+                            .arg(conn->pollsSucceeded())
+                            .arg(conn->pollsFailed());
+                diag += QStringLiteral("RTT avg: %1 ms\n")
+                            .arg(conn->rttAvgLast10Ms());
+            } else {
+                diag += QStringLiteral("(connection unavailable)\n");
+            }
+            QGuiApplication::clipboard()->setText(diag);
+        });
+    }
+
+    // Antenna labels: load operator-set labels from AppSettings at startup.
+    // Keys: RfKit_Ant1_Label .. RfKit_Ant4_Label (stored by RfKitPage.cpp).
+    // If a key is absent or empty the applet already shows "ANT N" by default.
+    for (int i = 1; i <= 4; ++i) {
+        const QString label = AppSettings::instance()
+            .value(QStringLiteral("RfKit_Ant%1_Label").arg(i)).toString();
+        if (!label.isEmpty()) {
+            m_rfKitApplet->setAntennaLabel(i, label);
+        }
+    }
+
     // ── Applet visibility controller (Containers > Applets + ☰ menus) ──
     // NereusSDR-original. Backs the show/hide menu surfaces.
     //
@@ -2548,6 +4794,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("PureSignal")] = m_pureSignalApplet;
     m_appletsById[QStringLiteral("Amp")]        = m_ampApplet;
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
+    m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
         m_appletsById[QStringLiteral("Tci")]        = m_tciApplet;
@@ -2588,6 +4835,8 @@ void MainWindow::populateDefaultMeter()
                                 QStringLiteral("Power Genius"), true);
     m_appletVis->registerApplet(QStringLiteral("Tuner"),
                                 QStringLiteral("Tuner Genius"), true);
+    m_appletVis->registerApplet(QStringLiteral("RfKit"),
+                                QStringLiteral("RF-Kit RF2K-S"), true);
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
         m_appletVis->registerApplet(QStringLiteral("Tci"),
@@ -2612,6 +4861,11 @@ void MainWindow::populateDefaultMeter()
     // USB, so initial availability=false. The dspModeChanged lambda
     // below updates this on every mode change.
     m_appletVis->setAvailable(QStringLiteral("Rade"),  false);
+
+    // RF-Kit RF2K-S: available only when the master toggle is enabled.
+    // Default OFF; live-updated via rfKitEnabledChanged below.
+    const bool rfKitOn = m_radioModel && m_radioModel->rfKitEnabled();
+    m_appletVis->setAvailable(QStringLiteral("RfKit"), rfKitOn);
 
     // Apply initial visibility state from the controller (in case
     // AppSettings already had values from a prior session).
@@ -2644,6 +4898,14 @@ void MainWindow::populateDefaultMeter()
             if (!m_appletVis) { return; }
             m_appletVis->setAvailable(QStringLiteral("Amp"),   enabled);
             m_appletVis->setAvailable(QStringLiteral("Tuner"), enabled);
+        });
+
+        // Phase 3P-III Task 14: live-track RF-Kit master toggle so the
+        // RfKit applet availability updates without an app restart.
+        connect(m_radioModel, &RadioModel::rfKitEnabledChanged,
+                this, [this](bool enabled) {
+            if (!m_appletVis) { return; }
+            m_appletVis->setAvailable(QStringLiteral("RfKit"), enabled);
         });
     }
 
@@ -2886,34 +5148,48 @@ void MainWindow::buildMenuBar()
     // =========================================================================
     QMenu* viewMenu = menuBar()->addMenu(QStringLiteral("&View"));
 
+    // Phase 3F Sub-Epic D Task 14: live Pan Layout / Add slice / Float
+    // entries. Replace the NYI submenu and disabled Add/Remove placeholders
+    // with the working stack actions. The bottom-bar +PAN dropdown
+    // (Task 10) is kept as the operator-facing primary; these menu items
+    // are for operators who prefer the menubar / keyboard shortcuts.
     {
-        QMenu* panLayoutMenu = viewMenu->addMenu(QStringLiteral("Pan &Layout"));
-        QActionGroup* layoutGroup = new QActionGroup(this);
-        layoutGroup->setExclusive(true);
-        const struct { const char* label; } layouts[] = {
-            { "&Single" }, { "2 &Vertical" }, { "2 &Horizontal" },
-            { "2×&2" }, { "1+2 &Horizontal" }
-        };
-        bool first = true;
-        for (const auto& l : layouts) {
-            QAction* a = panLayoutMenu->addAction(QString::fromUtf8(l.label));
-            a->setCheckable(true);
-            a->setEnabled(false);
-            a->setToolTip(QStringLiteral("NYI — Phase 3F"));
-            if (first) { a->setChecked(true); first = false; }
-            layoutGroup->addAction(a);
-        }
+        QAction* panLayoutAct = viewMenu->addAction(QStringLiteral("Pan &Layout…"));
+        panLayoutAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
+        panLayoutAct->setToolTip(QStringLiteral(
+            "Pick a panadapter layout template (1 / 2v / 2h / 12h / 2x2)"));
+        connect(panLayoutAct, &QAction::triggered, this, [this]() {
+            if (!m_panStack) { return; }
+            PanLayoutDialog dialog(this);
+            if (dialog.exec() == QDialog::Accepted) {
+                applyPanLayout(dialog.selectedLayout());
+            }
+        });
     }
 
     {
-        QAction* addPanAction = viewMenu->addAction(QStringLiteral("&Add Panadapter"));
-        addPanAction->setEnabled(false);
-        addPanAction->setToolTip(QStringLiteral("NYI — Phase 3F"));
+        QAction* addSliceAct = viewMenu->addAction(
+            QStringLiteral("&Add slice on active pan"));
+        addSliceAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+R")));
+        addSliceAct->setToolTip(QStringLiteral(
+            "Create a new slice on the active panadapter (up to maxSlices())"));
+        connect(addSliceAct, &QAction::triggered, this, [this]() {
+            if (m_panStack && m_radioModel) {
+                m_radioModel->addSliceOnPan(m_panStack->activePanId());
+            }
+        });
     }
+
     {
-        QAction* rmPanAction = viewMenu->addAction(QStringLiteral("&Remove Panadapter"));
-        rmPanAction->setEnabled(false);
-        rmPanAction->setToolTip(QStringLiteral("NYI — Phase 3F"));
+        QAction* floatAct = viewMenu->addAction(
+            QStringLiteral("&Float active pan…"));
+        floatAct->setToolTip(QStringLiteral(
+            "Detach the active panadapter into its own floating window"));
+        connect(floatAct, &QAction::triggered, this, [this]() {
+            if (m_panStack) {
+                m_panStack->floatPanadapter(m_panStack->activePanId());
+            }
+        });
     }
 
     viewMenu->addSeparator();
@@ -2944,8 +5220,8 @@ void MainWindow::buildMenuBar()
             bpGroup->addAction(a);
             const int pt = opt.pt;
             connect(a, &QAction::triggered, this, [this, pt]() {
-                if (m_spectrumWidget) {
-                    m_spectrumWidget->setBandPlanFontSize(pt);
+                if (activeSpectrumWidget()) {
+                    activeSpectrumWidget()->setBandPlanFontSize(pt);
                 }
                 AppSettings::instance().setValue(QStringLiteral("BandPlanFontSize"),
                                                  QString::number(pt));
@@ -3021,6 +5297,27 @@ void MainWindow::buildMenuBar()
         minimalAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
         minimalAction->setEnabled(false);
         minimalAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
+
+    // 2026-05-26 KG4VCF perf instrumentation: toggle the in-spectrum
+    // perf overlay (paint/gap/fft/overlay timings + audio underruns
+    // + UDP drops + memory pressure).  Persisted via AppSettings
+    // "ShowPerfOverlay" by SpectrumWidget::setShowPerfOverlay; the
+    // menu item just exposes the toggle.
+    {
+        QAction* perfAction = viewMenu->addAction(
+            QStringLiteral("&Performance Overlay"));
+        perfAction->setCheckable(true);
+        perfAction->setChecked(activeSpectrumWidget() && activeSpectrumWidget()->showPerfOverlay());
+        perfAction->setToolTip(QStringLiteral(
+            "Show paint/gap/fft/overlay timings + audio underruns + UDP drops"
+            " + memory pressure in a corner of the spectrum panel."
+            "  Useful for diagnosing jitter under system load."));
+        connect(perfAction, &QAction::toggled, this, [this](bool on) {
+            if (activeSpectrumWidget()) {
+                activeSpectrumWidget()->setShowPerfOverlay(on);
+            }
+        });
     }
 
     viewMenu->addSeparator();
@@ -3111,16 +5408,29 @@ void MainWindow::buildMenuBar()
     }
 
     // ── Single-toggle DSP actions ──────────────────────────────────────────
-    // ANF writes through RxChannel directly (SliceModel::anfEnabled is a
-    // Task 17 follow-up). Cross-surface sync is therefore not yet possible
-    // for ANF; the action emits its own toggled() but isn't checked from
-    // model state. SNB / APF / BIN go through SliceModel and are synced.
+    // ANF now goes through SliceModel::anfEnabled (Phase 3F Sub-Epic J
+    // Task 3) and is kept in sync below. SNB / APF / BIN go through
+    // SliceModel and are synced too.
     {
         QAction* anfAction = dspMenu->addAction(QStringLiteral("&ANF"));
         anfAction->setCheckable(true);
         connect(anfAction, &QAction::toggled, this, [this](bool on) {
-            RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-            if (rxCh) { rxCh->setAnfEnabled(on); }
+            // A control attached to no flag targets the active slice, which
+            // is whichever flag the operator last clicked. Resolved at
+            // invocation, not captured, so it follows focus.
+            if (SliceModel* slice = m_radioModel->activeSlice()) {
+                slice->setAnfEnabled(on);
+            }
+        });
+
+        // Reflect the active slice when focus moves, without re-emitting
+        // toggled back into the handler above.
+        connect(m_radioModel, &RadioModel::activeSliceChanged, this,
+                [this, anfAction](int) {
+            if (SliceModel* slice = m_radioModel->activeSlice()) {
+                QSignalBlocker block(anfAction);
+                anfAction->setChecked(slice->anfEnabled());
+            }
         });
     }
 
@@ -3201,9 +5511,10 @@ void MainWindow::buildMenuBar()
 
     // ── Sync NR / NB / SNB / APF / BIN checked state from slice 0 ──────────
     // Mirrors the AGC sync pattern above. Wired via sliceAdded so the
-    // connection survives slice teardown/re-create. ANF intentionally
-    // omitted — its state lives on RxChannel without a notify signal
-    // (SliceModel::anfEnabled is a Task 17 follow-up).
+    // connection survives slice teardown/re-create. ANF is not synced here:
+    // its check state follows activeSliceChanged instead (wired beside the
+    // action's creation above), since it must track whichever slice is
+    // active, not just slice 0.
     connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
         if (index != 0) { return; }
         SliceModel* slice = m_radioModel->activeSlice();
@@ -3584,6 +5895,27 @@ void MainWindow::buildMenuBar()
                 this, &MainWindow::openPureSignalDialog);
     }
 
+    // Phase 3F Sub-Epic G T4: Diversity dialog (bench minimum).
+    // Lazy-singleton: one dialog instance per RadioModel, kept alive
+    // across close so the dialog's own state survives a re-open
+    // (SliceModel persistence handles real settings round-trip in T2).
+    {
+        QAction* divDlgAct = toolsMenu->addAction(QStringLiteral("&Diversity..."));
+        divDlgAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+D")));
+        divDlgAct->setToolTip(QStringLiteral(
+            "Open the Diversity dialog (Slice A: enable, phase, gain)."));
+        connect(divDlgAct, &QAction::triggered, this, [this]() {
+            static DiversityDialog* dlg = nullptr;
+            if (!dlg) {
+                dlg = new DiversityDialog(m_radioModel, this);
+                dlg->setAttribute(Qt::WA_DeleteOnClose, false);
+            }
+            dlg->show();
+            dlg->raise();
+            dlg->activateWindow();
+        });
+    }
+
     toolsMenu->addSeparator();
 
     {
@@ -3633,6 +5965,41 @@ void MainWindow::buildMenuBar()
     }
     toolsMenu->addAction(QStringLiteral("&Support Bundle..."), this,
                          &MainWindow::showSupportDialog);
+
+    // Phase 3F closeout — operator-visible test entries for Sub-Epic E
+    // consumer surfaces. Lets the user verify the toast and TX-bound
+    // re-route dialog render correctly without needing to trigger a real
+    // antenna conflict. Removed when full conflict-detection state machine
+    // lands and the test surfaces become unnecessary.
+    toolsMenu->addSeparator();
+    {
+        QAction* testToastAct = toolsMenu->addAction(
+            QStringLiteral("Test antenna switch &toast"));
+        testToastAct->setToolTip(
+            QStringLiteral("Phase 3F closeout: fire the AntennaSwitchToast surface "
+                            "for visual verification. Real auto-switch firing wires "
+                            "when the conflict-detection state machine ships."));
+        connect(testToastAct, &QAction::triggered, this, [this]() {
+            if (m_radioModel) {
+                m_radioModel->emitAntennaAutoSwitched(
+                    0, QStringLiteral("ANT1"), QStringLiteral("ANT2"));
+            }
+        });
+    }
+    {
+        QAction* testReRouteAct = toolsMenu->addAction(
+            QStringLiteral("Test TX-bound &re-route dialog"));
+        testReRouteAct->setToolTip(
+            QStringLiteral("Phase 3F closeout: open the TxBoundConfirmDialog surface "
+                            "for visual verification. Real emission from addSliceOnPan "
+                            "wires when the conflict-detection state machine ships."));
+        connect(testReRouteAct, &QAction::triggered, this, [this]() {
+            if (m_radioModel) {
+                m_radioModel->requestTxBoundReRoute(
+                    QStringLiteral("ANT2"), QStringLiteral("ANT1"));
+            }
+        });
+    }
 
     // =========================================================================
     // HELP
@@ -3742,13 +6109,60 @@ void MainWindow::buildStatusBar()
     bandStackLabel->setCursor(Qt::PointingHandCursor);
     hbox->addWidget(bandStackLabel);
 
-    // +PAN icon (NYI)
-    auto* panLabel = new QLabel(QStringLiteral("+PAN"), barWidget);
-    panLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
-    panLabel->setToolTip(QStringLiteral("+PAN (NYI — Phase 3F)"));
-    panLabel->setCursor(Qt::PointingHandCursor);
-    hbox->addWidget(panLabel);
+    // Phase 3F Sub-Epic D Task 10: activated +PAN button. Replaces the
+    // long-dormant grey "NYI" label with a real dropdown that drives the
+    // PanadapterStack (add slice on active pan, pick layout template, or
+    // float the active pan into its own top-level window). The actual
+    // PanadapterStack instance is wired by Task 12; until then,
+    // showPanMenu's m_panStack-dependent actions no-op safely.
+    auto* panBtn = new QPushButton(QStringLiteral("+PAN"), barWidget);
+    panBtn->setFlat(true);
+    panBtn->setCursor(Qt::PointingHandCursor);
+    panBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { color: %1; font-weight: bold; font-size: 11px;"
+        " border: 1px solid %2; border-radius: 3px; padding: 2px 7px;"
+        " background: %3; }"
+        "QPushButton:hover { background: %4; }")
+        .arg(Style::kAccent, Style::kBorder, Style::kButtonBg,
+             Style::kButtonAltHover));
+    panBtn->setToolTip(QStringLiteral("Add slice / change layout / float pan"));
+    connect(panBtn, &QPushButton::clicked, this, &MainWindow::showPanMenu);
+    hbox->addWidget(panBtn);
+
+    // Phase 3F Sub-Epic D Task 11: per-chain (ADC) BPF state indicators
+    // in the bottom status bar. Two stacked labels per chain ("CH N"
+    // header + reasonText body), wired to AlexController::bpfStateChanged
+    // below so the body text + colour reflect the live per-ADC BPF
+    // state. CH 0 is always shown; CH 1 is shown only when the
+    // connected radio's BoardCapabilities reports rxFilterChainCount >= 2
+    // (gated in the currentRadioChanged handler below).
+    auto makeChainIndicator = [&](int adc) -> QWidget* {
+        auto* w  = new QWidget(barWidget);
+        auto* vl = new QVBoxLayout(w);
+        vl->setContentsMargins(0, 0, 0, 0);
+        vl->setSpacing(0);
+
+        auto* topLbl = new QLabel(QStringLiteral("CH %1").arg(adc), w);
+        topLbl->setStyleSheet(
+            QStringLiteral("color: %1; font-size: 10px; font-weight: bold;")
+                .arg(Style::kTextScale));
+        vl->addWidget(topLbl);
+
+        auto* botLbl = new QLabel(QStringLiteral("idle"), w);
+        botLbl->setObjectName(QStringLiteral("chainIndicator%1").arg(adc));
+        botLbl->setStyleSheet(
+            QStringLiteral("color: %1; font-size: 9px; font-weight: bold;")
+                .arg(Style::kTextInactive));
+        vl->addWidget(botLbl);
+
+        return w;
+    };
+
+    hbox->addWidget(makeChainIndicator(0));
+    auto* chain1Widget = makeChainIndicator(1);
+    chain1Widget->setVisible(false);  // shown only on 2-ADC SKUs
+    hbox->addWidget(chain1Widget);
+    m_chain1IndicatorWidget = chain1Widget;
 
     // Panel toggle (☰) — wired to QSplitter right pane visibility
     auto* panelToggleLabel = new QLabel(QStringLiteral("☰"), barWidget);
@@ -4071,23 +6485,59 @@ void MainWindow::buildStatusBar()
         if (auto* conn = m_radioModel->connection()) {
             // conn is a new object on each reconnect — no deduplication needed.
             // Qt::UniqueConnection is not supported for lambda connects anyway.
+            //
+            // 2026-05-25 KG4VCF G2E bench finding: ANAN-G2E (HermesC10)
+            // firmware leaves user_adc0 (AIN3 / status bytes 53-54) dark.
+            // Bench reading was 0.1 V against an actual 13.4 V supply.
+            // Route supply_volts (AIN6 / bytes 45-46) to the tile on G2E
+            // and rename "PA" to "PSU".  Other MKII boards keep the
+            // existing user_adc0 path -- on those SKUs user_adc0 IS the
+            // PA drain sense, which is what the "PA" label means.
+            //
+            // Implementation note: we bind BOTH signals unconditionally
+            // and gate inside each slot on the CURRENT model.  The outer
+            // lambda fires on every connectionStateChanged transition
+            // (Connecting / Probing / Connected), and at Connecting time
+            // hardwareProfile.model may not yet be set to ANAN_G2E -- so
+            // a branch-at-bind-time approach picked the wrong slot and
+            // the tile stayed dark.  Gating inside the slot reads the
+            // model at each signal emission, when it is guaranteed to be
+            // set (status frames only arrive after the Connected handler
+            // has populated the profile).
             connect(conn, &RadioConnection::userAdc0Changed, this,
                     [this, refreshPaStackVisibility](float v) {
+                const auto model = m_radioModel->hardwareProfile().model;
+                if (model == HPSDRModel::ANAN_G2E) {
+                    return;  // G2E uses supply_volts; ignore user_adc0.
+                }
                 // Task 3.6: ANAN-8000DLE user preference gate.
                 // For ANAN-8000D radios, consult the "Show volts/amps in title
                 // bar" AppSettings key (default true). For other MKII-class
                 // boards (7000DLE, AnvelinaPro3) the gate is always open —
                 // those boards don't have the per-SKU preference checkbox.
-                const bool is8000D = (m_radioModel &&
-                    m_radioModel->hardwareProfile().model == HPSDRModel::ANAN8000D);
+                const bool is8000D = (model == HPSDRModel::ANAN8000D);
                 const bool showVolts = !is8000D ||
                     AppSettings::instance().value(
                         QStringLiteral("HardwareAnan8000DleShowVoltsAmps"),
                         QStringLiteral("True")).toString() == QStringLiteral("True");
                 if (!showVolts) { return; }
+                m_paVoltLabel->setLabel(QStringLiteral("PA"));
                 m_paVoltLabel->setValue(QString::asprintf("%.1fV", static_cast<double>(v)));
                 m_paVoltLabel->setVisible(true);
                 refreshPaStackVisibility();
+                qInfo() << "PA tile updated via userAdc0:" << v << "V";
+            });
+            connect(conn, &RadioConnection::supplyVoltsChanged, this,
+                    [this, refreshPaStackVisibility](float v) {
+                const auto model = m_radioModel->hardwareProfile().model;
+                if (model != HPSDRModel::ANAN_G2E) {
+                    return;  // Non-G2E uses user_adc0 path.
+                }
+                m_paVoltLabel->setLabel(QStringLiteral("PSU"));
+                m_paVoltLabel->setValue(QString::asprintf("%.1fV", static_cast<double>(v)));
+                m_paVoltLabel->setVisible(true);
+                refreshPaStackVisibility();
+                qInfo() << "PSU tile updated via supplyVolts:" << v << "V";
             });
         }
     });
@@ -4356,8 +6806,77 @@ void MainWindow::buildStatusBar()
         m_cpuTimer->start(1000 / clampedHz);
     }
 
-    // Add the full-width bar widget to the status bar
+    // Add the full-width bar widget to the status bar.
+    //
+    // Deliberately addWidget rather than addPermanentWidget: the bar takes
+    // the full width with stretch 1, so as a permanent widget it would
+    // leave a showMessage no room to render and the notice would be lost
+    // silently. Nothing calls showMessage any more for exactly that
+    // reason; notices go through showToast() below. If you are about to
+    // add a showMessage here, it will blank this entire bar. Use
+    // showToast().
     sb->addWidget(barWidget, 1);
+}
+
+// ── Transient notices ────────────────────────────────────────────────────────
+//
+// Bench report 2026-07-30 (JJ, KG4VCF): pressing TUNE with PureSignal
+// active replaced the whole bottom bar with a single line of text for
+// six seconds. Root cause is not the message, it is the surface:
+// QStatusBar::showMessage hides every non-permanent widget while a
+// message is up, and buildStatusBar adds the entire bar as one such
+// widget. So any notice cost the operator the CH pill, the PureSignal
+// indicator, the radio name, CAT and TCI state, the PA and TX badges
+// and the clock, all at once, mid-transmit.
+//
+// The notices themselves are worth keeping. They move here instead.
+StatusToast* MainWindow::showToast(const QString& message,
+                                   ToastSeverity severity,
+                                   int timeoutMs)
+{
+    if (message.isEmpty()) { return nullptr; }
+
+    // Drop dead entries first so a repeat check and the restack below
+    // both see only live toasts.
+    m_toasts.removeIf([](const QPointer<StatusToast>& t) { return t.isNull(); });
+
+    // A repeat of something already on screen restarts its countdown
+    // rather than stacking a second copy. Several of these fire from
+    // signals that can repeat while the condition persists, and a column
+    // of identical toasts is worse than the message it replaced.
+    for (const QPointer<StatusToast>& existing : m_toasts) {
+        if (existing && existing->message() == message) {
+            existing->refresh(timeoutMs);
+            return existing;
+        }
+    }
+
+    auto* toast = new StatusToast(message, severity, timeoutMs, this);
+    connect(toast, &QObject::destroyed, this, [this]() {
+        m_toasts.removeIf([](const QPointer<StatusToast>& t) { return t.isNull(); });
+        restackToasts();
+    });
+    m_toasts.append(toast);
+    toast->show();
+    restackToasts();
+    return toast;
+}
+
+void MainWindow::restackToasts()
+{
+    // Bottom-right, newest nearest the bar, growing upward. Offset clears
+    // the status bar itself so a toast never covers the thing it was
+    // introduced to stop covering.
+    const QRect geom = frameGeometry();
+    const int rightEdge = geom.right() - 20;
+    int bottom = geom.bottom() - 60;
+
+    for (auto it = m_toasts.crbegin(); it != m_toasts.crend(); ++it) {
+        StatusToast* toast = *it;
+        if (!toast) { continue; }
+        toast->move(rightEdge - toast->width(), bottom - toast->height());
+        bottom -= toast->height() + 8;
+    }
 }
 
 // ── Phase 3M-0 Task 14 / sub-PR-8: PA trip badge update ──────────────────────
@@ -4485,6 +7004,8 @@ void MainWindow::openSetup(const QString& pageKey)
         {QStringLiteral("tgxlAdvanced"),  QStringLiteral("TGXL Advanced")},
         {QStringLiteral("pgxlInterlock"), QStringLiteral("PGXL Interlock")},
         {QStringLiteral("peripherals"),   QStringLiteral("Peripherals")},
+        // Phase 3P-III Task 14: RF-Kit setup page (Setup > CAT & Network > RF-Kit).
+        {QStringLiteral("rfKit"),         QStringLiteral("RF-Kit")},
     };
 
     auto* dialog = new SetupDialog(m_radioModel, this);
@@ -4542,32 +7063,30 @@ void MainWindow::onAmpMetersForPowerCap(float fwd, float /*swr*/)
     const QString msg = QStringLiteral("PGXL power %1 W exceeds cap %2 W")
         .arg(static_cast<int>(fwd))
         .arg(static_cast<int>(capW));
-    if (QStatusBar* sb = statusBar()) {
-        sb->showMessage(msg, 5000);
-    }
+    showToast(msg, ToastSeverity::Error, 5000);
     qCWarning(lcMeter) << msg;
 }
 
 // ── Phase 3P-II review fix C2: TX interlock warning/denial toasts ────────────
-// Both slots display a 5-second status-bar message so the operator knows why
-// TX was warned or blocked.  The distinction: warning allows TX to proceed;
-// denial means MOX was rejected.  Pattern mirrors onAmpMetersForPowerCap above
-// (QStatusBar::showMessage + qCWarning(lcMeter)).
+// Both slots display a 5-second notice so the operator knows why TX was
+// warned or blocked.  The distinction: warning allows TX to proceed; denial
+// means MOX was rejected.  Pattern mirrors onAmpMetersForPowerCap above
+// (showToast + qCWarning(lcMeter)).
+//
+// These are the strongest argument for not using QStatusBar::showMessage
+// here: both fire during transmit, and blanking the bottom bar would take
+// the PA and TX badges away at the exact moment they matter.
 void MainWindow::onTxInterlockWarning(const QString& reason)
 {
     const QString msg = QString("TX interlock warning: %1").arg(reason);
-    if (QStatusBar* sb = statusBar()) {
-        sb->showMessage(msg, 5000);
-    }
+    showToast(msg, ToastSeverity::Warning, 5000);
     qCWarning(lcMeter) << msg;
 }
 
 void MainWindow::onTxInterlockDenial(const QString& reason)
 {
     const QString msg = QString("TX interlock blocked: %1").arg(reason);
-    if (QStatusBar* sb = statusBar()) {
-        sb->showMessage(msg, 5000);
-    }
+    showToast(msg, ToastSeverity::Error, 5000);
     qCWarning(lcMeter) << msg;
 }
 
@@ -4742,7 +7261,7 @@ void MainWindow::showTciLogWindow() {}  // no-op in non-WebSocket builds
 void MainWindow::wireSliceToSpectrum()
 {
     SliceModel* slice = m_radioModel->activeSlice();
-    if (!slice || !m_spectrumWidget) {
+    if (!slice || !activeSpectrumWidget()) {
         return;
     }
 
@@ -4753,19 +7272,63 @@ void MainWindow::wireSliceToSpectrum()
     // (between 10 kHz and the DDC sample rate), keep it; otherwise
     // fall back to the full-span default (768 kHz = sample rate).
     double freq = slice->frequency();
-    const double loadedBw = m_spectrumWidget->bandwidth();
+    const double loadedBw = activeSpectrumWidget()->bandwidth();
     const double initialBw = (loadedBw >= 10000.0 && loadedBw <= 768000.0)
                              ? loadedBw : 768000.0;
-    m_spectrumWidget->setFrequencyRange(freq, initialBw);
-    m_spectrumWidget->setDdcCenterFrequency(freq);
-    m_spectrumWidget->setSampleRate(768000.0);
-    m_spectrumWidget->setVfoFrequency(freq);
-    m_spectrumWidget->setFilterOffset(slice->filterLow(), slice->filterHigh());
-    m_spectrumWidget->setStepSize(slice->stepHz());
+    activeSpectrumWidget()->setFrequencyRange(freq, initialBw);
+    activeSpectrumWidget()->setDdcCenterFrequency(freq);
+    activeSpectrumWidget()->setSampleRate(768000.0);
+    activeSpectrumWidget()->setVfoFrequency(freq);
+    activeSpectrumWidget()->setFilterOffset(slice->filterLow(), slice->filterHigh());
+    activeSpectrumWidget()->setStepSize(slice->stepHz());
 
     // --- Create floating VFO flag widget (AetherSDR pattern) ---
-    VfoWidget* vfo = m_spectrumWidget->addVfoWidget(0);
+    // Slice A's flag is built and wired by createSliceFlag, exactly like every
+    // other slice's. This used to construct it by hand and then wire 67
+    // connects to it, while createSliceFlag wired far fewer -- two paths, one
+    // incomplete, which is why 23 flag controls were dead on B/C/D. One path
+    // now, so the two cannot drift again.
+    VfoWidget* vfo = createSliceFlag(slice, activeSpectrumWidget());
+    if (!vfo) { return; }
     m_vfoWidget = vfo;
+
+    // Mode-driven applet surfaces. These are SINGLE global widgets (one RADE
+    // applet, one PhoneCw applet), so they follow the ACTIVE slice's mode and
+    // stay here rather than moving into the per-flag path.
+    //
+    // Restored after the flag-path unification deleted the handler that
+    // carried them alongside the flag's own setMode: switching to CW or FM
+    // stopped changing the PhoneCw page, and RADE stopped revealing its
+    // applet. The passband and TX-mode half of that handler now lives in
+    // createSliceFlag, per pan.
+    connect(slice, &SliceModel::dspModeChanged, this, [this](DSPMode mode) {
+        // Phase 3R L2: RADE applet shows for either RADE sideband, IN ADDITION
+        // to PhoneCwApplet -- bench feedback showed PhoneCw hosts the mic gain
+        // slider, which RADE TX still needs. Routed through the visibility
+        // controller so the wrapper and the menu entry agree, and the user's
+        // persisted preference survives the mode change.
+        const bool isRade = (mode == DSPMode::RADE_U
+                             || mode == DSPMode::RADE_L);
+        if (m_appletVis) {
+            m_appletVis->setAvailable(QStringLiteral("Rade"), isRade);
+        }
+        if (m_phoneCwApplet) {
+            m_phoneCwApplet->setVisible(true);  // always visible
+            switch (mode) {
+                case DSPMode::CWL:
+                case DSPMode::CWU:
+                    m_phoneCwApplet->showPage(1);  // CW page
+                    break;
+                case DSPMode::FM:
+                    m_phoneCwApplet->showPage(2);  // FM page
+                    break;
+                default:
+                    m_phoneCwApplet->showPage(0);  // Phone page
+                                                   // (incl. RADE_U / RADE_L)
+                    break;
+            }
+        }
+    });
     vfo->setSlice(slice);
     vfo->setFrequency(freq);
     vfo->setMode(slice->dspMode());
@@ -4784,42 +7347,38 @@ void MainWindow::wireSliceToSpectrum()
     vfo->setBoardCapabilities(m_radioModel->boardCapabilities());
     vfo->setHpsdrSku(m_radioModel->hardwareProfile().model);
     vfo->setRxBypassActive(m_radioModel->alexController().rxOutOnTx());
+    // Phase 3F closeout — give Slice A's VfoWidget the RadioModel pointer so
+    // contextMenuEvent builds AntennaPickerMenu instead of the stub fallback.
+    vfo->setRadioModel(m_radioModel);
     connect(m_radioModel, &RadioModel::currentRadioChanged, vfo,
             [this, vfo]() {
         vfo->setBoardCapabilities(m_radioModel->boardCapabilities());
         vfo->setHpsdrSku(m_radioModel->hardwareProfile().model);
     });
 
+    // Phase 3F Sub-Epic C Task 9: VFO TX badge click → arbiter handoff.
+    // VfoWidget emits txHandoffRequested(sliceIndex); MainWindow forwards to
+    // RadioModel::txSliceArbiter()->requestHandoff(), which drops MOX before
+    // flipping the TX-bound slice (RF-safe). Sub-Epic D wires the matching
+    // reverse path (txBoundSliceChanged then updates all flag badges) in T10.
+
+    // Phase 3F Sub-Epic E Task 4: VfoWidget context-menu intent signals.
+    // Routes to RadioModel::requestSliceSampleRate / FilterPolicyDialog /
+    // RadioModel::removeSlice. Phase 3F closeout: antennaChangeRequested is
+    // now live, fired by AntennaPickerMenu (Sub-Epic E Task 5 consumer wire).
+    //
+    // Phase 3F Sub-Epic I closeout, defect G2: same rewire as the secondary
+    // flags in createSliceFlag. The rate belongs to the DDC stream, so the
+    // request goes to the stream rather than into a per-slice property
+    // nothing downstream reads.
+    // Phase 3F closeout — AntennaPickerMenu pick forwards to SliceModel::setRxAntenna.
+
     // Phase 3P-I-b T9 — VFO BYPS button ↔ AlexController::rxOutOnTx
-    connect(vfo, &VfoWidget::rxBypassToggled,
-            &m_radioModel->alexControllerMutable(), &AlexController::setRxOutOnTx);
     connect(&m_radioModel->alexController(), &AlexController::rxOutOnTxChanged,
             vfo, &VfoWidget::setRxBypassActive);
 
     // Stage C2: wire FilterPresetStore so VFO flag filter buttons use user overrides.
     vfo->setFilterPresetStore(m_radioModel->filterPresetStore());
-
-    // Phase 3R K-bench: wire RadioModel's RADE signals to VfoWidget's
-    // AetherSDR-port label setters. Without this, the SNR label paints
-    // a value on the first sync and never reverts to "RADE ○ ---" when
-    // sync drops, leaving the user with a stale "-3 dB" readout when
-    // RADE has actually unlocked.
-    //   syncChanged(false) -> setRadeSynced(false) -> "RADE ○ ---"
-    //   syncChanged(true)  -> (next snrChanged fills in "RADE ● NdB")
-    //   freqOffsetChanged  -> appends "+Nhz" to existing label text
-    connect(m_radioModel, &RadioModel::radeSyncChanged, vfo,
-            [vfo](int /*sliceId*/, bool synced) {
-                if (!synced) {
-                    vfo->setRadeSynced(false);
-                }
-                // synced=true: snrChanged will paint "RADE ● NdB"
-                // shortly afterward, so no immediate label update
-                // needed here.
-            });
-    connect(m_radioModel, &RadioModel::radeFreqOffsetChanged, vfo,
-            [vfo](int /*sliceId*/, float hz) {
-                vfo->setRadeFreqOffset(hz);
-            });
 
     // 2026-05-11 bench: wire EOO-decoded RADE speaker callsign to the
     // VFO flag SNR row so "<call> ● <snr>dB" replaces "RADE ● <snr>dB"
@@ -4830,8 +7389,6 @@ void MainWindow::wireSliceToSpectrum()
     // already holds a decoded callsign (e.g. from before the user opened
     // a panadapter container) paints correctly on first show.
     vfo->setRadeCallsign(slice->lastRadeRxCallsign());
-    connect(slice, &SliceModel::lastRadeRxCallsignChanged,
-            vfo, &VfoWidget::setRadeCallsign);
 
     // --- Slice → spectrum display ---
 
@@ -4839,68 +7396,7 @@ void MainWindow::wireSliceToSpectrum()
     // In CTUN mode (SmartSDR-style): pan stays fixed, VFO moves within it.
     // In traditional mode: pan follows VFO (auto-scroll handled in setVfoFrequency).
     // Band changes (large jumps) always recenter regardless of mode.
-    connect(slice, &SliceModel::frequencyChanged, this, [this, vfo, slice](double freq) {
-        if (m_handlingBandJump) {
-            return;
-        }
 
-        double center = m_spectrumWidget->centerFrequency();
-        double halfBw = m_spectrumWidget->bandwidth() / 2.0;
-        bool offScreen = (freq < center - halfBw) || (freq > center + halfBw);
-
-        if (!m_spectrumWidget->ctunEnabled() || offScreen) {
-            m_handlingBandJump = true;
-
-            bool wasCTUN = m_spectrumWidget->ctunEnabled();
-            m_radioModel->receiverManager()->setDdcFrequencyLocked(false);
-
-            m_spectrumWidget->setCenterFrequency(freq);
-
-            int rxIdx = slice->receiverIndex();
-            if (rxIdx >= 0) {
-                m_radioModel->receiverManager()->forceHardwareFrequency(
-                    rxIdx, static_cast<quint64>(freq));
-            }
-            m_spectrumWidget->setDdcCenterFrequency(freq);
-
-            RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-            if (rxCh) {
-                rxCh->setShiftFrequency(0.0);
-            }
-
-            if (wasCTUN) {
-                m_radioModel->receiverManager()->setDdcFrequencyLocked(true);
-            }
-
-            m_handlingBandJump = false;
-        } else {
-            // From Thetis radio.rs:1417 -- WDSP shift = +(freq - center)
-            double shiftHz = freq - center;
-            RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-            if (rxCh) {
-                rxCh->setShiftFrequency(shiftHz);
-            }
-        }
-        m_spectrumWidget->setVfoFrequency(freq);
-        vfo->setFrequency(freq);
-
-        // Keep MaxBin's scan window aligned with the user's slice.  See
-        // WdspEngine::setMaxBinSliceOffsetHz for the architectural cite.
-        // sliceOffsetHz = sliceFreq - DDC center.  When CTUN is off the
-        // DDC NCO follows the slice and this term is zero; when CTUN is
-        // on the term is non-zero and the MaxBin scan range slides with
-        // the slice so the meter pumps on the user's modulation rather
-        // than the noise floor sitting at DDC center.
-        if (auto* eng = m_radioModel->wdspEngine()) {
-            const double ddcCenter = m_spectrumWidget->ddcCenterFrequency();
-            eng->setMaxBinSliceOffsetHz(/*disp=*/0, freq - ddcCenter);
-        }
-    });
-
-    connect(slice, &SliceModel::filterChanged, this, [this, vfo](int low, int high) {
-        m_spectrumWidget->setFilterOffset(low, high);
-        vfo->setFilter(low, high);
-    });
 
     // Task 42 (Phase 3P-II): reconfigure the Max Bin detector whenever the
     // IF passband changes so the passband-strongest-bin reading follows the
@@ -4913,17 +7409,19 @@ void MainWindow::wireSliceToSpectrum()
     //
     // WdspEngine::setupMaxBinDetector wraps Thetis Console/dsp.cs:846-847
     // [@501e3f5] SetupDetectMaxBin; display channel = 0 (single panadapter).
-    // Sample rate: m_fftEngine->sampleRate() at call time, which reflects
-    // the currently active DDC bandwidth.
-    // Frame rate: m_fftEngine->outputFps() * 1.1 matches Thetis
+    // Sample rate: primaryFftEngine()->sampleRate() at call time, which
+    // reflects the currently active DDC bandwidth.  Primary engine because
+    // the detector is set up with disp=0 (single display channel).
+    // Frame rate: primaryFftEngine()->outputFps() * 1.1 matches Thetis
     //   console.cs:51150 [@501e3f5]: (int)Math.Max(1, _display_fps * 1.1f).
     connect(slice, &SliceModel::filterChanged, this, [this, slice](int low, int high) {
         QTimer::singleShot(100, this, [this, slice, low, high]() {
-            if (!m_radioModel || !m_fftEngine) { return; }
+            FFTEngine* fft = primaryFftEngine();
+            if (!m_radioModel || !fft) { return; }
             WdspEngine* eng = m_radioModel->wdspEngine();
             if (!eng) { return; }
-            const double rate = m_fftEngine->sampleRate();
-            const int fps = qMax(1, static_cast<int>(m_fftEngine->outputFps() * 1.1f));
+            const double rate = fft->sampleRate();
+            const int fps = qMax(1, static_cast<int>(fft->outputFps() * 1.1f));
             eng->setupMaxBinDetector(/*disp=*/0, /*ss=*/0, /*LO=*/0,
                                      rate,
                                      static_cast<double>(low),
@@ -4937,7 +7435,7 @@ void MainWindow::wireSliceToSpectrum()
             // pushed by frequencyChanged.  Without this re-sync, a filter
             // change immediately after a CTUN tune could leave the detector
             // pointing at the wrong bins until the user nudges the VFO again.
-            const double ddcCenter = m_spectrumWidget->ddcCenterFrequency();
+            const double ddcCenter = activeSpectrumWidget()->ddcCenterFrequency();
             const double sliceFreq = slice ? slice->frequency() : ddcCenter;
             eng->setMaxBinSliceOffsetHz(/*disp=*/0, sliceFreq - ddcCenter);
         });
@@ -4945,311 +7443,89 @@ void MainWindow::wireSliceToSpectrum()
 
     // Plan 4 D9 (Cluster E): initial TX mode push so the overlay has the right
     // IQ-space sign convention before the first paint.
-    if (m_spectrumWidget) {
-        m_spectrumWidget->setTxMode(slice->dspMode());
+    if (activeSpectrumWidget()) {
+        activeSpectrumWidget()->setTxMode(slice->dspMode());
         // Initial XIT offset push + signal wires below so the TX overlay
         // centers on the actual TX frequency (RX VFO + XIT) rather than the
         // RX VFO alone.  Codex review feedback on PR #166.
         const int initialXitOffset = slice->xitEnabled() ? slice->xitHz() : 0;
-        m_spectrumWidget->setTxVfoOffsetHz(initialXitOffset);
+        activeSpectrumWidget()->setTxVfoOffsetHz(initialXitOffset);
     }
 
     // XIT-enabled toggle and XIT-Hz changes both feed the spectrum's TX
     // overlay center.  When enabled flips off, the offset goes to zero;
     // when on, the offset tracks xitHz.
     auto pushXitOffset = [this, slice]() {
-        if (!m_spectrumWidget) { return; }
-        m_spectrumWidget->setTxVfoOffsetHz(slice->xitEnabled() ? slice->xitHz() : 0);
+        if (!activeSpectrumWidget()) { return; }
+        activeSpectrumWidget()->setTxVfoOffsetHz(slice->xitEnabled() ? slice->xitHz() : 0);
     };
     connect(slice, &SliceModel::xitEnabledChanged, this,
             [pushXitOffset](bool /*enabled*/) { pushXitOffset(); });
     connect(slice, &SliceModel::xitHzChanged, this,
             [pushXitOffset](int /*hz*/) { pushXitOffset(); });
 
-    connect(slice, &SliceModel::dspModeChanged, this, [this, vfo](DSPMode mode) {
-        // Plan 4 D9 (Cluster E): keep TX mode in sync so drawTxFilterOverlay
-        // maps audio Hz to the correct IQ-space sideband.
-        if (m_spectrumWidget) {
-            m_spectrumWidget->setTxMode(mode);
-        }
-        vfo->setMode(mode);
-        // Phase 3R L2: gate RADE applet visibility on either RADE
-        // sideband (RADE_U or RADE_L).  Show RadeApplet IN ADDITION to
-        // PhoneCwApplet when in RADE mode — they were originally
-        // mutually exclusive in L2 but bench feedback showed PhoneCw
-        // hosts the mic gain slider which is critical for RADE TX
-        // (leveler can compensate but the user still needs a way to
-        // adjust mic preamp). Both applets coexist in RADE mode; the
-        // PhoneCwApplet's Phone page applies generically since RADE
-        // rides a USB/LSB carrier.
-        const bool isRade = (mode == DSPMode::RADE_U
-                             || mode == DSPMode::RADE_L);
-        // Route through the visibility controller so the wrapper (not
-        // just the inner widget) shows/hides AND the menu entries grey
-        // out when not in RADE mode. The user's persisted visibility
-        // preference is preserved across mode changes.
-        if (m_appletVis) {
-            m_appletVis->setAvailable(QStringLiteral("Rade"), isRade);
-        }
-        if (m_phoneCwApplet) {
-            m_phoneCwApplet->setVisible(true);  // always visible
-        }
-        // Switch PhoneCwApplet page based on active mode. RADE rides
-        // a USB/LSB carrier so the Phone page is the correct surface.
-        if (m_phoneCwApplet) {
-            switch (mode) {
-                case DSPMode::CWL:
-                case DSPMode::CWU:
-                    m_phoneCwApplet->showPage(1);  // CW page
-                    break;
-                case DSPMode::FM:
-                    m_phoneCwApplet->showPage(2);  // FM page
-                    break;
-                default:
-                    m_phoneCwApplet->showPage(0);  // Phone page
-                                                   // (incl. RADE_U / RADE_L)
-                    break;
-            }
-        }
-    });
 
-    connect(slice, &SliceModel::agcModeChanged, this, [vfo](AGCMode mode) {
-        vfo->setAgcMode(mode);
-    });
 
-    connect(slice, &SliceModel::afGainChanged, this, [vfo](int gain) {
-        vfo->setAfGain(gain);
-    });
 
-    connect(slice, &SliceModel::rfGainChanged, this, [vfo](int gain) {
-        vfo->setRfGain(gain);
-    });
 
-    connect(slice, &SliceModel::stepHzChanged, this, [this, vfo](int hz) {
-        m_spectrumWidget->setStepSize(hz);
-        vfo->setStepHz(hz);
-    });
 
-    connect(slice, &SliceModel::rxAntennaChanged, this, [vfo](const QString& ant) {
-        vfo->setRxAntenna(ant);
-    });
 
-    connect(slice, &SliceModel::txAntennaChanged, this, [vfo](const QString& ant) {
-        vfo->setTxAntenna(ant);
-    });
 
     // --- SliceModel → VfoWidget: RIT/XIT inbound (S1.8a stubs) ---
-    connect(slice, &SliceModel::ritEnabledChanged, this, [vfo](bool on) {
-        vfo->setRitEnabled(on);
-    });
 
-    connect(slice, &SliceModel::ritHzChanged, this, [vfo](int hz) {
-        vfo->setRitHz(hz);
-    });
 
-    connect(slice, &SliceModel::xitEnabledChanged, this, [vfo](bool on) {
-        vfo->setXitEnabled(on);
-    });
 
-    connect(slice, &SliceModel::xitHzChanged, this, [vfo](int hz) {
-        vfo->setXitHz(hz);
-    });
 
     // --- SliceModel → VfoWidget: DSP tab inbound (S1.8b) ---
-    connect(slice, &SliceModel::nbModeChanged, vfo, &VfoWidget::setNbMode);
-    vfo->setNbMode(slice->nbMode());   // initial sync
 
     // Sub-epic C-1: NR bank sync — VfoWidget::setSlice also connects activeNrChanged
     // via onActiveNrChanged for the full 7-button bank; this redundant connection is
     // removed to avoid double-firing. setSlice handles both initial sync and updates.
     // (Legacy setNr2Enabled call removed here — onActiveNrChanged covers NR2.)
 
-    connect(slice, &SliceModel::snbEnabledChanged, this, [vfo](bool v) {
-        vfo->setSnbEnabled(v);
-    });
 
-    connect(slice, &SliceModel::apfEnabledChanged, this, [vfo](bool v) {
-        vfo->setApfEnabled(v);
-    });
 
-    connect(slice, &SliceModel::apfTuneHzChanged, this, [vfo](int hz) {
-        vfo->setApfTuneHz(hz);
-    });
 
     // --- VFO flag → slice ---
 
-    connect(vfo, &VfoWidget::frequencyChanged, this, [slice](double hz) {
-        slice->setFrequency(hz);
-    });
 
-    connect(vfo, &VfoWidget::modeChanged, this, [slice](DSPMode mode) {
-        slice->setDspMode(mode);
-    });
 
-    connect(vfo, &VfoWidget::filterChanged, this, [slice](int low, int high) {
-        slice->setFilter(low, high);
-    });
 
     // Shift+click on a filter preset on the flag — snap TX passband to
     // match the RX preset's audio Hz range (Thetis-style alignment shortcut).
-    connect(vfo, &VfoWidget::txFilterMatchRequested, this,
-            [this](int audioLow, int audioHigh) {
-        m_radioModel->transmitModel().setFilterLow(audioLow);
-        m_radioModel->transmitModel().setFilterHigh(audioHigh);
-    });
 
-    connect(vfo, &VfoWidget::agcModeChanged, this, [slice](AGCMode mode) {
-        slice->setAgcMode(mode);
-    });
 
-    connect(vfo, &VfoWidget::afGainChanged, this, [slice](int gain) {
-        slice->setAfGain(gain);
-    });
 
-    connect(vfo, &VfoWidget::rfGainChanged, this, [slice](int gain) {
-        slice->setRfGain(gain);
-    });
 
-    connect(vfo, &VfoWidget::rxAntennaChanged, this, [slice](const QString& ant) {
-        slice->setRxAntenna(ant);
-    });
 
-    connect(vfo, &VfoWidget::txAntennaChanged, this, [slice](const QString& ant) {
-        slice->setTxAntenna(ant);
-    });
 
     // NB cycling — nbModeCycled fires on user click; cycle the mode through
     // Off → NB → NB2 → Off via SliceModel. SliceModel's nbModeChanged feeds
     // back to setNbMode() (wired in the inbound block above).
     // From Thetis console.cs:43513 [v2.10.3.13].
-    connect(vfo, &VfoWidget::nbModeCycled, this, [slice] {
-        slice->setNbMode(NereusSDR::cycleNbMode(slice->nbMode()));
-    });
 
     // NR/ANF → RxChannel directly (not SliceModel properties)
-    connect(vfo, &VfoWidget::nrChanged, this, [this](bool on) {
-        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) { rxCh->setNrEnabled(on); }
-    });
-    connect(vfo, &VfoWidget::anfChanged, this, [this](bool on) {
-        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) { rxCh->setAnfEnabled(on); }
-    });
 
     // --- VfoWidget → SliceModel: DSP tab outbound (S1.8b) ---
-    connect(vfo, &VfoWidget::nr2Changed, this, [slice](bool on) {
-        // NR2 = EMNR in Thetis naming. Toggle: NR2→active clears any other slot.
-        slice->setActiveNr(on ? NereusSDR::NrSlot::NR2 : NereusSDR::NrSlot::Off);
-    });
-    connect(vfo, &VfoWidget::snbChanged, this, [slice](bool on) {
-        slice->setSnbEnabled(on);
-    });
-    connect(vfo, &VfoWidget::apfChanged, this, [slice](bool on) {
-        slice->setApfEnabled(on);
-    });
-    connect(vfo, &VfoWidget::apfTuneHzChanged, this, [slice](int hz) {
-        slice->setApfTuneHz(hz);
-    });
 
     // --- SliceModel → VfoWidget: Audio tab inbound (S1.8c stubs) ---
-    connect(slice, &SliceModel::mutedChanged, this, [vfo](bool v) {
-        vfo->setMuted(v);
-    });
-    connect(slice, &SliceModel::audioPanChanged, this, [vfo](double p) {
-        vfo->setAudioPan(p);
-    });
-    connect(slice, &SliceModel::ssqlEnabledChanged, this, [vfo](bool v) {
-        vfo->setSsqlEnabled(v);
-    });
-    connect(slice, &SliceModel::ssqlThreshChanged, this, [vfo](double d) {
-        vfo->setSsqlThresh(d);
-    });
-    connect(slice, &SliceModel::agcThresholdChanged, this, [vfo](int v) {
-        vfo->setAgcThreshold(v);
-    });
-    connect(slice, &SliceModel::binauralEnabledChanged, this, [vfo](bool v) {
-        vfo->setBinauralEnabled(v);
-    });
 
     // --- VfoWidget → SliceModel: Audio tab outbound (S1.8c stubs) ---
-    connect(vfo, &VfoWidget::muteChanged, this, [slice](bool v) {
-        slice->setMuted(v);
-    });
-    connect(vfo, &VfoWidget::panChanged, this, [slice](double p) {
-        slice->setAudioPan(p);
-    });
-    connect(vfo, &VfoWidget::squelchEnabledChanged, this, [slice](bool v) {
-        slice->setSsqlEnabled(v);
-    });
-    connect(vfo, &VfoWidget::squelchThreshChanged, this, [slice](int v) {
-        slice->setSsqlThresh(static_cast<double>(v));
-    });
-    connect(vfo, &VfoWidget::agcThreshChanged, this, [slice](int v) {
-        slice->setAgcThreshold(v);
-    });
-    connect(vfo, &VfoWidget::binauralChanged, this, [slice](bool v) {
-        slice->setBinauralEnabled(v);
-    });
-    connect(vfo, &VfoWidget::quickModeRequested, this, [slice](int index) {
-        // Quick-mode buttons: 0=USB, 1=CW, 2=DIG (matching AetherSDR defaults)
-        static constexpr DSPMode kQuickModes[] = {DSPMode::USB, DSPMode::CWU, DSPMode::DIGU};
-        if (index >= 0 && index < 3) {
-            slice->setDspMode(kQuickModes[index]);
-        }
-    });
 
     // --- VfoWidget → MainWindow: open Setup dialog to AGC/ALC page ---
-    connect(vfo, &VfoWidget::openSetupRequested, this, [this]() {
-        auto* dialog = new SetupDialog(m_radioModel, this);
-        dialog->setAttribute(Qt::WA_DeleteOnClose);
-        wireSetupDialog(dialog);
-        dialog->selectPage(QStringLiteral("AGC/ALC"));
-        dialog->show();
-    });
 
     // --- VfoWidget → Setup → DSP → NB/SNB page (right-click on NB or SNB).
     // Mirrors Thetis chkNB_MouseDown / chkDSPNB2_MouseDown (console.cs:44447
     // [v2.10.3.13]) which call ShowSetupTab(NB_Tab).
-    connect(vfo, &VfoWidget::openNbSetupRequested, this, [this]() {
-        auto* dialog = new SetupDialog(m_radioModel, this);
-        dialog->setAttribute(Qt::WA_DeleteOnClose);
-        wireSetupDialog(dialog);
-        dialog->selectPage(QStringLiteral("NB/SNB"));
-        dialog->show();
-    });
 
     // --- VfoWidget → Setup → DSP → NR/ANF page (Task 18, Sub-epic C-1).
     // Emitted from DspParamPopup "More Settings…" on any NR bank button.
     // Mirrors Thetis chkNR_MouseDown (console.cs [v2.10.3.13]) which calls
     // ShowSetupTab(NR_Tab). Sub-tab selection per NrSlot is deferred to Task 17.
-    connect(vfo, &VfoWidget::openNrSetupRequested, this,
-            [this](NereusSDR::NrSlot slot) {
-        auto* dialog = new SetupDialog(m_radioModel, this);
-        dialog->setAttribute(Qt::WA_DeleteOnClose);
-        wireSetupDialog(dialog);
-        dialog->selectPage(QStringLiteral("NR/ANF"));
-        // Deep-link to the sub-tab matching the NR slot the user clicked
-        // (Task 18 polish 2026-04-23 — previously always opened NR1).
-        if (auto* nrPage = dialog->findChild<NrAnfSetupPage*>()) {
-            nrPage->selectSubtab(slot);
-        }
-        dialog->show();
-    });
 
     // --- VfoWidget AUTO button → SliceModel auto-AGC toggle ---
-    connect(vfo, &VfoWidget::autoAgcToggled,
-            slice, &SliceModel::setAutoAgcEnabled);
 
     // --- SliceModel auto-AGC state → update visuals on both widgets ---
-    connect(slice, &SliceModel::autoAgcEnabledChanged, this, [this, vfo, slice](bool on) {
-        auto* nft = m_radioModel->noiseFloorTracker();
-        float nf = nft ? nft->noiseFloor() : -200.0f;
-        double offset = slice->autoAgcOffset();
-        vfo->updateAgcAutoVisuals(on, nf, offset);
-        if (m_rxApplet) {
-            m_rxApplet->updateAgcAutoVisuals(on, nf, offset);
-        }
-    });
 
     // --- Noise floor fast-attack triggers (slice is guaranteed non-null here) ---
     {
@@ -5269,113 +7545,39 @@ void MainWindow::wireSliceToSpectrum()
     }
 
     // --- VfoWidget → SliceModel: RIT/XIT outbound (S1.8a stubs) ---
-    connect(vfo, &VfoWidget::ritEnabledChanged, this, [slice](bool on) {
-        slice->setRitEnabled(on);
-    });
 
-    connect(vfo, &VfoWidget::ritHzChanged, this, [slice](int hz) {
-        slice->setRitHz(hz);
-    });
 
-    connect(vfo, &VfoWidget::xitEnabledChanged, this, [slice](bool on) {
-        slice->setXitEnabled(on);
-    });
 
-    connect(vfo, &VfoWidget::xitHzChanged, this, [slice](int hz) {
-        slice->setXitHz(hz);
-    });
 
     // --- VfoWidget → SliceModel: STEP cycle (S1.8a — wires to live setStepHz) ---
-    connect(vfo, &VfoWidget::stepCycleRequested, this, [slice]() {
-        int current = slice->stepHz();
-        int next = kStageOneStepLadder[0];
-        for (int i = 0; i < kStageOneStepLadderSize; ++i) {
-            if (kStageOneStepLadder[i] == current) {
-                next = kStageOneStepLadder[(i + 1) % kStageOneStepLadderSize];
-                break;
-            }
-        }
-        // setStepHz emits stepHzChanged which the :1626-1629 handler uses to
-        // propagate to m_spectrumWidget->setStepSize and vfo->setStepHz.
-        slice->setStepHz(next);
-    });
 
     // --- VfoWidget → SliceModel: lock state (S1.8a — verifying edge exists) ---
-    connect(vfo, &VfoWidget::lockChanged, this, [slice](bool locked) {
-        slice->setLocked(locked);
-    });
 
     // --- SliceModel → VfoWidget: lock state inbound (S1.8a review — I3) ---
     // Without this edge, programmatic changes to SliceModel::locked (e.g. from
     // a future CAT/TCI command) would not be reflected in either lock button.
-    connect(slice, &SliceModel::lockedChanged, this, [vfo](bool v) {
-        vfo->setLocked(v);
-    });
 
-    // closeRequested → removeSlice wiring deferred to S1.10 — Stage 1
-    // has no sliceRemoved cleanup path yet, so calling removeSlice leaves
-    // dangling VfoWidget + lambda captures. See code review findings.
+    // Phase 3F (Bug 2): wire Slice A's floating ✕ close button to removeSlice.
+    // Slice A's close button is hidden by VfoWidget (last-slice invariant), so
+    // this can only fire if a future change un-hides it; removeSlice refuses
+    // to remove the final slice regardless, so this is safe and consistent
+    // with the secondary-flag wiring in createSliceFlag().
 
-    connect(vfo, &VfoWidget::sliceActivationRequested, this, [this](int index) {
-        m_radioModel->setActiveSlice(index);
-    });
 
-    // --- Spectrum click-to-tune → slice ---
-    connect(m_spectrumWidget, &SpectrumWidget::frequencyClicked,
-            this, [slice](double hz) {
-        slice->setFrequency(hz);
-    });
-
-    // --- Spectrum filter edge drag → slice ---
-    connect(m_spectrumWidget, &SpectrumWidget::filterEdgeDragged,
-            this, [slice](int low, int high) {
-        slice->setFilter(low, high);
-    });
-
-    // --- Pan center changed (pan drag) ---
-    // CTUN mode (SmartSDR): retune DDC to pan center, offset WDSP to keep
-    // demodulating at VFO frequency. This lets the spectrum show real data
-    // across the full pan range.
-    // Traditional mode: pan drag retunes the VFO (DDC follows VFO naturally).
-    connect(m_spectrumWidget, &SpectrumWidget::centerChanged,
-            this, [this, slice](double centerHz) {
-        if (m_handlingBandJump) {
-            return;
-        }
-        if (!m_spectrumWidget->ctunEnabled()) {
-            slice->setFrequency(centerHz);
-        } else {
-            // CTUN: retune DDC to pan center (bypasses lock) so spectrum shows correct data
-            int rxIdx = slice->receiverIndex();
-            if (rxIdx >= 0) {
-                m_radioModel->receiverManager()->forceHardwareFrequency(
-                    rxIdx, static_cast<quint64>(centerHz));
-            }
-            m_spectrumWidget->setDdcCenterFrequency(centerHz);
-            // Offset WDSP shift so audio stays on VFO frequency
-            // From Thetis radio.cs:1417 — SetRXAShiftFreq receives +(freq - center)
-            double shiftHz = slice->frequency() - centerHz;
-            RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-            if (rxCh) {
-                rxCh->setShiftFrequency(shiftHz);
-            }
-        }
-    });
-
-    // --- CTUN mode toggled → lock/unlock DDC ---
-    connect(m_spectrumWidget, &SpectrumWidget::ctunEnabledChanged,
-            this, [this](bool enabled) {
-        m_radioModel->receiverManager()->setDdcFrequencyLocked(enabled);
-        if (!enabled) {
-            RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-            if (rxCh) {
-                rxCh->setShiftFrequency(0.0);
-            }
-        }
-    });
+    // The four spectrum controls that act on a slice (click-to-tune, filter-
+    // edge drag, pan drag, CTUN toggle) used to be connected here, to
+    // activeSpectrumWidget(), with lambdas capturing the `slice` above by
+    // value. That pointer is Slice A and never moved, so on pan-0 all four
+    // drove Slice A for the life of the session however many times the
+    // operator selected another flag. Bench-caught 2026-07-28.
+    //
+    // They now live in wireSpectrumSliceControls, which ensureOverlayPanels
+    // runs for every pan including this one, and which resolves its target
+    // through sliceForPan(panId) on each signal instead of capturing it.
+    // verify-no-captured-slice-spectrum-wiring.py keeps them from coming back.
 
     // --- dBm range strip → PanadapterModel (per-band grid storage + AppSettings) ---
-    connect(m_spectrumWidget, &SpectrumWidget::dbmRangeChangeRequested,
+    connect(activeSpectrumWidget(), &SpectrumWidget::dbmRangeChangeRequested,
             this, [this](float minDbm, float maxDbm) {
         if (m_radioModel && !m_radioModel->panadapters().isEmpty()) {
             PanadapterModel* pan = m_radioModel->panadapters().first();
@@ -5386,10 +7588,10 @@ void MainWindow::wireSliceToSpectrum()
 
     // Set initial lock state
     m_radioModel->receiverManager()->setDdcFrequencyLocked(
-        m_spectrumWidget->ctunEnabled());
+        activeSpectrumWidget()->ctunEnabled());
 
     // Position the VFO flag
-    m_spectrumWidget->updateVfoPositions();
+    activeSpectrumWidget()->updateVfoPositions();
 
     // --- S-meter → VfoWidget level bar ---
     // MeterPoller emits smeterUpdated(double dbm) on each poll tick (100ms).
@@ -5461,12 +7663,10 @@ void MainWindow::wireSliceToSpectrum()
     // Previously this lambda called setFrequency and silently discarded
     // the mode arg, which was the #118 reproducer (80m click moved VFO
     // but left mode stale).
-    if (m_overlayPanel) {
-        connect(m_overlayPanel, &SpectrumOverlayPanel::bandSelected,
-                this, [this](const QString& name, double /*freqHz*/, const QString& /*mode*/) {
-            m_radioModel->onBandButtonClicked(bandFromName(name));
-        });
-    }
+    // Wired per strip in ensureOverlayPanels() now, so a band click acts on the
+    // pan it was clicked on rather than on whichever slice happens to be
+    // active. The handler there keeps this one's semantics (name only; the
+    // legacy freqHz / mode args stay for SpectrumOverlayPanel's kBands table).
 
     // Phase 3P-II Task 65: notify PGXL of band changes so the amplifier can
     // switch its bias / antenna profile when the operator crosses a band boundary.
@@ -6156,8 +8356,8 @@ void MainWindow::openSpotHub()
         // (see tst_spothub_display_knobs).
         connect(m_spotHubDialog.data(), &SpotHubDialog::settingsChanged,
                 this, [this] {
-                    if (m_spectrumWidget) {
-                        m_spectrumWidget->loadSpotDisplaySettings();
+                    if (activeSpectrumWidget()) {
+                        activeSpectrumWidget()->loadSpotDisplaySettings();
                     }
                 });
         // Defensive re-seed.  The primary seed runs at MainWindow startup
@@ -6170,8 +8370,8 @@ void MainWindow::openSpotHub()
         // is now -- loadSpotDisplaySettings re-reads AppSettings and the
         // setter is no-op when the value is unchanged, so the cost is
         // bounded and the behaviour is correct either way.
-        if (m_spectrumWidget) {
-            m_spectrumWidget->loadSpotDisplaySettings();
+        if (activeSpectrumWidget()) {
+            activeSpectrumWidget()->loadSpotDisplaySettings();
         }
 
         // Phase 3R K-bench (bench feedback): wire the FreeDV tab's
@@ -6308,13 +8508,13 @@ void MainWindow::openSpotHub()
         // Spot List hover paints a halo on the matching panadapter
         // label.  Lazy-wired here because both widgets are needed; the
         // dialog is constructed on first open.
-        if (m_spectrumWidget) {
-            connect(m_spectrumWidget, &SpectrumWidget::spotHoverIndexChanged,
+        if (activeSpectrumWidget()) {
+            connect(activeSpectrumWidget(), &SpectrumWidget::spotHoverIndexChanged,
                     m_spotHubDialog.data(),
                     &SpotHubDialog::setHoveredPanadapterSpot);
             connect(m_spotHubDialog.data(),
                     &SpotHubDialog::spotListHoverChanged,
-                    m_spectrumWidget,
+                    activeSpectrumWidget(),
                     &SpectrumWidget::setHoverSpotIndexExternal);
         }
     }
@@ -6385,6 +8585,193 @@ void MainWindow::openFreeDVReporter()
     m_freeDVReporterDialog->activateWindow();
 }
 
+// Phase 3F Sub-Epic D Task 10: build and exec the +PAN dropdown menu.
+// Three sections, top to bottom:
+//
+//   1. "Add slice on active pan" -- one row per Slice letter (A..N) up
+//      to maxSlices(); the next-available row triggers addSliceOnPan
+//      on m_panStack's currently active pan id. Already-active letters
+//      are greyed out so the operator can read at a glance which slice
+//      is "next".
+//   2. "Layout" -- one row per supported template (1 / 2v / 2h /
+//      12h / 2x2). Current layout is checkmarked. Selecting one calls
+//      PanadapterStack::applyLayout with a synthesized pan-id list
+//      sized to that template's pan count.
+//   3. "Float active pan..." -- detaches the active pan into its own
+//      top-level window via PanadapterStack::floatPanadapter.
+//
+// All m_panStack-dependent actions guard on null so the menu opens
+// cleanly even before Task 12 wires the stack. Add-slice's first
+// triggerable row uses "pan-0" as a fallback active pan id pre-Task-12,
+// matching the convention PanadapterStack uses for its bootstrap pan.
+// Codex review round 3, PR #293. The template-to-pan-count table had three
+// copies; this is the only one now.
+QStringList MainWindow::panIdsForLayout(const QString& layoutId)
+{
+    // Pan-count per template: 1=1, 2v/2h=2, 12h=3, 2x2=4.
+    const int needed = (layoutId == QStringLiteral("1"))   ? 1
+                     : (layoutId == QStringLiteral("12h")) ? 3
+                     : (layoutId == QStringLiteral("2x2")) ? 4
+                                                           : 2;
+    QStringList ids;
+    for (int i = 0; i < needed; ++i) {
+        ids << QStringLiteral("pan-%1").arg(i);
+    }
+    return ids;
+}
+
+// Codex review round 3, PR #293. See MainWindow.h for why this exists.
+void MainWindow::applyPanLayout(const QString& layoutId)
+{
+    if (!m_panStack) { return; }
+
+    const QStringList ids = panIdsForLayout(layoutId);
+
+    qCInfo(lcContainer) << "Pan layout: applying" << layoutId << "with ids" << ids;
+    m_panStack->applyLayout(layoutId, ids);
+
+    if (!m_radioModel) { return; }
+
+    // Shrink first. Slices left on panes applyLayout just deleted would keep a
+    // dangling panKey, lose their VFO widget, and hold a DDC, a stream and
+    // audio the operator can no longer reach. Running this before the grow
+    // step also means the occupancy question below sees the settled answer.
+    const int rehomed = m_radioModel->rehomeSlicesToPans(ids);
+    if (rehomed > 0) {
+        qCInfo(lcContainer) << "Layout: rehomed" << rehomed
+                            << "slice(s) onto" << ids.value(0);
+    }
+
+    // Grow. Every pan wants a slice so that it has a VfoWidget and an RX
+    // applet entry (Phase 3F bench fix 2026-06-03).
+    //
+    // Asked as an occupancy question rather than as
+    // `for (i = slices().size(); i < target; ++i)`. That form assumed the
+    // slice COUNT is the first unoccupied pan index, which stops being true
+    // the moment slices co-host or get rehomed: shrinking a 2x2 to one pane
+    // puts all four slices on pan-0, and expanding back then saw
+    // existing == target, added nothing, and left three panes empty.
+    // (Codex review round 4, PR #293.)
+    //
+    // No maxSlices arithmetic here: addSliceOnPan enforces the cap itself and
+    // emits sliceAddRejected with an operator-facing reason when it cannot,
+    // so restating it would be a second copy of that policy.
+    //
+    // Spread before creating. After a shrink every slice is co-hosted on
+    // pan-0, so the slices these empty pans need already exist. Creating new
+    // ones instead spends the maxSlices budget filling one pan and leaves the
+    // rest empty with a surplus slice in the model. (Codex review round 5.)
+    const int spread = m_radioModel->spreadSlicesOntoEmptyPans(ids);
+    if (spread > 0) {
+        qCInfo(lcContainer) << "Layout: spread" << spread
+                            << "co-hosted slice(s) onto empty pans";
+    }
+
+    // Whatever is still empty after the surplus has been used up genuinely
+    // needs a new slice.
+    populateEmptyPans();
+}
+
+// ---------------------------------------------------------------------------
+// populateEmptyPans — every pan needs a slice to be worth anything
+//
+// A pan with no slice has no VfoWidget, no RX applet entry, and no stream
+// feeding it: it renders as an empty box with a 0.0000 flag.
+//
+// Called from two places, and the second one is why this is a function.
+// applyPanLayout calls it because a layout change can add panes. The connect
+// handler calls it because the startup layout restore deliberately does NOT
+// (MainWindow.cpp, the PanLayoutId block): at startup no radio is connected
+// and the stream pool is unsized, so manufacturing slices there would bind
+// nothing. Correct as far as it goes, but nothing finished the job once a
+// radio did connect.
+//
+// Bench-caught 2026-08-01 (J.J. Boyd, KG4VCF): quit with a 2v layout, relaunch,
+// connect, and the second pan is permanently dead until the operator notices
+// they have to add Slice B by hand. The log gives it away by omission, with no
+// "Pan layout: applying" line anywhere in the session.
+//
+// addSliceOnPan enforces the maxSlices cap itself and emits sliceAddRejected
+// with an operator-facing reason, so there is no cap arithmetic here.
+// ---------------------------------------------------------------------------
+void MainWindow::populateEmptyPans()
+{
+    if (!m_radioModel || !m_panStack) { return; }
+
+    // The pans that actually exist, not panIdsForLayout's template. After a
+    // restore those are the same, but reading the live stack means a pan
+    // created by any other route is covered too.
+    QStringList ids;
+    for (const PanadapterApplet* applet : m_panStack->allApplets()) {
+        if (applet) { ids << applet->panId(); }
+    }
+
+    for (const QString& emptyPan : m_radioModel->pansWithoutSlices(ids)) {
+        m_radioModel->addSliceOnPan(emptyPan);
+    }
+}
+
+void MainWindow::showPanMenu()
+{
+    QMenu menu(this);
+
+    // -- Add slice section --------------------------------------------
+    menu.addSection(QStringLiteral("Add slice on active pan"));
+    if (m_radioModel) {
+        const int currentSlices = m_radioModel->slices().size();
+        const int maxS          = m_radioModel->maxSlices();
+        for (int i = 0; i < maxS; ++i) {
+            const QChar letter = QChar(QLatin1Char('A' + i));
+            QAction* act = menu.addAction(QStringLiteral("Slice %1").arg(letter));
+            // Already-active letters: grey. Next-available letter:
+            // wired. Beyond next-available: also grey (one click ->
+            // one slice).
+            act->setEnabled(i == currentSlices);
+            if (i == currentSlices) {
+                connect(act, &QAction::triggered, this, [this]() {
+                    if (!m_radioModel) { return; }
+                    const QString activePan = m_panStack
+                                                 ? m_panStack->activePanId()
+                                                 : QStringLiteral("pan-0");
+                    m_radioModel->addSliceOnPan(activePan);
+                });
+            }
+        }
+    }
+
+    // -- Layout section -----------------------------------------------
+    menu.addSeparator();
+    menu.addSection(QStringLiteral("Layout"));
+    const QStringList layouts = {
+        QStringLiteral("1"),
+        QStringLiteral("2v"),
+        QStringLiteral("2h"),
+        QStringLiteral("12h"),
+        QStringLiteral("2x2"),
+    };
+    for (const QString& layoutId : layouts) {
+        QAction* act = menu.addAction(layoutId);
+        if (m_panStack && m_panStack->currentLayoutId() == layoutId) {
+            act->setCheckable(true);
+            act->setChecked(true);
+        }
+        connect(act, &QAction::triggered, this, [this, layoutId]() {
+            applyPanLayout(layoutId);
+        });
+    }
+
+    // -- Float active pan section -------------------------------------
+    menu.addSeparator();
+    QAction* floatAct = menu.addAction(QStringLiteral("Float active pan..."));
+    floatAct->setEnabled(m_panStack != nullptr);
+    connect(floatAct, &QAction::triggered, this, [this]() {
+        if (!m_panStack) { return; }
+        m_panStack->floatPanadapter(m_panStack->activePanId());
+    });
+
+    menu.exec(QCursor::pos());
+}
+
 // Phase 3M-4 bench-fix: PSA bottom-banner indicator visibility
 // gated on (caps.hasPureSignal && PureSignal::isAutoCalEnabled).
 // Centralised so onConnectionStateChanged + autoCalEnabledChanged +
@@ -6416,10 +8803,18 @@ void MainWindow::showAudioDiagnoseDialog()
 
 void MainWindow::onConnectionStateChanged()
 {
-    // Phase 3Q-8: forward state to the spectrum widget for the disconnect overlay.
-    if (m_spectrumWidget) {
-        m_spectrumWidget->setConnectionState(m_radioModel->connectionState());
-    }
+    // Phase 3Q-8: forward state to the spectrum widgets for the disconnect
+    // overlay.
+    //
+    // EVERY pan, not just the active one. SpectrumWidget::mousePressEvent
+    // opens with a disconnected guard that emits disconnectedClickRequest()
+    // and returns, so a widget left at its Disconnected default swallows every
+    // press: no click-to-tune, no filter-edge drag, no pan drag. Only
+    // mouseMoveEvent is ungated, which is why a second pan still tracked the
+    // cursor readout and looked alive while being completely unclickable --
+    // and why tuning appeared to work only with the pointer over the flag,
+    // which is a separate widget with its own handlers.
+    pushConnectionStateToPans();
 
     if (m_radioModel->isConnected()) {
         // Board widget top line: show model code ("Saturn") not marketing name
@@ -6494,37 +8889,13 @@ void MainWindow::onConnectionStateChanged()
             });
         }
 
-        // Phase 3P-II Task 20: auto-connect PGXL / TGXL when a Manual IP is
-        // configured and the peripheral is not already connected.
-        //
-        // Gated on FourO3A_Enabled: when the master toggle is off, skip the
-        // auto-connect entirely (matches the FourO3APage.h contract
-        // "PGXL/TGXL auto-connect skipped"). Without this gate, a saved
-        // PGXL_ManualIp would dial out even with 4O3A disabled, get a
-        // statusUpdated back, flip m_hasAmplifier=true, and snap the
-        // S-Meter to the 2 kW PGXL scale — surprising the operator who
-        // explicitly turned 4O3A off.
-        if (m_radioModel->fourO3AEnabled()) {
-            auto& s = AppSettings::instance();
-
-            QString pgxlIp = s.value(QStringLiteral("PGXL_ManualIp"),
-                                     QStringLiteral("")).toString();
-            if (!pgxlIp.isEmpty()
-                && !m_radioModel->pgxlConnection()->isConnected()) {
-                quint16 p = quint16(s.value(QStringLiteral("PGXL_ManualPort"),
-                                            QStringLiteral("9008")).toInt());
-                m_radioModel->pgxlConnection()->connectToPgxl(pgxlIp, p);
-            }
-
-            QString tgxlIp = s.value(QStringLiteral("TGXL_ManualIp"),
-                                     QStringLiteral("")).toString();
-            if (!tgxlIp.isEmpty()
-                && !m_radioModel->tgxlConnection()->isConnected()) {
-                quint16 p = quint16(s.value(QStringLiteral("TGXL_ManualPort"),
-                                            QStringLiteral("9010")).toInt());
-                m_radioModel->tgxlConnection()->connectToTgxl(tgxlIp, p);
-            }
-        }
+        // Per-radio peripherals refactor (2026-05-26): the PGXL / TGXL
+        // auto-connect-on-Connected block previously lived here in
+        // MainWindow but read GLOBAL AppSettings keys.  The lifecycle
+        // (gated on the per-MAC FourO3A flag) now lives in
+        // RadioModel::applyPeripheralsForCurrentMac(), which is driven
+        // from onConnectionStateChanged so MainWindow doesn't need to
+        // touch the peripheral wires here.
 
         // Phase 3P-II Task 20: wire AmpApplet controls to PgxlConnection.
         // operateToggled: translate bool to "operate"/"standby" command string.
@@ -6648,13 +9019,18 @@ void MainWindow::onConnectionStateChanged()
                     // PGXL_Port (default 50001) returned empty
                     // strings on every install that had only ever
                     // written the canonical keys, so the AmpApplet
-                    // context-menu Connect did nothing.  AppSettings
-                    // canonical default 9008 per AppSettings.h:330.
-                    const QString ip = AppSettings::instance()
-                        .value(QStringLiteral("PGXL_ManualIp"), QString{})
-                        .toString();
-                    const quint16 port = static_cast<quint16>(AppSettings::instance()
-                        .value(QStringLiteral("PGXL_ManualPort"), 9008).toInt());
+                    // context-menu Connect did nothing.
+                    //
+                    // Per-radio peripherals refactor (2026-05-26):
+                    // the keys are scoped under
+                    // hardware/<mac>/peripherals/.  Default 9008
+                    // matches the AppSettings.h documented default.
+                    const QString ip = m_radioModel->peripheralValue(
+                        QStringLiteral("PGXL_ManualIp"));
+                    const quint16 port = static_cast<quint16>(
+                        m_radioModel->peripheralValue(
+                            QStringLiteral("PGXL_ManualPort"),
+                            QStringLiteral("9008")).toUInt());
                     if (!ip.isEmpty()) {
                         pgxl->connectToPgxl(ip, port);
                     }
@@ -6700,10 +9076,14 @@ void MainWindow::onConnectionStateChanged()
                 if (tgxl->isConnected()) {
                     tgxl->disconnect();
                 } else {
-                    const QString ip = AppSettings::instance()
-                        .value(QStringLiteral("TGXL_ManualIp"), QString{}).toString();
-                    const quint16 port = static_cast<quint16>(AppSettings::instance()
-                        .value(QStringLiteral("TGXL_ManualPort"), 9010).toInt());
+                    // Per-radio peripherals refactor (2026-05-26): keys
+                    // scoped under hardware/<mac>/peripherals/.
+                    const QString ip = m_radioModel->peripheralValue(
+                        QStringLiteral("TGXL_ManualIp"));
+                    const quint16 port = static_cast<quint16>(
+                        m_radioModel->peripheralValue(
+                            QStringLiteral("TGXL_ManualPort"),
+                            QStringLiteral("9010")).toUInt());
                     if (!ip.isEmpty()) {
                         tgxl->connectToTgxl(ip, port);
                     }
@@ -6947,7 +9327,7 @@ void MainWindow::tryAutoReconnect()
             // so the user's next manual scan uses the full timing.
             m_radioModel->discovery()->stopDiscovery();
             m_radioModel->discovery()->setProfile(DiscoveryProfile::SafeDefault);
-            // Phase 3Q Task 10: surface the failure — open panel + status bar.
+            // Phase 3Q Task 10: surface the failure — open panel + toast.
             const QString name = AppSettings::instance()
                 .savedRadio(chosenMac)
                 .value_or(SavedRadio{})
@@ -6957,11 +9337,11 @@ void MainWindow::tryAutoReconnect()
             if (m_connectionPanel) {
                 m_connectionPanel->highlightMac(chosenMac);
             }
-            statusBar()->showMessage(
+            showToast(
                 QStringLiteral("Auto-connect target %1 isn't reachable from this network. "
                                "Pick a different radio or update the address.")
                     .arg(displayName),
-                8000);
+                ToastSeverity::Warning, 8000);
         });
     } else {
         // No MAC pinning — direct connect to saved IP address.
@@ -7144,8 +9524,12 @@ void MainWindow::closeEvent(QCloseEvent* event)
     }
 
     // Save display settings before shutdown
-    if (m_spectrumWidget) {
-        m_spectrumWidget->saveSettings();
+    if (m_panStack) {
+        for (PanadapterApplet* applet : m_panStack->allApplets()) {
+            if (applet && applet->spectrumWidget()) {
+                applet->spectrumWidget()->saveSettings();
+            }
+        }
     }
 
     // Tear down connection (sends stop command, closes sockets, joins thread)
@@ -7154,6 +9538,14 @@ void MainWindow::closeEvent(QCloseEvent* event)
     // Save container layout
     if (m_containerManager) {
         m_containerManager->saveState();
+    }
+
+    // Phase 3F Sub-Epic D Task 15: persist pan layout id + per-splitter
+    // sizes. PanadapterStack::saveSplitterState writes PanLayoutId +
+    // PanLayoutSplitter_* keys to AppSettings; the matching restore runs
+    // during MainWindow init.
+    if (m_panStack) {
+        m_panStack->saveSplitterState();
     }
 
     // Issue #206 — persist window geometry + maximized/fullscreen

@@ -81,6 +81,46 @@ THETIS_DIR = Path(os.environ.get(
     "NEREUS_THETIS_DIR", discover_sibling("Thetis"))).expanduser()
 MI0BOT_DIR = Path(os.environ.get(
     "NEREUS_MI0BOT_DIR", discover_sibling("mi0bot-Thetis"))).expanduser()
+
+# ---------------------------------------------------------------------
+# Per-version ramdor checkouts
+# ---------------------------------------------------------------------
+# THETIS_DIR is pinned to ONE commit (501e3f5, tag v2.10.3.13). Cites
+# stamped against a different release must resolve against THAT release,
+# for exactly the reason resolve_upstream() refuses to cross the
+# ramdor/mi0bot fork boundary: opening a cited line number in the wrong
+# tree lands on unrelated code, harvests whatever author tags happen to
+# sit nearby, and reports our port as missing tags it never should have
+# carried. Version drift is the same bug on a different axis.
+#
+# Concretely, from the PR #293 CI failure on 2026-07-31. Upstream inserted
+# `case HPSDRModel.ANAN_G2E: //N1GP G2E added` between .13 and .15, which
+# shifted the SetupForHPSDRModel switch down by 8 lines:
+#
+#   v2.10.3.15 console.cs:14815-14817  case ANAN100D: _rx2_preamp_present
+#   v2.10.3.13 console.cs:14817        case ANAN_G2_1K: // G8NJJ: ...
+#
+# A correct `[v2.10.3.15]` port of the ANAN100D preamp case was therefore
+# told it had dropped //G8NJJ, and the mechanical remediation the message
+# invites (paste the tag in) would have credited G8NJJ's PA note to
+# unrelated code -- manufacturing a false attribution while "fixing" a
+# false one. Four such FAILs blocked that PR.
+#
+# Keyed by both the release tag and its short SHA, since either grammar is
+# legal in a stamp (`[v2.10.3.15]` or `[@3759d09]`).
+THETIS_V21015_DIR = Path(os.environ.get(
+    "NEREUS_THETIS_V21015_DIR",
+    discover_sibling("Thetis-v2.10.3.15"))).expanduser()
+
+THETIS_VERSION_DIRS = {
+    "2.10.3.15": THETIS_V21015_DIR,
+    "3759d09":   THETIS_V21015_DIR,
+}
+
+# The stamp on a cite line: `[v2.10.3.15]`, `[@3759d09]`, or the combined
+# `[v2.10.3.13 @501e3f5]` form. Captures whichever token is present so the
+# resolver can look it up in THETIS_VERSION_DIRS.
+RE_STAMP = re.compile(r"\[\s*(?:v(?P<ver>\d+(?:\.\d+)+)|@(?P<sha>[0-9a-f]{7,40}))")
 DESKHPSDR_DIR = Path(os.environ.get(
     "NEREUS_DESKHPSDR_DIR", discover_sibling("deskhpsdr"))).expanduser()
 FREEDV_DIR = Path(os.environ.get(
@@ -281,13 +321,19 @@ def parse_lines_spans(tok: str) -> list[tuple[int, int]]:
     return spans
 
 
-def resolve_upstream(cite_file: str, which: str) -> Path | None:
+def resolve_upstream(cite_file: str, which: str,
+                     stamp: str | None = None) -> Path | None:
     """Find the cited file under the ONE upstream the cite names.
 
     `which` comes from whichever cite detector matched, and is honoured
     exactly: a cite that says mi0bot is resolved against the mi0bot clone
     and nowhere else. See the comment on the `bases` assignment below for
     why falling back to a sibling upstream is actively harmful.
+
+    `stamp` is the version token from the cite (`2.10.3.15`, `3759d09`).
+    A ramdor cite carrying a stamp we have a dedicated checkout for is
+    resolved against THAT checkout and nowhere else -- same rule as the
+    fork boundary, same reason. See THETIS_VERSION_DIRS.
     """
     if which in ("deskhpsdr", "freedv-gui"):
         # These cite paths are relative to the upstream repo root
@@ -322,7 +368,19 @@ def resolve_upstream(cite_file: str, which: str) -> Path | None:
     # real contributor (//N1GP, //DH1KLM) and each entirely spurious. A
     # tool that fabricates GPL-attribution violations is worse than one
     # that reports it cannot check, so an absent clone now warns.
-    bases = [THETIS_DIR] if which == "ramdor" else [MI0BOT_DIR]
+    if which == "ramdor":
+        versioned = THETIS_VERSION_DIRS.get(stamp) if stamp else None
+        if versioned is not None:
+            # Absent clone returns None -> "upstream-not-found" warning,
+            # NOT a silent fall-through to the default pin. Falling through
+            # is precisely the phantom-failure path this mapping exists to
+            # close, and a check that cannot verify must say so rather than
+            # verify against the wrong tree.
+            bases = [versioned] if versioned.is_dir() else []
+        else:
+            bases = [THETIS_DIR]
+    else:
+        bases = [MI0BOT_DIR]
     for base in bases:
         # Direct path
         candidate = base / cite_file
@@ -460,6 +518,18 @@ def main() -> int:
               f"instead of being verified. Set NEREUS_MI0BOT_DIR or clone "
               f"to a sibling directory.", file=sys.stderr)
 
+    # Per-version ramdor checkouts. Absent means the cites stamped for that
+    # release go unverified rather than being verified against the wrong
+    # tree; say which, because "unverified" and "verified" look identical
+    # in a green run.
+    for ver, path in sorted(set((v, p) for v, p in THETIS_VERSION_DIRS.items()
+                                if "." in v)):
+        if not path.is_dir():
+            print(f"WARN: Thetis v{ver} not found at {path}. Every cite "
+                  f"stamped [v{ver}] will emit upstream-not-found instead "
+                  f"of being verified. Set NEREUS_THETIS_V21015_DIR or "
+                  f"clone to a sibling directory.", file=sys.stderr)
+
     # deskhpsdr is optional for now — warn if absent so local runs without
     # the clone still pass, but CI that has it cloned will do full checks.
     if not _deskhpsdr_search_bases():
@@ -505,7 +575,12 @@ def main() -> int:
                 if not spans:
                     continue
                 line_nums = parse_lines_token(m.group("lines"))
-                upstream = resolve_upstream(m.group("file"), which)
+                # Route by the cite's own version stamp, so a
+                # `[v2.10.3.15]` cite is checked against v2.10.3.15 rather
+                # than whatever sits at that line in the default pin.
+                sm = RE_STAMP.search(line)
+                stamp = (sm.group("ver") or sm.group("sha")) if sm else None
+                upstream = resolve_upstream(m.group("file"), which, stamp)
                 if upstream is None:
                     findings.append({
                         "severity": "warn",

@@ -1,0 +1,55 @@
+<h2>Q7 (trimmed): just the layouts operators actually use</h2>
+<p class="subtitle">5 templates. Each maps to a real workflow. Floating windows for anything beyond.</p>
+
+<h3>The 5 layouts we keep</h3>
+<div class="mockup">
+  <div class="mockup-header">Each template = one specific workflow</div>
+  <div class="mockup-body" style="padding:0">
+    <table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:11px;color:#cde">
+      <thead><tr style="background:#2a3548;color:#8aa8c0;font-size:10px;text-transform:uppercase">
+        <th style="padding:6px;text-align:left">ID</th>
+        <th style="padding:6px;text-align:left">Shape</th>
+        <th style="padding:6px;text-align:left">Workflow it serves</th>
+      </tr></thead>
+      <tbody>
+        <tr style="background:#1a2030"><td style="padding:6px"><strong>1</strong></td><td>Single full-size pan</td><td>Focused single-band operation. Default for HL2 + new users.</td></tr>
+        <tr><td style="padding:6px"><strong>2v</strong></td><td>Two stacked vertically</td><td>Wide-screen dual-band (e.g. 20m work + 40m monitor). Or DDC pan + wideband-of-same-ADC.</td></tr>
+        <tr style="background:#1a2030"><td style="padding:6px"><strong>2h</strong></td><td>Two side-by-side</td><td>Tall-screen / portrait dual-band. Or DDC + zoomed-DDC same source.</td></tr>
+        <tr><td style="padding:6px"><strong>12h</strong></td><td>Wide top + 2 below</td><td><strong>The wideband workflow:</strong> Wideband ADC0 across top (0..61.44 MHz scan), 2 DDC pans below for active work + monitor. Killer layout.</td></tr>
+        <tr style="background:#1a2030"><td style="padding:6px"><strong>2x2</strong></td><td>4 in a grid</td><td>Contest / multi-band monitor (4 DDC pans, or 2 wideband + 2 DDC).</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">What we drop and why</h3>
+<div style="background:#1a2030;padding:14px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  <span style="color:#a66">✗</span> <strong>3v</strong> (3 stacked vertical) — niche use, 2x2 covers it with a 4th idle pan; 12h serves the "1 wide + 2 below" version better<br>
+  <span style="color:#a66">✗</span> <strong>4v</strong> (4 stacked vertical) — needs an unreasonably tall screen, 2x2 is the better 4-pan layout<br>
+  <span style="color:#a66">✗</span> <strong>3h2</strong>, <strong>2x3</strong>, <strong>4h3</strong>, <strong>2x4</strong> (5/6/7/8 pans) — beyond realistic max, no operator workflow demands this many tiled panes; floating windows handle the rare "I really want pan #5 on my second monitor" case<br>
+  <span style="color:#a66">✗</span> <strong>2h1</strong> (2 top + 1 below) — the inverse of 12h, low marginal value, drop for simplicity
+</div>
+
+<h3 style="margin-top:24px">Layout selector dialog (final)</h3>
+<div class="mockup">
+  <div class="mockup-header">View → Pan Layout — 5 buttons, one row</div>
+  <div class="mockup-body" style="background:#0d1218;padding:12px;border-radius:4px;font-family:monospace;font-size:11px;color:#cde;text-align:center">
+    ┌──────┬──────┬──────┬──────┬──────┐<br>
+    │ &nbsp;<strong>1</strong>&nbsp; │ &nbsp;<strong>2v</strong> │ &nbsp;<strong>2h</strong> │ <strong>12h</strong>&nbsp;│ <strong>2x2</strong>&nbsp;│<br>
+    │ &nbsp;▓▓&nbsp; │ &nbsp;▓ &nbsp;│ &nbsp;▓▓&nbsp; │ &nbsp;██&nbsp; │ ▓▓▓ &nbsp;│<br>
+    │ &nbsp;▓▓&nbsp; │ &nbsp;▓ &nbsp;│ &nbsp;&nbsp; &nbsp; &nbsp;│ &nbsp;▓▓&nbsp; │ ▓▓▓ &nbsp;│<br>
+    └──────┴──────┴──────┴──────┴──────┘
+  </div>
+</div>
+
+<h3 style="margin-top:24px">Floating window stays</h3>
+<div style="background:#1a2030;padding:12px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  Right-click any pan → "Float pan" → detaches into top-level QWidget for second monitor. Port AetherSDR <code>PanFloatingWindow</code> faithfully. The 2 percent of operators who want 5+ panes visible can float the overflow rather than us shipping 8-pane templates nobody else uses.
+</div>
+
+<h3 style="margin-top:24px">Per-pan source picker unchanged</h3>
+<div style="background:#1a2030;padding:12px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  Right-click any pan slot → Source ▶ {DDC pan: A/B/C/D/E, Wideband ADC0, Wideband ADC1}. Capability-gated (HL2 only shows DDC A + wideband ADC0; HermesII shows A/B + wideband ADC0; 2-ADC SKUs show A..E + both wideband ADCs).
+</div>
+
+<p class="subtitle" style="margin-top:24px;text-align:center">Lock: <strong>5 templates (1, 2v, 2h, 12h, 2x2)</strong> + per-pan source picker + AetherSDR floating window port. Same as the original 2026-04-09 plan's count, with the wideband source option layered on top and the AetherSDR overlay model handling multi-slice on shared pans.</p>

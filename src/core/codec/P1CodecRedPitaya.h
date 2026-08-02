@@ -67,6 +67,10 @@ public:
         quint8 adcCtrl2
     ) const override;
 
+    DdcAssignment applyDdcAssignment(
+        const CodecContext& ctx,
+        const std::array<SliceConfig, 5>& slices) const override;
+
 protected:
     void bank12(const CodecContext& ctx, quint8 out[5]) const override;
 };

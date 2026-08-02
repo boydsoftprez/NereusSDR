@@ -15,6 +15,7 @@
 #include <QList>
 #include <QTimer>
 #include <QHash>
+#include <QSet>
 #include <memory>
 
 class QNetworkAccessManager;
@@ -70,6 +71,7 @@ public:
     int     pollsFailed()         const noexcept { return m_pollsFailed; }
     int     rttAvgLast10Ms()      const noexcept { return m_rttAvgMs; }
     int     reconnectAttempts()   const noexcept { return m_reconnectAttempts; }
+    bool    autoReconnect()       const noexcept { return m_autoReconnect; }
 
     RfKitPowerSnapshot  lastPower()             const { return m_lastPower; }
     RfKitTunerSnapshot  lastTuner()             const { return m_lastTuner; }
@@ -88,11 +90,34 @@ public:
     void testForceBackoffSequence();
     void testForceBackoffReset();
     int  testCurrentBackoffMs() const noexcept { return m_reconnectBackoffMs; }
+    // Sets m_connected to true without going through the network stack,
+    // so tests that need disconnect() to emit disconnected() can arm the
+    // guard without spinning up a real HTTP server.
+    void testForceConnectedForTesting() { m_connected = true; }
+    // Arms a real reconnect (unlike testForceBackoffSequence, which cancels
+    // it immediately because it only wants the backoff arithmetic), and
+    // reports whether one is currently pending.  Together these let a test
+    // assert that disconnect() actually cancels a scheduled reconnect.
+    void testScheduleReconnect() { scheduleReconnect(); }
+    bool testReconnectPending() const { return m_reconnectTimer.isActive(); }
+    int testInFlightReplyCount() const { return m_inFlight.size(); }
+    // Test-only: is the REST poller running?  markPollFailure() stops it
+    // on the down transition so a dead amp is not polled through the
+    // whole backoff window.
+    bool testPollActive() const { return m_pollTimer.isActive(); }
+    // Test-only: drive one poll/probe failure without a network stack, so a
+    // test can walk the down transition and the reconnect-probe-failed path
+    // that keeps the retry schedule alive.
+    void testMarkPollFailure() { markPollFailure(); }
 
 public slots:
     void connectToAmp(const QString& host, quint16 port = 8080);
     void disconnect();
     void setPollIntervalMs(int ms);
+    // When false, a dropped link is NOT retried.  Backs the "Auto-reconnect"
+    // checkbox on Setup -> Peripherals -> RF-Kit, which was previously saved
+    // to AppSettings and never read (review blocker [P2] on PR #291).
+    void setAutoReconnect(bool on) { m_autoReconnect = on; }
 
     void setActiveAntenna(RfKitAntenna::Type type, int number);
     void setOperateMode(const QString& mode);
@@ -120,12 +145,16 @@ private slots:
     void pollOnce();
     void scheduleReconnect();
     void onReplyFinished();
+    // Fired by the owned m_reconnectTimer. Was an inline lambda passed to
+    // the static QTimer::singleShot, which disconnect() could not cancel.
+    void onReconnectTimeout();
 
 private:
     void   handleResponse(const QString& path, const QByteArray& body);
     void   issueGet(const QString& path);
     void   issuePut(const QString& path, const QByteArray& body);
     void   issuePost(const QString& path);
+    void   trackReply(QNetworkReply* reply);
     void   markPollSuccess(int rttMs);
     void   markPollFailure();
     void   parseInfo(const QByteArray& body);
@@ -137,6 +166,9 @@ private:
     void   parseOperationalInterface(const QByteArray& body);
     void   parseData(const QByteArray& body);
 
+    // Declared before m_nam so it outlives replies destroyed by the network
+    // manager during member teardown; their destroyed handlers remove from it.
+    QSet<QNetworkReply*> m_inFlight;
     std::unique_ptr<QNetworkAccessManager> m_nam;
     QTimer  m_pollTimer;
     QTimer  m_reconnectTimer;
@@ -144,6 +176,9 @@ private:
     QString m_host;
     quint16 m_port               = 8080;
     bool    m_connected          = false;
+    bool    m_operatorDisconnected = true;
+    bool    m_autoReconnect      = true;   // default matches prior behaviour
+    quint64 m_generation         = 0;
     int     m_pollIntervalMs     = 1000;
     // Half of the first real reconnect delay (500 ms).  scheduleReconnect()
     // doubles before scheduling, so the first actual retry fires after 1 s,
@@ -169,6 +204,24 @@ private:
     int    m_rttAvgMs            = 0;
     int    m_reconnectAttempts   = 0;
     int    m_consecutiveFailures = 0;
+
+    // Session counter, bumped by connectToAmp() and disconnect().  Every
+    // reply carries the generation it was issued under; onReplyFinished()
+    // drops any whose generation has moved on.
+    //
+    // Without it, a GET still in flight when the operator disables RF-Kit
+    // completed afterwards, fell through to the "not connected yet" branch
+    // and set m_connected back to true -- reviving a connection the
+    // operator had just shut down.  The same race applied the previous
+    // host's state after switching amplifiers.  Codex review, PR #291.
+    //
+    // That session counter is m_generation above, declared alongside
+    // m_inFlight because the two are one mechanism: abort what is in flight,
+    // and tag what escapes. PR #291 arrived with a second counter of its own
+    // (m_connectionGeneration) that did the tagging without the aborting;
+    // the merge kept this one and dropped that one, since disconnect() and
+    // connectToAmp() already bump m_generation at both the sites #291 cared
+    // about.
 };
 
 } // namespace NereusSDR

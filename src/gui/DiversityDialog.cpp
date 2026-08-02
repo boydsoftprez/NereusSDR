@@ -1,0 +1,405 @@
+// src/gui/DiversityDialog.cpp
+// =================================================================
+// src/gui/DiversityDialog.cpp  (NereusSDR)
+// =================================================================
+//
+//  Copyright (C) 2026 J.J. Boyd (KG4VCF)
+//
+//  This program is free software; you can redistribute it and/or
+//  modify it under the terms of the GNU General Public License
+//  as published by the Free Software Foundation; either version 2
+//  of the License, or (at your option) any later version.
+//
+//  This program is distributed in the hope that it will be useful,
+//  but WITHOUT ANY WARRANTY; without even the implied warranty of
+//  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+//  GNU General Public License for more details.
+//
+//  You should have received a copy of the GNU General Public License
+//  along with this program; if not, write to the Free Software
+//  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-05-27 — Created for Phase 3F Sub-Epic G Task 4 (simplified,
+//                bench-minimum). NereusSDR-original code. J.J. Boyd
+//                (KG4VCF), with AI-assisted implementation via
+//                Anthropic Claude Code.
+//   2026-05-27 — Sub-Epic G Task 12: embed DiversityRadarWidget for
+//                polar lobe display; dialog re-titled "Diversity".
+//   2026-05-27 — Sub-Epic G Task 3: 8-memory slots M1-M8 with
+//                per-band AppSettings persistence
+//                (Slice0/Band<key>/DiversityMemory<N>/{Phase,Gain,
+//                Populated}).
+//   2026-05-27 — Sub-Epic G Task 21: PS HOLD overlay; translucent
+//                "PS HOLD - PureSignal calibrating" label across the
+//                client area when MOX + Slice A diversity + PS are
+//                all engaged.  Operator visual cue only -- actual
+//                DSP pause integration with PsccPump deferred.
+// =================================================================
+
+#include "gui/DiversityDialog.h"
+#include "StyleConstants.h"
+#include "core/AppSettings.h"
+#include "core/MoxController.h"
+#include "core/PureSignal.h"
+#include "gui/widgets/DiversityRadarWidget.h"
+#include "models/Band.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
+
+#include <QButtonGroup>
+#include <QCheckBox>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPushButton>
+#include <QResizeEvent>
+#include <QSignalBlocker>
+#include <QSlider>
+#include <QVBoxLayout>
+
+#include <cmath>
+
+namespace NereusSDR {
+
+DiversityDialog::DiversityDialog(RadioModel* radioModel, QWidget* parent)
+    : QDialog(parent)
+    , m_radioModel(radioModel)
+{
+    setWindowTitle(QStringLiteral("Diversity"));
+    setStyleSheet(QStringLiteral("background: %1; color: %2;")
+                      .arg(Style::kPanelBg, Style::kTextPrimary));
+    setFixedWidth(460);
+
+    auto* main = new QVBoxLayout(this);
+    main->setContentsMargins(14, 14, 14, 14);
+
+    m_enableBox = new QCheckBox(
+        QStringLiteral("Enable diversity on Slice A (DDC0 + DDC1 sync pair)"),
+        this);
+    connect(m_enableBox, &QCheckBox::toggled,
+            this, &DiversityDialog::onEnableToggled);
+    main->addWidget(m_enableBox);
+
+    auto* phaseGroup = new QGroupBox(QStringLiteral("Phase (degrees)"), this);
+    auto* phaseLayout = new QHBoxLayout(phaseGroup);
+    m_phaseSlider = new QSlider(Qt::Horizontal, phaseGroup);
+    // 0.1-degree precision: slider 0..3600 maps to 0..360 degrees.
+    m_phaseSlider->setRange(0, 3600);
+    connect(m_phaseSlider, &QSlider::valueChanged,
+            this, &DiversityDialog::onPhaseChanged);
+    m_phaseLabel = new QLabel(QStringLiteral("0.0"), phaseGroup);
+    m_phaseLabel->setMinimumWidth(50);
+    phaseLayout->addWidget(m_phaseSlider, 1);
+    phaseLayout->addWidget(m_phaseLabel);
+    main->addWidget(phaseGroup);
+
+    auto* gainGroup = new QGroupBox(QStringLiteral("Gain (dB)"), this);
+    auto* gainLayout = new QHBoxLayout(gainGroup);
+    m_gainSlider = new QSlider(Qt::Horizontal, gainGroup);
+    // 0.1-dB precision: slider -200..200 maps to -20.0..+20.0 dB.
+    m_gainSlider->setRange(-200, 200);
+    connect(m_gainSlider, &QSlider::valueChanged,
+            this, &DiversityDialog::onGainChanged);
+    m_gainLabel = new QLabel(QStringLiteral("0.0"), gainGroup);
+    m_gainLabel->setMinimumWidth(50);
+    gainLayout->addWidget(m_gainSlider, 1);
+    gainLayout->addWidget(m_gainLabel);
+    main->addWidget(gainGroup);
+
+    // Phase 3F Sub-Epic G Task 12: polar sensitivity radar.
+    auto* radarGroup = new QGroupBox(QStringLiteral("Sensitivity pattern"), this);
+    auto* radarLayout = new QVBoxLayout(radarGroup);
+    m_radar = new DiversityRadarWidget(radarGroup);
+    m_radar->setMinimumSize(240, 240);
+    radarLayout->addWidget(m_radar);
+    main->addWidget(radarGroup);
+
+    // Mouse drag on the radar emits phaseAdjusted(radians); convert to
+    // degrees and write back to SliceModel.  refreshFromSlice() then
+    // echoes the value into the slider (signal-blocked) and the lobe
+    // re-renders.
+    connect(m_radar, &DiversityRadarWidget::phaseAdjusted,
+            this, [this](double rad) {
+                if (auto* s = sliceA()) {
+                    const double deg = rad * 180.0 / M_PI;
+                    const double normDeg = std::fmod(deg + 360.0, 360.0);
+                    s->setDiversityPhaseDeg(normDeg);
+                }
+            });
+
+    // Phase 3F Sub-Epic G Task 3: 8-memory slot row.
+    auto* memGroup = new QGroupBox(
+        QStringLiteral("Memory (left-click recall, right-click store)"), this);
+    auto* memLayout = new QHBoxLayout(memGroup);
+    m_memButtons = new QButtonGroup(this);
+    for (int i = 0; i < 8; ++i) {
+        auto* btn = new QPushButton(QStringLiteral("M%1").arg(i + 1), memGroup);
+        btn->setFixedSize(44, 28);
+        btn->setStyleSheet(Style::buttonBaseStyle());
+        btn->setContextMenuPolicy(Qt::CustomContextMenu);
+        m_memButtons->addButton(btn, i);
+        connect(btn, &QPushButton::clicked, this,
+                [this, i]() { recallMemory(i); });
+        connect(btn, &QPushButton::customContextMenuRequested, this,
+                [this, i](const QPoint&) { storeMemory(i); });
+        memLayout->addWidget(btn);
+    }
+    main->addWidget(memGroup);
+
+    m_statusLabel = new QLabel(QStringLiteral("Status: idle"), this);
+    m_statusLabel->setStyleSheet(QStringLiteral("color: %1;")
+                                     .arg(Style::kTextSecondary));
+    main->addWidget(m_statusLabel);
+
+    auto* footer = new QHBoxLayout();
+    footer->addStretch(1);
+    auto* closeBtn = new QPushButton(QStringLiteral("Close"), this);
+    closeBtn->setStyleSheet(Style::buttonBaseStyle());
+    connect(closeBtn, &QPushButton::clicked, this, &QDialog::accept);
+    footer->addWidget(closeBtn);
+    main->addLayout(footer);
+
+    // Initial state from Slice A.
+    refreshFromSlice();
+
+    // React to external SliceModel changes (e.g. AppSettings load,
+    // RadioModel T13 round-trip, future RadarWidget edits).
+    if (auto* s = sliceA()) {
+        connect(s, &SliceModel::diversityEnabledChanged,
+                this, &DiversityDialog::refreshFromSlice);
+        connect(s, &SliceModel::diversityPhaseDegChanged,
+                this, &DiversityDialog::refreshFromSlice);
+        connect(s, &SliceModel::diversityGainDbChanged,
+                this, &DiversityDialog::refreshFromSlice);
+        connect(s, &SliceModel::frequencyChanged,
+                this, &DiversityDialog::refreshFromSlice);
+        // When the operator tunes across a band boundary, swap the
+        // memory bank to the new band.
+        connect(s, &SliceModel::bandChanged, this,
+                [this](Band) { loadMemoryFromSettings(); });
+    }
+
+    // Hydrate memory slots from AppSettings for the current band.
+    loadMemoryFromSettings();
+
+    // Phase 3F Sub-Epic G Task 21: PS HOLD overlay.  Hidden until MOX
+    // engages while Slice A diversity is on AND PureSignal is enabled.
+    // The overlay is a translucent child widget sized to the dialog
+    // client area; it intercepts mouse events so phase/gain edits go
+    // through.
+    m_pauseOverlay = new QWidget(this);
+    m_pauseOverlay->setStyleSheet(QStringLiteral(
+        "background: rgba(20, 30, 45, 220);"
+        "color: #ffb800; font-size: 18px; font-weight: bold;"));
+    auto* overlayLayout = new QVBoxLayout(m_pauseOverlay);
+    overlayLayout->setContentsMargins(0, 0, 0, 0);
+    auto* overlayLbl = new QLabel(
+        QStringLiteral("PS HOLD\nPureSignal calibrating"), m_pauseOverlay);
+    overlayLbl->setAlignment(Qt::AlignCenter);
+    overlayLbl->setStyleSheet(QStringLiteral("color: #ffb800;"));
+    overlayLayout->addWidget(overlayLbl);
+    m_pauseOverlay->setGeometry(rect());
+    m_pauseOverlay->hide();
+
+    if (m_radioModel) {
+        if (auto* mox = m_radioModel->moxController()) {
+            connect(mox, &MoxController::moxChanged, this,
+                    [this](int, bool, bool) { refreshPauseState(); });
+        }
+        if (auto* ps = m_radioModel->pureSignal()) {
+            connect(ps, &PureSignal::enabledChanged, this,
+                    [this](bool) { refreshPauseState(); });
+        }
+    }
+    if (auto* s = sliceA()) {
+        connect(s, &SliceModel::diversityEnabledChanged, this,
+                [this](bool) { refreshPauseState(); });
+    }
+    refreshPauseState();
+}
+
+DiversityDialog::~DiversityDialog() = default;
+
+SliceModel* DiversityDialog::sliceA() const
+{
+    if (!m_radioModel) { return nullptr; }
+    const auto slices = m_radioModel->slices();
+    return slices.isEmpty() ? nullptr : slices.first();
+}
+
+void DiversityDialog::onEnableToggled(bool on)
+{
+    if (auto* s = sliceA()) {
+        s->setDiversityEnabled(on);
+        m_statusLabel->setText(on
+            ? QStringLiteral("Status: engaged (DDC0+DDC1 sync; BPF auto-bypass)")
+            : QStringLiteral("Status: idle"));
+    }
+}
+
+void DiversityDialog::onPhaseChanged(int sliderValue)
+{
+    const double deg = sliderValue / 10.0;
+    m_phaseLabel->setText(QString::number(deg, 'f', 1));
+    if (auto* s = sliceA()) {
+        s->setDiversityPhaseDeg(deg);
+    }
+}
+
+void DiversityDialog::onGainChanged(int sliderValue)
+{
+    const double db = sliderValue / 10.0;
+    m_gainLabel->setText(QString::number(db, 'f', 1));
+    if (auto* s = sliceA()) {
+        s->setDiversityGainDb(db);
+    }
+}
+
+void DiversityDialog::refreshFromSlice()
+{
+    auto* s = sliceA();
+    if (!s) { return; }
+    QSignalBlocker bEn(m_enableBox);
+    QSignalBlocker bPh(m_phaseSlider);
+    QSignalBlocker bGn(m_gainSlider);
+    m_enableBox->setChecked(s->diversityEnabled());
+    m_phaseSlider->setValue(static_cast<int>(s->diversityPhaseDeg() * 10.0));
+    m_gainSlider->setValue(static_cast<int>(s->diversityGainDb() * 10.0));
+    m_phaseLabel->setText(QString::number(s->diversityPhaseDeg(), 'f', 1));
+    m_gainLabel->setText(QString::number(s->diversityGainDb(), 'f', 1));
+    m_statusLabel->setText(s->diversityEnabled()
+        ? QStringLiteral("Status: engaged (DDC0+DDC1 sync; BPF auto-bypass)")
+        : QStringLiteral("Status: idle"));
+
+    // Phase 3F Sub-Epic G Task 12: push slice phase/gain/VFO into radar
+    // for live lobe redraw.  Gain is stored in dB on the slice; the
+    // radar widget takes a linear ratio.
+    if (m_radar) {
+        m_radar->setPhase(s->diversityPhaseDeg() * M_PI / 180.0);
+        const double gainLin = std::pow(10.0, s->diversityGainDb() / 20.0);
+        m_radar->setGain(gainLin);
+        m_radar->setVfoFreqMhz(s->frequency() / 1e6);
+    }
+}
+
+// ---------- Phase 3F Sub-Epic G Task 3: memory slot helpers ----------
+
+namespace {
+
+QString memoryPrefix(Band band, int slot)
+{
+    return QStringLiteral("Slice0/Band%1/DiversityMemory%2")
+        .arg(bandKeyName(band))
+        .arg(slot + 1);
+}
+
+} // namespace
+
+void DiversityDialog::storeMemory(int slot)
+{
+    auto* s = sliceA();
+    if (!s || slot < 0 || slot >= 8) { return; }
+    const Band band = bandFromFrequency(s->frequency());
+    m_memorySlots[slot].phaseDeg  = s->diversityPhaseDeg();
+    m_memorySlots[slot].gainDb    = s->diversityGainDb();
+    m_memorySlots[slot].populated = true;
+
+    auto& settings = AppSettings::instance();
+    const QString prefix = memoryPrefix(band, slot);
+    settings.setValue(prefix + QStringLiteral("/Phase"),
+                      s->diversityPhaseDeg());
+    settings.setValue(prefix + QStringLiteral("/Gain"),
+                      s->diversityGainDb());
+    settings.setValue(prefix + QStringLiteral("/Populated"),
+                      QStringLiteral("True"));
+    refreshMemoryLabels();
+}
+
+void DiversityDialog::recallMemory(int slot)
+{
+    if (slot < 0 || slot >= 8) { return; }
+    if (!m_memorySlots[slot].populated) { return; }
+    auto* s = sliceA();
+    if (!s) { return; }
+    s->setDiversityPhaseDeg(m_memorySlots[slot].phaseDeg);
+    s->setDiversityGainDb(m_memorySlots[slot].gainDb);
+}
+
+void DiversityDialog::refreshMemoryLabels()
+{
+    if (!m_memButtons) { return; }
+    for (int i = 0; i < 8; ++i) {
+        auto* btn = m_memButtons->button(i);
+        if (!btn) { continue; }
+        btn->setStyleSheet(m_memorySlots[i].populated
+            ? Style::buttonBaseStyle()
+                  + QStringLiteral("QPushButton { color: #00d4ff; }")
+            : Style::buttonBaseStyle());
+    }
+}
+
+void DiversityDialog::loadMemoryFromSettings()
+{
+    auto* s = sliceA();
+    if (!s) { return; }
+    const Band band = bandFromFrequency(s->frequency());
+    auto& settings = AppSettings::instance();
+    for (int i = 0; i < 8; ++i) {
+        const QString prefix = memoryPrefix(band, i);
+        const bool populated =
+            settings.value(prefix + QStringLiteral("/Populated"),
+                           QStringLiteral("False"))
+                .toString() == QStringLiteral("True");
+        m_memorySlots[i].populated = populated;
+        if (populated) {
+            m_memorySlots[i].phaseDeg =
+                settings.value(prefix + QStringLiteral("/Phase"),
+                               0.0).toDouble();
+            m_memorySlots[i].gainDb =
+                settings.value(prefix + QStringLiteral("/Gain"),
+                               0.0).toDouble();
+        } else {
+            m_memorySlots[i].phaseDeg = 0.0;
+            m_memorySlots[i].gainDb = 0.0;
+        }
+    }
+    refreshMemoryLabels();
+}
+
+// ---------- Phase 3F Sub-Epic G Task 21: PS HOLD overlay ----------
+
+void DiversityDialog::resizeEvent(QResizeEvent* event)
+{
+    QDialog::resizeEvent(event);
+    if (m_pauseOverlay) {
+        m_pauseOverlay->setGeometry(rect());
+    }
+}
+
+void DiversityDialog::refreshPauseState()
+{
+    if (!m_pauseOverlay) { return; }
+    const auto* slice = sliceA();
+    const bool diversityOn = slice && slice->diversityEnabled();
+    bool moxOn = false;
+    bool psOn  = false;
+    if (m_radioModel) {
+        if (auto* mox = m_radioModel->moxController()) {
+            moxOn = mox->isMox();
+        }
+        if (auto* ps = m_radioModel->pureSignal()) {
+            psOn = ps->isEnabled();
+        }
+    }
+    const bool shouldPause = moxOn && diversityOn && psOn;
+    if (m_pauseOverlay->isVisible() != shouldPause) {
+        m_pauseOverlay->setVisible(shouldPause);
+        if (shouldPause) {
+            m_pauseOverlay->setGeometry(rect());
+            m_pauseOverlay->raise();
+        }
+    }
+}
+
+} // namespace NereusSDR

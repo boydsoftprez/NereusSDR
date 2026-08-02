@@ -64,10 +64,15 @@ public:
     explicit FourO3APage(RadioModel* model, QWidget* parent = nullptr);
 
 private slots:
-    // Master toggle handler.  Persists the new state to AppSettings via
+    // Master toggle handler.  Persists the new state via
     // RadioModel::setFourO3AEnabled, then updates the disabled state of
     // the detail tabs to reflect the new master gate.
     void onMasterToggled(bool checked);
+
+    // Per-radio peripherals refactor (2026-05-26): refresh the
+    // "Editing peripherals for <radio> (<MAC>)" banner and the gray-out
+    // state of every peripheral-bearing control on connectionStateChanged.
+    void refreshConnectionBanner();
 
 private:
     // Build the General tab content as a composite widget: master toggle
@@ -92,6 +97,9 @@ private:
     // General tab controls.
     QCheckBox*            m_masterToggle{nullptr};
     QLabel*               m_flexApiStatusLabel{nullptr};
+    // Per-radio peripherals refactor (2026-05-26): banner at top of the
+    // General tab; refreshConnectionBanner updates its text + style.
+    QLabel*               m_connectionBanner{nullptr};
 
     // Embedded existing pages.  We keep raw pointers so the master
     // toggle can enable/disable them as a unit.  Owned by the tab

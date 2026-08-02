@@ -1662,28 +1662,70 @@ RxChannel::MeterValues RxChannel::getMeters() const
 
 ### 11.1 Standard Channel Allocation
 
+Superseded in Phase 3F. The pre-3F table below reserved ids 1-3 for a
+diversity / RX2 layout that was never built, and put TX at 4; the shipped
+code put TX at 1. Phase 3F replaced both with one slice pool sized off
+`BoardCapabilities::maxSlices`, so the reserved block is now derived from
+the upstream `chid()` formula instead of hand-assigned.
+
+The ids are constants on `WdspEngine` (`kMaxSliceChannels`,
+`kTxChannelId`, `kPsFeedbackChannelId`); read those, not this table, when
+writing code. `tests/tst_wdsp_channel_id_map.cpp` pins the invariants.
+
 | WDSP Channel ID | NereusSDR Concept | Type | Default State | Notes |
 |-----------------|-------------------|------|---------------|-------|
-| 0 | RX1 main | RX | Active | Primary receiver. Always created. |
-| 1 | RX1 sub (diversity) | RX | Inactive | Activated when diversity mode is enabled for RX1. |
-| 2 | RX2 main | RX | Inactive | Secondary independent receiver. Activated by user. |
-| 3 | RX2 sub (diversity) | RX | Inactive | Activated when diversity mode is enabled for RX2. |
-| 4 | TX | TX | Inactive | Activated on MOX/PTT/VOX. Single TX path. |
-| 5 | PureSignal feedback | RX | Inactive | Dedicated feedback receiver for PureSignal. Not available for normal RX. |
+| 0 | Slice A | RX | Active | Primary receiver. Always created. WDSP channel id == slice index. |
+| 1 | Slice B | RX | Inactive until bound | Pooled at connect; activated when a slice binds to a stream. |
+| 2 | Slice C | RX | Inactive until bound | Pooled at connect. |
+| 3 | Slice D | RX | Inactive until bound | Pooled at connect. |
+| 4 | Slice E | RX | Inactive until bound | Pooled at connect. Top of the RX block on a 5-slice SKU. |
+| 5 | TX | TX | Inactive | `kTxChannelId` = `cmSubRCVR * cmRCVR` = `1 * kMaxSliceChannels`. Activated on MOX/PTT/VOX. Single TX path. |
+| 6 | PureSignal feedback | RX | Inactive | `kPsFeedbackChannelId`. NereusSDR extension; upstream runs PS feedback inside the TX channel. Not available for normal RX. |
+
+A SKU with fewer slices (HL2 `maxSlices=1`, HermesII 2, Atlas 3, Hermes 4)
+opens a shorter pool but does **not** move the TX or PS ids: the reserved
+block is sized off the ceiling so those two stay compile-time constants,
+the same way Thetis's `cmRCVR = 5` is a compile-time maximum rather than
+the connected radio's receiver count.
 
 ### 11.2 Mapping to Thetis Thread/SubRX Convention
 
-| Thetis (thread, subrx) | WDSP Channel | NereusSDR RxChannel |
-|-------------------------|--------------|---------------------|
-| (0, 0) | 0 | RX1 main |
-| (0, 1) | 1 | RX1 diversity |
-| (2, 0) | 2 | RX2 main |
-| (2, 1) | 3 | RX2 diversity |
-| TX | 4 | TxChannel |
+Thetis's `chid(stream, subrx)` (`ChannelMaster/cmsetup.c:176-191`
+[v2.10.3.15]) is:
 
-NereusSDR uses sequential channel IDs (0-5) rather than Thetis's sparse
-thread numbering (0, 2). The mapping is documented here for reference
-when porting Thetis DSP code.
+```
+rx (stype 0):  ch_id = cmSubRCVR * stream + subrx
+tx (stype 1):  ch_id = stream + (cmSubRCVR - 1) * cmRCVR
+```
+
+with `cmRCVR = 5`, `cmSubRCVR = 2`, `cmXMTR = 1` (`cmaster.cs:412,419,502`
+[v2.10.3.15]), giving Thetis ch[0..9] = RX and ch[10] = TX. The C# mirror
+is `WDSP.id(thread, subrx)` at `dsp.cs:926-944` [v2.10.3.15], whose TX case
+returns `CMsubrcvr * CMrcvr`.
+
+NereusSDR's radio structure is one WDSP channel per slice with no
+sub-receivers, i.e. `cmSubRCVR = 1`, `cmRCVR = kMaxSliceChannels`,
+`cmXMTR = 1`. Substituting into the same formula:
+
+```
+rx:  ch_id = 1 * slice + 0          = slice
+tx:  ch_id = kMaxSliceChannels + 0  = kMaxSliceChannels
+```
+
+so the upstream formula reproduces the Phase 3F "WDSP channel id == slice
+index" invariant exactly, and TX lands immediately above the RX block.
+
+| Thetis (thread, subrx) | Thetis WDSP Channel | NereusSDR equivalent | NereusSDR WDSP Channel |
+|-------------------------|--------------------|----------------------|------------------------|
+| (0, 0) | 0 | Slice A | 0 |
+| (0, 1) | 1 | Slice B | 1 |
+| (2, 0) | 2 | Slice C | 2 |
+| (2, 1) | 3 | Slice D | 3 |
+| (1, 0) TX | 10 | TX | 5 |
+
+The two columns differ because Thetis reserves two sub-receiver channels
+per receiver and NereusSDR reserves one channel per slice. The formula is
+the same; only `cmSubRCVR` differs.
 
 ### 11.3 SliceModel to Channel Binding
 

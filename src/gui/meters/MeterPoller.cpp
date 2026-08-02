@@ -334,6 +334,7 @@ void MeterPoller::poll()
     // SMeter mode -- a 3-15 dB divergence depending on signal/noise.
     Q_UNUSED(smeterDbm);
     pollSMeter();
+    pollSliceSMeters();
 }
 
 // Drive the analog SMeterWidget with the WDSP source selected by its current
@@ -349,6 +350,27 @@ void MeterPoller::poll()
 // MaxBin uses GetDetectMaxBin (wdsp/analyzer.c:830 [@501e3f5]) -- no direct
 // Thetis dsp.cs call site; the detector is always display-channel 0 in
 // single-panadapter builds.
+// Per-slice S-meter, one emit per slice per tick.
+//
+// Deliberately NOT part of pollSMeter(): that returns early without an analog
+// SMeterWidget or without m_rxChannel, and the flag level bars depend on
+// neither. Slices B+ had no S-meter at all before this -- the poller owns a
+// single m_rxChannel and emitted one unqualified smeterUpdated.
+//
+// SignalAvg only: the analog SMeter's peak / MaxBin modes are a property of
+// that one widget, while every flag bar wants the same averaged reading.
+void MeterPoller::pollSliceSMeters()
+{
+    if (!m_wdspEngine || m_sliceChannels.isEmpty()) { return; }
+    const double rxOffsetDb = m_rxOffsetSource ? m_rxOffsetSource() : 0.0;
+    for (int sliceId : m_sliceChannels) {
+        RxChannel* ch = m_wdspEngine->rxChannel(sliceId);
+        if (!ch) { continue; }
+        emit sliceSmeterUpdated(
+            sliceId, ch->getMeter(RxMeterType::SignalAvg) + rxOffsetDb);
+    }
+}
+
 void MeterPoller::pollSMeter()
 {
     SMeterWidget* sm = m_sMeter.data();
@@ -423,6 +445,7 @@ void MeterPoller::pollSMeter()
     // so the analog widget sees the value first (matches the order
     // VfoWidget::setSmeter listeners expect for cross-meter alignment).
     emit smeterUpdated(static_cast<double>(dbm));
+
 }
 
 // Poll the four WDSP TX meters active in 3M-1a and push to meter widget targets.

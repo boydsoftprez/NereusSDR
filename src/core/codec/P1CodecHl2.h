@@ -95,6 +95,10 @@ public:
         quint8 adcCtrl2
     ) const override;
 
+    DdcAssignment applyDdcAssignment(
+        const CodecContext& ctx,
+        const std::array<SliceConfig, 5>& slices) const override;
+
     // Phase 3P-E Task 2: wire to IoBoardHl2 for I2C intercept.
     // Called by P1RadioConnection::setIoBoard() at connect time.
     void setIoBoard(IoBoardHl2* io) { m_io = io; }

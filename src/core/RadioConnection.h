@@ -60,6 +60,37 @@ struct AntennaRouting {
     bool tx        {false}; // current MOX state             (3M-1)
 };
 
+// Per-ADC RX band-pass decision — Phase 3F.
+//
+// Composed by AlexController::recomputeBpf over the set of slice bands on
+// each ADC, published by RadioModel::republishAlexAdcSlices, and consumed by
+// the connection when it composes the Alex HPF bits.
+//
+// A 2-ADC radio has two independent filter chains and Thetis writes them as
+// two independent wire words: `prbpfilter` (Alex0, ADC0) fed from
+// setAlex1HPF(_rx1_dds_freq), and `prbpfilter2` (Alex1, ADC1) fed from
+// setAlex2HPF(rx2_dds_freq_mhz).
+//   From Thetis console.cs:15401 + 15435-15443 [v2.10.3.15]
+//[2.10.3.13]MW0LGE
+//   From Thetis ChannelMaster/network.c:1040-1050 [v2.10.3.15]
+//   Upstream inline attribution preserved verbatim (console.cs:15441):
+//     HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+// Before this struct existed NereusSDR derived one HPF value from whichever
+// receiver was retuned last and put it in both words, so a second slice on a
+// different band made the first one deaf (reported by CT1IQI on PR #293).
+//
+// -1 means "no decision for this ADC": no slice sits on it, so the connection
+// keeps whatever HPF bits it already had. That mirrors Thetis, which only
+// calls setAlex2HPF when RX2 actually exists (console.cs:15435-15442) and
+// otherwise leaves prbpfilter2's HPF nibble untouched.
+//
+// Values are the Thetis HPF bit encoding (AlexFilterMap::computeHpf):
+// 0x10/0x08/0x04/0x01/0x02 band filters, 0x40 6 m preamp, 0x20 bypass.
+struct AlexRxBpf {
+    int hpfBitsAdc0 {-1};
+    int hpfBitsAdc1 {-1};
+};
+
 // Abstract base class for radio connections.
 // Subclasses implement protocol-specific behavior (P1 or P2).
 // Instances live on the Connection worker thread.
@@ -160,6 +191,19 @@ public slots:
     virtual void setTxDrive(int level) = 0;
     virtual void setMox(bool enabled) = 0;
     virtual void setAntennaRouting(AntennaRouting routing) = 0;
+
+    // Apply the per-ADC RX band-pass decision to the Alex HPF wire bits.
+    //
+    // Deliberately a separate pump from setAntennaRouting rather than an
+    // extra field on AntennaRouting: that struct is composed by
+    // RadioModel::applyAlexAntennaForBand from a single (band, isTx) pair,
+    // and with N slices spread over two chains there is no single band to
+    // compose it from. The filter decision also fires on a different trigger
+    // set (slice bind / retune / removal) than antenna routing does
+    // (antennaChanged / bandChanged / Connected).
+    //
+    // Non-pure so existing test mocks compile unchanged; P1 and P2 override.
+    virtual void setAlexRxBpf(AlexRxBpf /*bpf*/) {}
 
     // Push TX-side step attenuator value to hardware.
     //

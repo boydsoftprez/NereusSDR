@@ -60,13 +60,11 @@ private slots:
     // wrong connection type or a missed moveToThread).
     void processIqBatch_drainsBurstWithoutBlockingSender();
 
-    // Phase 3M-3a-iv: per drained chunk, processIqBatch must emit
-    // antiVoxSampleReady alongside chunkDrained so TxWorkerThread can
-    // feed WDSP DEXP. Payload shape: (sliceId=0, interleaved L/R buffer
-    // of outSize*2 floats, sampleCount=outSize). The signal fires
-    // regardless of WDSP/AudioEngine wiring — same contract as
-    // chunkDrained — so this test runs without fake engines.
-    void processIqBatch_emitsAntiVoxSampleReady_perChunk();
+    // (Phase 3M-3a-iv added processIqBatch_emitsAntiVoxSampleReady_perChunk
+    //  here, pinning the per-chunk slice-0 anti-VOX fork. Phase 3F Sub-Epic J
+    //  Task 9 retired that fork: the reference is now AudioEngine's anti-VOX
+    //  mixer, summing every audible slice. See
+    //  tests/tst_audio_engine_antivox_mix.cpp.)
 };
 
 namespace {
@@ -182,38 +180,6 @@ void TestRxDspWorkerThread::processIqBatch_drainsBurstWithoutBlockingSender()
     h.teardown();
 }
 
-void TestRxDspWorkerThread::processIqBatch_emitsAntiVoxSampleReady_perChunk()
-{
-    WorkerHarness h = makeHarness();
-    // Tiny sizes so a single 4-IQ-pair feed drains exactly one chunk.
-    h.worker->setBufferSizes(/*in=*/4, /*out=*/2);
-
-    QSignalSpy antiVoxSpy(h.worker, &RxDspWorker::antiVoxSampleReady);
-    QVERIFY(antiVoxSpy.isValid());
-
-    // 4 stereo I/Q samples (= 8 floats interleaved) = exactly inSize=4,
-    // so processIqBatch drains exactly one chunk.
-    QVector<float> iq{ 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f };
-    QMetaObject::invokeMethod(h.worker, "processIqBatch",
-                              Qt::QueuedConnection,
-                              Q_ARG(int, 0),
-                              Q_ARG(QVector<float>, iq));
-
-    // Drain on the main event loop until the spy catches the emission.
-    QElapsedTimer t; t.start();
-    while (antiVoxSpy.count() < 1 && t.elapsed() < 5000) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    }
-    QCOMPARE(antiVoxSpy.count(), 1);
-
-    const auto args = antiVoxSpy.takeFirst();
-    QCOMPARE(args.at(0).toInt(), 0);                  // sliceId (single-RX)
-    const auto interleaved = args.at(1).value<QVector<float>>();
-    QCOMPARE(interleaved.size(), 4);                  // outSize=2 stereo => 4 floats
-    QCOMPARE(args.at(2).toInt(), 2);                  // sampleCount = outSize
-
-    h.teardown();
-}
 
 QTEST_MAIN(TestRxDspWorkerThread)
 #include "tst_rx_dsp_worker_thread.moc"

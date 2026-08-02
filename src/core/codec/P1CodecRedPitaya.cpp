@@ -37,6 +37,7 @@
 // =================================================================
 
 #include "P1CodecRedPitaya.h"
+#include "core/DdcAssignment.h"
 
 namespace NereusSDR {
 
@@ -183,6 +184,185 @@ PsDdcConfig P1CodecRedPitaya::applyPureSignalDdcConfig(
     }
 
     return cfg;
+}
+
+// =================================================================
+// P1CodecRedPitaya::applyDdcAssignment
+// =================================================================
+//
+// Porting from Thetis console.cs:8305-8385 [v2.10.3.15] UpdateDDCs()
+// RedPitaya-specific case. RedPitaya has its OWN separate case (not shared
+// with OrionMkII/AnvelinaPro3), attributed //DH1KLM throughout.
+//
+// Key difference from OrionMkII-class: Rate[0] and Rate[1] are always set
+// to rx1_rate even in the plain (non-diversity, non-PS) RX path, per
+// // REDPITAYA PAVEL inline comments.
+//
+// Also: 384k sample rate is supported via include_extra_p1_rate flag:
+//   bool include_extra_p1_rate = HardwareSpecific.Model == HPSDRModel.REDPITAYA; //DH1KLM
+//   From Thetis setup.cs:847-849 [v2.10.3.15]
+//   The 384k rate flows naturally through SliceConfig.sampleRateHz.
+//
+// Original C# (relevant fragment):
+//
+//   case HPSDRModel.REDPITAYA: //DH1KLM
+//       P1_rxcount = 5;  // RX5 used for puresignal feedback
+//       nddc = 5;
+//       if (!_mox)
+//       {
+//           if (diversity_enabled)
+//           {
+//               P1_DDCConfig = 2; // REDPITAYA PAVEL
+//               DDCEnable = DDC0; SyncEnable = DDC1;
+//               Rate[0] = rx1_rate; Rate[1] = rx1_rate;
+//               Rate[2] = rx1_rate; // REDPITAYA PAVEL
+//               cntrl1 = rx_adc_ctrl1 & 0xff; cntrl2 = rx_adc_ctrl2 & 0x3f;
+//           }
+//           else
+//           {
+//               P1_DDCConfig = 1; DDCEnable = DDC2; SyncEnable = 0;
+//               Rate[0] = rx1_rate; // REDPITAYA PAVEL
+//               Rate[1] = rx1_rate; // REDPITAYA PAVEL
+//               Rate[2] = rx1_rate;
+//               cntrl1 = rx_adc_ctrl1 & 0xff; cntrl2 = rx_adc_ctrl2 & 0x3f;
+//           }
+//       }
+//       else { ... PS / diversity-mox branches, also with REDPITAYA PAVEL Rate extras }
+//       if (rx2_enabled) { DDCEnable += DDC3; Rate[3] = rx2_rate; }
+//
+// //DH1KLM  [original tag from console.cs:8305 REDPITAYA case header, verbatim]
+DdcAssignment P1CodecRedPitaya::applyDdcAssignment(
+    const CodecContext& ctx,
+    const std::array<SliceConfig, 5>& slices) const
+{
+    // DDC bitmask constants from Thetis console.cs:8199-8202 [v2.10.3.15]
+    static constexpr int kDDC0 = 1;
+    static constexpr int kDDC1 = 2;
+    static constexpr int kDDC2 = 4;
+    static constexpr int kDDC3 = 8;
+
+    // ps_rate = cmaster.PSrate from Thetis cmaster.cs:425 [v2.10.3.15]
+    static constexpr int kPsRate = 192000;
+
+    DdcAssignment a{};
+
+    // From Thetis console.cs:8306-8307 [v2.10.3.15]: //DH1KLM
+    //   P1_rxcount = 5;  // RX5 used for puresignal feedback
+    //   nddc = 5;
+    // //DH1KLM  [original tag from console.cs:8305 REDPITAYA case header]
+    a.p1RxCount = 5;
+    a.nDdc      = 5;
+
+    const int rx1Rate = slices[0].live ? slices[0].sampleRateHz : 0;
+    const int rx2Rate = slices[1].live ? slices[1].sampleRateHz : 0;
+    const bool rx2Live = slices[1].live;
+
+    if (ctx.puresignalRun && ctx.mox) {
+        // From Thetis console.cs:8346-8355 [v2.10.3.15] (!diversity && puresignal_enabled):
+        //   P1_DDCConfig = 3; DDCEnable = DDC0 + DDC2; SyncEnable = DDC1;
+        //   Rate[0] = ps_rate; Rate[1] = ps_rate; Rate[2] = rx1_rate;
+        //   cntrl1 = (rx_adc_ctrl1 & 0xf3) | 0x08;
+        // (diversity+PS identical per console.cs:8357-8366)
+        // //DH1KLM  [original tag from console.cs:8305 REDPITAYA case header]
+        a.p1DdcConfig = 3;
+        a.ddcEnable   = kDDC0 | kDDC2;
+        a.syncEnable  = kDDC1;
+        a.rate[0]     = kPsRate;
+        a.rate[1]     = kPsRate;
+        a.rate[2]     = rx1Rate;
+        a.adcCtrl1    = (ctx.p1AdcCntrl & 0xf3) | 0x08;
+        a.adcCtrl2    = ctx.p1AdcCntrl & 0x3f;
+        a.psFwdDdc    = 0;
+        a.psRevDdc    = 1;
+        // Phase 3F Sub-Epic I Task 7b: stream 0 stays on DDC2 (rate[2] above
+        // is preserved, not reclaimed by the PS pair).
+        if (slices[0].live) { a.streamDdc[0] = 2; }
+    } else if (ctx.diversity) {
+        // From Thetis console.cs:8310-8319 [v2.10.3.15] (no-mox, diversity):
+        //   P1_DDCConfig = 2; // REDPITAYA PAVEL
+        //   DDCEnable = DDC0; SyncEnable = DDC1;
+        //   Rate[0] = rx1_rate; Rate[1] = rx1_rate;
+        //   Rate[2] = rx1_rate; // REDPITAYA PAVEL
+        //   cntrl1 = rx_adc_ctrl1 & 0xff; cntrl2 = rx_adc_ctrl2 & 0x3f;
+        // Also mox+diversity+!PS at console.cs:8368-8378:
+        //   P1_DDCConfig = 2; DDCEnable = DDC0; SyncEnable = DDC1;
+        //   Rate[0]=Rate[1]=rx1_rate; Rate[2] = rx1_rate; // REDPITAYA PAVEL
+        // //DH1KLM  [original tag from console.cs:8305 REDPITAYA case header]
+        // // REDPITAYA PAVEL  [original inline tag from console.cs:8312, P1_DDCConfig override]
+        // // REDPITAYA PAVEL  [original inline tag from console.cs:8317, Rate[2] in diversity]
+        a.p1DdcConfig = 2; // REDPITAYA PAVEL
+        a.ddcEnable   = kDDC0;
+        a.syncEnable  = kDDC1;
+        a.rate[0]     = rx1Rate;
+        a.rate[1]     = rx1Rate;
+        a.rate[2]     = rx1Rate; // REDPITAYA PAVEL
+        a.adcCtrl1    = ctx.p1AdcCntrl & 0xff;
+        a.adcCtrl2    = ctx.p1AdcCntrl & 0x3f;
+        a.p1Diversity = 1;
+        // Phase 3F Sub-Epic I Task 7b: stream 0 migrates to the DDC0/DDC1
+        // sync pair set above. ddcEnable carries only kDDC0 here (DDC2's
+        // rate[2] REDPITAYA PAVEL quirk above does not enable DDC2 itself).
+        if (slices[0].live) { a.streamDdc[0] = 0; }
+    } else {
+        // From Thetis console.cs:8321-8330 [v2.10.3.15] (no-diversity, plain RX):
+        //   P1_DDCConfig = 1; DDCEnable = DDC2; SyncEnable = 0;
+        //   Rate[0] = rx1_rate; // REDPITAYA PAVEL
+        //   Rate[1] = rx1_rate; // REDPITAYA PAVEL
+        //   Rate[2] = rx1_rate;
+        //   cntrl1 = rx_adc_ctrl1 & 0xff; cntrl2 = rx_adc_ctrl2 & 0x3f;
+        // Note: Rate[0] and Rate[1] always set even in non-PS mode (REDPITAYA PAVEL)
+        // vs. OrionMkII which only sets Rate[0] for the P1 path ([2.10.3.13]MW0LGE p1!)
+        // //DH1KLM  [original tag from console.cs:8305 REDPITAYA case header]
+        // // REDPITAYA PAVEL  [original inline tag from console.cs:8326, Rate[0] always set]
+        // // REDPITAYA PAVEL  [original inline tag from console.cs:8327, Rate[1] always set]
+        a.p1DdcConfig = 1;
+        a.ddcEnable   = kDDC2;
+        a.syncEnable  = 0;
+        a.rate[0]     = rx1Rate; // REDPITAYA PAVEL
+        a.rate[1]     = rx1Rate; // REDPITAYA PAVEL
+        a.rate[2]     = rx1Rate;
+        a.adcCtrl1    = ctx.p1AdcCntrl & 0xff;
+        a.adcCtrl2    = ctx.p1AdcCntrl & 0x3f;
+        a.nDdc        = 1;
+        // Phase 3F Sub-Epic I Task 7b: stream 0 -> DDC2, plain-RX path.
+        if (slices[0].live) { a.streamDdc[0] = 2; }
+
+        // Phase 3F extension: streams 2/3/4 -> DDC4/5/6 in plain-RX path.
+        // 384k flows through naturally via SliceConfig.sampleRateHz
+        // (include_extra_p1_rate flag in setup.cs:847 [v2.10.3.15] //DH1KLM
+        //  controls the sample rate combo list; the codec just carries through).
+        // //DH1KLM  [original tag from console.cs:8305; rate selection is a setup.cs
+        //            concern; the codec treats rx1Rate as opaque]
+        for (int i = 2; i <= 4; ++i) {
+            if (slices[i].live) {
+                const int ddc = i + 2;  // stream 2->DDC4, 3->DDC5, 4->DDC6
+                // Phase 3F Sub-Epic I Task 7b: publish the mapping explicitly.
+                a.streamDdc[i] = ddc;
+                a.ddcEnable |= (1 << ddc);
+                a.rate[ddc]  = slices[i].sampleRateHz;
+                ++a.nDdc;
+            }
+        }
+    }
+
+    // From Thetis console.cs:8381-8385 [v2.10.3.15]:
+    //   if (rx2_enabled) { DDCEnable += DDC3; Rate[3] = rx2_rate; }
+    // //DH1KLM  [original tag from console.cs:8305 REDPITAYA case header]
+    // Note: console.cs:8386 break falls through to the Hermes-class case at 8387-8388:
+    //   case HPSDRModel.ANAN_G2E: //N1GP G2E added   [adjacent inline tag from console.cs:8388]
+    if (rx2Live) {
+        a.ddcEnable |= kDDC3;
+        a.rate[3]    = rx2Rate;
+        // Phase 3F Sub-Epic I Task 7b: stream 1 -> DDC3, in every branch (the
+        // rx2Live addendum runs unconditionally, same as ddcEnable/rate[3]
+        // above).
+        a.streamDdc[1] = 3;
+        if (!(ctx.puresignalRun && ctx.mox) && !ctx.diversity) {
+            ++a.nDdc;
+        }
+    }
+
+    return a;
 }
 
 } // namespace NereusSDR

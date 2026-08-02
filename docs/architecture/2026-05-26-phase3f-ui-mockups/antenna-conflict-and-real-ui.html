@@ -1,0 +1,299 @@
+<style>
+.nereus-frame { background: #181c24; border: 1px solid #2a3548; border-radius: 4px; overflow: hidden; box-shadow: 0 4px 16px rgba(0,0,0,0.4); font-family: -apple-system, "Segoe UI", "Helvetica Neue", sans-serif; }
+.nereus-titlebar { background: linear-gradient(180deg, #3a4a5a 0%, #2a3a4a 50%, #1a2a38 100%); border-bottom: 1px solid #44556a; padding: 4px 10px; display: flex; align-items: center; justify-content: space-between; }
+.nereus-titletext { color: #8aa8c0; font-size: 10px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; }
+.nereus-badge { display: inline-flex; align-items: center; justify-content: center; height: 16px; padding: 0 6px; border-radius: 2px; font-size: 9px; font-weight: 700; letter-spacing: 0.3px; }
+.nereus-slice-A { background: #d4631f; color: #fff; }
+.nereus-slice-B { background: #a83333; color: #fff; }
+.nereus-slice-C { background: #3070a8; color: #fff; }
+.nereus-slice-D { background: #6a4a8a; color: #fff; }
+.nereus-tx { background: #c0392b; color: #fff; border: 1px solid #e74c3c; }
+.nereus-wide { background: #a87a3a; color: #fff; border: 1px solid #c89a5a; }
+.nereus-chain { background: #2a4458; color: #aac5d8; border: 1px solid #3a5468; font-weight: 600; }
+.nereus-button { background: linear-gradient(180deg, #3a4a5a 0%, #2a3a4a 100%); color: #cde; border: 1px solid #44556a; border-radius: 3px; padding: 5px 12px; font-size: 11px; cursor: pointer; }
+.nereus-button-primary { background: linear-gradient(180deg, #4a6a8a 0%, #3a557a 100%); color: #fff; border: 1px solid #5a7a9a; font-weight: 600; }
+.nereus-menu { background: #1f2530; border: 1px solid #44556a; border-radius: 4px; padding: 4px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.5); min-width: 240px; }
+.nereus-menu-item { padding: 6px 14px; color: #cde; font-size: 11px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; }
+.nereus-menu-item:hover { background: #3a557a; }
+.nereus-menu-item-selected { background: rgba(58, 85, 122, 0.4); }
+.nereus-menu-item-consequence { color: #88a; font-size: 10px; font-style: italic; }
+.nereus-menu-divider { height: 1px; background: #44556a; margin: 4px 0; }
+</style>
+
+<h2>Antenna conflict resolution + real UI fidelity</h2>
+<p class="subtitle">Your proposal refined with TX safety, then proper UI mockups for the affected surfaces.</p>
+
+<h3>§1 The conflict-resolution refinement</h3>
+<div style="background:#1a2030;padding:14px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  Your idea: auto-switch all subscribed slices on the conflicting chain to the new slice's antenna. <strong>Yes, but with one safety carve-out: never silently re-route a TX-bound slice's antenna.</strong> TX-bound antenna selection is RF-critical (wrong antenna could trip SWR, hit the wrong feedline, in worst case damage the PA). Everything else can flip silently with an undo toast.<br><br>
+
+  <strong style="color:#8aa8c0">The policy:</strong><br>
+  &nbsp;&nbsp;<strong style="color:#5cb85c">●</strong> Adding a slice with a new antenna preference, and there's an idle chain → use the idle chain, no conflict.<br>
+  &nbsp;&nbsp;<strong style="color:#5cb85c">●</strong> Both chains active, NEITHER on the wanted antenna, conflict chain has only RX slices → auto-switch the conflict chain to the new antenna, all RX slices on that chain follow. Toast appears: "Slice B's antenna changed from ANT2 to ANT3. [Undo]".<br>
+  &nbsp;&nbsp;<strong style="color:#fc9">●</strong> Conflict chain contains the TX-bound slice → confirmation dialog: "Adding Slice C on ANT3 will switch your TX-bound slice (Slice A) from ANT1 to ANT3. Confirm?" with the four explicit options.<br>
+  &nbsp;&nbsp;<strong style="color:#5cb85c">●</strong> Operator can change the default policy in Setup → Antenna → "Conflict policy: [Auto-switch (RX only safe) ✓] [Always ask] [Auto-switch (any)]".
+</div>
+
+<h3 style="margin-top:30px">§2 Real UI mockups — pan title bar at near-actual fidelity</h3>
+
+<p style="font-size:11px;color:#8aa;margin-bottom:8px">Slice A pan, TX-bound, on Chain 0 with BPF filtered (no WIDE badge):</p>
+<div class="nereus-frame" style="max-width:760px;margin:0 auto 18px">
+  <div class="nereus-titlebar">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="nereus-badge nereus-slice-A">A</span>
+      <span class="nereus-titletext">14.225.000 USB &nbsp;·&nbsp; 192 kHz &nbsp;·&nbsp; ANT1 &nbsp;·&nbsp; DDC2</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span class="nereus-badge nereus-chain">CH 0</span>
+      <span class="nereus-badge nereus-tx">TX</span>
+    </div>
+  </div>
+  <div style="height:140px;background:linear-gradient(180deg,#0f1a28 0%,#0a1018 60%,#1a1224 100%);position:relative;border-top:1px solid #2a3548">
+    <div style="position:absolute;top:6px;left:0;right:0;display:flex;justify-content:space-between;padding:0 14px;font-size:9px;color:#557;font-family:monospace">
+      <span>14.130</span><span>14.180</span><span>14.225</span><span>14.270</span><span>14.320</span>
+    </div>
+    <div style="position:absolute;top:22px;left:0;right:0;bottom:50px">
+      <svg viewBox="0 0 760 80" preserveAspectRatio="none" style="width:100%;height:100%">
+        <path d="M0,72 L60,65 L120,70 L180,55 L220,30 L260,48 L320,62 L368,18 L380,32 L420,55 L460,68 L520,70 L580,62 L640,58 L700,68 L760,72" stroke="#6acb6a" stroke-width="1.5" fill="none"/>
+      </svg>
+    </div>
+    <div style="position:absolute;top:22px;bottom:50px;left:50%;width:1px;background:#fc9;box-shadow:0 0 4px rgba(255,200,100,0.5)"></div>
+    <div style="position:absolute;top:22px;bottom:50px;left:48%;width:5%;background:rgba(212,99,31,0.18);border-left:1px dashed rgba(212,99,31,0.5);border-right:1px dashed rgba(212,99,31,0.5)"></div>
+    <div style="position:absolute;bottom:0;left:0;right:0;height:50px;background:repeating-linear-gradient(180deg,#0a0a1a 0%,#1a1a3a 25%,#3a2a5a 50%,#5a3a3a 75%,#8a5a3a 100%);opacity:0.65"></div>
+  </div>
+</div>
+
+<p style="font-size:11px;color:#8aa;margin-bottom:8px">Slice B pan, on Chain 0 with WIDE badge (multi-band conflict — sharing chain with Slice A's 20m + Slice C's 80m):</p>
+<div class="nereus-frame" style="max-width:760px;margin:0 auto 18px">
+  <div class="nereus-titlebar">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="nereus-badge nereus-slice-B">B</span>
+      <span class="nereus-titletext">7.150.000 LSB &nbsp;·&nbsp; 96 kHz &nbsp;·&nbsp; ANT1 &nbsp;·&nbsp; DDC4</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span class="nereus-badge nereus-chain">CH 0</span>
+      <span class="nereus-badge nereus-wide" title="Alex BPF bypassed — multi-band on Chain 0 (20m, 40m, 80m). Reduced out-of-band rejection. Click for filter policy.">WIDE</span>
+    </div>
+  </div>
+  <div style="height:140px;background:linear-gradient(180deg,#1a1018 0%,#0a0510 60%,#181028 100%);position:relative;border-top:1px solid #2a3548">
+    <div style="position:absolute;top:6px;left:0;right:0;display:flex;justify-content:space-between;padding:0 14px;font-size:9px;color:#557;font-family:monospace">
+      <span>7.102</span><span>7.126</span><span>7.150</span><span>7.174</span><span>7.198</span>
+    </div>
+    <div style="position:absolute;top:22px;left:0;right:0;bottom:50px">
+      <svg viewBox="0 0 760 80" preserveAspectRatio="none" style="width:100%;height:100%">
+        <path d="M0,68 L60,62 L120,68 L180,50 L240,32 L280,48 L320,62 L360,55 L400,68 L460,55 L520,62 L560,38 L600,48 L660,68 L720,65 L760,68" stroke="#6acb6a" stroke-width="1.5" fill="none"/>
+      </svg>
+    </div>
+    <div style="position:absolute;top:22px;bottom:50px;left:50%;width:1px;background:#a83333;box-shadow:0 0 4px rgba(168,51,51,0.5)"></div>
+    <div style="position:absolute;top:22px;bottom:50px;left:47%;width:6%;background:rgba(168,51,51,0.18);border-left:1px dashed rgba(168,51,51,0.5);border-right:1px dashed rgba(168,51,51,0.5)"></div>
+    <div style="position:absolute;bottom:0;left:0;right:0;height:50px;background:repeating-linear-gradient(180deg,#0a0a1a 0%,#1a1a3a 25%,#3a2a5a 50%,#5a3a3a 75%,#8a5a3a 100%);opacity:0.65"></div>
+  </div>
+</div>
+
+<h3 style="margin-top:30px">§3 Right-click antenna menu on a VFO flag (close to real)</h3>
+
+<div style="display:flex;gap:18px;align-items:flex-start;justify-content:center;margin:20px 0">
+
+  <div class="nereus-frame" style="width:280px">
+    <div class="nereus-titlebar">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="nereus-badge nereus-slice-C">C</span>
+        <span class="nereus-titletext">50.150.000 USB</span>
+      </div>
+      <div style="display:flex;gap:6px">
+        <span class="nereus-badge nereus-chain">CH 1</span>
+      </div>
+    </div>
+    <div style="padding:12px;background:#1a1f28;display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:baseline;gap:6px;font-family:monospace">
+        <span style="color:#3a5a7a;font-size:11px">50.</span>
+        <span style="color:#cde;font-size:24px;font-weight:700;letter-spacing:1px">150</span>
+        <span style="color:#cde;font-size:18px;font-weight:600">.</span>
+        <span style="color:#cde;font-size:18px;font-weight:600">000</span>
+        <span style="color:#888;font-size:10px;margin-left:6px">MHz</span>
+      </div>
+      <div style="display:flex;gap:4px;align-items:center">
+        <div style="background:#0a0f18;border:1px solid #2a3548;border-radius:2px;padding:2px 6px;color:#8aa8c0;font-size:10px;font-family:monospace">6m</div>
+        <div style="background:#0a0f18;border:1px solid #2a3548;border-radius:2px;padding:2px 6px;color:#8aa8c0;font-size:10px;font-family:monospace">USB</div>
+        <div style="background:#0a0f18;border:1px solid #2a3548;border-radius:2px;padding:2px 6px;color:#8aa8c0;font-size:10px;font-family:monospace">3.0k</div>
+        <div style="background:#0a0f18;border:1px solid #2a3548;border-radius:2px;padding:2px 6px;color:#8aa8c0;font-size:10px;font-family:monospace">AGC-M</div>
+      </div>
+      <div style="display:flex;gap:4px">
+        <div style="flex:1;background:#0a0f18;border:1px solid #2a3548;border-radius:2px;padding:3px 6px;color:#aac;font-size:10px;text-align:center">S 5</div>
+        <div style="flex:1;background:#0a0f18;border:1px solid #2a3548;border-radius:2px;padding:3px 6px;color:#aac;font-size:10px;text-align:center">RIT</div>
+        <div style="flex:1;background:#0a0f18;border:1px solid #2a3548;border-radius:2px;padding:3px 6px;color:#aac;font-size:10px;text-align:center">XIT</div>
+        <div style="flex:1;background:#0a0f18;border:1px solid #2a3548;border-radius:2px;padding:3px 6px;color:#aac;font-size:10px;text-align:center">LOCK</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="position:relative;width:340px">
+    <div class="nereus-menu">
+      <div style="padding:6px 14px 4px 14px;color:#8aa8c0;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #2a3548;margin-bottom:4px">Slice C — Antenna for 6 m</div>
+      <div class="nereus-menu-item">
+        <span>ANT1</span>
+        <span class="nereus-menu-item-consequence">Chain 0 — joins Slice A (filter bypass)</span>
+      </div>
+      <div class="nereus-menu-item nereus-menu-item-selected" style="color:#8c8;font-weight:600">
+        <span>● ANT2</span>
+        <span class="nereus-menu-item-consequence" style="color:#8c8">Chain 1 — current</span>
+      </div>
+      <div class="nereus-menu-item">
+        <span>ANT3</span>
+        <span class="nereus-menu-item-consequence" style="color:#fc9">Auto-switches Chain 1 from ANT2</span>
+      </div>
+      <div class="nereus-menu-divider"></div>
+      <div class="nereus-menu-item">
+        <span>EXT1</span>
+        <span class="nereus-menu-item-consequence">RX only</span>
+      </div>
+      <div class="nereus-menu-item">
+        <span>EXT2</span>
+        <span class="nereus-menu-item-consequence">RX only</span>
+      </div>
+      <div class="nereus-menu-item">
+        <span>BYPS</span>
+        <span class="nereus-menu-item-consequence">RX only, no Alex</span>
+      </div>
+      <div class="nereus-menu-divider"></div>
+      <div class="nereus-menu-item" style="color:#88a">
+        <span>Antenna policy ▶</span>
+        <span></span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<p style="font-size:11px;color:#8aa;text-align:center;margin-top:8px">Selected option is bolded with green dot. "Auto-switches Chain 1 from ANT2" is the inline consequence preview — operator sees what choosing ANT3 will do before clicking. No surprises.</p>
+
+<h3 style="margin-top:30px">§4 Toast notification — silent antenna re-route</h3>
+
+<div style="position:relative;height:120px;background:linear-gradient(135deg,#0a1018 0%,#1a2030 100%);border-radius:6px;margin:16px 0;border:1px solid #2a3548;overflow:hidden">
+  <div style="position:absolute;bottom:14px;right:14px;background:#1f2530;border:1px solid #44556a;border-left:3px solid #5cb85c;border-radius:4px;padding:10px 14px;display:flex;align-items:center;gap:12px;max-width:380px;box-shadow:0 4px 16px rgba(0,0,0,0.6)">
+    <div style="color:#5cb85c;font-size:18px;line-height:1">✓</div>
+    <div style="flex:1">
+      <div style="color:#cde;font-size:11px;font-weight:600;margin-bottom:2px">Antenna auto-switched</div>
+      <div style="color:#88a;font-size:10px;line-height:1.4">Slice B moved from ANT2 to ANT3 to fit Slice C on Chain 1.</div>
+    </div>
+    <button class="nereus-button" style="padding:3px 10px;font-size:10px">Undo</button>
+  </div>
+</div>
+
+<p style="font-size:11px;color:#8aa;text-align:center;margin-top:4px">Non-blocking, lower-right, auto-dismisses after 8 seconds. Undo button reverts the antenna and removes the newly-added slice (or rejects its antenna preference and falls back to the chain's existing antenna).</p>
+
+<h3 style="margin-top:30px">§5 Confirmation dialog — when re-route would affect TX-bound slice</h3>
+
+<div style="background:rgba(10,15,24,0.85);padding:30px;border-radius:6px;margin:16px 0;border:1px solid #2a3548;display:flex;align-items:center;justify-content:center;min-height:280px">
+  <div class="nereus-frame" style="width:480px;background:#1f2530">
+    <div class="nereus-titlebar">
+      <span class="nereus-titletext" style="color:#fc9">⚠ TX-bound antenna re-route</span>
+      <span style="color:#666;font-size:14px;cursor:pointer;line-height:1">×</span>
+    </div>
+    <div style="padding:18px 20px;color:#cde;font-size:12px;line-height:1.65">
+      <div style="margin-bottom:14px">
+        Adding <strong style="color:#3070a8">Slice C</strong> on <strong>ANT3</strong> requires re-routing <strong>Chain 0</strong> from ANT1 to ANT3. Chain 0 currently hosts:
+      </div>
+      <div style="background:#0a0f18;border:1px solid #2a3548;border-radius:3px;padding:10px 14px;margin-bottom:14px;font-family:monospace;font-size:11px">
+        <div style="display:flex;justify-content:space-between;color:#cde">
+          <span><span class="nereus-badge nereus-slice-A" style="margin-right:6px">A</span>14.225 USB · 20m</span>
+          <span class="nereus-badge nereus-tx">TX</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;color:#aac;margin-top:6px">
+          <span><span class="nereus-badge nereus-slice-D" style="margin-right:6px">D</span>21.300 USB · 15m</span>
+          <span style="color:#666">RX only</span>
+        </div>
+      </div>
+      <div style="color:#fc9;font-size:11px;margin-bottom:6px">⚠ Slice A is your TX-bound slice. Re-routing changes the antenna your transmit signal goes to.</div>
+      <div style="color:#88a;font-size:11px">Verify that ANT3 is rated for your TX power and band before confirming.</div>
+    </div>
+    <div style="padding:12px 16px;background:#181c24;border-top:1px solid #2a3548;display:flex;justify-content:flex-end;gap:8px">
+      <button class="nereus-button">Cancel — don't add Slice C</button>
+      <button class="nereus-button">Use ANT1 for Slice C instead</button>
+      <button class="nereus-button-primary nereus-button">Re-route ANT3</button>
+    </div>
+  </div>
+</div>
+
+<p style="font-size:11px;color:#8aa;text-align:center;margin-top:4px">Only appears when the conflict chain hosts the TX-bound slice. RX-only conflict chains auto-resolve via the toast above.</p>
+
+<h3 style="margin-top:30px">§6 Bottom status banner — at near-real fidelity</h3>
+
+<div class="nereus-frame" style="max-width:1100px;margin:0 auto">
+  <div style="background:linear-gradient(180deg,#1a2030 0%,#0f1620 100%);padding:5px 12px;display:flex;align-items:center;font-size:10px;color:#aac;border-top:1px solid #2a3548;gap:18px;font-family:-apple-system,'Segoe UI',sans-serif">
+    <div style="display:flex;align-items:center;gap:6px">
+      <span style="width:7px;height:7px;border-radius:50%;background:#5cb85c;box-shadow:0 0 4px #5cb85c"></span>
+      <span style="color:#cde;font-weight:600">ANAN-G2</span>
+      <span style="color:#666">192.168.1.42</span>
+    </div>
+    <div style="color:#666">|</div>
+    <div style="display:flex;align-items:center;gap:4px"><span style="color:#666">CH 0</span><span class="nereus-badge nereus-wide" style="height:14px;font-size:8px">WIDE</span><span style="color:#aac">20m+40m+80m</span></div>
+    <div style="display:flex;align-items:center;gap:4px"><span style="color:#666">CH 1</span><span style="color:#5cb85c">●</span><span style="color:#aac">6m filt</span></div>
+    <div style="color:#666">|</div>
+    <div><span style="color:#666">Slices</span> <span style="color:#cde;font-weight:600">4/5</span></div>
+    <div><span style="color:#666">RX</span> <span style="color:#cde">38 Mbps</span></div>
+    <div><span style="color:#666">TX</span> <span style="color:#cde">0 Mbps</span></div>
+    <div style="flex:1"></div>
+    <div style="color:#666">PA 38°C</div>
+    <div style="color:#666">SWR 1.2</div>
+    <div style="color:#666">14:23:18 UTC</div>
+  </div>
+</div>
+
+<p style="font-size:11px;color:#8aa;text-align:center;margin-top:6px">Per-chain WIDE state surfaced at a glance. Click "CH 0" or its WIDE badge → opens Filter Policy popup.</p>
+
+<h3 style="margin-top:30px">§7 Filter Policy popup (clicked from WIDE badge or chain tag)</h3>
+
+<div style="background:rgba(10,15,24,0.85);padding:24px;border-radius:6px;margin:16px 0;border:1px solid #2a3548;display:flex;align-items:center;justify-content:center;min-height:260px">
+  <div class="nereus-frame" style="width:380px">
+    <div class="nereus-titlebar">
+      <span class="nereus-titletext">Chain 0 — Filter Policy</span>
+      <span style="color:#666;font-size:14px;cursor:pointer;line-height:1">×</span>
+    </div>
+    <div style="padding:14px 18px;color:#cde;font-size:11px;line-height:1.6">
+      <div style="margin-bottom:14px">
+        <div style="color:#88a;margin-bottom:4px">Chain 0 currently:</div>
+        <div style="background:#0a0f18;border:1px solid #2a3548;border-radius:3px;padding:8px 12px;font-family:monospace;font-size:10px">
+          ANT1 → Alex0 (<span style="color:#a87a3a;font-weight:600">BYPASS</span>) → ADC0<br>
+          Slices: <span class="nereus-badge nereus-slice-A" style="margin:0 4px 0 0">A</span> 20m · <span class="nereus-badge nereus-slice-B" style="margin:0 4px 0 0">B</span> 40m · <span class="nereus-badge nereus-slice-D" style="margin:0 4px 0 0">D</span> 80m<br>
+          Reason: multi-band (20m + 40m + 80m)
+        </div>
+      </div>
+      <div style="margin-bottom:6px;color:#88a">BPF mode:</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:6px 10px;background:rgba(58,85,122,0.4);border-radius:3px">
+          <input type="radio" name="bpf" checked style="margin-top:2px">
+          <div>
+            <div style="color:#cde;font-weight:600">Auto</div>
+            <div style="color:#88a;font-size:10px">Filter when single-band, bypass when multi-band</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:6px 10px;border-radius:3px;border:1px solid transparent">
+          <input type="radio" name="bpf" style="margin-top:2px">
+          <div>
+            <div style="color:#cde;font-weight:600">Force filter (TX-bound band)</div>
+            <div style="color:#88a;font-size:10px">Keep BPF on 20m. Slice B + D see ~30 dB OOB attenuation.</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:6px 10px;border-radius:3px;border:1px solid transparent">
+          <input type="radio" name="bpf" style="margin-top:2px">
+          <div>
+            <div style="color:#cde;font-weight:600">Force bypass</div>
+            <div style="color:#88a;font-size:10px">Always wideband, no BPF protection</div>
+          </div>
+        </label>
+      </div>
+      <div style="border-top:1px solid #2a3548;margin:14px 0 10px 0;padding-top:10px">
+        <label style="display:flex;align-items:center;gap:8px;color:#cde;cursor:pointer;font-size:11px">
+          <input type="checkbox" checked> HPF (broadcast band reject) enabled
+        </label>
+      </div>
+    </div>
+    <div style="padding:10px 16px;background:#181c24;border-top:1px solid #2a3548;display:flex;justify-content:flex-end;gap:8px">
+      <button class="nereus-button">Cancel</button>
+      <button class="nereus-button-primary nereus-button">Apply</button>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:24px;text-align:center">All UI surfaces now closer to the actual look. Push back on any specific surface — fonts, colors, layout density, button styling. The styling here approximates StyleConstants.h (gradient title bars, 10px bold #8aa8c0 labels, dark backgrounds) but I'll need to verify exact values when writing the design doc.</p>

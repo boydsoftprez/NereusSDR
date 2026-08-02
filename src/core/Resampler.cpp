@@ -64,6 +64,42 @@ QByteArray Resampler::process(const float* in, int numSamples)
     return result;
 }
 
+// NereusSDR-original: non-allocating variant of process() for use inside
+// real-time audio callbacks (e.g. PortAudioBus paCallback).  Same math
+// as process() but writes into a caller-provided float buffer instead
+// of returning a QByteArray.  See Resampler.h for the rationale.
+int Resampler::processInto(const float* in, int numSamples,
+                           float* out, int outCapacity)
+{
+    if (numSamples <= 0 || in == nullptr ||
+        out == nullptr || outCapacity <= 0) {
+        return 0;
+    }
+
+    // Convert float32 -> double.  m_inBuf was reserved to maxBlockSamples
+    // in the constructor; resize() within that capacity is allocation-free.
+    m_inBuf.resize(numSamples);
+    for (int i = 0; i < numSamples; ++i) {
+        m_inBuf[i] = static_cast<double>(in[i]);
+    }
+
+    double* outPtr = nullptr;
+    int outLen = m_resampler->process(m_inBuf.data(), numSamples, outPtr);
+    if (outLen <= 0 || outPtr == nullptr) {
+        return 0;
+    }
+    // Clamp to caller's capacity.  r8brain's per-call output length
+    // varies with the rate ratio and internal buffer fill, so the
+    // caller's outCapacity must be sized for the worst case.
+    if (outLen > outCapacity) {
+        outLen = outCapacity;
+    }
+    for (int i = 0; i < outLen; ++i) {
+        out[i] = static_cast<float>(outPtr[i]);
+    }
+    return outLen;
+}
+
 // From AetherSDR src/core/Resampler.cpp:40-61 [@0cd4559]
 QByteArray Resampler::processStereoToMono(const float* stereoIn, int numStereoFrames)
 {

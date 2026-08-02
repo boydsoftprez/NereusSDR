@@ -1,0 +1,108 @@
+<h2>Do we actually need wideband if we already have multi-slice DDC pans?</h2>
+<p class="subtitle">Honest assessment. The case for wideband gets weaker as slice count goes up. It might be worth dropping or deferring.</p>
+
+<h3>What you can already do with DDC pans (no wideband needed)</h3>
+<div style="background:#1a2030;padding:14px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  On a G2 (5-slice cap), each DDC pan can show up to <strong>1.5 MHz of spectrum</strong> (at 1536 kHz sample rate). With 5 slices:<br><br>
+
+  &nbsp;&nbsp;Slice A pan: 1.5 MHz of 20m &nbsp;<em style="color:#888"># entire 20m band fits</em><br>
+  &nbsp;&nbsp;Slice B pan: 1.5 MHz of 40m<br>
+  &nbsp;&nbsp;Slice C pan: 1.5 MHz of 80m<br>
+  &nbsp;&nbsp;Slice D pan: 1.5 MHz of 17m<br>
+  &nbsp;&nbsp;Slice E pan: 1.5 MHz of 15m<br>
+  <br>
+  Total: <strong>7.5 MHz</strong> of cumulative spectrum visible, all listenable, at fine resolution (~375 Hz/bin).<br><br>
+
+  Compare wideband: 61.44 MHz visible at <strong>7.5 kHz/bin</strong> (20× coarser), no audio.<br><br>
+
+  <strong style="color:#fc9">For G2-class operators, 5 DDC pans cover most needs. Wideband is mostly redundant.</strong>
+</div>
+
+<h3 style="margin-top:24px">Where wideband ACTUALLY beats DDC pans</h3>
+
+<div class="mockup">
+  <div class="mockup-header">Genuine wideband-only use cases (the honest list)</div>
+  <div class="mockup-body" style="padding:0">
+    <table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:11px;color:#cde">
+      <thead><tr style="background:#2a3548;color:#8aa8c0;font-size:10px;text-transform:uppercase">
+        <th style="padding:6px;text-align:left">Use case</th>
+        <th style="padding:6px;text-align:left">Why DDC pans can't do it</th>
+        <th style="padding:6px;text-align:center">How common?</th>
+      </tr></thead>
+      <tbody>
+        <tr style="background:#1a2030"><td style="padding:6px">"What bands are alive right now?"</td><td>You have to pre-decide where to point 5 DDC pans. If you don't put one on 12m, you won't see 12m activity.</td><td style="text-align:center;color:#8c8">common (DXers)</td></tr>
+        <tr><td style="padding:6px">6m monitoring (4 MHz band, 50-54 MHz)</td><td>One DDC pan at 1.5 MHz can't show all of 6m. Needs 3 DDC pans, but operator only has 5 total.</td><td style="text-align:center;color:#fc9">moderate (VHF chasers)</td></tr>
+        <tr style="background:#1a2030"><td style="padding:6px">HL2 / HermesII operators (1-2 slice cap)</td><td>They CAN'T have 5 DDC pans. Wideband is their only multi-band view.</td><td style="text-align:center;color:#8c8">common (HL2 is popular)</td></tr>
+        <tr><td style="padding:6px">Propagation watching / gray-line tracking</td><td>5 DDC pans show 5 bands; wideband shows all simultaneous changes across all 10 HF bands + 6m.</td><td style="text-align:center;color:#fc9">moderate (propagation enthusiasts)</td></tr>
+        <tr style="background:#1a2030"><td style="padding:6px">Broadband interference hunting</td><td>Wideband instantly shows where wide noise sources live. DDC pans miss noise outside their windows.</td><td style="text-align:center;color:#a66">rare (specialized)</td></tr>
+        <tr><td style="padding:6px">"What does that other antenna see?" (2-ADC)</td><td>On 2-ADC boards, wideband ADC1 can show what the second antenna sees without consuming a slice budget.</td><td style="text-align:center;color:#a66">rare (multi-antenna setups)</td></tr>
+        <tr style="background:#1a2030"><td style="padding:6px">Multi-band contests (4+ bands competing)</td><td>5 DDC pans help, but wideband adds "all bands at a glance" for situational awareness.</td><td style="text-align:center;color:#fc9">moderate (contest stations)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">Per-SKU value analysis</h3>
+<div class="mockup">
+  <div class="mockup-header">Wideband value drops as slice count rises</div>
+  <div class="mockup-body" style="padding:0">
+    <table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:11px;color:#cde">
+      <thead><tr style="background:#2a3548;color:#8aa8c0;font-size:10px;text-transform:uppercase">
+        <th style="padding:6px;text-align:left">SKU</th>
+        <th style="padding:6px;text-align:center">Max slices</th>
+        <th style="padding:6px;text-align:center">Wideband value</th>
+        <th style="padding:6px;text-align:left">Why</th>
+      </tr></thead>
+      <tbody>
+        <tr style="background:#1a2030"><td style="padding:6px">HL2</td><td style="text-align:center">1</td><td style="text-align:center;color:#8c8;font-weight:bold">HIGH</td><td>Only way to see beyond the one currently-tuned band</td></tr>
+        <tr><td style="padding:6px">HermesII</td><td style="text-align:center">2</td><td style="text-align:center;color:#8c8;font-weight:bold">HIGH</td><td>Two DDC pans + wideband = decent coverage; without wideband very limited</td></tr>
+        <tr style="background:#1a2030"><td style="padding:6px">Metis</td><td style="text-align:center">3</td><td style="text-align:center;color:#fc9">MODERATE</td><td>3 DDC pans cover most needs, wideband adds "see all" view</td></tr>
+        <tr><td style="padding:6px">Hermes (ANAN-10/100)</td><td style="text-align:center">4</td><td style="text-align:center;color:#fc9">MODERATE</td><td>4 DDC pans is usually enough; wideband nice-to-have</td></tr>
+        <tr style="background:#1a2030"><td style="padding:6px">G2/G2E/Saturn/MkII/Andromeda</td><td style="text-align:center">5</td><td style="text-align:center;color:#a66">LOW</td><td>5 DDC pans cover almost everything; wideband mostly redundant unless 6m or multi-antenna</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">The cost</h3>
+<div style="background:#2a3548;padding:14px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  <strong>Estimated implementation:</strong> 1-2 weeks inside 3F. Separate code path for the lifetime of the project.<br>
+  <strong>Bench risk:</strong> Thetis built the protocol path but never publicly surfaced the UI — undocumented firmware quirks possible.<br>
+  <strong>Per-SKU support:</strong> P2 boards straightforward (same protocol). HL2 / standard P1 boards use a different mechanism we'd have to research separately. So "wideband on HL2" (where it's most valuable) is actually the hardest port — and gated on additional research.<br>
+  <strong>Maintenance:</strong> wideband panadapter is a distinct pan type with its own FFT, its own SpectrumWidget mode, its own per-pan source picker option. All future panadapter work has to handle the wideband variant.
+</div>
+
+<h3 style="margin-top:24px">Three honest options</h3>
+
+<div class="options">
+  <div class="option" data-choice="defer" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Defer wideband to a 3F-W follow-on phase</h3>
+      <p>3F MVP ships with: multi-slice (5), multi-pan layout templates, AetherSDR overlay model, Alex hybrid filter policy, TxSliceArbiter, full DDC pan capability. Design the architecture to leave a clean seam for wideband (PanadapterType enum gains Wideband variant later). Ship 3F, get bench feedback, then decide if wideband-W is worth the effort.</p>
+      <p style="font-size:11px;color:#8aa"><strong>Pros:</strong> Smaller 3F. Faster to ship. Real operator feedback informs whether wideband is needed. HL2 wideband (the most valuable case) gets proper research time. AetherSDR doesn't have wideband — we're already shipping more than parity with multi-slice + multi-pan alone.<br><strong>Cons:</strong> Loses the "headline feature" of wideband + the "12h layout for wideband" narrative we were building. HL2 operators wait longer for the multi-band view that helps them most.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="build" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Build wideband as planned in 3F</h3>
+      <p>1-2 weeks of additional 3F scope. Per-ADC wideband enable, "12h" layout, click-to-tune integration with active DDC. P2 boards first, HL2 sub-task gated on protocol research.</p>
+      <p style="font-size:11px;color:#8aa"><strong>Pros:</strong> Single epic delivers everything. HL2/HermesII operators get high-value feature. Showcases unused OpenHPSDR capability that Thetis abandoned.<br><strong>Cons:</strong> Bigger 3F. Risk if undocumented firmware quirks surface. Most G2 operators (the bulk of the user base) get marginal value.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="drop" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Drop wideband entirely</h3>
+      <p>5 DDC pans + 1.5 MHz max bandwidth per pan covers most needs. Wideband becomes a permanent "out of scope" for NereusSDR. Save the engineering effort for elsewhere (3M-2 CW TX, 3F polish, bench bugs).</p>
+      <p style="font-size:11px;color:#8aa"><strong>Pros:</strong> Zero ongoing maintenance burden. Code stays focused. Most operators won't notice (Thetis users never had it either).<br><strong>Cons:</strong> HL2/HermesII operators lose a feature that would meaningfully help them. We leave OpenHPSDR hardware capability on the table indefinitely. Closes a door we'd want to open later anyway.</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:20px;text-align:center">Honest recommendation: <strong>A (defer to 3F-W follow-on)</strong>. 3F is already huge — multi-slice + multi-pan + Alex policy + TxSliceArbiter + 8 architectural decisions. Adding wideband is 1-2 more weeks. Defer, ship 3F, gather operator feedback, then make the wideband call with real-world signal on whether HL2/HermesII operators actually want it before we commit to a separate code path.</p>
+
+<p class="subtitle" style="margin-top:10px;text-align:center">Your call. You said earlier you wanted wideband in this epic — but the question you just asked is the right one to ask before committing.</p>

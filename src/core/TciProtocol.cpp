@@ -137,7 +137,7 @@ void TciProtocol::enqueueLocalBroadcast(const QString& frame)
 // follows TXFreq's single-RX !VFOBTX path (mirrors RX1 VFO A); full
 // VFOBTX/multi-RX logic lands with Phase 3F (see TXFreq cite in
 // buildInitialRadioStateLines).
-void TciProtocol::enqueueLocalBroadcastVfo(int rxIndex, qint64 hz)
+void TciProtocol::enqueueLocalBroadcastVfo(int rxIndex, qint64 hz, bool isTxBound)
 {
     // Per-rx (vfo:rx,chan,hz) covers both channels; Thetis sendVFO at
     // TCIServer.cs:2061-2093 [v2.10.3.13] -- format string.  NereusSDR
@@ -157,35 +157,61 @@ void TciProtocol::enqueueLocalBroadcastVfo(int rxIndex, qint64 hz)
         const QString ddsFrame = QStringLiteral("dds:%1,%2;").arg(rxIndex).arg(hz);
         m_vfoCoalescer.update(ddsKey, ddsFrame);
     }
-    // TX frequency: emit only for rxIndex==0 (the single-RX !VFOBTX path).
-    // When 3F multi-pan lands the full TXFreq logic, the caller (or this
-    // method) will decide which rx drives TX based on VFOBTX/VFOATX/split.
-    // From Thetis sendTXFrequencyChanged at TCIServer.cs:2246-2259 [v2.10.3.13].
-    if (rxIndex == 0) {
-        const QString txKey   = QStringLiteral("tx_frequency");
-        const QString txFrame = QStringLiteral("tx_frequency:%1;").arg(hz);
-        m_vfoCoalescer.update(txKey, txFrame);
-        // bespoke tx_frequency_thetis -- read the SAME rx2Enabled state used
-        // by buildInitialRadioStateLines so the live broadcast doesn't flip
-        // RX2 from true to false between init and the first VFO move (review
-        // P2 #3, 2026-05-22).  VFOBTX still hardcoded false until Phase 3F
-        // multi-pan lands the full TXFreq logic per console.cs:11345-11369
-        // [v2.10.3.15].  Format from sendTXFrequencyChanged at
-        // TCIServer.cs:2249-2254 [v2.10.3.15]: tx_frequency_thetis:hz,band,
-        // rx2en,txvfob.
-        bool rx2en = false;
-        QMetaObject::invokeMethod(m_radio, "rx2Enabled",
-                                  Qt::DirectConnection,
-                                  Q_RETURN_ARG(bool, rx2en));
-        const QString band = bandLabel(bandFromFrequency(static_cast<double>(hz)));
-        const QString txThetisKey = QStringLiteral("tx_frequency_thetis");
-        const QString txThetisFrame =
-            QStringLiteral("tx_frequency_thetis:%1,%2,%3,false;")
-                .arg(hz)
-                .arg(band)
-                .arg(rx2en ? QStringLiteral("true") : QStringLiteral("false"));
-        m_vfoCoalescer.update(txThetisKey, txThetisFrame);
+    // TX frequency: emit only from the receiver actually driving the
+    // transmitter. Codex review round 6, PR #293.
+    //
+    // This used to test rxIndex == 0, the single-RX !VFOBTX path, with a
+    // comment saying the caller would decide once 3F multi-pan landed the
+    // full TXFreq logic. It has landed. TxSliceArbiter binds TX to any slice,
+    // so rxIndex == 0 was wrong in both directions at once: tuning Slice A
+    // advertised A as the transmit frequency while the transmitter was on B,
+    // and tuning B, the slice that actually was transmitting, advertised
+    // nothing at all. A TCI client following tx_frequency was pointed at the
+    // wrong receiver with no indication anything had changed.
+    //
+    // The caller answers it, because TciProtocol holds no RadioModel.
+    if (isTxBound) {
+        enqueueLocalBroadcastTxFrequency(hz);
     }
+}
+
+// Split out of enqueueLocalBroadcastVfo, Codex review round 6, PR #293.
+//
+// tx_frequency and tx_frequency_thetis carry no receiver index, so they are
+// legal to send for ANY slice that has the transmitter, including Slice C or
+// beyond, which are internal and never appear as a trx:N. The vfo: and dds:
+// frames above are the opposite: they are tagged, and must not name a
+// receiver past the advertised trx_count. Keeping the untagged pair
+// separately callable is what lets the TX-handoff broadcast publish the new
+// transmit frequency without also announcing a receiver that does not exist
+// on the wire.
+//
+// From Thetis sendTXFrequencyChanged at TCIServer.cs:2246-2259 [v2.10.3.13].
+void TciProtocol::enqueueLocalBroadcastTxFrequency(qint64 hz)
+{
+    const QString txKey   = QStringLiteral("tx_frequency");
+    const QString txFrame = QStringLiteral("tx_frequency:%1;").arg(hz);
+    m_vfoCoalescer.update(txKey, txFrame);
+    // bespoke tx_frequency_thetis -- read the SAME rx2Enabled state used
+    // by buildInitialRadioStateLines so the live broadcast doesn't flip
+    // RX2 from true to false between init and the first VFO move (review
+    // P2 #3, 2026-05-22).  VFOBTX still hardcoded false until Phase 3F
+    // multi-pan lands the full TXFreq logic per console.cs:11345-11369
+    // [v2.10.3.15].  Format from sendTXFrequencyChanged at
+    // TCIServer.cs:2249-2254 [v2.10.3.15]: tx_frequency_thetis:hz,band,
+    // rx2en,txvfob.
+    bool rx2en = false;
+    QMetaObject::invokeMethod(m_radio, "rx2Enabled",
+                              Qt::DirectConnection,
+                              Q_RETURN_ARG(bool, rx2en));
+    const QString band = bandLabel(bandFromFrequency(static_cast<double>(hz)));
+    const QString txThetisKey = QStringLiteral("tx_frequency_thetis");
+    const QString txThetisFrame =
+        QStringLiteral("tx_frequency_thetis:%1,%2,%3,false;")
+            .arg(hz)
+            .arg(band)
+            .arg(rx2en ? QStringLiteral("true") : QStringLiteral("false"));
+    m_vfoCoalescer.update(txThetisKey, txThetisFrame);
 }
 
 // From Thetis TCIServer.cs:2512-2552 [v2.10.3.13] — sendInitialisationData
@@ -238,7 +264,9 @@ QStringList TciProtocol::buildInitBurst() const
 
     // From Thetis TCIServer.cs:2530 [v2.10.3.13] — locked at 2 per design doc §1.2;
     // Slice C/D are NereusSDR-internal and not exposed via TCI in Phase 3J-1.
-    lines << QStringLiteral("trx_count:2;");
+    // Reads kExposedReceiverCount so the live-broadcast gate in TciServer
+    // cannot drift from the count advertised here (Codex round 6, PR #293).
+    lines << QStringLiteral("trx_count:%1;").arg(kExposedReceiverCount);
 
     // From Thetis TCIServer.cs:2531 [v2.10.3.13]
     lines << QStringLiteral("channels_count:2;");
@@ -537,18 +565,35 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     // mapped via the LOG curve audioGainToDb (TCIServer.cs:4778-4787
     // [v2.10.3.15]).
     //
-    // NereusSDR architectural divergence: a single global AF gain (afLinear,
-    // 0..100) replaces the three Thetis sliders.  Per-RX-audio and per-sub-RX
-    // gains are deferred to Phase 3F multi-pan, which introduces the
-    // sub-receiver model.  Until then all three TCI rx_volume slots reflect
-    // the same afLinear value (operator sees a single AF knob in the UI).
-    // The bench impact: TCI clients see identical dB across rx_volume slots,
-    // but a single Volume control affects all of them -- semantically
-    // consistent with the single-knob UI.
-    const int afLinearVal = readIntGlobal("afLinear");
-    const double rx1vol    = tciAudioGainToDb(afLinearVal / 100.0);
-    const double rx1Subvol = tciAudioGainToDb(afLinearVal / 100.0);
-    const double rx2vol    = tciAudioGainToDb(afLinearVal / 100.0);
+    // Phase 3F Sub-Epic J Task 10 closeout: NereusSDR has no sub-receiver
+    // model (no analog of Thetis's RX1-sub slider), so a single per-slice AF
+    // gain -- SliceModel::afGain, read here via RadioModel::afGain(rx) --
+    // stands in for BOTH of a receiver's channels.  This mirrors the
+    // collapse Thetis itself already applies to RX2: sendRxVolume(1, 1,
+    // rx2vol) reuses rx2vol for RX2's "sub" slot too (TCIServer.cs:2557),
+    // because Thetis has no RX2-sub gain slider either.  Before this fix all
+    // four slots read the single radio-global afLinear (the separate master
+    // AF slider, Thetis's "AF" console field / handleVolume), so a client
+    // asking for receiver 1's volume got receiver 0's, and moving the master
+    // volume moved every slot at once.
+    //
+    // Mapping decision (protocol-facing, documented here per the handler
+    // convention): TCI receiver N, channel M -> slice id N.  Channel M is
+    // not consulted (both channels of a receiver report the same afGain, as
+    // above), and N maps straight to a slice id via sliceById(N) -- the same
+    // convention setMode/mode, setFilterBand/filterLow, setAgcMode/agcMode
+    // and every other per-rx shim in RadioModel.cpp already use (rx is
+    // passed straight to sliceById(rx), never remapped through a list
+    // position). RadioModel::afGain(rx) falls back to the active slice when
+    // sliceById(rx) resolves to nothing, rather than defaulting to 0 (which
+    // a TCI client would read as "muted") or silently reusing whatever
+    // sliceById(0) returns -- see RadioModel.cpp's afGain(int rx) for the
+    // fallback.
+    const int rx1AfGainVal = readIntPerRx("afGain", 0);
+    const int rx2AfGainVal = readIntPerRx("afGain", 1);
+    const double rx1vol    = tciAudioGainToDb(rx1AfGainVal / 100.0);
+    const double rx1Subvol = tciAudioGainToDb(rx1AfGainVal / 100.0);
+    const double rx2vol    = tciAudioGainToDb(rx2AfGainVal / 100.0);
 
     // Per-rx per-chan balance via rxBalance(rx, chan) shim.  Thetis maps
     // GetBal -> "40.0 - (pan * 0.8)" at sendInitialRadioState; the shim
@@ -675,7 +720,11 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     const bool globalMute = readBoolGlobal("globalMute");
     const bool rx0Mute    = readBoolPerRx("rxMute", 0);
     const bool rx1Mute    = readBoolPerRx("rxMute", 1);
-    const double volumeDb = tciLinearToDbVolume(afLinearVal);
+    // afLinear is the radio-global master AF slider (Thetis's separate "AF"
+    // console field), NOT the per-slice gain rx_volume reads above -- see
+    // the rx_volume mapping writeup earlier in this function for the split.
+    const int afLinearVal  = readIntGlobal("afLinear");
+    const double volumeDb  = tciLinearToDbVolume(afLinearVal);
 
     // monEnable -- From Thetis TCIServer.cs:2654 [v2.10.3.15] --
     // sendMONEnable(consoleThreadSafe.MON) where MON = chkMON.Checked
@@ -1921,10 +1970,16 @@ QString TciProtocol::handleSplitEnableCommand(const QStringList& args)
             return {};
         }
         const bool split = (boolStr == QStringLiteral("true"));
-        QMetaObject::invokeMethod(m_radio, "setSplit",
-                                  Qt::DirectConnection,
-                                  Q_ARG(int, rx),
-                                  Q_ARG(bool, split));
+        // Phase 3F deletes RadioModel::setSplit per design §3: split is
+        // replaced with XIT (plus or minus 10 kHz) or addSliceOnPan (full
+        // retune via a second slice).  No dispatch to the model on the set
+        // path; we just broadcast the confirmation so WSJT-X / N1MM /
+        // Log4OM see the wire-protocol round-trip ("Split Operation:
+        // None/Fake It" remains the supported configuration).  The query
+        // path below still calls RadioModel::split() which always returns
+        // false, keeping init-burst output stable.  See
+        // docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md
+        // section 3 ("VFO A/B / split: not implemented").
         // From Thetis sendSplit at TCIServer.cs:1878 [v2.10.3.13] — broadcast format.
         m_pendingNotifications << QStringLiteral("split_enable:%1,%2;")
                                       .arg(rx)

@@ -16,6 +16,7 @@
 // =================================================================
 #include "PgxlConnection.h"
 #include "AppSettings.h"
+#include "RouteProbe.h"
 #include <QDateTime>
 #include <QLoggingCategory>
 
@@ -72,8 +73,40 @@ void PgxlConnection::connectToPgxl(const QString& host, quint16 port) {
     // every intentional connect so a manual reconnect re-arms
     // auto-reconnect for subsequent network drops.
     m_userInitiatedDisconnect = false;
+
+    bindSourceForHost(host);
+
     qCDebug(lcPgxl) << "connecting to" << host << ":" << port;
     m_socket.connectToHost(host, port);
+}
+
+void PgxlConnection::bindSourceForHost(const QString& host)
+{
+    // 2026-05-26 KG4VCF multi-homed-host source-IP pick.  On a host
+    // with overlapping subnets across more than one local interface
+    // (e.g. macOS en0 AND a ZeroTier feth/utun overlay both advertising
+    // 192.168.x.x), the OS routing picker may bind the socket to an
+    // interface that can not actually reach this peer.  Re-probe per
+    // connect attempt and source-bind the TCP socket to the kernel's
+    // ground-truth source for *this* target.  Independent from TGXL's
+    // probe so a host can route to PGXL via one NIC and TGXL via
+    // another.
+    const QHostAddress targetAddr(host);
+    if (targetAddr.isNull()) {
+        return;
+    }
+    const QHostAddress src = probeLocalAddressFor(targetAddr);
+    if (src.isNull()) {
+        return;  // no kernel hint; fall through to OS default routing
+    }
+    if (m_socket.bind(src, /*port=*/0)) {
+        qCInfo(lcPgxl) << "source-bound to" << src.toString()
+                       << "for target" << host;
+    } else {
+        qCWarning(lcPgxl) << "source bind to" << src.toString()
+                          << "failed:" << m_socket.errorString()
+                          << "-- proceeding with OS default routing";
+    }
 }
 
 void PgxlConnection::disconnect() {
@@ -395,6 +428,11 @@ void PgxlConnection::scheduleReconnect() {
                             << m_socket.state() << "before reconnect, aborting";
             m_socket.abort();
         }
+        // 2026-05-26 KG4VCF: re-probe the kernel's source-IP choice
+        // on every reconnect.  Topology may have shifted (ZeroTier
+        // membership flipped, VPN toggled, NIC came/went) since the
+        // last connect; a stale binding would silently fail.
+        bindSourceForHost(host);
         qCInfo(lcPgxl) << "scheduleReconnect lambda: firing connectToHost"
                        << host << ":" << port;
         m_socket.connectToHost(host, port);

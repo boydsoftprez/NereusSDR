@@ -423,11 +423,8 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
             subscribeToSlice(slice);
         }
         connect(m_model, &RadioModel::sliceAdded, this,
-                [this, subscribeToSlice](int index) {
-                    const auto slices = m_model->slices();
-                    if (index >= 0 && index < slices.size()) {
-                        subscribeToSlice(slices[index]);
-                    }
+                [this, subscribeToSlice](int sliceId) {
+                    subscribeToSlice(m_model->sliceById(sliceId));
                 });
     }
 

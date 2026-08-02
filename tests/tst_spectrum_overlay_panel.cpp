@@ -46,6 +46,14 @@ private:
         return h.host.findChild<QComboBox*>(QStringLiteral("vaxIqCombo"));
     }
 
+    QComboBox* rxAntennaCombo(PanelHarness& h) {
+        return h.host.findChild<QComboBox*>(QStringLiteral("m_rxAntCmb"));
+    }
+
+    QComboBox* txAntennaCombo(PanelHarness& h) {
+        return h.host.findChild<QComboBox*>(QStringLiteral("m_txAntCmb"));
+    }
+
 private slots:
 
     void init() {
@@ -72,7 +80,7 @@ private slots:
     void vaxComboWritesToSlice() {
         RadioModel radio;
         radio.addSlice();
-        SliceModel* s = radio.sliceAt(0);
+        SliceModel* s = radio.sliceById(0);
         QVERIFY(s);
 
         PanelHarness h;
@@ -92,7 +100,7 @@ private slots:
     void sliceUpdateEchoesToCombo() {
         RadioModel radio;
         radio.addSlice();
-        SliceModel* s = radio.sliceAt(0);
+        SliceModel* s = radio.sliceById(0);
         QVERIFY(s);
 
         PanelHarness h;
@@ -112,7 +120,7 @@ private slots:
     void noFeedbackLoopOnEcho() {
         RadioModel radio;
         radio.addSlice();
-        SliceModel* s = radio.sliceAt(0);
+        SliceModel* s = radio.sliceById(0);
         QVERIFY(s);
 
         PanelHarness h;
@@ -151,9 +159,17 @@ private slots:
     void sliceZeroReplacedRebindsCombo() {
         RadioModel radio;
         radio.addSlice();  // slice 0 (A)
-        SliceModel* first = radio.sliceAt(0);
+        SliceModel* first = radio.sliceById(0);
         QVERIFY(first);
         first->setVaxChannel(2);
+
+        // Phase 3F Sub-Epic C Task 7 added a "never remove the last
+        // remaining slice" invariant to RadioModel::removeSlice, which this
+        // test predates. Keep a second slice alive so removing slice 0
+        // below is legal. It takes id 1, so sliceById(0) still returns
+        // nothing once A is gone, and the re-add reclaims id 0.
+        const int keeper = radio.addSlice();
+        QCOMPARE(keeper, 1);
 
         PanelHarness h;
         h.panel->setRadioModel(&radio);
@@ -172,7 +188,7 @@ private slots:
         // Add a replacement slice; the combo must rebind to the new
         // slice (Model→Widget) and route writes back (Widget→Model).
         radio.addSlice();
-        SliceModel* second = radio.sliceAt(0);
+        SliceModel* second = radio.sliceById(0);
         QVERIFY(second);
         QVERIFY(combo->isEnabled());
 
@@ -200,10 +216,82 @@ private slots:
         QVERIFY(combo->isEnabled());
 
         // Sanity: forward path works after the deferred bind.
-        SliceModel* s = radio.sliceAt(0);
+        SliceModel* s = radio.sliceById(0);
         QVERIFY(s);
         combo->setCurrentIndex(4);
         QCOMPARE(s->vaxChannel(), 4);
+    }
+
+    void controls_bind_to_the_resolved_pan_slice()
+    {
+        RadioModel radio;
+        SliceModel* first = radio.sliceById(radio.addSlice());
+        SliceModel* second = radio.sliceById(radio.addSlice());
+        QVERIFY(first);
+        QVERIFY(second);
+        first->setRxAntenna(QStringLiteral("ANT1"));
+        first->setTxAntenna(QStringLiteral("ANT1"));
+        first->setVaxChannel(1);
+        second->setRxAntenna(QStringLiteral("ANT2"));
+        second->setTxAntenna(QStringLiteral("ANT3"));
+        second->setVaxChannel(4);
+
+        PanelHarness h;
+        h.panel->setSliceResolver([second]() { return second; });
+        h.panel->setRadioModel(&radio);
+
+        QComboBox* rx = rxAntennaCombo(h);
+        QComboBox* tx = txAntennaCombo(h);
+        QComboBox* vax = vaxCombo(h);
+        QVERIFY(rx);
+        QVERIFY(tx);
+        QVERIFY(vax);
+        QCOMPARE(rx->currentText(), QStringLiteral("ANT2"));
+        QCOMPARE(tx->currentText(), QStringLiteral("ANT3"));
+        QCOMPARE(vax->currentIndex(), 4);
+
+        rx->setCurrentText(QStringLiteral("ANT3"));
+        tx->setCurrentText(QStringLiteral("ANT2"));
+        vax->setCurrentIndex(2);
+        QCOMPARE(second->rxAntenna(), QStringLiteral("ANT3"));
+        QCOMPARE(second->txAntenna(), QStringLiteral("ANT2"));
+        QCOMPARE(second->vaxChannel(), 2);
+        QCOMPARE(first->rxAntenna(), QStringLiteral("ANT1"));
+        QCOMPARE(first->txAntenna(), QStringLiteral("ANT1"));
+        QCOMPARE(first->vaxChannel(), 1);
+    }
+
+    void changing_the_pan_slice_rebinds_and_missing_slice_disables()
+    {
+        RadioModel radio;
+        SliceModel* first = radio.sliceById(radio.addSlice());
+        SliceModel* second = radio.sliceById(radio.addSlice());
+        QVERIFY(first);
+        QVERIFY(second);
+        first->setVaxChannel(1);
+        second->setVaxChannel(3);
+
+        QPointer<SliceModel> resolved = first;
+        PanelHarness h;
+        h.panel->setSliceResolver([&resolved]() { return resolved.data(); });
+        h.panel->setRadioModel(&radio);
+        QComboBox* vax = vaxCombo(h);
+        QVERIFY(vax);
+        QCOMPARE(vax->currentIndex(), 1);
+
+        resolved = second;
+        h.panel->bindToPanSlice();
+        QCOMPARE(vax->currentIndex(), 3);
+
+        radio.removeSlice(second->sliceIndex());
+        resolved = nullptr;
+        h.panel->bindToPanSlice();
+        QVERIFY(!vax->isEnabled());
+
+        resolved = first;
+        h.panel->bindToPanSlice();
+        QVERIFY(vax->isEnabled());
+        QCOMPARE(vax->currentIndex(), 1);
     }
 };
 

@@ -132,6 +132,7 @@
 #include "gui/StyleConstants.h"
 #include "gui/styles/PopupMenuStyle.h"
 #include "gui/widgets/FilterPassbandWidget.h"
+#include "gui/widgets/VfoWidget.h"  // VfoWidget::sliceColor — shared slice palette
 #include "models/PanadapterModel.h"
 #include "models/FilterPresetStore.h"
 #include "models/RadioModel.h"
@@ -141,6 +142,7 @@
 #include <algorithm>
 
 #include <QAction>
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QGridLayout>
@@ -152,6 +154,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 namespace NereusSDR {
@@ -215,6 +218,30 @@ void RxApplet::buildUi()
     root->setContentsMargins(4, 2, 4, 2);
     root->setSpacing(2);
     outer->addWidget(body);
+
+    // ── Phase 3F (Bug 3): per-slice tab row (populated by updateSliceButtons) ──
+    // One checkable QToolButton per live slice (A/B/C...). Hidden until there
+    // is more than one slice; then it lets the operator pick which slice the
+    // RX applet (and active-slice surfaces) follow. Workflow ported from
+    // AetherSDR RxApplet buildUI slice-tab row (RxApplet.cpp:347 [@6a142807]).
+    {
+        m_sliceTabRow = new QWidget(this);
+        m_sliceTabRow->setVisible(false);  // shown once >1 slice exists
+        m_sliceTabLayout = new QHBoxLayout(m_sliceTabRow);
+        m_sliceTabLayout->setContentsMargins(0, 0, 0, 0);
+        m_sliceTabLayout->setSpacing(2);
+        m_sliceGroup = new QButtonGroup(this);
+        m_sliceGroup->setExclusive(true);
+        m_sliceTabLayout->addStretch();  // keep tabs left-aligned
+        root->addWidget(m_sliceTabRow);
+
+        connect(m_sliceGroup, &QButtonGroup::idClicked, this,
+                [this](int sliceIndex) {
+            if (sliceIndex >= 0) {
+                emit sliceActivationRequested(sliceIndex);
+            }
+        });
+    }
 
     // ── Row 1: badge | lock | RX ant | TX ant | stretch | filter label ────
     // From AetherSDR RxApplet.cpp lines 243-336
@@ -299,34 +326,6 @@ void RxApplet::buildUi()
                 const QString text = sel->data().isValid() ? sel->data().toString()
                                                            : sel->text();
                 m_slice->setRxAntenna(text);
-                // Phase 3P-F Task 4: persist per-band assignment in AlexController.
-                if (m_model && m_pan) {
-                    // ANT1/2/3 → setRxAnt. RX-only labels → setRxOnlyAnt (position in sku).
-                    // "RX out on TX" is the bypass toggle — not routed via setRxAnt.
-                    //
-                    // Issue #257: picking ANT1/2/3 also clears any pending
-                    // rx-only mux (rxOnlyAnt → 0) so the RX bypass relay
-                    // releases and the main TX/RX input is restored. Mirrors
-                    // Thetis ProcessAlexAntCheckBox (setup.cs:13643-13705
-                    // [v2.10.3.13 @501e3f51]) where unchecking every RX-only
-                    // checkbox sends `setRxOnlyAnt(band, 0)`.
-                    if (text.startsWith(QStringLiteral("ANT"))) {
-                        int antNum = 1;
-                        if (text == QStringLiteral("ANT2")) { antNum = 2; }
-                        else if (text == QStringLiteral("ANT3")) { antNum = 3; }
-                        m_model->alexControllerMutable().setRxAnt(m_pan->band(), antNum);
-                        m_model->alexControllerMutable().setRxOnlyAnt(m_pan->band(), 0);  // issue #257
-                    } else if (m_popupSku && text != QStringLiteral("RX out on TX")) {
-                        // RX-only label: find its position in sku.rxOnlyLabels (1-indexed)
-                        const auto& lbls = m_popupSku->rxOnlyLabels;
-                        for (int i = 0; i < static_cast<int>(lbls.size()); ++i) {
-                            if (lbls[static_cast<size_t>(i)] == text) {
-                                m_model->alexControllerMutable().setRxOnlyAnt(m_pan->band(), i + 1);
-                                break;
-                            }
-                        }
-                    }
-                }
             }
         });
         row->addWidget(m_rxAntBtn);
@@ -373,14 +372,6 @@ void RxApplet::buildUi()
                 const QString text = sel->data().isValid() ? sel->data().toString()
                                                            : sel->text();
                 m_slice->setTxAntenna(text);
-                // Phase 3P-F Task 4: persist per-band TX assignment in AlexController.
-                // setTxAnt() respects blockTxAnt2/3 safety guards from Task 1.
-                if (m_model && m_pan) {
-                    int antNum = 1;
-                    if (text == QStringLiteral("ANT2")) { antNum = 2; }
-                    else if (text == QStringLiteral("ANT3")) { antNum = 3; }
-                    m_model->alexControllerMutable().setTxAnt(m_pan->band(), antNum);
-                }
             }
         });
         row->addWidget(m_txAntBtn);
@@ -1216,6 +1207,81 @@ void RxApplet::setSliceIndex(int idx)
     }
 }
 
+// Phase 3F (Bug 3): rebuild the per-slice tab row to mirror the live slice
+// list. Workflow ported from AetherSDR RxApplet::updateSliceButtons
+// (RxApplet.cpp:1434 [@6a142807]); NereusSDR drops the Multi-Flex
+// foreign/empty slot model (we own the radio directly) and renders one tab
+// per existing slice, the active one checked. The tab's button-group id is
+// the slice's actual sliceIndex() (NOT the list position), because
+// RadioModel::removeSlice does not reindex survivors — activation must target
+// the slice the operator clicked.
+void RxApplet::updateSliceButtons(const QVector<SliceModel*>& slices,
+                                  int activeSliceIndex)
+{
+    if (!m_sliceTabRow || !m_sliceGroup || !m_sliceTabLayout) {
+        return;
+    }
+
+    // <= 1 slice: the static letter badge in Row 1 is enough; hide the tabs.
+    if (slices.size() <= 1) {
+        m_sliceTabRow->setVisible(false);
+        return;
+    }
+
+    // Rebuild the button set when the count changes. The set is tiny
+    // (<= maxSlices), so a full rebuild on count change is cheap and keeps
+    // the id<->slice mapping correct after a mid-list removal.
+    if (m_sliceBtns.size() != slices.size()) {
+        QSignalBlocker blocker(m_sliceGroup);
+        while (!m_sliceBtns.isEmpty()) {
+            QToolButton* btn = m_sliceBtns.takeLast();
+            m_sliceGroup->removeButton(btn);
+            delete btn;
+        }
+        // Insert tabs before the trailing stretch (index count() - 1) so they
+        // stay left-aligned.
+        for (int i = 0; i < slices.size(); ++i) {
+            auto* btn = new QToolButton(m_sliceTabRow);
+            btn->setCheckable(true);
+            btn->setFixedSize(22, 20);
+            m_sliceBtns.append(btn);
+            const int insertAt = m_sliceTabLayout->count() - 1;
+            m_sliceTabLayout->insertWidget(insertAt < 0 ? 0 : insertAt, btn);
+        }
+    }
+
+    // Apply per-slice label / colour / id / checked state.
+    QSignalBlocker blocker(m_sliceGroup);
+    for (int i = 0; i < slices.size(); ++i) {
+        SliceModel* s = slices.at(i);
+        QToolButton* btn = m_sliceBtns.at(i);
+        if (!s || !btn) { continue; }
+
+        const int sliceIdx = s->sliceIndex();
+        // sliceLetter() derives from the slice id. The guard that used to sit
+        // here -- isNull() ? QChar('A' + sliceIdx) : sliceLetter() -- never took
+        // its fallback, because the stored letter defaulted to 'A' and a
+        // defaulted QChar is not null. That is why the slice buttons read
+        // A, A, A instead of A, B, C.
+        btn->setText(QString(s->sliceLetter()));
+        // Re-key the button-group id to this slice's index on every refresh
+        // (a mid-list removal can shift which slice sits at position i).
+        m_sliceGroup->removeButton(btn);
+        m_sliceGroup->addButton(btn, sliceIdx);
+
+        const QColor c = VfoWidget::sliceColor(sliceIdx);
+        btn->setStyleSheet(QStringLiteral(
+            "QToolButton { background: #2a2a2a; color: %1; border: 1px solid %1;"
+            " border-radius: 3px; font-weight: bold; font-size: 10px; padding: 0; }"
+            "QToolButton:checked { background: %1; color: #000000; }")
+            .arg(c.name()));
+        btn->setToolTip(QStringLiteral("Slice %1").arg(s->sliceLetter()));
+        btn->setChecked(sliceIdx == activeSliceIndex);
+    }
+
+    m_sliceTabRow->setVisible(true);
+}
+
 void RxApplet::setAntennaList(const QStringList& ants)
 {
     m_antList = ants;
@@ -1705,22 +1771,21 @@ void RxApplet::populateAntennaButtons(Band band)
     const int rxNum = alex.rxAnt(band);
     const QString rxLabel = QStringLiteral("ANT") + QString::number(rxNum);
 
-    // TX antenna: same mapping. setTxAnt() honours blockTxAnt2/3 safety guards.
-    const int txNum = alex.txAnt(band);
-    const QString txLabel = QStringLiteral("ANT") + QString::number(txNum);
+    // TX antenna is bound-slice intent, not an AlexController read-back.
+    // RadioModel reconciles that intent into Alex on a bound-slice edit,
+    // TX handoff, and pre-MOX. Reading stale per-band Alex state here would
+    // overwrite the newly bound slice during applet construction.
+    const QString txLabel = m_slice->txAntenna();
 
     // Update button text directly — bypasses the connectSlice() signal chain
     // so the change is immediate regardless of whether the slice is "connected".
     m_rxAntBtn->setText(rxLabel);
     m_txAntBtn->setText(txLabel);
 
-    // Also push into SliceModel so the model stays in sync with the UI.
-    // Use setters only when the value actually differs to avoid spurious signals.
+    // RX remains a per-band Alex read-back. TX already came from SliceModel
+    // above, so the UI must not write controller state back into its authority.
     if (m_slice->rxAntenna() != rxLabel) {
         m_slice->setRxAntenna(rxLabel);
-    }
-    if (m_slice->txAntenna() != txLabel) {
-        m_slice->setTxAntenna(txLabel);
     }
 }
 

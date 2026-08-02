@@ -119,6 +119,13 @@ private slots:
 private:
     void processLine(const QString& line);
 
+    // 2026-05-26 KG4VCF: probe the kernel for the local source IP it
+    // would use to reach `host` and explicitly bind m_socket to that
+    // address.  Called from both connectToPgxl() and the auto-reconnect
+    // lambda so a topology change between drops is picked up.  No-op
+    // if the probe fails -- falls through to OS default routing.
+    void bindSourceForHost(const QString& host);
+
     QTcpSocket m_socket;
     QTimer     m_pollTimer;
     QByteArray m_readBuf;

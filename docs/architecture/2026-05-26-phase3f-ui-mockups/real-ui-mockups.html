@@ -1,0 +1,365 @@
+<style>
+/* Source: src/gui/StyleConstants.h — these are the exact app constants */
+.nereus-app-bg { background: #0f0f1a; color: #c8d8e8; font-family: -apple-system, "Segoe UI", "Helvetica Neue", sans-serif; }
+.nereus-panel-bg { background: #0a0a18; }
+.nereus-text-primary { color: #c8d8e8; }
+.nereus-text-secondary { color: #8090a0; }
+.nereus-text-tertiary { color: #708090; }
+.nereus-text-scale { color: #607080; }
+.nereus-title-text { color: #8aa8c0; }
+.nereus-accent { color: #00b4d8; }
+
+/* Title bar — Style::titleBarStyle() — gradient + border */
+.nereus-titlebar {
+  background: linear-gradient(180deg, #3a4a5a 0%, #2a3a4a 50%, #1a2a38 100%);
+  border-bottom: 1px solid #0a1a28;
+  height: 16px;
+  padding: 0 8px;
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 10px; font-weight: bold; color: #8aa8c0;
+}
+
+/* Button — Style::buttonBaseStyle() — exact */
+.nereus-btn {
+  background: #1a2a3a; border: 1px solid #205070; border-radius: 3px;
+  color: #c8d8e8; font-size: 10px; font-weight: bold; padding: 2px 8px;
+  height: 22px; cursor: pointer;
+}
+.nereus-btn:hover { background: #204060; }
+.nereus-btn-green { background: #006040; color: #00ff88; border: 1px solid #00a060; }
+.nereus-btn-blue { background: #0070c0; color: #ffffff; border: 1px solid #0090e0; }
+.nereus-btn-amber { background: #604000; color: #ffb800; border: 1px solid #906000; }
+.nereus-btn-red { background: #cc2222; color: #ffffff; border: 1px solid #ff4444; }
+.nereus-btn-dsp { background: #1a6030; color: #80ff80; border: 1px solid #20a040; }
+
+/* Slice badges — REAL slice colors from VfoWidget::sliceColor() */
+.slice-A { background: #00d4ff; color: #001020; }
+.slice-B { background: #ff40ff; color: #200020; }
+.slice-C { background: #40ff40; color: #002010; }
+.slice-D { background: #ffff00; color: #201000; }
+.slice-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 3px;
+  font-size: 11px; font-weight: bold;
+}
+
+/* Status pill badges in title bar */
+.status-pill {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 14px; padding: 0 5px; border-radius: 2px;
+  font-size: 9px; font-weight: bold; letter-spacing: 0.3px;
+}
+.pill-tx { background: #cc2222; color: #ffffff; border: 1px solid #ff4444; }
+.pill-wide { background: #604000; color: #ffb800; border: 1px solid #906000; }
+.pill-chain { background: #1a2a3a; color: #8aa8c0; border: 1px solid #304050; font-weight: 600; }
+
+/* Group box — Style::kGroupBoxStyle */
+.nereus-groupbox {
+  border: 1px solid #304050; border-radius: 4px;
+  margin-top: 8px; padding: 12px 10px 8px 10px; position: relative;
+}
+.nereus-groupbox-title {
+  position: absolute; top: -8px; left: 10px; padding: 0 4px;
+  background: #0f0f1a; color: #8aa8c0; font-size: 12px; font-weight: bold;
+}
+
+/* ComboBox — Style::kComboStyle */
+.nereus-combo {
+  background: #1a2a3a; border: 1px solid #304050; border-radius: 3px;
+  color: #c8d8e8; font-size: 12px; padding: 3px 6px;
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+}
+.nereus-combo-dropdown { color: #708090; font-size: 9px; }
+
+/* Inset value display — Style::insetValueStyle */
+.nereus-inset {
+  font-size: 10px; background: #0a0a18; border: 1px solid #1e2e3e;
+  border-radius: 3px; padding: 1px 6px; color: #c8d8e8;
+}
+
+/* Menu — context menu styling */
+.nereus-menu {
+  background: #0a0a18; border: 1px solid #205070; border-radius: 4px;
+  padding: 4px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+}
+.nereus-menu-header {
+  padding: 4px 12px; color: #8aa8c0; font-size: 9px; font-weight: bold;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  border-bottom: 1px solid #203040; margin-bottom: 4px;
+}
+.nereus-menu-item {
+  padding: 5px 12px; color: #c8d8e8; font-size: 11px;
+  display: flex; justify-content: space-between; gap: 16px; cursor: pointer;
+}
+.nereus-menu-item:hover { background: #204060; }
+.nereus-menu-item-sel { background: rgba(0,180,216,0.18); color: #00ff88; font-weight: 600; }
+.nereus-menu-item-disabled { color: #556070; }
+.nereus-menu-hint { color: #708090; font-size: 10px; font-style: italic; }
+.nereus-menu-hint-warn { color: #ffb800; font-size: 10px; font-style: italic; }
+.nereus-menu-divider { height: 1px; background: #203040; margin: 4px 0; }
+
+/* Status bar — Style::kStatusBarH (46px) */
+.nereus-statusbar {
+  height: 46px; background: #0a0a14;
+  border-top: 1px solid #304050;
+  display: flex; align-items: center; gap: 14px; padding: 0 14px;
+  font-size: 11px; color: #8090a0;
+}
+.nereus-statussep { color: #304050; }
+
+/* Dialog */
+.nereus-dialog {
+  background: #0a0a18; border: 1px solid #205070; border-radius: 4px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.8);
+}
+.nereus-dialog-tb {
+  background: linear-gradient(180deg, #3a4a5a 0%, #2a3a4a 50%, #1a2a38 100%);
+  border-bottom: 1px solid #0a1a28;
+  height: 22px; padding: 0 10px;
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; font-weight: bold; color: #8aa8c0;
+}
+.nereus-dialog-body { padding: 14px 16px; color: #c8d8e8; font-size: 12px; line-height: 1.5; }
+.nereus-dialog-footer {
+  padding: 10px 16px; background: #0f0f1a; border-top: 1px solid #203040;
+  display: flex; justify-content: flex-end; gap: 8px;
+}
+</style>
+
+<div class="nereus-app-bg" style="padding:24px;border-radius:6px">
+
+<h2 style="color:#c8d8e8;margin-top:0">Real UI mockups using actual StyleConstants.h values</h2>
+<p style="color:#8090a0;font-size:12px">Pulled exact constants from <code>src/gui/StyleConstants.h</code> + slice colors from <code>VfoWidget::sliceColor()</code>. These should read as native NereusSDR widgets.</p>
+
+<h3 style="color:#8aa8c0;margin-top:24px">Pan title bar — Slice A, TX-bound, Chain 0 filtered</h3>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;overflow:hidden;max-width:760px">
+  <div class="nereus-titlebar">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="slice-badge slice-A">A</span>
+      <span>14.225.000 USB · 192 kHz · ANT1 · DDC2</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span class="status-pill pill-chain">CH 0</span>
+      <span class="status-pill pill-tx">TX</span>
+    </div>
+  </div>
+  <div style="height:130px;background:linear-gradient(180deg,#061730 0%,#040d1a 65%,#1a0830 100%);position:relative">
+    <div style="position:absolute;top:4px;left:0;right:0;display:flex;justify-content:space-between;padding:0 12px;font-size:9px;color:#607080;font-family:monospace">
+      <span>14.130</span><span>14.180</span><span>14.225</span><span>14.270</span><span>14.320</span>
+    </div>
+    <div style="position:absolute;top:20px;left:0;right:0;bottom:40px">
+      <svg viewBox="0 0 760 80" preserveAspectRatio="none" style="width:100%;height:100%">
+        <path d="M0,72 L60,65 L120,70 L180,55 L220,30 L260,48 L320,62 L368,18 L380,32 L420,55 L460,68 L520,70 L580,62 L640,58 L700,68 L760,72" stroke="#00d4ff" stroke-width="1.3" fill="none"/>
+      </svg>
+    </div>
+    <div style="position:absolute;top:20px;bottom:40px;left:50%;width:1px;background:#00d4ff;box-shadow:0 0 4px #00d4ff"></div>
+    <div style="position:absolute;top:20px;bottom:40px;left:48%;width:5%;background:rgba(0,212,255,0.15);border-left:1px dashed rgba(0,212,255,0.4);border-right:1px dashed rgba(0,212,255,0.4)"></div>
+    <div style="position:absolute;bottom:0;left:0;right:0;height:40px;background:linear-gradient(180deg,#040818 0%,#0a1a3a 30%,#1a2858 60%,#2a4080 90%);opacity:0.7"></div>
+    <div style="position:absolute;bottom:0;left:48%;width:5%;height:40px;background:linear-gradient(180deg,#00d4ff 0%,#0090c0 30%,transparent 70%);opacity:0.6"></div>
+  </div>
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:24px">Pan title bar — Slice B, Chain 0 WIDE (multi-band conflict)</h3>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;overflow:hidden;max-width:760px">
+  <div class="nereus-titlebar">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="slice-badge slice-B">B</span>
+      <span>7.150.000 LSB · 96 kHz · ANT1 · DDC4</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span class="status-pill pill-chain">CH 0</span>
+      <span class="status-pill pill-wide" title="Alex0 BPF bypassed — multi-band on Chain 0 (20m + 40m). Click for filter policy.">WIDE</span>
+    </div>
+  </div>
+  <div style="height:130px;background:linear-gradient(180deg,#180a20 0%,#0c0410 65%,#180830 100%);position:relative">
+    <div style="position:absolute;top:4px;left:0;right:0;display:flex;justify-content:space-between;padding:0 12px;font-size:9px;color:#607080;font-family:monospace">
+      <span>7.102</span><span>7.126</span><span>7.150</span><span>7.174</span><span>7.198</span>
+    </div>
+    <div style="position:absolute;top:20px;left:0;right:0;bottom:40px">
+      <svg viewBox="0 0 760 80" preserveAspectRatio="none" style="width:100%;height:100%">
+        <path d="M0,68 L60,62 L120,68 L180,50 L240,32 L280,48 L320,62 L360,55 L400,68 L460,55 L520,62 L560,38 L600,48 L660,68 L720,65 L760,68" stroke="#ff40ff" stroke-width="1.3" fill="none"/>
+      </svg>
+    </div>
+    <div style="position:absolute;top:20px;bottom:40px;left:50%;width:1px;background:#ff40ff;box-shadow:0 0 4px #ff40ff"></div>
+    <div style="position:absolute;top:20px;bottom:40px;left:47%;width:6%;background:rgba(255,64,255,0.13);border-left:1px dashed rgba(255,64,255,0.4);border-right:1px dashed rgba(255,64,255,0.4)"></div>
+    <div style="position:absolute;bottom:0;left:0;right:0;height:40px;background:linear-gradient(180deg,#040818 0%,#0a1a3a 30%,#1a2858 60%,#2a4080 90%);opacity:0.7"></div>
+  </div>
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:30px">Right-click antenna menu (real app styling)</h3>
+<div style="position:relative;max-width:380px">
+  <div class="nereus-menu">
+    <div class="nereus-menu-header">Slice C — Antenna for 6 m</div>
+    <div class="nereus-menu-item">
+      <span>ANT1</span>
+      <span class="nereus-menu-hint">Chain 0 — joins Slice A (bypass)</span>
+    </div>
+    <div class="nereus-menu-item nereus-menu-item-sel">
+      <span>● ANT2</span>
+      <span class="nereus-menu-hint" style="color:#00ff88">Chain 1 — current</span>
+    </div>
+    <div class="nereus-menu-item">
+      <span>ANT3</span>
+      <span class="nereus-menu-hint-warn">Auto-switches Chain 1 from ANT2</span>
+    </div>
+    <div class="nereus-menu-divider"></div>
+    <div class="nereus-menu-item">
+      <span>EXT1</span>
+      <span class="nereus-menu-hint">RX only</span>
+    </div>
+    <div class="nereus-menu-item">
+      <span>EXT2</span>
+      <span class="nereus-menu-hint">RX only</span>
+    </div>
+    <div class="nereus-menu-item">
+      <span>BYPS</span>
+      <span class="nereus-menu-hint">RX only, no Alex</span>
+    </div>
+    <div class="nereus-menu-divider"></div>
+    <div class="nereus-menu-item nereus-menu-item-disabled">
+      <span>Antenna policy…</span>
+      <span></span>
+    </div>
+  </div>
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:30px">Toast notification — antenna auto-switched</h3>
+<div style="background:#0f0f1a;border:1px solid #205070;border-radius:4px;height:80px;position:relative;max-width:760px">
+  <div style="position:absolute;bottom:10px;right:10px;background:#0a0a18;border:1px solid #205070;border-left:3px solid #00ff88;border-radius:3px;padding:8px 12px;display:flex;align-items:center;gap:10px;max-width:400px;box-shadow:0 4px 16px rgba(0,0,0,0.7)">
+    <div style="color:#00ff88;font-size:14px;line-height:1">✓</div>
+    <div style="flex:1">
+      <div style="color:#c8d8e8;font-size:11px;font-weight:bold;margin-bottom:2px">Antenna auto-switched</div>
+      <div style="color:#708090;font-size:10px;line-height:1.4">Slice B moved from ANT2 to ANT3 for Slice C.</div>
+    </div>
+    <button class="nereus-btn" style="height:18px;padding:0 8px;font-size:9px">UNDO</button>
+  </div>
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:30px">Confirmation dialog — TX-bound antenna re-route</h3>
+<div style="background:#000a;padding:24px;border-radius:6px;display:flex;justify-content:center;min-height:280px">
+  <div class="nereus-dialog" style="width:500px">
+    <div class="nereus-dialog-tb">
+      <span style="color:#ffb800">⚠ TX-bound antenna re-route</span>
+      <span style="color:#607080;font-size:14px;cursor:pointer">×</span>
+    </div>
+    <div class="nereus-dialog-body">
+      <div style="margin-bottom:14px">
+        Adding <span class="slice-badge slice-C" style="display:inline-flex;vertical-align:middle;margin:0 2px">C</span> on <strong>ANT3</strong> requires re-routing <strong>Chain 0</strong> from ANT1 to ANT3.
+      </div>
+      <div class="nereus-groupbox" style="margin-bottom:14px;margin-top:14px">
+        <div class="nereus-groupbox-title">Chain 0 currently hosts</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="slice-badge slice-A">A</span>
+            <span style="font-family:monospace;font-size:11px;color:#c8d8e8">14.225 USB · 20m</span>
+          </div>
+          <span class="status-pill pill-tx">TX</span>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="slice-badge slice-D">D</span>
+            <span style="font-family:monospace;font-size:11px;color:#c8d8e8">21.300 USB · 15m</span>
+          </div>
+          <span style="color:#708090;font-size:10px">RX only</span>
+        </div>
+      </div>
+      <div style="color:#ffb800;font-size:11px;margin-bottom:4px">⚠ Slice A is TX-bound. Re-routing changes the antenna your transmit signal goes to.</div>
+      <div style="color:#8090a0;font-size:11px">Verify ANT3 is rated for the current band and TX power.</div>
+    </div>
+    <div class="nereus-dialog-footer">
+      <button class="nereus-btn" style="padding:4px 14px">Cancel</button>
+      <button class="nereus-btn" style="padding:4px 14px">Use ANT1 instead</button>
+      <button class="nereus-btn nereus-btn-blue" style="padding:4px 14px">Re-route ANT3</button>
+    </div>
+  </div>
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:30px">Bottom status bar (46px tall, real constants)</h3>
+<div style="background:#0f0f1a;border:1px solid #205070;border-radius:3px;overflow:hidden;max-width:1100px">
+  <div class="nereus-statusbar">
+    <div style="display:flex;align-items:center;gap:6px">
+      <span style="width:7px;height:7px;border-radius:50%;background:#00ff88;box-shadow:0 0 5px #00ff88"></span>
+      <span style="color:#c8d8e8;font-weight:bold">ANAN-G2</span>
+      <span class="nereus-text-tertiary">Saturn</span>
+    </div>
+    <span class="nereus-statussep">|</span>
+    <div style="display:flex;align-items:center;gap:5px">
+      <span class="nereus-text-tertiary">CH 0</span>
+      <span class="status-pill pill-wide" style="height:13px;font-size:8px">WIDE</span>
+      <span class="nereus-text-secondary">20m+40m+80m</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:5px">
+      <span class="nereus-text-tertiary">CH 1</span>
+      <span style="color:#00ff88">●</span>
+      <span class="nereus-text-secondary">6m</span>
+    </div>
+    <span class="nereus-statussep">|</span>
+    <span><span class="nereus-text-tertiary">Slices</span> <span class="nereus-text-primary" style="font-weight:bold">4/5</span></span>
+    <span><span class="nereus-text-tertiary">▼</span> <span class="nereus-text-primary">38 Mbps</span></span>
+    <span><span class="nereus-text-tertiary">▲</span> <span class="nereus-text-primary">0 Mbps</span></span>
+    <div style="flex:1"></div>
+    <span class="nereus-text-tertiary">PA 38°C</span>
+    <span class="nereus-text-tertiary">SWR 1.2</span>
+    <span class="nereus-text-tertiary">14:23:18 UTC</span>
+  </div>
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:30px">Filter Policy dialog (clicked from WIDE badge or CH 0 tag)</h3>
+<div style="background:#000a;padding:24px;border-radius:6px;display:flex;justify-content:center;min-height:340px">
+  <div class="nereus-dialog" style="width:420px">
+    <div class="nereus-dialog-tb">
+      <span>Chain 0 — Filter Policy</span>
+      <span style="color:#607080;font-size:14px;cursor:pointer">×</span>
+    </div>
+    <div class="nereus-dialog-body">
+      <div class="nereus-groupbox" style="margin-bottom:14px">
+        <div class="nereus-groupbox-title">Current state</div>
+        <div style="font-family:monospace;font-size:11px;color:#c8d8e8;line-height:1.6">
+          ANT1 → Alex0 (<span style="color:#ffb800;font-weight:bold">BYPASS</span>) → ADC0<br>
+          Slices: <span class="slice-badge slice-A" style="display:inline-flex;vertical-align:middle;width:16px;height:16px;font-size:10px">A</span> 20m · <span class="slice-badge slice-B" style="display:inline-flex;vertical-align:middle;width:16px;height:16px;font-size:10px">B</span> 40m · <span class="slice-badge slice-D" style="display:inline-flex;vertical-align:middle;width:16px;height:16px;font-size:10px">D</span> 80m<br>
+          <span style="color:#8090a0">Reason: multi-band (20m + 40m + 80m)</span>
+        </div>
+      </div>
+
+      <div style="margin-bottom:8px;color:#8090a0;font-size:11px;font-weight:bold">BPF mode</div>
+
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:6px 10px;background:rgba(0,180,216,0.12);border:1px solid #205070;border-radius:3px">
+          <input type="radio" name="bpf" checked style="margin-top:2px;accent-color:#00b4d8">
+          <div>
+            <div style="color:#c8d8e8;font-weight:bold;font-size:12px">Auto</div>
+            <div style="color:#8090a0;font-size:10px">Filter when single-band, bypass when multi-band</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:6px 10px;border:1px solid #203040;border-radius:3px">
+          <input type="radio" name="bpf" style="margin-top:2px;accent-color:#00b4d8">
+          <div>
+            <div style="color:#c8d8e8;font-weight:bold;font-size:12px">Force filter (TX-bound band)</div>
+            <div style="color:#8090a0;font-size:10px">Keep BPF on 20m. B + D see ~30 dB OOB attenuation.</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:6px 10px;border:1px solid #203040;border-radius:3px">
+          <input type="radio" name="bpf" style="margin-top:2px;accent-color:#00b4d8">
+          <div>
+            <div style="color:#c8d8e8;font-weight:bold;font-size:12px">Force bypass</div>
+            <div style="color:#8090a0;font-size:10px">Always wideband. No BPF protection.</div>
+          </div>
+        </label>
+      </div>
+
+      <div style="border-top:1px solid #203040;margin-top:14px;padding-top:10px">
+        <label style="display:flex;align-items:center;gap:8px;color:#c8d8e8;cursor:pointer;font-size:12px">
+          <input type="checkbox" checked style="accent-color:#00b4d8"> HPF (broadcast band reject) enabled
+        </label>
+      </div>
+    </div>
+    <div class="nereus-dialog-footer">
+      <button class="nereus-btn" style="padding:4px 14px">Cancel</button>
+      <button class="nereus-btn nereus-btn-blue" style="padding:4px 14px">Apply</button>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<p class="subtitle" style="margin-top:24px;text-align:center;color:#8090a0">Using the actual app palette (<code>#0f0f1a</code> app bg, <code>#0a0a18</code> panel, <code>#c8d8e8</code> text, <code>#8aa8c0</code> title, real slice colors from <code>VfoWidget::sliceColor()</code>: cyan / magenta / green / yellow). Buttons use the actual <code>Style::buttonBaseStyle()</code> heights and borders. Title bars use the real gradient stops. Should read as native NereusSDR now.</p>

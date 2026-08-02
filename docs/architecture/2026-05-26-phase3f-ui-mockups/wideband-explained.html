@@ -1,0 +1,155 @@
+<h2>What is a wideband pan? (explained from zero)</h2>
+<p class="subtitle">A wideband pan is a different kind of spectrum view from the regular panadapters. Easier to grasp with an analogy, then we'll show what it actually does.</p>
+
+<h3>The map analogy</h3>
+<div style="background:#1a2030;padding:18px;border-radius:6px;font-size:13px;color:#cde;line-height:1.7">
+  Think of frequency space the same way you think of geographic space.<br><br>
+
+  A <strong style="color:#8aa8c0">regular panadapter</strong> is like <strong>Google Street View</strong>. You see one block in great detail: street signs, house numbers, faces. The view is rich, but narrow — you can only see one block at a time. If you want to see the next block over, you scroll. To see a different city, you have to drive there.<br><br>
+
+  A <strong style="color:#5cb85c">wideband pan</strong> is like <strong>opening Google Maps and zooming all the way out to the country view</strong>. You see every city at once. You can't read street signs from this view, but you can see where the lights are on, where the traffic is, where activity is concentrated. If you spot something interesting in Boston, you double-click and zoom back down to Street View on that exact block.<br><br>
+
+  Wideband is the country-view of radio. Regular DDC pans are Street View. <strong>You use them together.</strong>
+</div>
+
+<h3 style="margin-top:24px">Side-by-side: what a regular pan shows vs what wideband shows</h3>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0">
+
+  <div>
+    <div style="background:#0d1218;border:1px solid #2a3548;border-radius:4px;overflow:hidden">
+      <div style="background:linear-gradient(180deg,#3a4a5a 0%,#1a2a38 100%);padding:5px 10px">
+        <span style="color:#8aa8c0;font-size:10px;font-weight:bold">REGULAR DDC PAN · Slice A · 192 kHz wide</span>
+      </div>
+      <div style="background:linear-gradient(180deg,#1a3548 0%,#0d1218 100%);height:120px;position:relative">
+        <div style="position:absolute;top:6px;left:0;right:0;display:flex;justify-content:space-between;padding:0 10px;font-size:9px;color:#557">
+          <span>14.129</span><span>14.180</span><span>14.225</span><span>14.270</span><span>14.321</span>
+        </div>
+        <div style="position:absolute;top:22px;left:0;right:0;bottom:40px">
+          <svg viewBox="0 0 460 60" style="width:100%;height:100%">
+            <path d="M0,55 L20,52 L40,48 L60,52 L80,45 L100,52 L120,50 L130,32 L150,28 L170,38 L190,52 L210,48 L228,18 L240,30 L260,42 L280,52 L300,50 L320,52 L340,42 L360,48 L380,52 L400,40 L420,50 L440,52 L460,55" stroke="#6acb6a" stroke-width="1.5" fill="none"/>
+          </svg>
+        </div>
+        <div style="position:absolute;top:22px;bottom:40px;left:50%;width:1px;background:#fc9"></div>
+        <div style="position:absolute;top:22px;bottom:40px;left:48%;width:5%;background:rgba(255,200,100,0.15)"></div>
+        <div style="position:absolute;bottom:0;left:0;right:0;height:40px;background:repeating-linear-gradient(180deg,#1a1a3a 0%,#3a2a5a 30%,#5a3a3a 60%,#8a5a3a 90%);opacity:0.7"></div>
+      </div>
+    </div>
+    <ul style="font-size:11px;color:#cde;line-height:1.6;margin-top:10px;padding-left:18px">
+      <li><strong>Frequency range:</strong> 192 kHz (just inside 20m band, ~14.13 to 14.32)</li>
+      <li><strong>Resolution:</strong> very fine. Bin width ~47 Hz. You can see individual signals down to weak CW or single SSB stations.</li>
+      <li><strong>You can:</strong> click any signal to tune to it, drag the filter edges, see signal shape and bandwidth, listen via the slice's audio.</li>
+      <li><strong>Refresh:</strong> real-time. Hundreds of times per second.</li>
+      <li><strong>What it's for:</strong> active operation. You're working a band; this is your "I am listening here right now" window.</li>
+    </ul>
+  </div>
+
+  <div>
+    <div style="background:#0d1218;border:1px solid #4a7a4a;border-radius:4px;overflow:hidden">
+      <div style="background:linear-gradient(180deg,#3a4a5a 0%,#1a2a38 100%);padding:5px 10px">
+        <span style="color:#5cb85c;font-size:10px;font-weight:bold">WIDEBAND ADC0 · 0 – 61.44 MHz (320× wider)</span>
+      </div>
+      <div style="background:linear-gradient(180deg,#1a2848 0%,#0d1218 100%);height:120px;position:relative">
+        <div style="position:absolute;top:6px;left:0;right:0;display:flex;font-size:8px;color:#669">
+          <span style="position:absolute;left:3%">160m</span>
+          <span style="position:absolute;left:13%">80m</span>
+          <span style="position:absolute;left:22%">60m</span>
+          <span style="position:absolute;left:30%">40m</span>
+          <span style="position:absolute;left:38%">30m</span>
+          <span style="position:absolute;left:45%">20m</span>
+          <span style="position:absolute;left:52%">17m</span>
+          <span style="position:absolute;left:58%">15m</span>
+          <span style="position:absolute;left:64%">12m</span>
+          <span style="position:absolute;left:70%">10m</span>
+          <span style="position:absolute;left:92%">6m</span>
+        </div>
+        <div style="position:absolute;top:22px;left:0;right:0;bottom:0">
+          <svg viewBox="0 0 460 90" style="width:100%;height:100%">
+            <path d="M0,80 L10,72 L20,75 L30,55 L40,68 L50,75 L60,72 L70,42 L80,55 L90,75 L100,78 L110,75 L120,68 L130,72 L140,75 L145,45 L155,55 L170,72 L180,75 L195,38 L205,50 L220,68 L240,72 L250,55 L260,62 L275,78 L290,80 L305,72 L325,68 L340,72 L355,82 L370,78 L380,80 L395,75 L410,80 L425,68 L440,72 L455,80 L460,82" stroke="#6acb6a" stroke-width="1.2" fill="none"/>
+          </svg>
+        </div>
+        <div style="position:absolute;top:30px;left:13%;width:1px;height:35px;background:#69b"></div>
+        <div style="position:absolute;top:30px;left:30%;width:1px;height:35px;background:#a66"></div>
+        <div style="position:absolute;top:30px;left:45%;width:1px;height:35px;background:#fc9"></div>
+      </div>
+    </div>
+    <ul style="font-size:11px;color:#cde;line-height:1.6;margin-top:10px;padding-left:18px">
+      <li><strong>Frequency range:</strong> 0 – 61.44 MHz (all of HF + 6m, in one strip)</li>
+      <li><strong>Resolution:</strong> coarse. Bin width 7.5 kHz. Individual SSB stations look like small bumps; weak CW vanishes.</li>
+      <li><strong>You can:</strong> see where activity is across all bands at once, spot openings on bands you weren't watching, click a hot spot to tune a DDC there.</li>
+      <li><strong>Cannot:</strong> listen to it. Wideband is display-only — no audio.</li>
+      <li><strong>Refresh:</strong> 14 times per second (snapshot mode).</li>
+      <li><strong>What it's for:</strong> situational awareness. The "what bands are alive right now?" window.</li>
+    </ul>
+  </div>
+
+</div>
+
+<h3 style="margin-top:24px">Why can't you listen to the wideband pan?</h3>
+<div style="background:#1a2030;padding:14px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  Short answer: the wideband data the radio sends is <em>raw</em> from the ADC, before any frequency conversion. To turn it into audio for one specific frequency, the receiver needs to mix it down to baseband and apply a filter — that's what a DDC does. The DDC takes the raw ADC stream and gives you the equivalent of "this 192 kHz window starting at 14.13 MHz, demodulated as USB."<br><br>
+
+  The wideband stream skips that step entirely. The radio just says "here's everything the ADC saw in this 133-microsecond snapshot." There's no center frequency, no filter, no demod. We display it as spectrum. To listen to anything you see in it, you tell a DDC to tune to that frequency — which puts a regular DDC pan + audio on that signal.<br><br>
+
+  Think of it like the difference between <strong>a photograph of a busy intersection</strong> (wideband — you see everyone at once but can't hear what they're saying) and <strong>a microphone pointed at one person</strong> (DDC — you hear them clearly but only that one person).
+</div>
+
+<h3 style="margin-top:24px">The actual workflow</h3>
+<div class="mockup">
+  <div class="mockup-header">How operators use wideband + DDC pans together</div>
+  <div class="mockup-body" style="font-family:monospace;font-size:11px;color:#cde;padding:14px;line-height:1.8">
+    <span style="color:#fc9">1.</span> Operator turns on wideband ADC0 — top strip lights up showing all of HF.<br>
+    <span style="color:#fc9">2.</span> Operator notices a bright cluster of signals on 17m (where they weren't expecting activity).<br>
+    <span style="color:#fc9">3.</span> Operator clicks on that cluster in the wideband strip.<br>
+    <span style="color:#fc9">4.</span> The active DDC pan instantly retunes to 18.100 MHz. Now they have a 192 kHz detailed view of that activity, with audio.<br>
+    <span style="color:#fc9">5.</span> Operator finds a station they want to chase, fine-tunes within the DDC pan, listens.<br>
+    <span style="color:#fc9">6.</span> Meanwhile the wideband strip keeps showing everything else — operator can spot the next opening without losing their current QSO.<br>
+    <br>
+    <span style="color:#888"># This is the SmartSDR "panadapter + slice" workflow. Most operators with<br>
+    # wideband-capable radios use this constantly. OpenHPSDR has had the hardware<br>
+    # capability since day one — Thetis just never surfaced the UI.</span>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">What it looks like at full size, in our layout</h3>
+<div style="background:#0d1218;border:1px solid #2a3548;border-radius:4px;padding:0;margin:16px auto;max-width:900px;overflow:hidden">
+
+  <div style="background:linear-gradient(180deg,#1a2848 0%,#0d1218 100%);height:130px;position:relative;border-bottom:1px solid #2a3548">
+    <div style="background:linear-gradient(180deg,#3a4a5a 0%,#1a2a38 100%);padding:3px 10px;display:flex;justify-content:space-between">
+      <span style="color:#5cb85c;font-size:10px;font-weight:bold">▍ WIDEBAND ADC0 · 0 – 61.44 MHz · 7.5 kHz/bin · 14 fps</span>
+      <span style="color:#888;font-size:9px">snapshot mode · no audio · click to tune active DDC</span>
+    </div>
+    <div style="position:absolute;top:22px;left:0;right:0;font-size:8px;color:#669;height:14px">
+      <span style="position:absolute;left:3%">160m</span>
+      <span style="position:absolute;left:13%">80m</span>
+      <span style="position:absolute;left:22%">60m</span>
+      <span style="position:absolute;left:30%">40m</span>
+      <span style="position:absolute;left:38%">30m</span>
+      <span style="position:absolute;left:45%">20m</span>
+      <span style="position:absolute;left:52%">17m</span>
+      <span style="position:absolute;left:58%">15m</span>
+      <span style="position:absolute;left:64%">12m</span>
+      <span style="position:absolute;left:70%">10m</span>
+      <span style="position:absolute;left:92%">6m</span>
+    </div>
+    <div style="position:absolute;top:36px;left:0;right:0;bottom:0">
+      <svg viewBox="0 0 900 90" style="width:100%;height:100%">
+        <path d="M0,80 L20,72 L40,75 L60,55 L80,68 L100,75 L120,72 L140,42 L160,55 L180,75 L200,78 L220,75 L240,68 L260,72 L280,75 L290,45 L310,55 L340,72 L360,75 L390,38 L410,50 L440,68 L470,72 L500,55 L520,62 L550,78 L580,80 L610,72 L650,68 L680,72 L710,82 L740,78 L770,80 L795,75 L820,80 L850,68 L880,72 L900,80" stroke="#6acb6a" stroke-width="1.3" fill="none"/>
+      </svg>
+    </div>
+    <div style="position:absolute;top:36px;left:13%;width:1px;height:50px;background:#69b"></div>
+    <div style="position:absolute;top:36px;left:30%;width:1px;height:50px;background:#a66"></div>
+    <div style="position:absolute;top:36px;left:45%;width:1px;height:50px;background:#fc9"></div>
+    <div style="position:absolute;top:62px;left:11%;background:#69b;color:#fff;font-size:9px;font-weight:bold;padding:1px 4px;border-radius:2px">C · 3.750</div>
+    <div style="position:absolute;top:62px;left:28%;background:#a66;color:#fff;font-size:9px;font-weight:bold;padding:1px 4px;border-radius:2px">B · 7.150</div>
+    <div style="position:absolute;top:62px;left:43%;background:#fc9;color:#0d1218;font-size:9px;font-weight:bold;padding:1px 4px;border-radius:2px">A · 14.225</div>
+  </div>
+
+  <div style="background:#0a0e14;padding:8px 14px;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#aac">
+    <span>Click anywhere on the strip to retune the active slice to that frequency.</span>
+    <span style="color:#666;font-size:10px">Alex0: BYPASS (wideband active)</span>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:24px;text-align:center">That's the wideband pan. Spectrum-only view of the entire HF + 6m range, no audio, used as a "where's the activity?" radar that feeds your DDC pans where the real listening happens.</p>

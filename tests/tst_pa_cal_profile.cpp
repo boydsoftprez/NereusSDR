@@ -94,6 +94,35 @@ private slots:
         // hides the cal group. Thetis would route this to default 10 W.
         QCOMPARE(paCalBoardClassFor(HPSDRModel::HPSDR), PaCalBoardClass::None);
     }
+    void board_class_anan_g2e() {
+        // From Thetis console.cs:6725-6760 [v2.10.3.15] the CalibratedPAPower
+        // switch enumerates ANAN100D, ANAN7000D, ANVELINAPRO3, ANAN_G2 //G8NJJ,
+        // ANAN_G2_1K //G8NJJ, REDPITAYA //DH1KLM, ANAN8000D, ANAN10 and ANAN10E
+        // only.  There is no `case HPSDRModel.ANAN_G2E`, so the G2E SKU takes
+        // `default: interval = 10.0f`, which is the Anan100 (10 W interval)
+        // class here.  Agrees with paMaxWattsFor(ANAN_G2E) == 100.
+        QCOMPARE(paCalBoardClassFor(HPSDRModel::ANAN_G2E), PaCalBoardClass::Anan100);
+        // G2E must not pick up the ANAN8000D 20 W interval class.
+        QVERIFY(paCalBoardClassFor(HPSDRModel::ANAN_G2E) != PaCalBoardClass::Anan8000);
+    }
+    void board_class_every_model_is_classified() {
+        // Invariant guard for the next SKU.  paCalBoardClassFor must never
+        // fall out of its switch onto the defensive trailing return for a
+        // real (non-sentinel) model: HPSDR/Atlas is the only real model
+        // deliberately classified None.
+        for (int i = static_cast<int>(HPSDRModel::HPSDR);
+             i < static_cast<int>(HPSDRModel::LAST); ++i) {
+            const HPSDRModel m = static_cast<HPSDRModel>(i);
+            if (m == HPSDRModel::HPSDR) {
+                continue;  // discrete-board kit, no integrated PA
+            }
+            QVERIFY2(paCalBoardClassFor(m) != PaCalBoardClass::None,
+                     qPrintable(QStringLiteral(
+                         "HPSDRModel %1 (%2) has no PA cal board class")
+                         .arg(i)
+                         .arg(QString::fromLatin1(displayName(m)))));
+        }
+    }
     void board_class_first_last_sentinels() {
         QCOMPARE(paCalBoardClassFor(HPSDRModel::FIRST), PaCalBoardClass::None);
         QCOMPARE(paCalBoardClassFor(HPSDRModel::LAST), PaCalBoardClass::None);
