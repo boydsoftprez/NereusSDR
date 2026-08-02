@@ -124,6 +124,22 @@ class TestStreamPoolBinding;
 // which ids openRxChannelPool actually opens.
 class TestWdspChannelIdMap;
 class TestRadioModelMoxHardwareFlip;
+// TNF Task 1: the notch tune-frequency test primes the engine so
+// createRxChannel opens real RX channels. RXANBPSetTuneFrequency
+// dereferences rxa[channel].ndb.p before it compares (nbp.c:477-479), so
+// the kTestChannel = 99 never-opened-channel hatch is unavailable here.
+class TestNotchTuneFrequency;
+// TNF Task 2: the notch-wrapper test opens one real RX channel so the
+// RXANBP* entry points have an rxa[].ndb to dereference.
+class TestRxChannelNotchWrappers;
+// TNF Task 4: the notch fan-out test primes the engine so openRxChannelPool
+// opens real WDSP channels; the RXANBP* wrappers cannot be exercised on an
+// unopened id (design section 11.1 -- rxa[] is sized MAX_CHANNELS and every
+// entry point dereferences before range-checking).
+class TestNotchChannelSync;
+// TNF Task 9: the MNF Settings page test primes the engine so it can open one
+// real RX channel and check the minimum-notch-width readout against it.
+class TestMnfSetupPage;
 #endif
 
 namespace NereusSDR {
@@ -760,6 +776,21 @@ private:
     // Authoritative-TX regression: seed nonzero RX channels without the
     // asynchronous wisdom lifecycle so MOX can prove which exact ID moves.
     friend class ::TestRadioModelMoxHardwareFlip;
+    // TNF Task 1: same friendship for the notch tune-frequency test, which
+    // needs really opened RX channels rather than an unopened slot.
+    friend class ::TestNotchTuneFrequency;
+    // TNF Task 2: same friendship for the notch-wrapper test, which primes
+    // m_initialized so createRxChannel opens a real WDSP channel with a real
+    // notch database.
+    friend class ::TestRxChannelNotchWrappers;
+    // TNF Task 4: same friendship for the notch channel-sync test, which
+    // drives openRxChannelPool and reads the notch state back off every
+    // channel the pool opened.
+    friend class ::TestNotchChannelSync;
+    // TNF Task 9: same friendship for the MnfSetupPage readout test, which
+    // opens one real RX channel so RXANBPGetMinNotchWidth has an rxa[].nbp0
+    // to read.
+    friend class ::TestMnfSetupPage;
 #endif
 };
 

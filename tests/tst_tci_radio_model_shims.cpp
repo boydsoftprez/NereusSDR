@@ -450,16 +450,17 @@ private slots:
     void stub_dsp_toggles_roundtrip() {
         RadioModel m;
         setupOneSlice(m);
-        // setRxNf / setRxEnable / setRxCtun are what is left on the per-slice
-        // stub backing storage (m_tciStubRx*).  Three shims have since moved
-        // off it to real SliceModel properties: setRxAnf in Phase 3F Sub-Epic J
-        // Task 10, then setRxApf and setRxBin in chip task_c1e6fbad.  Their
-        // coverage is anf_routes_to_slice_anf_enabled,
-        // apf_routes_to_slice_apf_enabled and
-        // bin_routes_to_slice_binaural_enabled below.  Round-trip still holds
-        // for all of them, which is exactly why round-trip alone never caught
-        // that the stubbed ones reached no DSP: assert the destination, not
-        // just the echo.
+        // setRxEnable / setRxCtun are what is left on the per-slice stub
+        // backing storage (m_tciStubRx*).  Four shims have since moved off it
+        // to real model state: setRxAnf in Phase 3F Sub-Epic J Task 10, then
+        // setRxApf and setRxBin in chip task_c1e6fbad, then setRxNf onto
+        // NotchModel::globalEnabled in TNF section 6.4.  Their coverage is
+        // anf_routes_to_slice_anf_enabled, apf_routes_to_slice_apf_enabled and
+        // bin_routes_to_slice_binaural_enabled below, plus
+        // tst_notch_tci_rx_nf_enable for NF.  setRxNf is kept in this
+        // round-trip because the echo contract still holds for it; round-trip
+        // alone is exactly what never caught that the stubbed ones reached no
+        // DSP, so assert the destination too, not just the echo.
         for (const QByteArray name :
              {"setRxNf", "setRxEnable", "setRxCtun"})
         {

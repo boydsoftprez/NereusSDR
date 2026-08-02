@@ -791,6 +791,26 @@ public:
         return m_frequency + (m_ritEnabled ? static_cast<double>(m_ritHz) : 0.0);
     }
 
+    /// VFO + RIT + the active mode's DIG click-tune offset: the complete
+    /// demodulated RF origin, matching what RadioModel::composedShiftHz feeds
+    /// WDSP as the notch shift. effectiveRxFrequency() deliberately omits the
+    /// DIG term and every existing caller depends on that, so this is a
+    /// separate accessor rather than a change to it.
+    ///
+    /// Codex review of PR #313: +TNF placed its notch from
+    /// effectiveRxFrequency() while the passband being listened to is based on
+    /// VFO + RIT + DIG, so in DIGU/DIGL the notch was displaced by exactly the
+    /// configured offset.
+    double demodulatedRxFrequency() const {
+        double hz = effectiveRxFrequency();
+        if (m_dspMode == DSPMode::DIGL) {
+            hz += static_cast<double>(m_diglOffsetHz);
+        } else if (m_dspMode == DSPMode::DIGU) {
+            hz += static_cast<double>(m_diguOffsetHz);
+        }
+        return hz;
+    }
+
     // ---- Per-mode filter presets ----
     // Returns the F5 (default) filter low/high for a given mode.
     // Ported from Thetis console.cs:5180-5575 InitFilterPresets.

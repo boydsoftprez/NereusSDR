@@ -187,6 +187,11 @@ class SpotModel;
 class SpotTableModel;
 class FreeDVStationModel;
 class RxDecodeModel;
+// TNF (design section 5): the canonical notch store, owned by RadioModel
+// alongside SpotModel. One list shared by every slice (design D1) because
+// notch centres are absolute RF Hz, so a 20 m notch is inherently inert on a
+// 40 m slice.
+class NotchModel;
 struct DxSpot;
 struct FreeDVStation;
 
@@ -527,6 +532,20 @@ public:
     /// of openRxChannelPool so a reconnect, which re-binds every slice before
     /// WDSP has any channels, still comes back with all of them audible.
     void activateBoundSliceChannels();
+
+    /// Reconcile every OPEN pool channel with the current notch set.
+    ///
+    /// Design section 6.3. Runs at the tail of openRxChannelPool because
+    /// activateSliceChannel is dead as a hook for Slice A: connectToRadio's
+    /// WDSP-init lambda activates channel 0 before it opens the pool, and
+    /// activateSliceChannel early-returns on an already-active channel.
+    /// Covers reconnect for free, since teardownConnection destroys every
+    /// channel.
+    ///
+    /// Reconciles channels that no slice is bound to yet as well: a notch
+    /// database is created inert (third_party/wdsp/src/RXA.c:87) and this is
+    /// where the run flag lands.
+    void syncNotchesToAllChannels();
 
     /// Switch on one slice's WDSP channel, pushing its demodulation state
     /// first. No-op when the slice has no stream, has no channel yet, or is
@@ -982,6 +1001,16 @@ public:
     PotaClient*           pota()                const { return m_pota.get(); }
     FreeDVReporterClient* freeDvReporter()      const { return m_freeDvReporter.get(); }
     PskReporterClient*    pskReporter()         const { return m_pskReporter.get(); }
+
+    // ── TNF (design section 8.1): the canonical notch store ─────────────────
+    //
+    // Constructed in the RadioModel ctor and restored from AppSettings there,
+    // before any WDSP channel exists, so the openRxChannelPool-tail reconcile
+    // (section 6.3) always has the full list to install. Non-owning pointer;
+    // lifetime is RadioModel's. Consumed by the TCI rx_nf_enable repoint
+    // (section 6.4), the +TNF button and status-bar light (section 7), and
+    // MnfSetupPage (section 9).
+    NotchModel*           notchModel()          const { return m_notchModel.get(); }
 
     // ── Phase 3J-2 + 3R M3: spot-client auto-start state restore ────────────
     //
@@ -1712,6 +1741,26 @@ public:
     void setGanymedePresent(bool present);
 
 public slots:
+    /// Flush any coalesced notch edit immediately. Called when a notch drag
+    /// ends so the committed position is exact rather than up to one
+    /// coalescing window stale. See scheduleNotchEditPush.
+    void commitPendingNotchEdits();
+
+    /// The single creation route for every notch. Resolves the minimum
+    /// realisable width from THE GIVEN SLICE's channel and clamps to it, so a
+    /// notch is never stored or drawn at a width WDSP will silently widen.
+    ///
+    /// Codex review of PR #313 found three separate add routes with three
+    /// different behaviours: the panadapter gesture clamped against
+    /// activeSlice() rather than the pan that was clicked, and the +TNF button
+    /// and the settings-page Add button did not clamp at all. Every route goes
+    /// through here now, and `slice` is always the slice the operator acted
+    /// on, per the standing rule that a control drawn on a pan targets that
+    /// pan.
+    ///
+    /// Returns the new notch id, or -1 if the model refused it.
+    int addNotchForSlice(SliceModel* slice, double centerHz, double widthHz);
+
     // ── Phase 3M-1a Task F.1: MoxController::hardwareFlipped fan-out ───────────
     // Slot connected to MoxController::hardwareFlipped(bool isTx).
     // Fans out hardware-flip side-effects to AlexController + RadioConnection
@@ -1969,13 +2018,16 @@ public slots:
     Q_INVOKABLE void setRxApf(int rx, bool on);
     Q_INVOKABLE bool rxApf(int rx) const;
 
+    // NOT a stub since TNF section 6.4: these read and write the NotchModel
+    // master enable.  Global despite the per-rx command shape, exactly as
+    // Thetis GetMNF is (console.cs:52317-52330 [v2.10.3.15]).
+    Q_INVOKABLE void setRxNf(int rx, bool on);
+    Q_INVOKABLE bool rxNf(int rx) const;
+
     // ── Stub categories: SliceModel doesn't expose these as Q_PROPERTYs yet ─
     // Each stub stores the requested value in a small per-slice array so
     // round-trip (set then get) returns the operator's last value.  Real
-    // wiring to WDSP comes when the underlying feature lands.  NF also has an
-    // upstream asymmetry to resolve first (see setRxNf in RadioModel.cpp).
-    Q_INVOKABLE void setRxNf(int rx, bool on);
-    Q_INVOKABLE bool rxNf(int rx) const;
+    // wiring to WDSP comes when the underlying feature lands.
     Q_INVOKABLE void setRxEnable(int rx, bool on);
     Q_INVOKABLE bool rxEnable(int rx) const;
 
@@ -2563,6 +2615,27 @@ private:
     /// addSlice time.
     void wireSliceSignals(SliceModel* slice);
 
+    /// Connect NotchModel's mutation signals to the per-channel WDSP
+    /// fan-out. Called once from the ctor; NotchModel outlives every
+    /// connection.
+    void wireNotchModel();
+
+    /// Push the full notch state at one channel: the list, the master run
+    /// flag, the auto-increase flag and the NBP tune frequency. `channelId`
+    /// is also the slice index (Sub-Epic I invariant), which is how the
+    /// hosting stream's centre is resolved for the tune frequency
+    /// (design section 4.1).
+    void syncNotchesToChannel(RxChannel* ch, int channelId);
+
+    /// Every WDSP RX channel that currently backs a slice. The fan-out
+    /// target set for a live notch mutation (design section 6.3).
+    QVector<RxChannel*> sliceRxChannels() const;
+
+    /// Design section 6.2: our list position IS the WDSP notch index, so a
+    /// count divergence is a correctness bug. Detect and recover with a full
+    /// resync rather than assert, which a release build compiles out.
+    void reconcileNotchCount(RxChannel* ch);
+
     // Recomputes the transmit frequency from the TX-bound slice and pushes it
     // at the connection. The single place that answers "what frequency is the
     // radio transmitting on", so the Alex TX low-pass, the TX NCO and the
@@ -2576,6 +2649,46 @@ private:
     // XIT is included and RIT is not, per Thetis console.cs:31782-31784
     // [v2.10.3.15]: udXIT lands on tx_freq, udRIT on rx_freq.
     void pushTxFrequencyFromTxSlice();
+
+    // The total WDSP shift for a slice: the allocator's offset from its
+    // hosting stream's centre, plus RIT, plus the per-mode DIG click-tune
+    // offset. Five sites push the shift (bindSliceToStream,
+    // activateSliceChannel, reshiftSlicesOnStream,
+    // commitStreamSampleRateChange and the RIT/DIG lambda in
+    // wireSliceSignals) and they used to disagree about which terms belonged
+    // in it, so each clobbered the others'. Toggling RIT on a shifted slice
+    // threw away the stream offset; retuning with RIT on threw away the RIT.
+    //
+    // Reads slice->shiftOffsetHz(), so every caller must commit the stream
+    // term to the model before calling.
+    // See docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.4.
+    double composedShiftHz(const SliceModel* slice) const;
+    /// Shift derived from an EXPLICIT stream centre, so it cannot disagree
+    /// with the NOTCHDB::tunefreq written alongside it. Design section 4.1.
+    double composedShiftHz(const SliceModel* slice, double streamCentreHz) const;
+    /// The ONLY writer of the notch RF origin. Writes tunefreq and shift
+    /// together from one centre; WDSP sums them (nbp.c:192).
+    void pushNotchOrigin(SliceModel* slice, RxChannel* ch, double streamCentreHz);
+
+    /// Coalesces notch edits during a drag. RXANBPEditNotch runs a full
+    /// UpdateNBPFilters (an FFT per partition at nc=4096, plus a bpsnba
+    /// recalculation) and swaps the masks under the DSP lock, so pushing one
+    /// per mouse-move costs ~50 filter redesigns per second PER CHANNEL.
+    /// Thetis does push per move (console.cs:49967 [v2.10.3.15]) but for one
+    /// notch on one channel; multi-pan multiplies that by the channel count.
+    /// The marker is drawn from the model and does not wait for this, so the
+    /// only thing rate-limited is the DSP redesign.
+    void scheduleNotchEditPush(int id);
+    void flushNotchEditPush();
+
+    QTimer* m_notchEditTimer{nullptr};
+    QSet<int> m_pendingNotchEdits;
+
+    // The connect-time DDC seed, factored out of the wireSliceSignals
+    // singleShot so it can be driven without a live connection. Commands the
+    // centre of whichever stream hosts `slice`, then re-seeds the TX NCO.
+    // See docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.5.
+    void seedConnectFrequency(SliceModel* slice);
 
     // The frequency a slice would actually transmit on: its dial plus XIT.
     //
@@ -2889,6 +3002,13 @@ public:
     }
     bool streamActiveForTest(int streamIndex) const {
         return m_streamAllocator.isStreamActive(streamIndex);
+    }
+
+    /// TNF Task 1 test seam (design doc 4.5): runs the connect-time DDC seed
+    /// without a live connection, so a test can assert the quantity it
+    /// commands.
+    void seedConnectFrequencyForTest(SliceModel* slice) {
+        seedConnectFrequency(slice);
     }
 
 private:
@@ -3333,9 +3453,11 @@ private:
     // values so the production path passes the existing matrix tests.
     //
     // Per-slice stub state for DSP toggles SliceModel doesn't yet expose
-    // as Q_PROPERTYs: rxBin / rxApf / rxNf / rxEnable.  Sized to the max
-    // RX count NereusSDR supports today (4 for the four-DDC SKUs); the
-    // setter clamps the index so an out-of-range slice silently no-ops.
+    // as Q_PROPERTYs: rxCtun / rxEnable.  Sized to the max RX count
+    // NereusSDR supports today (4 for the four-DDC SKUs); the setter clamps
+    // the index so an out-of-range slice silently no-ops.
+    // rxNf left this set in TNF section 6.4: it is the global notch master
+    // enable and now reads and writes NotchModel::globalEnabled.
     static constexpr int kTciStubSliceMax = 4;
     bool        m_tciGlobalMute{false};
     // AF / MON volume fallback defaults match the live-source defaults
@@ -3369,9 +3491,8 @@ private:
     // BIN and APF used to live here too; Phase 3F chip task_c1e6fbad routed
     // them to SliceModel::binauralEnabled / apfEnabled, which are wired to
     // RxChannel, and deleted their arrays rather than leaving state nothing
-    // reads. NF stays because upstream is asymmetric about it -- see the
-    // setRxNf comment in RadioModel.cpp.
-    std::array<bool, kTciStubSliceMax> m_tciStubRxNf{};
+    // reads. NF followed them out in TNF section 6.4, onto
+    // NotchModel::globalEnabled -- see the setRxNf comment in RadioModel.cpp.
     std::array<bool, kTciStubSliceMax> m_tciStubRxCtun{};
     std::array<bool, kTciStubSliceMax> m_tciStubRxEnable{ {true, false, false, false} };
 
@@ -3546,6 +3667,11 @@ private:
     std::unique_ptr<PotaClient>           m_pota;
     std::unique_ptr<FreeDVReporterClient> m_freeDvReporter;
     std::unique_ptr<PskReporterClient>    m_pskReporter;
+
+    // TNF (design section 5): notch store. Persisted globally rather than
+    // per-MAC (design D3) because a notch tracks a QRM source at the
+    // operator's location and band, not a property of the radio.
+    std::unique_ptr<NotchModel>           m_notchModel;
 
     // Phase 3R-bridge: drives the freedv-gui-style RADE "sync-only"
     // rx_report upload (empty callsign, "RADEV1" mode, 1 Hz) into

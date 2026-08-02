@@ -124,6 +124,7 @@
 #include "dbm_strip_math.h"
 #include "popup_placement.h"
 #include "models/BandPlanManager.h"
+#include "models/NotchModel.h"
 #include "spectrum/SpectrumDetector.h"
 
 #include <QApplication>
@@ -1872,7 +1873,12 @@ void SpectrumWidget::setNoiseFloorFastAttack(bool on)
 // because NereusSDR's renderer doesn't share the averaging loop.
 void SpectrumWidget::processNoiseFloor()
 {
-    const int width = m_renderedPixels.size();
+    // The noise floor is a MEASUREMENT, so it reads the undented pixels
+    // (design section 8.3).  Upstream does the same: its accumulator takes
+    // max_copy from the pristine array while everything else in that loop
+    // takes the dented max - display.cs:5256-5259 [v2.10.3.15].
+    const QVector<float>& src = measurementPixels();
+    const int width = src.size();
     if (width <= 0) { return; }
 
     // Per-pixel accumulator — Thetis display.cs:5253-5258 [v2.10.3.13]:
@@ -1886,7 +1892,7 @@ void SpectrumWidget::processNoiseFloor()
     double averageSum = 0.0;
     int    averageCount = 0;
     for (int i = 0; i < width; ++i) {
-        const float dB = m_renderedPixels[i];
+        const float dB = src[i];
         if (dB < currentAverage) {
             averageSum += std::pow(10.0, static_cast<double>(dB) / 10.0);
             averageCount++;
@@ -2755,6 +2761,21 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
         }
     }
 
+    // Visual notch, spectrum plane.  Thetis dents in place right after the
+    // analyzer hands the frame over and before its per-pixel render loop
+    // (display.cs:5234-5238 [v2.10.3.15]), keeping one pristine copy that
+    // only the noise-floor accumulator reads (display.cs:5259 [v2.10.3.15]).
+    // Peak hold, the blob / IMD detector and the max readout deliberately see
+    // the dent (display.cs:5269, :5280, :5337 [v2.10.3.15]) and so are still
+    // fed from m_renderedPixels below.  Do NOT "protect" them: that would be
+    // a divergence, not a fix.
+    if (visualNotchWillDent()) {
+        m_undentedPixels = m_renderedPixels;
+        applyVisualNotchDent(m_renderedPixels);
+    } else if (!m_undentedPixels.isEmpty()) {
+        m_undentedPixels.clear();
+    }
+
     // --- Waterfall plane: own detector + avenger -> m_wfRenderedPixels ---
     // Thetis runs separate analyzer planes for spectrum and waterfall (see
     // ANALYZER_INFO[] in analyzer.c).  DetType + AvMode are independent.
@@ -2783,6 +2804,23 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
                              false,
                              0.0,
                              m_wfRenderedPixels);
+
+    // Visual notch, waterfall plane.  Thetis re-runs modifyDataForNotches on
+    // the waterfall array after `data = current_waterfall_data` (:6567), under
+    // the same MOX gate - display.cs:6579-6586 [v2.10.3.15].  A second
+    // explicit call here because NereusSDR keeps the waterfall pixels in
+    // their own array, so denting the spectrum plane above does not reach
+    // them.
+    //
+    // No undented waterfall copy: upstream needs one for its per-frame
+    // waterfall minimum (dataCopy at display.cs:6741, :6833, :6915, :6954,
+    // :7163, :7369, each carrying //[2.10.3]MW0LGE use non notched data), and
+    // NereusSDR has no such tracker - m_wfLowThreshold is a persisted user
+    // setting, and pushWaterfallRow is the only consumer of
+    // m_wfRenderedPixels.
+    if (visualNotchWillDent()) {
+        applyVisualNotchDent(m_wfRenderedPixels);
+    }
 
     // Legacy per-pixel peak hold -- track running max in display-pixel
     // space.  Replaces the old per-bin m_peakHoldBins.
@@ -2931,7 +2969,15 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
 // return -400 sentinel.
 double SpectrumWidget::peakDbmInSlicePassband() const
 {
-    const int n = m_renderedPixels.size();
+    // Deliberate NereusSDR-specific divergence from the dent-in-place rule
+    // (design section 8.3, decision recorded 2026-07-28): this feeds
+    // WdspEngine's MaxBin detector and therefore the analog S-Meter. Thetis
+    // reads MaxBin from WDSP upstream of its display code (console.cs:46959,
+    // dsp.cs:849-850 [v2.10.3.15]), so its visual notch structurally cannot
+    // move its meter; ours would if this scanned the dented array. A display
+    // preference must not change a measurement.
+    const QVector<float>& src = measurementPixels();
+    const int n = src.size();
     if (n < 2 || m_bandwidthHz <= 0.0) { return -400.0; }
 
     const double loHz = m_vfoHz + static_cast<double>(m_filterLowHz);
@@ -2955,9 +3001,111 @@ double SpectrumWidget::peakDbmInSlicePassband() const
 
     float peak = -400.0f;
     for (int i = firstPx; i <= lastPx; ++i) {
-        if (m_renderedPixels[i] > peak) { peak = m_renderedPixels[i]; }
+        if (src[i] > peak) { peak = src[i]; }
     }
     return static_cast<double>(peak);
+}
+
+// ---------------------------------------------------------------------------
+// Visual notch (trace dent) - design section 8.3
+// ---------------------------------------------------------------------------
+//
+// Port of Thetis modifyDataForNotches (display.cs:4733-4817 [v2.10.3.15], the
+// dent maths itself at :4790-4816) and the non-drawing arm of its
+// handleNotches helper (display.cs:8677-8687 [v2.10.3.15]).  Thetis works in
+// Hz-from-the-VFO and divides every pixel index by its display decimation;
+// our pixel array is absolute-RF and undecimated (the m_nDecimation == 1 case,
+// see updateSpectrumLinear), so a pixel index here IS Thetis's xPos and hzToX
+// is the whole coordinate map.
+//
+// Two terms of the upstream maths are deliberately NOT ported, per section 8.3:
+//
+//   * handleNotches' localRit / CTUN offset (display.cs:8648-8652
+//     [v2.10.3.15]).  It compensates for Thetis's VFO-label-anchored pixel
+//     maths combined with its RIT-driven DDS retune.  Our x axis is absolute
+//     RF, RIT never retunes the hardware, and WDSP applies shift to the
+//     passband rather than to the notch, so adding it would displace every
+//     dent by rit_hz.  Recorded so nobody re-adds it.
+//   * cwSideToneShift (display.cs:8654 [v2.10.3.15]), dropped entirely rather
+//     than threaded as a constant zero: a notch added at F in CW stores at
+//     exactly F here (design section 1.2).
+
+void SpectrumWidget::setVisualNotchEnabled(bool on)
+{
+    if (m_visualNotchEnabled == on) { return; }
+    m_visualNotchEnabled = on;
+    markOverlayDirty();
+}
+
+// From Thetis display.cs:5235 [v2.10.3.15]:
+//   if (bDoVisualNotch && m_bShowVisualNotch && !local_mox)
+// plus the _tnf_active half of the per-notch _Use flag at display.cs:8686
+// [v2.10.3.15].  The per-notch Active half is applied inside the loop below,
+// exactly as upstream skips on !nc._Use.
+bool SpectrumWidget::visualNotchWillDent() const
+{
+    return m_visualNotchEnabled
+        && !m_moxOverlay
+        && m_notchGlobalEnabled
+        && !m_notchMarkers.isEmpty();
+}
+
+void SpectrumWidget::applyVisualNotchDent(QVector<float>& pixels) const
+{
+    const int n = pixels.size();
+    if (n <= 0 || m_bandwidthHz <= 0.0) { return; }
+
+    const float fAttenuation = kNotchDentAttenuationDb;
+
+    // A rect the width of the array, so hzToX maps onto the same columns the
+    // trace is drawn from regardless of the widget's live geometry.
+    const QRect r(0, 0, n, 1);
+
+    for (const NotchMarker& nc : m_notchMarkers) {
+        if (!nc.active) { continue; } // skip inactive
+
+        // From Thetis display.cs:8679-8680 [v2.10.3.15]:
+        //   double dNewWidth = n.FWidth < min_notch_wdith ? min_notch_wdith : n.FWidth; // use the min width of filter from WDSP
+        //   dNewWidth += 20; // fudge factor to align better with spectrum notch
+        const double dNewWidth =
+            ((nc.widthHz < m_notchMinWidthHz) ? m_notchMinWidthHz : nc.widthHz)
+            + kNotchDentFudgeHz;
+
+        const double centreHz = nc.freqMhz * 1e6;
+        const int cX     = hzToX(centreHz, r);
+        const int leftX  = hzToX(centreHz - dNewWidth / 2.0, r);
+        const int rightX = hzToX(centreHz + dNewWidth / 2.0, r);
+
+        // do left
+        int wL = cX - leftX;
+        wL = qMax(1, wL);
+        for (int i = cX; i > cX - wL; --i) {
+            if (i < 0 || i > n - 1) { continue; }
+            const int x = cX - i;
+            const float fTmp = 1.0f / static_cast<float>(std::pow(
+                static_cast<double>(wL) / static_cast<double>(wL - x),
+                1.5)); // pow2 quite sharp
+            pixels[i] -= (fAttenuation * fTmp);
+        }
+        // do right
+        int wR = rightX - cX;
+        wR = qMax(1, wR);
+        for (int i = cX; i < cX + wR; ++i) {
+            if (i < 0 || i > n - 1) { continue; }
+            const int x = i - cX;
+            const float fTmp = 1.0f / static_cast<float>(std::pow(
+                static_cast<double>(wR) / static_cast<double>(wR - x),
+                1.5)); // pow2 quite sharp
+            pixels[i] -= (fAttenuation * fTmp);
+        }
+    }
+}
+
+const QVector<float>& SpectrumWidget::measurementPixels() const
+{
+    return (m_undentedPixels.size() == m_renderedPixels.size())
+               ? m_undentedPixels
+               : m_renderedPixels;
 }
 
 void SpectrumWidget::resizeEvent(QResizeEvent* event)
@@ -3058,6 +3206,17 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     drawGrid(p, specRect);
     drawSpectrum(p, specRect);
     drawWaterfall(p, wfRect);
+    // TNF notch overlay immediately before the spots, matching upstream's
+    // paint order: AetherSDR src/gui/SpectrumWidget.cpp:12903-12904
+    // [@c6481cbf] draws drawTnfMarkers then drawSpotMarkers.  No visibility
+    // gate: an empty marker list IS the off state, and the master TNF flag
+    // recolours the markers rather than hiding them (Thetis
+    // display.cs:8704-8707 [v2.10.3.15]).
+    //
+    // notchSpecRect() rather than the local specRect above: it is the
+    // single notch geometry source the hit test also builds from, and the
+    // two agree by construction on this path.
+    drawNotchMarkers(p, notchSpecRect());
     // Phase 3J-2 Task E1: spot overlay between spectrum/waterfall and the
     // VFO marker so the spot label tick + pill sit on top of the trace
     // but below the slice/VFO marker chrome. Mirrors AetherSDR
@@ -5254,6 +5413,176 @@ std::pair<int,int> SpectrumWidget::txAudioToIq(int audioLow, int audioHigh,
 }
 
 // ---------------------------------------------------------------------------
+// TNF / notch overlay: setters, colour resolution, render
+// (design sections 8.1 and 8.2).
+//
+// Geometry is AetherSDR's drawTnfMarkers ported unchanged
+// (src/gui/SpectrumWidget.cpp:13503-13554 [@c6481cbf]).  The only two
+// divergences are the ones the missing depth axis forces: the hatch spacing
+// is fixed instead of depth-derived (upstream :13535) and the handle height
+// is fixed instead of 8 + depthDb * 2 (upstream :13545).
+//
+// Colours are Thetis's, not AetherSDR's: upstream encodes permanent versus
+// temporary in green/yellow and we have no permanence, while Thetis encodes
+// exactly the four states we do have (display.cs:386-390 [v2.10.3.15]).
+// ---------------------------------------------------------------------------
+
+// From Thetis display.cs:389 [v2.10.3.15]: notch_active_colour = Color.Yellow.
+static constexpr QRgb kNotchActiveColour = qRgb(0xFF, 0xFF, 0x00);
+// From Thetis display.cs:390 [v2.10.3.15]: notch_inactive_colour = Color.Gray.
+// System.Drawing.Color.Gray is #808080 while Qt::gray is #A0A0A4, so the
+// literal is spelled out rather than reaching for the Qt global colour.
+static constexpr QRgb kNotchInactiveColour = qRgb(0x80, 0x80, 0x80);
+// From Thetis display.cs:387 [v2.10.3.15]: notch_tnf_off_colour = Color.Olive.
+static constexpr QRgb kNotchTnfOffColour = qRgb(0x80, 0x80, 0x00);
+// From Thetis display.cs:386 [v2.10.3.15]:
+// notch_highlight_color = Color.Chartreuse.
+static constexpr QRgb kNotchHighlightColour = qRgb(0x7F, 0xFF, 0x00);
+
+// From Thetis display.cs:400-408 [v2.10.3.15]: every notch fill brush is
+// changeAlpha(colour, 92); changeAlpha itself is display.cs:2939-2942.
+static constexpr int kNotchFillAlpha = 92;
+
+// Fixed, replacing AetherSDR's depth-derived
+// (depthDb <= 1) ? 12 : (depthDb == 2 ? 8 : 5) at
+// src/gui/SpectrumWidget.cpp:13535 [@c6481cbf].
+static constexpr int kNotchHatchSpacingPx = 8;
+
+// Fixed, replacing AetherSDR's 8 + depthDb * 2 at
+// src/gui/SpectrumWidget.cpp:13545 [@c6481cbf].
+static constexpr int kNotchHandleHeightPx = 10;
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13547-13548 [@c6481cbf]:
+// tri << QPoint(cx - 5, ...) << QPoint(cx + 5, ...).
+static constexpr int kNotchHandleHalfWidthPx = 5;
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13523 [@c6481cbf]:
+// std::max(2, ...), so a sub-2-pixel notch stays grabbable.
+static constexpr int kNotchMinHalfWidthPx = 2;
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13551 [@c6481cbf]: the grab
+// handle dims with the master flag as well as changing colour.
+static constexpr int kNotchHandleAlphaOn  = 200;
+static constexpr int kNotchHandleAlphaOff = 80;
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13436-13440 [@c6481cbf]
+void SpectrumWidget::setNotchMarkers(const QVector<NotchMarker>& markers)
+{
+    m_notchMarkers = markers;
+    markOverlayDirty();
+}
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13497-13501 [@c6481cbf]
+void SpectrumWidget::setNotchGlobalEnabled(bool on)
+{
+    m_notchGlobalEnabled = on;
+    markOverlayDirty();
+}
+
+void SpectrumWidget::setNotchMinWidthHz(double hz)
+{
+    m_notchMinWidthHz = hz;
+    markOverlayDirty();
+}
+
+// From Thetis display.cs:8691-8722 [v2.10.3.15]: handleNotches' brush
+// selection, flattened to a colour because our pen and fill derive from one
+// base (upstream keeps a Pen and a Brush per state and they never disagree).
+QColor SpectrumWidget::notchColor(const NotchMarker& n) const
+{
+    // From Thetis display.cs:8710-8722 [v2.10.3.15]:
+    //   //overide if highlighed  [original inline comment from display.cs:8710]
+    // The highlight is applied AFTER the master-off branch upstream, so it
+    // wins over every other state.  Guarded on a real id because both
+    // selection members and a default-constructed marker share -1.
+    if (n.id >= 0 && (n.id == m_selectedNotchId || n.id == m_hoveredNotchId)) {
+        return QColor::fromRgb(kNotchHighlightColour);
+    }
+
+    // From Thetis display.cs:8704-8707 [v2.10.3.15]: master TNF off repaints
+    // every marker olive rather than hiding it.
+    if (!m_notchGlobalEnabled) {
+        return QColor::fromRgb(kNotchTnfOffColour);
+    }
+
+    // From Thetis display.cs:8693-8702 [v2.10.3.15]
+    return n.active ? QColor::fromRgb(kNotchActiveColour)
+                    : QColor::fromRgb(kNotchInactiveColour);
+}
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13503-13554 [@c6481cbf]
+void SpectrumWidget::drawNotchMarkers(QPainter& p, const QRect& specRect)
+{
+    if (m_notchMarkers.isEmpty()) {
+        return;
+    }
+
+    // From AetherSDR src/gui/SpectrumWidget.cpp:13507-13519 [@c6481cbf]:
+    // the drawDepthHatch lambda, renamed because the depth argument is gone.
+    const auto drawHatch = [&](const QRect& rect, const QColor& colour,
+                               int left, int right, int spacing) {
+        if (rect.isEmpty()) {
+            return;
+        }
+        p.save();
+        p.setClipRect(rect);
+        p.setPen(QPen(colour, 1));
+        const int height = rect.height();
+        for (int x = left - height; x < right; x += spacing) {
+            p.drawLine(x, rect.bottom(), x + height, rect.top());
+        }
+        p.restore();
+    };
+
+    for (const NotchMarker& n : m_notchMarkers) {
+        // NereusSDR coordinate mapping: hzToX(double hz, QRect) takes Hz.
+        // AetherSDR upstream uses mhzToX(freqMhz) at :13522-13523; multiply
+        // by 1e6, exactly as drawSpotMarkers already does.
+        const double centreHz = n.freqMhz * 1.0e6;
+        const int cx    = hzToX(centreHz, specRect);
+        const int halfW = std::max(kNotchMinHalfWidthPx,
+                                   hzToX(centreHz + n.widthHz / 2.0, specRect) - cx);
+        const int left  = cx - halfW;
+        const int right = cx + halfW;
+
+        // From AetherSDR src/gui/SpectrumWidget.cpp:13527-13528 [@c6481cbf]
+        // Skip if fully off-screen
+        if (right < 0 || left > width()) {
+            continue;
+        }
+
+        const QColor base = notchColor(n);
+        QColor fill(base);
+        fill.setAlpha(kNotchFillAlpha);
+
+        const QRect notchRect(left, specRect.top(), right - left, specRect.height());
+        p.fillRect(notchRect, fill);
+        drawHatch(notchRect, base, left, right, kNotchHatchSpacingPx);
+
+        // From AetherSDR src/gui/SpectrumWidget.cpp:13538-13542 [@c6481cbf]
+        // Edge lines
+        p.setPen(QPen(base, 1, Qt::SolidLine));
+        p.drawLine(left,  specRect.top(), left,  specRect.bottom());
+        p.drawLine(right, specRect.top(), right, specRect.bottom());
+
+        // From AetherSDR src/gui/SpectrumWidget.cpp:13544-13552 [@c6481cbf]
+        // Center triangle (grab handle) at top of spectrum
+        QPolygon tri;
+        tri << QPoint(cx - kNotchHandleHalfWidthPx, specRect.top())
+            << QPoint(cx + kNotchHandleHalfWidthPx, specRect.top())
+            << QPoint(cx, specRect.top() + kNotchHandleHeightPx);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(base.red(), base.green(), base.blue(),
+                          m_notchGlobalEnabled ? kNotchHandleAlphaOn
+                                               : kNotchHandleAlphaOff));
+        p.drawPolygon(tri);
+    }
+
+    p.setBrush(Qt::NoBrush);
+    p.setPen(Qt::NoPen);
+}
+
+// ---------------------------------------------------------------------------
 // drawTxFilterOverlay()
 //
 // ---------------------------------------------------------------------------
@@ -5992,6 +6321,261 @@ static int specHFromHeight(int widgetH, float spectrumFrac, int chromeH)
 #endif
 }
 
+// ===========================================================================
+// Notch (TNF) geometry -- design sections 8.1 and 8.2
+// ===========================================================================
+//
+// The single geometry source for the notch overlay.  Reproduces the rect
+// each paint site builds for itself, through the same specHFromHeight helper
+// so the GPU/CPU layout split is honoured without restating it: the QPainter
+// path puts the frequency bar at the bottom of the widget and takes
+// h * spectrumFrac, the QRhi path puts it between spectrum and waterfall and
+// takes (h - chrome) * spectrumFrac.
+//
+// Defined here rather than beside drawNotchMarkers because specHFromHeight is
+// a file-local static defined immediately above.
+QRect SpectrumWidget::notchSpecRect() const
+{
+    const int specH = specHFromHeight(height(), m_spectrumFrac,
+                                      kFreqScaleH + kDividerH);
+    return QRect(0, 0, width() - effectiveStripW(), specH);
+}
+
+// ===========================================================================
+// Notch (TNF) interaction -- design section 7
+// ===========================================================================
+
+// From Thetis console.cs:49039 [v2.10.3.15]: if (nHpx - nLpx > 8)
+static constexpr int kNotchEdgeZoneMinPx = 8;
+// From Thetis console.cs:49042 [v2.10.3.15]: if (Math.Abs(e.X - nLpx) < 4)
+// and console.cs:49047 [v2.10.3.15]: else if (Math.Abs(e.X - nHpx) < 4)
+static constexpr int kNotchEdgeGrabPx = 4;
+
+const SpectrumWidget::NotchMarker* SpectrumWidget::notchMarkerById(int id) const
+{
+    for (const NotchMarker& n : m_notchMarkers) {
+        if (n.id == id) {
+            return &n;
+        }
+    }
+    return nullptr;
+}
+
+// Pixel-space port of Thetis MNotchDB.NotchThatSurroundsFrequencyInBW:
+// first-found in list order, with the pad applied only when the notch is
+// narrower than twice the pad.  AetherSDR's nearest-centre tnfAtPixel
+// (src/gui/SpectrumWidget.cpp:13648-13681 [@c6481cbf]) is deliberately NOT
+// what governs here; design section 7.3.
+//
+// From Thetis radio.cs:4296-4325 [v2.10.3.15]
+//MW0LGE return first notch found that surrounds a given frequency in the given bandwidth
+//   [original inline comment from radio.cs:4296]
+//MW0LGE return list of notches in given bandwidth
+//notch is included if filter width is enough to be within the BW
+//   [original inline comments from radio.cs:4274-4275, the NotchesInBW
+//   prefilter this folds in]
+//
+// The call site supplies the arguments: Thetis passes HzInNPixels(1) as the
+// pad ("we pad it with 1pixel worth of hz to make it selectable at low
+// zoom", console.cs:49920 [v2.10.3.15]) and widens the bandwidth window by
+// _max_filter_width on both sides (console.cs:49921 [v2.10.3.15]).
+int SpectrumWidget::notchAtPixel(int x, const QRect& specRect) const
+{
+    if (m_notchMarkers.isEmpty() || specRect.width() <= 0) {
+        return -1;
+    }
+    // Off-screen rejection: neither hzToX nor xToHz clamps, so a pixel
+    // outside the plot maps to a frequency outside the displayed span.
+    if (x < specRect.left() || x > specRect.right()) {
+        return -1;
+    }
+
+    const double freqHz = xToHz(x, specRect);
+    const double padHz  = m_bandwidthHz / static_cast<double>(specRect.width());
+    const double windowLowHz  = m_centerHz - m_bandwidthHz / 2.0
+                                - NotchModel::kMaxNotchWidthHz;
+    const double windowHighHz = m_centerHz + m_bandwidthHz / 2.0
+                                + NotchModel::kMaxNotchWidthHz;
+
+    for (const NotchMarker& n : m_notchMarkers) {
+        const double centreHz = n.freqMhz * 1.0e6;
+        const double halfHz   = n.widthHz / 2.0;
+
+        // NotchesInBW inclusive edge overlap.
+        // From Thetis radio.cs:4286 [v2.10.3.15]
+        if (centreHz + halfHz < windowLowHz) {
+            continue;
+        }
+        if (centreHz - halfHz > windowHighHz) {
+            continue;
+        }
+
+        double lowHz  = centreHz - halfHz;
+        double highHz = centreHz + halfHz;
+        // From Thetis radio.cs:4310 [v2.10.3.15]:
+        //   if (n.FWidth < (nPadWidth * 2))
+        if (n.widthHz < padHz * 2.0) {
+            lowHz  -= padHz;
+            highHz += padHz;
+        }
+        if (freqHz >= lowHz && freqHz <= highHz) {
+            return n.id;
+        }
+    }
+    return -1;
+}
+
+int SpectrumWidget::notchAtPixelForTest(int x) const
+{
+    return notchAtPixel(x, notchSpecRect());
+}
+
+// Edge-vs-centre discrimination for a press on a notch.
+// From Thetis console.cs:49024-49067 [v2.10.3.15]
+//NOTCH MW0LGE  [original section marker from console.cs:48981]
+SpectrumWidget::NotchGrab SpectrumWidget::notchGrabAt(
+    int id, int x, bool shiftHeld, const QRect& specRect) const
+{
+    const NotchMarker* n = notchMarkerById(id);
+    if (!n || specRect.width() <= 0) {
+        return NotchGrab::None;
+    }
+
+    const double centreHz = n->freqMhz * 1.0e6;
+
+    // upper and lower sides of the notch
+    //   [original comment from console.cs:49024]
+    const double dL = centreHz - (n->widthHz / 2.0);
+    const double dH = centreHz + (n->widthHz / 2.0);
+
+    // convert the upper and lower sides into pixels from left edge of pnlDisplay
+    //   [original comment from console.cs:49028]
+    const int nLpx = hzToX(dL, specRect);
+    const int nHpx = hzToX(dH, specRect);
+
+    bool bNearEdge = false;
+
+    // default this based on which side of middle the mouse is
+    // so that we get inuative feeling when using shift modifier to resize
+    // ie we are not draggin an edge
+    //   [original comments from console.cs:49034-49036]
+    NotchGrab grab = (xToHz(x, specRect) >= centreHz) ? NotchGrab::HighEdge
+                                                      : NotchGrab::LowEdge;
+
+    if (nHpx - nLpx > kNotchEdgeZoneMinPx) {
+        // ok, the edges are far enough appart in pixels to actually check to see if we are over low or high side
+        //   [original comment from console.cs:49041]
+        if (std::abs(x - nLpx) < kNotchEdgeGrabPx) {
+            grab = NotchGrab::LowEdge;
+            bNearEdge = true;
+        } else if (std::abs(x - nHpx) < kNotchEdgeGrabPx) {
+            grab = NotchGrab::HighEdge;
+            bNearEdge = true;
+        }
+    }
+
+    // can also hold shift drag to resize the notch
+    //   [original comment from console.cs:49056]
+    // near edge of notch, let us drag the width
+    //   [original comment from console.cs:49058]
+    // drag whole notch, as we are not near the edge
+    //   [original comment from console.cs:49064]
+    return (bNearEdge || shiftHeld) ? grab : NotchGrab::Centre;
+}
+
+SpectrumWidget::NotchGrab SpectrumWidget::notchGrabAtForTest(
+    int id, int x, bool shiftHeld) const
+{
+    return notchGrabAt(id, x, shiftHeld, notchSpecRect());
+}
+
+// Notch right-click menu.  Contents from AetherSDR
+// src/gui/SpectrumWidget.cpp:8517-8572 [@c6481cbf], minus the Depth
+// submenu and the Permanent toggle: WDSP's NBP notch database carries
+// neither, so per design section 1.2 the per-notch Active flag takes the
+// Permanent slot.  Thetis has no notch menu at all: it suppresses every
+// right-click action while a notch is highlighted (console.cs:49615-49616
+// [v2.10.3.15]), so the whole surface is AetherSDR's.
+void SpectrumWidget::buildNotchContextMenu(int id, QMenu& menu)
+{
+    const NotchMarker* n = notchMarkerById(id);
+    if (!n) {
+        return;
+    }
+    const double freqMhz = n->freqMhz;
+    const int    widthHz = qRound(n->widthHz);
+    const bool   active  = n->active;
+
+    // Info header.  AetherSDR renders it as a disabled QWidgetAction with
+    // a two-line styled label (src/gui/SpectrumWidget.cpp:8521-8545
+    // [@c6481cbf]); a disabled QAction carries the same text with no
+    // styling to maintain.
+    QAction* info = menu.addAction(QString("%1 MHz    %2 Hz")
+                                       .arg(freqMhz, 0, 'f', 6)
+                                       .arg(widthHz));
+    info->setEnabled(false);
+    menu.addSeparator();
+
+    // From AetherSDR src/gui/SpectrumWidget.cpp:8548-8554 [@c6481cbf]
+    //
+    // Presets below the filter's achievable minimum are disabled, not hidden,
+    // so the floor is visible rather than mysterious.
+    //
+    // 2026-08-02 bench (JJ): the list was offered unconditionally, and 50 Hz
+    // is below the minimum at our default nc of 4096
+    // (min_width = 1600 / (nc / 256) * (rate / 48000) = 100 Hz,
+    // third_party/wdsp/src/nbp.c:88). WDSP's autoincr defaults on
+    // (RXA.c:105; Thetis ships chkMNFAutoIncrease.Checked = true,
+    // setup.designer.cs:44197) and silently widens a sub-minimum notch back
+    // to the minimum (nbp.c:122-125). So picking 50 Hz stored 50, drew a
+    // 50 Hz marker and notched 100 Hz: the menu, the marker, the settings
+    // table and the DSP all disagreed with no indication.
+    //
+    // Thetis has no preset list at all (it uses the udMNFWidth spinner) and
+    // its own widths are 200 and 100, both at or above the floor, so this
+    // list is a NereusSDR addition and this clamp is what makes it honest.
+    // To go genuinely narrower, raise nc: 8192 gives 50 Hz, 16384 gives 25,
+    // at proportional filter cost on every channel.
+    const int minWidthHz = static_cast<int>(std::ceil(m_notchMinWidthHz));
+    QMenu* widthMenu = menu.addMenu(QStringLiteral("Width"));
+    for (int presetHz : {50, 100, 200, 500}) {
+        const bool realisable = (presetHz >= minWidthHz);
+        QAction* a = widthMenu->addAction(
+            realisable ? QString("%1 Hz").arg(presetHz)
+                       : QString("%1 Hz  (min %2 Hz)").arg(presetHz).arg(minWidthHz),
+            this,
+            [this, id, presetHz]() {
+                emit notchWidthRequested(id, presetHz);
+            });
+        a->setCheckable(true);
+        a->setChecked(widthHz == presetHz);
+        a->setEnabled(realisable);
+        if (!realisable) {
+            a->setToolTip(
+                QStringLiteral("Below the narrowest notch this filter can "
+                               "realise (%1 Hz). Raise the DSP filter size to "
+                               "go narrower.").arg(minWidthHz));
+        }
+    }
+
+    menu.addSeparator();
+    // Replaces AetherSDR's Make Permanent / Make Temporary pair
+    // (src/gui/SpectrumWidget.cpp:8565-8571 [@c6481cbf]) with the WDSP
+    // notch's own active flag (third_party/wdsp/src/nbp.c:362,
+    // RXANBPAddNotch takes fcenter / fwidth / active only).
+    menu.addAction(active ? QStringLiteral("Bypass Notch")
+                          : QStringLiteral("Activate Notch"),
+                   this, [this, id, active]() {
+                       emit notchActiveRequested(id, !active);
+                   });
+
+    menu.addSeparator();
+    // From AetherSDR src/gui/SpectrumWidget.cpp:8547 [@c6481cbf]
+    // ("Remove TNF").
+    menu.addAction(QStringLiteral("Remove Notch"), this,
+                   [this, id]() { emit notchRemoveRequested(id); });
+}
+
 void SpectrumWidget::mousePressEvent(QMouseEvent* event)
 {
     // Phase 3Q-8: while disconnected, swallow all left-clicks and signal
@@ -6022,6 +6606,48 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
     }
 
     if (event->button() == Qt::RightButton) {
+        // Ctrl + right-click adds a notch at the clicked frequency; Shift
+        // makes it narrow.  Checked before the spot menu and the overlay
+        // menu, so plain right-click behaviour is unchanged when Ctrl is
+        // not held (design section 7.3).
+        //
+        // From Thetis console.cs:49614-49646 [v2.10.3.15]:
+        //   case MouseButtons.Right: -> if (Common.CtrlKeyDown) ->
+        //   AddNotch(dFreq, rx).  The "add notch from cross hair mode with
+        //   middle mouse" comment at console.cs:49633 is stale: the only
+        //   MouseButtons.Middle branch (console.cs:49725) toggles active or
+        //   removes on Shift, and never adds (design section 7.1).
+        //
+        // Both Control and Meta count: macOS swaps them, so the physical
+        // Ctrl key arrives as Qt::MetaModifier.  The zoom wheel below
+        // already accepts either.
+        const bool notchCtrlHeld =
+            (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)) != 0;
+        if (notchCtrlHeld && my < specH && mx <= specRect.right()) {
+            const bool narrow = (event->modifiers() & Qt::ShiftModifier) != 0;
+            emit notchCreateRequested(xToHz(mx, specRect), narrow);
+            event->accept();
+            return;
+        }
+
+        // Right-click on a notch marker opens the notch menu.  Thetis
+        // suppresses every other right-click action while a notch is
+        // highlighted:
+        // if we have a notch highlighted, then all other right click is ignored
+        //   [original comment from console.cs:49615, guarding the return at
+        //   console.cs:49616 [v2.10.3.15]].  NereusSDR fills that suppressed
+        //   slot with AetherSDR's notch menu rather than doing nothing.
+        if (my < specH && mx <= specRect.right()) {
+            const int hitNotch = notchAtPixel(mx, specRect);
+            if (hitNotch >= 0) {
+                QMenu menu(this);
+                buildNotchContextMenu(hitNotch, menu);
+                menu.exec(event->globalPosition().toPoint());
+                event->accept();
+                return;
+            }
+        }
+
         // 2026-05-12 bench fix (Gaps #3 + #5 — right-click context menu
         // on spot labels + memory-spot variant).  Ported from
         // AetherSDR SpectrumWidget.cpp:1779-1822 [@0cd4559].  Without
@@ -6109,11 +6735,23 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                     this, [this](float v) { m_dynamicRange = v; update(); scheduleSettingsSave(); });
             connect(m_overlayMenu, &SpectrumOverlayMenu::ctunChanged,
                     this, [this](bool v) { setCtunEnabled(v); });
+            // Plan decision D-e: the empty-pan "add a notch here" row.
+            // The overlay-menu route always places the default width, so
+            // narrow is false; Ctrl + Shift + right-click on the pan is
+            // the narrow variant.
+            connect(m_overlayMenu, &SpectrumOverlayMenu::notchAddRequested,
+                    this, [this](double freqHz) {
+                        emit notchCreateRequested(freqHz, false);
+                    });
         }
         m_overlayMenu->setValues(m_wfColorGain, m_wfBlackLevel, false,
                                   static_cast<int>(m_wfColorScheme),
                                   m_fillAlpha, m_panFill, false,
                                   m_refLevel, m_dynamicRange, m_ctunEnabled);
+        // The frequency under the cursor, captured at popup time: the
+        // popup outlives the press, and by the time the button is clicked
+        // the pointer has moved onto the popup itself.
+        m_overlayMenu->setNotchAddFrequency(xToHz(mx, specRect));
 
         // Clamp onto the screen before showing.
         //
@@ -6251,6 +6889,46 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         return;
     }
 
+    // 3b. Notch (TNF) grab.  Thetis runs its notch block first inside
+    // case MouseButtons.Left:, ahead of every filter drag, so a notch
+    // marker sitting on a filter edge still drags as a notch.  The dBm
+    // strip / divider / freq-scale rows above are NereusSDR chrome outside
+    // the spectrum plot and keep their existing precedence, so the notch
+    // test is guarded on my < specH.
+    //
+    // The press also writes m_selectedNotchId, so a press is
+    // self-contained rather than relying on a prior hover, and the grab
+    // latches the notch for the whole gesture: hover stops writing until
+    // release, so an overlapping neighbour cannot steal the drag
+    // (design section 7.3).
+    //
+    // From Thetis console.cs:48981-48998 [v2.10.3.15]
+    //NOTCH MW0LGE  [original section marker from console.cs:48981]
+    if (my < specH) {
+        const int hitNotch = notchAtPixel(mx, specRect);
+        if (m_selectedNotchId != hitNotch) {
+            m_selectedNotchId = hitNotch;
+            markOverlayDirty();
+        }
+        if (hitNotch >= 0) {
+            const bool shiftHeld =
+                (event->modifiers() & Qt::ShiftModifier) != 0;
+            m_notchGrab = notchGrabAt(hitNotch, mx, shiftHeld, specRect);
+            const NotchMarker* n = notchMarkerById(hitNotch);
+            // the inital click point, delta is worked in mouse_move
+            //   [original comment from console.cs:48997]
+            m_notchDragStartX = mx;
+            // From Thetis console.cs:49059 [v2.10.3.15] (width, edge drag)
+            // and console.cs:49065 [v2.10.3.15] (centre, whole-notch drag).
+            m_notchDragStartData = (m_notchGrab == NotchGrab::Centre)
+                ? (n ? n->freqMhz * 1.0e6 : 0.0)
+                : (n ? n->widthHz : 0.0);
+            setCursor(Qt::SizeHorCursor);
+            event->accept();
+            return;
+        }
+    }
+
     // Compute filter edge pixel positions for hit-testing
     double loHz = m_vfoHz + m_filterLowHz;
     double hiHz = m_vfoHz + m_filterHighHz;
@@ -6364,6 +7042,45 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         }
 
         setCursor(Qt::SizeVerCursor);
+        event->accept();
+        return;
+    }
+
+    // Notch drag: whole-notch move, or width from the latched edge.  The
+    // pixel delta is worked here from the press point recorded above; the
+    // NotchModel owns every clamp (min/max centre, 0..10000 width), so
+    // this layer emits the raw request.  AetherSDR's y-axis width gesture
+    // (src/gui/SpectrumWidget.cpp:9051-9070 [@c6481cbf]) is deliberately
+    // declined, so vertical movement during a centre drag cannot silently
+    // change the width (design section 7.2).
+    //
+    // From Thetis console.cs:49928-49968 [v2.10.3.15] (centre)
+    //MW0LGE [2.9.0.7] update on drag
+    //   [original inline comment from console.cs:49967 — Thetis pushes on
+    //   every mouse-move by named design; design section 6.2 says do not
+    //   add throttling here.]
+    // From Thetis console.cs:49971-49987 [v2.10.3.15] (width)
+    if (m_notchGrab != NotchGrab::None && m_selectedNotchId >= 0
+        && specRect.width() > 0) {
+        const double hzPerPx = m_bandwidthHz / specRect.width();
+        if (m_notchGrab == NotchGrab::Centre) {
+            // drag the whole notch  [original comment from console.cs:49930]
+            const double diff = (mx - m_notchDragStartX) * hzPerPx;
+            emit notchMoveRequested(m_selectedNotchId,
+                                    m_notchDragStartData + diff);
+        } else {
+            // drag the bw edges of the notch
+            //   [original comment from console.cs:49973]
+            const double diff = (m_notchGrab == NotchGrab::HighEdge)
+                ? (mx - m_notchDragStartX) * hzPerPx
+                : (m_notchDragStartX - mx) * hzPerPx;
+            // we want double the diff, as we are doing 'both sides'
+            //   [original comment from console.cs:49984]
+            emit notchWidthRequested(m_selectedNotchId,
+                                     m_notchDragStartData + (diff * 2.0));
+        }
+        setCursor(Qt::SizeHorCursor);
+        markOverlayDirty();
         event->accept();
         return;
     }
@@ -6582,6 +7299,52 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         }
     }
 
+    // Notch hover: highlight, frequency/width readout, and the selection
+    // the wheel resize is gated on.  Thetis re-evaluates the selected notch
+    // on every non-dragging move and clears it when the cursor is not over
+    // one, which is what keeps a plain scroll tuning the VFO.
+    //
+    // ok are we over the top of a notch?
+    //   [original comment from console.cs:49919]
+    // From Thetis console.cs:49917-49926 [v2.10.3.15]
+    if (my < specH) {
+        const int hoverNotch = notchAtPixel(mx, specRect);
+        if (hoverNotch != m_hoveredNotchId) {
+            m_hoveredNotchId = hoverNotch;
+            if (hoverNotch < 0) {
+                QToolTip::hideText();
+            }
+            markOverlayDirty();
+        }
+        if (hoverNotch != m_selectedNotchId) {
+            m_selectedNotchId = hoverNotch;
+            markOverlayDirty();
+        }
+        if (hoverNotch >= 0) {
+            const NotchMarker* n = notchMarkerById(hoverNotch);
+            if (n) {
+                // AetherSDR renders this in a styled QLabel popup
+                // (m_tnfHoverPopup, src/gui/SpectrumWidget.cpp:13591-13646
+                // [@c6481cbf]); NereusSDR routes the same frequency +
+                // width readout through QToolTip, the path the spot
+                // overlay above already uses.
+                QToolTip::showText(event->globalPosition().toPoint(),
+                    QString("<b>%1 MHz</b><br>Width: %2 Hz")
+                        .arg(n->freqMhz, 0, 'f', 6)
+                        .arg(qRound(n->widthHz)),
+                    this);
+            }
+            setCursor(Qt::SizeHorCursor);
+            // Unconditional, not just when the hovered id changes: the
+            // cursor-frequency readout is painted into the same cached
+            // static overlay (drawCursorInfo), so skipping this would
+            // freeze it for as long as the pointer stayed over a marker.
+            markOverlayDirty();
+            event->accept();
+            return;
+        }
+    }
+
     // Sub-epic E: hit-test against the actual dBm-strip width, not the
     // effectiveStripW() layout reservation (which widens to 72px when paused
     // to make room for the time-scale strip's UTC labels — but the dBm strip
@@ -6701,6 +7464,11 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         m_draggingDivider = false;
         m_draggingPan = false;
         m_draggingBandwidth = false;
+        // Ends the notch gesture; hover resumes writing the selection.
+        if (m_notchGrab != NotchGrab::None) {
+            m_notchGrab = NotchGrab::None;
+            emit notchDragFinished();
+        }
         setCursor(Qt::CrossCursor);
     }
     QWidget::mouseReleaseEvent(event);
@@ -6721,11 +7489,53 @@ void SpectrumWidget::leaveEvent(QEvent* event)
         m_hoverSpotIndex = -1;
         emit spotHoverIndexChanged(-1);
     }
+    // Same reasoning for the notch overlay: the cursor never crosses a
+    // "not over a notch" boundary inside mouseMoveEvent when it leaves the
+    // widget outright, so the Chartreuse highlight would stay lit and the
+    // wheel would keep resizing a notch the operator is no longer near.
+    if (m_hoveredNotchId != -1 || m_selectedNotchId != -1) {
+        m_hoveredNotchId = -1;
+        m_selectedNotchId = -1;
+        markOverlayDirty();
+    }
     QWidget::leaveEvent(event);
 }
 
 void SpectrumWidget::wheelEvent(QWheelEvent* event)
 {
+    // MW0LGE before all, handle the notch size change
+    //   [original inline comment from console.cs:31140]
+    // From Thetis console.cs:31133-31145 [v2.10.3.15] — the wheel resizes
+    // the selected notch and returns before any other wheel handling.  The
+    // gate is mandatory: without a selected notch a plain scroll over the
+    // panadapter tunes the VFO, so an ungated resize would steal every
+    // scroll (design section 7.4).  num_steps is 1 per click upstream, not
+    // a raw delta, which is what makes the step constants below Hz.
+    const int notchDelta = event->angleDelta().y();
+    const int notchSteps = (notchDelta == 0) ? 0 : (notchDelta > 0 ? 1 : -1);
+    if (m_selectedNotchId >= 0 && notchSteps != 0) {
+        const NotchMarker* n = notchMarkerById(m_selectedNotchId);
+        if (n) {
+            // From Thetis console.cs:33299-33321 [v2.10.3.15],
+            // notchMouseWheel: Shift adds the raw detent count
+            // (console.cs:33306), no modifier multiplies it by 10
+            // (console.cs:33309).
+            //
+            // Upstream's own clamps (0..._max_filter_width at
+            // console.cs:33312-33313, and the "check to see if outside
+            // frequency limits" pair at console.cs:33315-33318) are NOT
+            // repeated here: NotchModel::setWidth carries both, so the
+            // bound has one owner.
+            const double step = (event->modifiers() & Qt::ShiftModifier)
+                ? NotchModel::kWheelWidthStepFineHz
+                : NotchModel::kWheelWidthStepHz;
+            emit notchWidthRequested(m_selectedNotchId,
+                                     n->widthHz + notchSteps * step);
+        }
+        event->accept();
+        return;
+    }
+
     // Wheel over dBm strip: adjust dynamic range in ±5 dB steps.
     // From AetherSDR SpectrumWidget.cpp:2630-2636 [@0cd4559]
     const int mx = static_cast<int>(event->position().x());
@@ -7274,6 +8084,14 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             p.fillRect(0, specH, w, kDividerH, QColor(0x30, 0x40, 0x50));
             drawFreqScale(p, QRect(0, specH + kDividerH, w - effectiveStripW(), kFreqScaleH));
             drawTimeScale(p, wfRectFull);
+            // TNF notch overlay, GPU static-overlay path.  Same relative
+            // ordering as the CPU paintEvent above and as AetherSDR
+            // src/gui/SpectrumWidget.cpp:12013-12016 [@c6481cbf], where
+            // drawTnfMarkers likewise precedes drawSpotMarkers in the
+            // frequency-plane painter.  Missing THIS call site while
+            // having the CPU one is a silent GPU-only regression, since
+            // NEREUS_GPU_SPECTRUM is the shipping path.
+            drawNotchMarkers(p, notchSpecRect());
             // Phase 3J-2 Task E1: spot overlay before VFO marker so labels
             // sit below the slice marker chrome. Mirrors the CPU paintEvent
             // ordering and AetherSDR SpectrumWidget.cpp:3787 [@0cd4559]
