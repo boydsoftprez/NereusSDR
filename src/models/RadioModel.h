@@ -2591,6 +2591,12 @@ private:
     // See docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.4.
     double composedShiftHz(const SliceModel* slice) const;
 
+    // The connect-time DDC seed, factored out of the wireSliceSignals
+    // singleShot so it can be driven without a live connection. Commands the
+    // centre of whichever stream hosts `slice`, then re-seeds the TX NCO.
+    // See docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.5.
+    void seedConnectFrequency(SliceModel* slice);
+
     // The frequency a slice would actually transmit on: its dial plus XIT.
     //
     // One answer for three callers, because they had drifted apart. The
@@ -2903,6 +2909,13 @@ public:
     }
     bool streamActiveForTest(int streamIndex) const {
         return m_streamAllocator.isStreamActive(streamIndex);
+    }
+
+    /// TNF Task 1 test seam (design doc 4.5): runs the connect-time DDC seed
+    /// without a live connection, so a test can assert the quantity it
+    /// commands.
+    void seedConnectFrequencyForTest(SliceModel* slice) {
+        seedConnectFrequency(slice);
     }
 
 private:

@@ -350,6 +350,49 @@ private slots:
         QCOMPARE(chB->notchTuneFrequencyHz() + chB->shiftOffsetHz(),
                  sliceB->effectiveRxFrequency());
     }
+
+    // -- 4.5: the connect-time DDC seed -----------------------------------
+
+    void the_connect_seed_commands_the_stream_centre_not_the_slice_frequency()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(2, 2, kRateHz);
+        model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+
+        const int b = model.addSlice();
+        SliceModel* sliceB = model.sliceById(b);
+        sliceB->setFrequency(kSliceBFreqHz);
+        QCOMPARE(sliceB->streamIndex(), 0);
+
+        // ReceiverManager drops a frequency for a receiver it never created
+        // (ReceiverManager.cpp:226-228). Stream 0 already has one: claiming
+        // a stream runs syncReceiverToStream, which creates every index up
+        // to it (RadioModel.cpp:3915-3926). Asserted rather than assumed,
+        // because a silent drop here would make the spy count zero and read
+        // as a different defect.
+        ReceiverManager* rm = model.receiverManager();
+        QVERIFY(rm != nullptr);
+        QCOMPARE(rm->receiverConfig(0).receiverIndex, 0);
+
+        QSignalSpy spy(rm, &ReceiverManager::receiverFrequencyChanged);
+        model.seedConnectFrequencyForTest(sliceB);
+
+        // The seed used to hand ReceiverManager slice->frequency(). For a
+        // slice on the JoinedExisting path that is the stream centre plus its
+        // own offset, so the DDC came up 10 kHz off and every notch mapped
+        // off it came up wrong with it. The allocator is authoritative,
+        // matching the bind-time push in bindSliceToStream.
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.first().at(0).toInt(), 0);
+        QCOMPARE(spy.first().at(1).toULongLong(),
+                 static_cast<quint64>(kSliceAFreqHz));
+    }
 };
 
 QTEST_MAIN(TestNotchTuneFrequency)

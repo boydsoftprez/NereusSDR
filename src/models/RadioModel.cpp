@@ -8840,6 +8840,32 @@ quint64 RadioModel::txFrequencyForSlice(const SliceModel* slice) const
     return (txHz < 0) ? 0 : static_cast<quint64>(txHz);
 }
 
+void RadioModel::seedConnectFrequency(SliceModel* slice)
+{
+    if (!slice) {
+        return;
+    }
+
+    // The hosting STREAM's centre, not slice->frequency(). A slice that
+    // joined an existing stream sits at a non-zero offset inside its window
+    // (SliceStreamAllocator.h:48) and the two quantities differ, so seeding
+    // from the slice frequency dragged the DDC off by the stream delta. Same
+    // wrong-quantity mistake the notch tune frequency corrects, and the same
+    // fix: the allocator owns the centre, exactly as it does at the
+    // stream-claim push in bindSliceToStream.
+    // See docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.5.
+    const int streamIndex = slice->streamIndex();
+    if (streamIndex >= 0 && m_receiverManager) {
+        const double centreHz = m_streamAllocator.streamCentreHz(streamIndex);
+        m_receiverManager->setReceiverFrequency(
+            streamIndex, static_cast<quint64>(centreHz));
+    }
+
+    // Seed the transmit frequency from the TX-bound slice, which on
+    // connect is usually but not necessarily this one.
+    pushTxFrequencyFromTxSlice();
+}
+
 // ---------------------------------------------------------------------------
 // composedShiftHz — the one WDSP shift every writer pushes.
 //
@@ -9976,14 +10002,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     // XIT state without needing a separate update trigger.
     QTimer::singleShot(100, this, [this, slice]() {
         if (m_connection && m_connection->isConnected()) {
-            int rxIdx = slice->streamIndex();
-            quint64 freqHz = static_cast<quint64>(slice->frequency());
-            if (rxIdx >= 0) {
-                m_receiverManager->setReceiverFrequency(rxIdx, freqHz);
-            }
-            // Seed the transmit frequency from the TX-bound slice, which on
-            // connect is usually but not necessarily this one.
-            pushTxFrequencyFromTxSlice();
+            seedConnectFrequency(slice);
         }
     });
 }
