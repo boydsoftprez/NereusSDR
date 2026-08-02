@@ -947,7 +947,9 @@ Create `src/gui/widgets/SystemTile.cpp`:
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/widgets/SystemTile.h"
 
-#include "core/PaTempUnitNotifier.h"
+// The notifier class is PaTempUnitNotifier, but it lives in PaTempUnit.h
+// alongside the PaTempUnit enum. There is no PaTempUnitNotifier.h.
+#include "core/PaTempUnit.h"
 #include "gui/widgets/MetricLabel.h"
 
 #include <QLabel>
@@ -2116,8 +2118,13 @@ repoint their signal handlers at `m_systemTile`:
     });
     connect(&PaTempUnitNotifier::instance(), &PaTempUnitNotifier::unitChanged,
             this, [this](PaTempUnit) { m_systemTile->refreshPaRow(); });
+    // There is no toggle(); flip explicitly, matching the existing
+    // isPaTempToggle handler in eventFilter (MainWindow.cpp:8099-8103).
     connect(m_systemTile, &SystemTile::paTempClicked, this, []() {
-        PaTempUnitNotifier::instance().toggle();
+        const PaTempUnit cur = PaTempUnitNotifier::currentUnit();
+        PaTempUnitNotifier::setUnit(cur == PaTempUnit::Celsius
+                                        ? PaTempUnit::Fahrenheit
+                                        : PaTempUnit::Celsius);
     });
 ```
 
