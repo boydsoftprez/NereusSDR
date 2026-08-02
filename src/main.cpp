@@ -129,6 +129,11 @@ int main(int argc, char* argv[])
     // QApplication::quit, which fires aboutToQuit and runs the graceful
     // disconnect path.  SIGKILL (kill -9, Activity Monitor "Force Quit") is
     // uncatchable — power-cycle is still the only recovery there.
+    //
+    // R1 Task 9 candidate: already written against QCoreApplication, not
+    // QApplication, so this pair is daemon-compatible in shape as-is;
+    // server_main.cpp will likely want an equivalent pair rather than a
+    // shared call, since a daemon may also want SIGHUP for config reload.
     std::signal(SIGTERM, [](int) {
         // Async-signal-safe: only QCoreApplication::quit() is approximately
         // safe to call.  Internally it just sets an atomic flag the event
@@ -182,6 +187,9 @@ int main(int argc, char* argv[])
     NereusSDR::applyAppBaselineQss(app);
 
     // Register custom metatypes for cross-thread signal/slot connections.
+    // R1 Task 9 candidate: a daemon driving RadioConnection will likely need
+    // these same two registrations; two one-line calls, trivial to duplicate
+    // in server_main.cpp if a third call site doesn't appear first.
     qRegisterMetaType<NereusSDR::RadioConnectionError>();
     qRegisterMetaType<NereusSDR::AudioDeviceConfig>();
 

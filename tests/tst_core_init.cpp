@@ -47,6 +47,33 @@ private slots:
                  qPrintable(QStringLiteral("expected a log file under %1").arg(logDir)));
     }
 
+    // Invariant this test depends on: no other test persists
+    // SettingsSchemaVersion to the shared QStandardPaths test sandbox
+    // before this one runs. `tests/tst_settings_schema_v6_migration.cpp`
+    // shares this exact key, sets it to "5" and to "6" via the SAME
+    // default-profile AppSettings::instance() singleton this test reads
+    // (not a local direct-constructed instance), and registers earlier in
+    // tests/CMakeLists.txt, so it runs first under a plain sequential
+    // `ctest` (no -j, no random scheduling).
+    //
+    // That is currently harmless only because nothing in the chain calls
+    // .save(): AppSettings::setValue()/remove() are pure in-memory QMap
+    // operations, AppSettings::load() does not write on the file-missing
+    // path, ensureSettingsAtVersion() never calls save() at all, and the
+    // other three migration helpers (migrateVaxSchemaV1ToV2,
+    // migrateLegacyN2adrFilter, removeOrphanOcN2adrFilter) each early-return
+    // before their own conditional save() when the store is fresh. So
+    // tst_settings_schema_v6_migration's in-memory writes die with its
+    // process and never reach the on-disk sandbox file this test's
+    // CoreInit::initialize() -> AppSettings::instance().load() call reads.
+    //
+    // If a future edit adds a .save() to tst_settings_schema_v6_migration.cpp
+    // (reasonable, to check a real round-trip), that mechanism breaks
+    // silently: this test would load an already-migrated store and never
+    // exercise CoreInit's actual migration path, while still reporting
+    // PASS on the >= 6 assertion below. Anyone adding that save() should
+    // also give it its own isolated AppSettings(tempPath) instance, the way
+    // tst_settings_migration_v0_3_0.cpp already does.
     void migratesSettingsToCurrentVersion()
     {
         QVERIFY(NereusSDR::CoreInit::initialize());
