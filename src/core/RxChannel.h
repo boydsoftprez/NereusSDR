@@ -651,6 +651,11 @@ public:
     /// Number of notches currently installed on this channel.
     int notchCount() const;
 
+    /// Insert `n` at WDSP notch index `index`. Returns false when WDSP
+    /// refuses (index past the end, or kMaxNotches reached), in which case
+    /// nothing was mutated and the caller should resync.
+    bool addNotch(int index, const Notch& n);
+
     // --- Filter convenience setters (single-axis) ---
     // Thin wrappers that remember the pending low/high and call setFilterFreqs.
     // Carry-only for state preservation in captureState/applyState; WDSP wiring

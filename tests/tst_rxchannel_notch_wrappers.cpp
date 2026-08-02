@@ -135,6 +135,57 @@ private slots:
         QCOMPARE(ch->notchCount(), 0);
 #endif
     }
+
+    // -- 6.2: add ---------------------------------------------------------
+
+    void add_notch_appends_in_list_order()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("Requires a live WDSP build: the notch database is rxa[].ndb.");
+#else
+        WdspEngine engine;
+        RxChannel* ch = openNotchChannel(engine);
+        ChannelCloser closer{&engine};
+        QVERIFY(ch != nullptr);
+
+        QVERIFY(ch->addNotch(0, Notch{1, 14074000.0, 200.0, true}));
+        QVERIFY(ch->addNotch(1, Notch{2, 14100000.0, 100.0, true}));
+        QVERIFY(ch->addNotch(2, Notch{3, 14200000.0, 500.0, false}));
+
+        QCOMPARE(ch->notchCount(), 3);
+
+        const RawNotch first = readRawNotch(kNotchTestChannel, 0);
+        QCOMPARE(first.rval, 0);
+        QCOMPARE(first.centerHz, 14074000.0);
+        QCOMPARE(first.widthHz, 200.0);
+        QCOMPARE(first.active, 1);
+
+        const RawNotch third = readRawNotch(kNotchTestChannel, 2);
+        QCOMPARE(third.rval, 0);
+        QCOMPARE(third.centerHz, 14200000.0);
+        QCOMPARE(third.widthHz, 500.0);
+        QCOMPARE(third.active, 0);
+#endif
+    }
+
+    void add_notch_past_the_end_is_rejected_without_mutating()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("Requires a live WDSP build: the notch database is rxa[].ndb.");
+#else
+        WdspEngine engine;
+        RxChannel* ch = openNotchChannel(engine);
+        ChannelCloser closer{&engine};
+        QVERIFY(ch != nullptr);
+
+        QVERIFY(ch->addNotch(0, Notch{1, 7040000.0, 200.0, true}));
+
+        // nbp.c:368 guards on `notch <= b->nn`, so index 1 is legal (append)
+        // and index 2 is not. The -1 must reach the caller, not be swallowed.
+        QVERIFY(!ch->addNotch(2, Notch{2, 7050000.0, 200.0, true}));
+        QCOMPARE(ch->notchCount(), 1);
+#endif
+    }
 };
 
 QTEST_MAIN(TestRxChannelNotchWrappers)

@@ -1513,6 +1513,33 @@ void RxChannel::setNotchTuneFrequency(double absoluteHz)
 // Manual notch filter (TNF): the per-channel WDSP notch database
 // ---------------------------------------------------------------------------
 
+bool RxChannel::addNotch(int index, const Notch& n)
+{
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:40271-40273 [v2.10.3.15], AddNotch pushes the
+    // same (index, centre, width, active) tuple to every RX channel. Centre
+    // and width are absolute Hz on the wire (console.cs:40271 passes fFreqHZ
+    // straight through).
+    // WDSP: third_party/wdsp/src/nbp.c:362, an INSERT guarded by
+    // `notch <= b->nn && b->nn < b->maxnotches`; returns -1 with no mutation
+    // otherwise.
+    const int rval = RXANBPAddNotch(m_channelId, index, n.centerHz, n.widthHz,
+                                    n.active ? 1 : 0);
+    if (rval < 0) {
+        qCWarning(lcDsp) << "RxChannel" << m_channelId
+                         << "RXANBPAddNotch rejected index" << index
+                         << "centreHz" << n.centerHz
+                         << "existing" << notchCount();
+        return false;
+    }
+    return true;
+#else
+    Q_UNUSED(index);
+    Q_UNUSED(n);
+    return false;
+#endif
+}
+
 int RxChannel::notchCount() const
 {
 #ifdef HAVE_WDSP
