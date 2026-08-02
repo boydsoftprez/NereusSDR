@@ -1585,7 +1585,13 @@ Append to `tests/tst_mainwindow_status_bar_safety.cpp`:
                                           Qt::FindDirectChildrenOnly);
         QCOMPARE(slots.size(), 4);
         for (QWidget* s : slots) {
-            QCOMPARE(s->width(), 50);
+            // Assert the CONSTRAINT, not the laid-out geometry. Qt does not
+            // lay out an unshown window, so width() would read the default
+            // 100 here and fail for a reason that has nothing to do with
+            // the fix. setFixedWidth pins both bounds, so this is the
+            // property the reserved-slot design actually depends on.
+            QCOMPARE(s->minimumWidth(), 50);
+            QCOMPARE(s->maximumWidth(), 50);
         }
     }
 ```
