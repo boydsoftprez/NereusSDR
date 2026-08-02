@@ -1741,6 +1741,11 @@ public:
     void setGanymedePresent(bool present);
 
 public slots:
+    /// Flush any coalesced notch edit immediately. Called when a notch drag
+    /// ends so the committed position is exact rather than up to one
+    /// coalescing window stale. See scheduleNotchEditPush.
+    void commitPendingNotchEdits();
+
     // ── Phase 3M-1a Task F.1: MoxController::hardwareFlipped fan-out ───────────
     // Slot connected to MoxController::hardwareFlipped(bool isTx).
     // Fans out hardware-flip side-effects to AlexController + RadioConnection
@@ -2649,6 +2654,20 @@ private:
     /// The ONLY writer of the notch RF origin. Writes tunefreq and shift
     /// together from one centre; WDSP sums them (nbp.c:192).
     void pushNotchOrigin(SliceModel* slice, RxChannel* ch, double streamCentreHz);
+
+    /// Coalesces notch edits during a drag. RXANBPEditNotch runs a full
+    /// UpdateNBPFilters (an FFT per partition at nc=4096, plus a bpsnba
+    /// recalculation) and swaps the masks under the DSP lock, so pushing one
+    /// per mouse-move costs ~50 filter redesigns per second PER CHANNEL.
+    /// Thetis does push per move (console.cs:49967 [v2.10.3.15]) but for one
+    /// notch on one channel; multi-pan multiplies that by the channel count.
+    /// The marker is drawn from the model and does not wait for this, so the
+    /// only thing rate-limited is the DSP redesign.
+    void scheduleNotchEditPush(int id);
+    void flushNotchEditPush();
+
+    QTimer* m_notchEditTimer{nullptr};
+    QSet<int> m_pendingNotchEdits;
 
     // The connect-time DDC seed, factored out of the wireSliceSignals
     // singleShot so it can be driven without a live connection. Commands the

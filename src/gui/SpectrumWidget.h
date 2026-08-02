@@ -1334,6 +1334,10 @@ signals:
     void notchCreateRequested(double freqHz, bool narrow);
     void notchMoveRequested(int id, double newFreqHz);
     void notchWidthRequested(int id, double widthHz);
+    /// Emitted when a notch drag ends, so the coalesced DSP push can flush
+    /// immediately and the final position is exact rather than up to one
+    /// coalescing window stale.
+    void notchDragFinished();
     void notchActiveRequested(int id, bool active);
     void notchRemoveRequested(int id);
 

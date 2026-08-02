@@ -481,6 +481,56 @@ private slots:
                  "a slice claiming a pool channel must get a resolved notch "
                  "origin without needing a retune first");
     }
+
+    // 2026-08-02 bench (JJ): a notch drag logged ~50 mutations per second per
+    // channel, each a full UpdateNBPFilters (an FFT per partition at nc=4096
+    // plus a bpsnba recalculation) swapped under the DSP lock from the GUI
+    // thread. Thetis pushes per mouse-move (console.cs:49967 [v2.10.3.15])
+    // but for one notch on one channel; multi-pan multiplies it.
+    //
+    // A burst of edits inside one coalescing window must reach WDSP once, not
+    // once per edit, and the final value must still be exact.
+    void a_burst_of_notch_edits_coalesces_into_one_push()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        NotchModel* nm = model.notchModel();
+        QVERIFY(nm != nullptr);
+        nm->setGlobalEnabled(true);
+
+        model.configureStreamPool(/*userDdcCount*/ 2, /*maxSlices*/ 2, kRateHz);
+        model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+        const int aId = model.addSlice();
+        SliceModel* a = model.sliceById(aId);
+        QVERIFY(a != nullptr);
+        a->setFrequency(kSliceAFreqHz);
+
+        const int id = nm->addNotch(kSliceAFreqHz + 1000.0);
+        QVERIFY(id >= 0);
+        RxChannel* ch = engine->rxChannel(aId);
+        QVERIFY(ch != nullptr);
+
+        // Simulate a drag: 20 width edits with no event-loop turn between
+        // them, which is how mouse-moves arrive relative to the 50 ms window.
+        for (int i = 0; i < 20; ++i) {
+            nm->setWidth(id, 200.0 + i);
+        }
+
+        // The first edit of the gesture lands immediately (throttle, not
+        // debounce), the other 19 are still pending.
+        Notch back;
+        QVERIFY(ch->notchAt(0, back));
+        QVERIFY2(back.widthHz < 219.0,
+                 "every edit reached WDSP synchronously; the drag was not "
+                 "coalesced at all");
+
+        // Ending the drag must commit the exact final value.
+        model.commitPendingNotchEdits();
+        QVERIFY(ch->notchAt(0, back));
+        QCOMPARE(back.widthHz, 219.0);
+    }
 };
 
 QTEST_MAIN(TestNotchChannelSync)

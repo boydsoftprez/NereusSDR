@@ -1727,6 +1727,12 @@ void MainWindow::wirePanNotchHandlers()
         connect(sw, &SpectrumWidget::notchMoveRequested,
                 this, &MainWindow::onNotchMoveRequested,
                 Qt::UniqueConnection);
+        // Flush the coalesced notch push the moment a drag ends, so the
+        // final position is exact rather than up to one coalescing window
+        // stale. RadioModel::scheduleNotchEditPush explains the window.
+        connect(sw, &SpectrumWidget::notchDragFinished,
+                m_radioModel, &RadioModel::commitPendingNotchEdits,
+                Qt::UniqueConnection);
         connect(sw, &SpectrumWidget::notchWidthRequested,
                 this, &MainWindow::onNotchWidthRequested,
                 Qt::UniqueConnection);

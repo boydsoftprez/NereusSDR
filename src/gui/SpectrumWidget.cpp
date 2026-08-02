@@ -7465,7 +7465,10 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         m_draggingPan = false;
         m_draggingBandwidth = false;
         // Ends the notch gesture; hover resumes writing the selection.
-        m_notchGrab = NotchGrab::None;
+        if (m_notchGrab != NotchGrab::None) {
+            m_notchGrab = NotchGrab::None;
+            emit notchDragFinished();
+        }
         setCursor(Qt::CrossCursor);
     }
     QWidget::mouseReleaseEvent(event);

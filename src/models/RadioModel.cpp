@@ -3440,32 +3440,8 @@ void RadioModel::wireNotchModel()
     });
 
     connect(nm, &NotchModel::notchChanged, this, [this](int id) {
-        const int    index = m_notchModel->indexOfId(id);
-        const Notch* n     = m_notchModel->notchById(id);
-        if (!n || index < 0) {
-            return;
-        }
-        const QVector<RxChannel*> chans = sliceRxChannels();
-        for (RxChannel* ch : chans) {
-            // Incremental, not a resync. RXANBPEditNotch runs UpdateNBPFilters
-            // once (nbp.c:345-359), which designs nbp0 AND recalculates bpsnba
-            // (snb.c:814-828); syncNotches would pay that 2N times
-            // (nbp.c:384, :435, :456). Design section 6.2.
-            //
-            // No throttling on drag, deliberately. Thetis pushes on every
-            // mouse-move by named design:
-            //
-            //   From Thetis console.cs:49967 [v2.10.3.15]:
-            //     //MW0LGE [2.9.0.7] update on drag
-            //
-            // and it does strictly more per move than this
-            // (SaveNotchesToDatabase + UpdateNotchDisplay,
-            // console.cs:40105-40106 [v2.10.3.15]).
-            if (!ch->editNotch(index, *n)) {
-                ch->syncNotches(m_notchModel->notches());
-            }
-            reconcileNotchCount(ch);
-        }
+        // Coalesced, not immediate. See scheduleNotchEditPush for why.
+        scheduleNotchEditPush(id);
     });
 
     connect(nm, &NotchModel::notchRemoved, this, [this](int, int formerIndex) {
@@ -9183,6 +9159,86 @@ void RadioModel::seedConnectFrequency(SliceModel* slice)
 //
 // See docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.4.
 // ---------------------------------------------------------------------------
+// Coalescing window for notch edits pushed during a drag. 50 ms is 20 Hz:
+// below the point where a filter update is audible as stepping, and matching
+// the cadence already used for other coalesced UI-to-DSP pushes.
+//
+// 2026-08-02 bench (JJ): a drag logged ~50 mutations per second across two
+// channels, each running a full UpdateNBPFilters (nbp.c:345-359) and a bpsnba
+// recalculation (snb.c:814-828), from the GUI thread while the audio thread
+// read the other fircore mask set. Thetis pushes per mouse-move by named
+// design (console.cs:49967 [v2.10.3.15], "//MW0LGE [2.9.0.7] update on drag")
+// but does it for one notch on one channel; multi-pan multiplies the cost by
+// the channel count, so upstream parity stops being a sufficient argument.
+static constexpr int kNotchEditCoalesceMs = 50;
+
+void RadioModel::scheduleNotchEditPush(int id)
+{
+    m_pendingNotchEdits.insert(id);
+
+    if (m_notchEditTimer == nullptr) {
+        m_notchEditTimer = new QTimer(this);
+        m_notchEditTimer->setSingleShot(true);
+        m_notchEditTimer->setTimerType(Qt::PreciseTimer);
+        connect(m_notchEditTimer, &QTimer::timeout,
+                this, &RadioModel::flushNotchEditPush);
+    }
+
+    // Throttle with a guaranteed trailing edge, not a debounce: the first edit
+    // of a gesture lands immediately so the audio responds at once, and a
+    // continuous drag still cannot starve the flush the way a restarting
+    // debounce would.
+    if (!m_notchEditTimer->isActive()) {
+        flushNotchEditPush();
+        m_notchEditTimer->start(kNotchEditCoalesceMs);
+    }
+}
+
+void RadioModel::flushNotchEditPush()
+{
+    if (m_pendingNotchEdits.isEmpty() || !m_notchModel) {
+        return;
+    }
+    const QSet<int> pending = m_pendingNotchEdits;
+    m_pendingNotchEdits.clear();
+
+    const QVector<RxChannel*> chans = sliceRxChannels();
+    for (int id : pending) {
+        const int    index = m_notchModel->indexOfId(id);
+        const Notch* n     = m_notchModel->notchById(id);
+        if (!n || index < 0) {
+            continue;
+        }
+        for (RxChannel* ch : chans) {
+            // Incremental, not a resync. RXANBPEditNotch runs UpdateNBPFilters
+            // once (nbp.c:345-359), which designs nbp0 AND recalculates bpsnba
+            // (snb.c:814-828); syncNotches would pay that 2N times
+            // (nbp.c:384, :435, :456). Design section 6.2.
+            if (!ch->editNotch(index, *n)) {
+                ch->syncNotches(m_notchModel->notches());
+            }
+            reconcileNotchCount(ch);
+        }
+    }
+
+    // Keep the window open while edits keep arriving, so a long drag stays
+    // rate-limited rather than reverting to one push per move.
+    if (m_notchEditTimer && !m_notchEditTimer->isActive()) {
+        m_notchEditTimer->start(kNotchEditCoalesceMs);
+    }
+}
+
+void RadioModel::commitPendingNotchEdits()
+{
+    if (m_notchEditTimer) {
+        m_notchEditTimer->stop();
+    }
+    flushNotchEditPush();
+    if (m_notchEditTimer) {
+        m_notchEditTimer->stop();
+    }
+}
+
 void RadioModel::pushNotchOrigin(SliceModel* slice, RxChannel* ch,
                                  double streamCentreHz)
 {
