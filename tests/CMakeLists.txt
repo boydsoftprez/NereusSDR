@@ -662,6 +662,12 @@ nereus_add_test(tst_p1_codec_hl2)
 # P1FakeRadio.cpp source, matching tst_p1_loopback_connection's pattern.
 nereus_add_test(tst_p1_hl2_rx2_wiring fakes/P1FakeRadio.cpp)
 
+# ── Codex review P1 on PR #311: P1 frame slot after a stream removal ──
+# Pins that rebuildHardwareMapping retunes the frame slot it compacts a
+# surviving receiver onto. That re-emit is the only reason removing the
+# lower stream does not hand the survivor the removed slice's band.
+nereus_add_test(tst_p1_frame_slot_after_removal)
+
 # ── Phase 3P-A regression-freeze gate (Task 16) ──
 nereus_add_test(tst_p1_regression_freeze)
 target_compile_definitions(tst_p1_regression_freeze PRIVATE
