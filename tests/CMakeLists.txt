@@ -5924,6 +5924,15 @@ nereus_add_test(tst_notch_model_index_invariant)
 #         section 5.3.
 nereus_add_test(tst_notch_spatial_helpers)
 
+# TNF: NotchModel::notchSidebandShift, the pure helper behind the +TNF
+# button. Table-driven. USB 200/2800 -> +1500; LSB -2800/-200 -> -1500;
+# AM -3000/+3000 hits the middle==0 fallback -> 1500. A dropped sign is
+# silent on LSB and correct on USB, so it needs its own test.
+# Source: Thetis console.cs:40281-40307 [v2.10.3.15].
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         section 5.3.
+nereus_add_test(tst_notch_sideband_shift)
+
 # ── PR #291 Codex review fixes ────────────────────────────────────────────
 # Capture-path helpers behind the native-rate mic resampling path.  The
 # defects only appear on a device whose native rate differs from the

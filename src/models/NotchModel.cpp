@@ -266,6 +266,26 @@ const Notch* NotchModel::notchSurrounding(double centreHz, int lowHz,
     return nullptr;
 }
 
+// used when adding a notch to shift it into the middle of the sideband
+// From Thetis console.cs:40281-40307 [v2.10.3.15], notchSidebandShift(rx).
+// Upstream reads the edges off radio.GetDSPRX(...).RXFilterLow /
+// RXFilterHigh per rx index; a global, slice-agnostic NotchModel cannot, so
+// the caller supplies the active slice's edges (SliceModel::filterLow() /
+// filterHigh()).
+//
+// The Thetis CW-pitch term is deliberately absent (design section 1.2):
+// upstream TNFAdd's +cw_pitch and AddNotch's -cw_pitch cancel, and
+// NereusSDR keeps the CW pitch in the filter passband rather than on the
+// DDC, so this shift alone is already correct.
+int NotchModel::notchSidebandShift(int filterLowHz, int filterHighHz)
+{
+    int middle = filterLowHz + ((filterHighHz - filterLowHz) / 2);
+    if (middle == 0) { // probably symetric filter such as AM
+        middle = filterHighHz / 2;
+    }
+    return middle;
+}
+
 // ---------------------------------------------------------------------------
 // Mutations
 // ---------------------------------------------------------------------------
