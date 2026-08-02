@@ -1510,6 +1510,24 @@ void RxChannel::setNotchTuneFrequency(double absoluteHz)
 }
 
 // ---------------------------------------------------------------------------
+// Manual notch filter (TNF): the per-channel WDSP notch database
+// ---------------------------------------------------------------------------
+
+int RxChannel::notchCount() const
+{
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:40265 [v2.10.3.15], AddNotch reads the count
+    // back out of WDSP before it picks an insert index.
+    // WDSP: third_party/wdsp/src/nbp.c:465
+    int n = 0;
+    RXANBPGetNumNotches(m_channelId, &n);
+    return n;
+#else
+    return 0;
+#endif
+}
+
+// ---------------------------------------------------------------------------
 // Channel state
 // ---------------------------------------------------------------------------
 

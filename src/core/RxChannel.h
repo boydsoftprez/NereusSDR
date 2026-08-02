@@ -199,6 +199,7 @@ warren@wpratt.com
 #include "NbFamily.h"
 #include "WdspTypes.h"
 #include "dsp/ChannelConfig.h"
+#include "dsp/Notch.h"
 #include "dsp/RxChannelState.h"
 
 #ifdef HAVE_DFNR
@@ -209,6 +210,7 @@ warren@wpratt.com
 #include "MacNRFilter.h"
 #endif
 
+#include <QList>
 #include <QObject>
 
 #include <atomic>
@@ -634,6 +636,20 @@ public:
     // calc_nbp_lightweight reads it with no reference to any run flag
     // (nbp.c:192), so a shift that stops being pushed fails silently.
     double notchShiftHz() const { return m_notchShiftHz; }
+
+    // --- Manual notch filter (TNF) ---
+    //
+    // WDSP owns the authoritative per-channel notch database; RxChannel is a
+    // thin forwarder. List position IS the WDSP notch index, so every caller
+    // must keep its own ordering in lockstep (design doc section 5.2).
+    //
+    // WDSP builds each RXA channel's database with room for 1024 notches
+    // (third_party/wdsp/src/RXA.c:88). RXANBPAddNotch returns -1 and mutates
+    // nothing once nn reaches that (nbp.c:368).
+    static constexpr int kMaxNotches = 1024;
+
+    /// Number of notches currently installed on this channel.
+    int notchCount() const;
 
     // --- Filter convenience setters (single-axis) ---
     // Thin wrappers that remember the pending low/high and call setFilterFreqs.

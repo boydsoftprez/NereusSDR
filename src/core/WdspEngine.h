@@ -129,6 +129,9 @@ class TestRadioModelMoxHardwareFlip;
 // dereferences rxa[channel].ndb.p before it compares (nbp.c:477-479), so
 // the kTestChannel = 99 never-opened-channel hatch is unavailable here.
 class TestNotchTuneFrequency;
+// TNF Task 2: the notch-wrapper test opens one real RX channel so the
+// RXANBP* entry points have an rxa[].ndb to dereference.
+class TestRxChannelNotchWrappers;
 #endif
 
 namespace NereusSDR {
@@ -768,6 +771,10 @@ private:
     // TNF Task 1: same friendship for the notch tune-frequency test, which
     // needs really opened RX channels rather than an unopened slot.
     friend class ::TestNotchTuneFrequency;
+    // TNF Task 2: same friendship for the notch-wrapper test, which primes
+    // m_initialized so createRxChannel opens a real WDSP channel with a real
+    // notch database.
+    friend class ::TestRxChannelNotchWrappers;
 #endif
 };
 
