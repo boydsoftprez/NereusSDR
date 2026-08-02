@@ -2820,22 +2820,28 @@ void MainWindow::buildUI()
         }
     });
 
-    // Phase 3Q Sub-PR-6 (F.1): bind RxDashboard to slice(0) once it exists.
-    // buildStatusBar() runs before connectToRadio() so slices().isEmpty() at
-    // construction time; defer binding to sliceAdded.
-    // Resolved by id, not list position. sliceAdded carries the stable slice
-    // id and addSlice reuses the lowest free one, so after Slice A is closed
-    // and a new slice takes id 0 it is APPENDED to m_slices -- id 0 at some
-    // other position. slices().at(0) then bound the dashboard to whichever
-    // slice happened to be first. Same class of defect as the one closed in
-    // requestSliceSampleRate (Sub-Epic I closeout, defect G2).
-    connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int sliceId) {
-        if (sliceId == 0 && m_rxDashboard) {
-            if (SliceModel* s = m_radioModel->sliceById(0)) {
-                m_rxDashboard->bindSlice(s);
-            }
-        }
-    });
+    // The dashboard follows the ACTIVE slice, not slice 0. It was pinned to
+    // id 0 and never rebound, so after multi-pan landed (#312) an operator
+    // working Slice B was shown Slice A's mode, filter, AGC and NR as
+    // current. See design §4.2.
+    auto rebindDashboard = [this]() {
+        if (!m_rxDashboard || !m_radioModel) { return; }
+        SliceModel* s = m_radioModel->activeSlice();
+        if (!s) { return; }
+        m_rxDashboard->bindSlice(s);
+        // Use SliceModel::sliceLetter(), do NOT derive the letter here.
+        // It is already derived from sliceIndex() upstream. It previously
+        // returned a stored member defaulting to 'A', so every slice
+        // reported 'A' and three call sites mislabelled their slices; see
+        // the comment at SliceModel.h:503. Deriving locally would
+        // reintroduce a second source of truth for the same fact.
+        m_rxDashboard->setSliceLetter(s->sliceLetter());
+    };
+    connect(m_radioModel, &RadioModel::sliceAdded, this,
+            [rebindDashboard](int) { rebindDashboard(); });
+    connect(m_radioModel, &RadioModel::activeSliceChanged, this,
+            [rebindDashboard]() { rebindDashboard(); });
+    rebindDashboard();
 
     // Phase 3F: the status overlay's per-slice triggers. Topology changes
     // reach the overlay through rebuildFftRouting, but a retune or a mode
