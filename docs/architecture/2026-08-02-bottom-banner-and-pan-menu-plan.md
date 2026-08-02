@@ -36,7 +36,11 @@ harness, `AppSettings` (never `QSettings`).
   first line, or the pre-commit `check-new-ports.py` gate fails.
 * **GPG-sign every commit.** Never `--no-gpg-sign`.
 * **No `Co-Authored-By: Claude` trailer** in any commit message.
-* **No em-dash (`—`)** in any commit message, doc, or user-visible string.
+* **No em-dash (`—`) in drafted text**: commit messages, design docs, PR
+  bodies, and any prose written for a human to read. This does NOT extend to
+  UI placeholder glyphs. `QStringLiteral("—")` is this codebase's dominant
+  "no reading yet" placeholder, with 61 call sites in `src/` against 16 for
+  `"--"`, and new widgets match it. Ruling by JJ / KG4VCF, 2026-08-02.
 * **No source cites inside user-visible strings.** Tooltips and labels stay
   plain English; the cite goes in a comment next to the string.
 * **`AppSettings`, never `QSettings`.** Boolean values are the strings
