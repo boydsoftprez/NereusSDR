@@ -292,6 +292,26 @@ int NotchModel::notchSidebandShift(int filterLowHz, int filterHighHz)
     return middle;
 }
 
+// From Thetis console.cs:40313-40331 [v2.10.3.15], TNFAdd(rx). Upstream reads
+// the VFO off the console and adds RIT before the shift; a global NotchModel
+// has neither, so the RIT-inclusive frequency arrives as the argument.
+//
+// The RIT term is the design section 7.5 divergence: upstream's
+// `vfoHz += (double)RITValue * 1e-6` at console.cs:40321 scales an already-Hz
+// RITValue onto an already-Hz quantity, so the term is inert. Section 4.1
+// puts RIT inside the WDSP shift, which means the slice's demodulated RF
+// already carries it and a notch placed at the bare VFO would land rit_hz off
+// the signal. Callers pass SliceModel::effectiveRxFrequency().
+double NotchModel::tnfAddCenterHz(double effectiveRxFrequencyHz,
+                                  int filterLowHz, int filterHighHz)
+{
+    // shift into sideband
+    // From Thetis console.cs:40329 [v2.10.3.15]:
+    //     vfoHz += notchSidebandShift(rx); //MW0LGE_21k9rc4
+    return effectiveRxFrequencyHz
+         + static_cast<double>(notchSidebandShift(filterLowHz, filterHighHz));
+}
+
 // ---------------------------------------------------------------------------
 // Mutations
 // ---------------------------------------------------------------------------

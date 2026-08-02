@@ -236,6 +236,27 @@ public:
     // DSP object (console.cs:40289-40295 [v2.10.3.15]).
     static int notchSidebandShift(int filterLowHz, int filterHighHz);
 
+    // The centre the +TNF button asks for. Static and slice-agnostic for the
+    // same reason notchSidebandShift is: a global NotchModel (design D1)
+    // cannot reach per-slice filter edges or per-slice RIT, so the caller
+    // supplies both.
+    //
+    // From Thetis console.cs:40313-40331 [v2.10.3.15], TNFAdd(rx):
+    //     vfoHz = VFOAFreq * 1.0e6;
+    //     if (RITOn) vfoHz += (double)RITValue * 1e-6;   // check for RIT
+    //     vfoHz += notchSidebandShift(rx);               //MW0LGE_21k9rc4
+    //     AddNotch(vfoHz, rx);
+    //
+    // Deliberate divergence, design section 7.5: upstream's `* 1e-6` scales
+    // an already-Hz RITValue onto an already-Hz VFO, which makes the RIT term
+    // inert (100 Hz of RIT moves the notch by 0.0001 Hz). We port the evident
+    // intent, place the notch where the operator is listening, and fix the
+    // unit by taking the RIT-inclusive frequency as the argument.
+    // Flagged for maintainer review: reverting to upstream's effective
+    // behaviour means passing the bare VFO instead.
+    static double tnfAddCenterHz(double effectiveRxFrequencyHz,
+                                 int filterLowHz, int filterHighHz);
+
     // ── Mutations ────────────────────────────────────────────────────────
     int  addNotch(double centerHz, double widthHz = kDefaultNotchWidthHz);
     bool setCenter(int id, double centerHz);
