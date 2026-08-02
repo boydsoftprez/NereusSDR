@@ -213,11 +213,20 @@ public:
     bool adminBusy()     const { return m_adminBusy; }
 
     // ── Thetis-ported spatial helpers [v2.10.3.15] ───────────────────────
-    //   NotchNearFreq                     radio.cs:4261-4272
-    //   NotchesInBW                       radio.cs:4276-4293
-    //   NotchThatSurroundsFrequencyInBW   radio.cs:4297-4325
+    // Upstream's own description comments are kept verbatim above each
+    // declaration; the bodies are in the .cpp beside their cites.
+
+    //MW0LGE check if notch close by
+    //   MNotchDB.NotchNearFreq                   radio.cs:4260-4272
     bool         notchNearFreq(double hz, int deltaHz) const;
+
+    //MW0LGE return list of notches in given bandwidth
+    //notch is included if filter width is enough to be within the BW
+    //   MNotchDB.NotchesInBW                     radio.cs:4274-4293
     QList<Notch> notchesInBandwidth(double centreHz, int lowHz, int highHz) const;
+
+    //MW0LGE return first notch found that surrounds a given frequency in the given bandwidth
+    //   MNotchDB.NotchThatSurroundsFrequencyInBW radio.cs:4296-4325
     const Notch* notchSurrounding(double centreHz, int lowHz, int highHz,
                                   double hz, int padWidthHz = 0) const;
 

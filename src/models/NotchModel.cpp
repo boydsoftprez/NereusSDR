@@ -148,6 +148,7 @@
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"
 
+#include <QLatin1String>
 #include <QVariant>
 
 #include <cmath>
@@ -161,6 +162,11 @@ namespace {
 QString boolStr(bool v)
 {
     return v ? QStringLiteral("True") : QStringLiteral("False");
+}
+
+bool boolFrom(const QVariant& v)
+{
+    return v.toString() == QLatin1String("True");
 }
 
 }  // namespace
@@ -480,6 +486,61 @@ void NotchModel::setAdminBusy(bool busy)
 }
 
 // ---------------------------------------------------------------------------
+// Global flags
+// ---------------------------------------------------------------------------
+
+// From Thetis console.cs:39987-40005 [v2.10.3.15], TNFActive. Upstream gates
+// its change handler on `if (old_tnf != value)` at console.cs:40004;
+// preserved so a repeated set does not re-push the run flag to every channel.
+void NotchModel::setGlobalEnabled(bool on)
+{
+    if (m_globalEnabled == on) {
+        return;
+    }
+    m_globalEnabled = on;
+    persist();
+    emit globalEnabledChanged(on);
+}
+
+// Fanned out to RXANBPSetAutoIncrease. Starts ON because WDSP creates nbp0
+// with autoincr = 1 (From WDSP RXA.c:105).
+void NotchModel::setAutoIncrease(bool on)
+{
+    if (m_autoIncrease == on) {
+        return;
+    }
+    m_autoIncrease = on;
+    persist();
+    emit autoIncreaseChanged(on);
+}
+
+// Thetis's equivalent operator switch is the chkVisualNotch checkbox on the
+// Display settings page, which drives its display layer directly. NereusSDR
+// keeps the flag on the model and lets SpectrumWidget observe it; the
+// checkbox and its upstream cite live on the settings page.
+void NotchModel::setVisualEnabled(bool on)
+{
+    if (m_visualEnabled == on) {
+        return;
+    }
+    m_visualEnabled = on;
+    persist();
+    emit visualEnabledChanged(on);
+}
+
+void NotchModel::clear()
+{
+    m_notches.clear();
+    persist();
+    // Design section 5.3 clear() contract: the RadioModel fan-out is purely
+    // signal-driven, so a silent clear() would leave every channel's notch
+    // set installed while the model showed none. Emitted unconditionally,
+    // including when the list was already empty, because the signal is the
+    // reconcile trigger rather than a change notification.
+    emit notchesReset();
+}
+
+// ---------------------------------------------------------------------------
 // Persistence (AppSettings, global scope; design section 5.5)
 // ---------------------------------------------------------------------------
 
@@ -524,6 +585,67 @@ void NotchModel::saveToSettings() const
                    QString::number(n.widthHz, 'f', 6));
         s.setValue(QStringLiteral("Notch%1Active").arg(i), boolStr(n.active));
     }
+}
+
+void NotchModel::restoreFromSettings()
+{
+    auto& s = AppSettings::instance();
+
+    // Suppress save-on-mutate for the duration: the setters below would
+    // otherwise write the half-restored list straight back over the keys
+    // still being read out of it.
+    m_restoring = true;
+
+    // Each key: if absent, leave the current default unchanged. Restores go
+    // through the public setters so observers see the change.
+    if (s.contains(QStringLiteral("NotchGlobalEnabled"))) {
+        setGlobalEnabled(boolFrom(s.value(QStringLiteral("NotchGlobalEnabled"))));
+    }
+    if (s.contains(QStringLiteral("NotchVisualEnabled"))) {
+        setVisualEnabled(boolFrom(s.value(QStringLiteral("NotchVisualEnabled"))));
+    }
+    if (s.contains(QStringLiteral("NotchAutoIncrease"))) {
+        setAutoIncrease(boolFrom(s.value(QStringLiteral("NotchAutoIncrease"))));
+    }
+
+    const bool hasList = s.contains(QStringLiteral("NotchCount"));
+    if (hasList) {
+        const int count =
+            s.value(QStringLiteral("NotchCount")).toString().toInt();
+        m_notches.clear();
+
+        for (int i = 0; i < count; ++i) {
+            const QString centerKey = QStringLiteral("Notch%1Center").arg(i);
+            if (!s.contains(centerKey)) {
+                qCWarning(lcDsp) << "NotchModel: missing" << centerKey
+                                 << "- stopping notch restore at index" << i;
+                break;
+            }
+
+            // ids are session-local hit-test keys and are deliberately not
+            // persisted (design section 5.1); they are re-minted
+            // monotonically here.
+            Notch n;
+            n.id       = m_nextId++;
+            n.centerHz = s.value(centerKey).toDouble();
+            n.widthHz  = s.value(QStringLiteral("Notch%1Width").arg(i),
+                                 QString::number(kDefaultNotchWidthHz, 'f', 6))
+                             .toDouble();
+            n.active   = boolFrom(s.value(QStringLiteral("Notch%1Active").arg(i),
+                                          QStringLiteral("True")));
+            m_notches.append(n);
+        }
+    }
+
+    m_restoring = false;
+
+    if (!hasList) {
+        return;
+    }
+
+    // Whole-list replacement (design section 5.3): RadioModel reconciles
+    // every open channel off this signal.
+    emit notchesReset();
 }
 
 }  // namespace NereusSDR

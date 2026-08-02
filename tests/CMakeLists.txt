@@ -5933,6 +5933,20 @@ nereus_add_test(tst_notch_spatial_helpers)
 #         section 5.3.
 nereus_add_test(tst_notch_sideband_shift)
 
+# TNF section 5.5: NotchModel AppSettings round-trip at global scope, plus
+# the section 5.3 clear() contract. Covers NotchGlobalEnabled /
+# NotchVisualEnabled / NotchAutoIncrease / NotchCount /
+# Notch<i>Center|Width|Active, save-on-mutate (Task 4 never calls
+# saveToSettings itself), key pruning on a shrink, whole-list-replacement
+# semantics, and that clear() emits notchesReset() even when already empty
+# (the fan-out's reconcile trigger).
+# Source: NereusSDR-original persistence (Thetis packs these into a single
+# mnotchdb string at console.cs:3034-3035, 4763-4764 [v2.10.3.15]; flat keys
+# avoid its locale-sensitive double.Parse).
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         sections 5.3 and 5.5.
+nereus_add_test(tst_notch_persistence)
+
 # ── PR #291 Codex review fixes ────────────────────────────────────────────
 # Capture-path helpers behind the native-rate mic resampling path.  The
 # defects only appear on a device whose native rate differs from the
