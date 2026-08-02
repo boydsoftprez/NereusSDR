@@ -4,13 +4,13 @@
 **Date:** 2026-07-28 (rev 2)
 **Author:** J.J. Boyd (KG4VCF), with AI-assisted drafting via Anthropic Claude Code
 
-> **All NereusSDR line numbers are taken against
-> `origin/feature/phase3f-sub-epic-a-foundation` (PR #293) as rebased onto
-> `main` on 2026-07-29, at which point the branch was 374 commits ahead of
-> `main` and 0 behind.** They were re-derived by symbol search in a single pass
-> after that rebase, not carried forward. They are NOT valid against `main`
-> until #293 merges. Thetis cites are against `v2.10.3.15` @ `3759d096` and are
-> unaffected by our branch state.
+> **All NereusSDR line numbers are taken against `origin/main` as of
+> 2026-08-02.** Phase 3F landed on `main` via PR #312
+> (`feature/nereussdr-multipan`), carrying PR #293 and PR #291 with it, so the
+> baseline this design was written against is now simply `main` and the
+> merge-order precondition in section 2.8 is discharged. Cites were re-derived
+> by symbol search after the merge. Thetis cites are against `v2.10.3.15`
+> @ `3759d096` and are unaffected by our branch state.
 
 ---
 
@@ -1004,7 +1004,7 @@ revision named `FFTRouter::fftFrameForPan` as the insertion point. That signal
 has **zero emitters** and `onFftFrame` **zero callers**; a `SpectrumEndpoint`
 connected to it would receive nothing, forever. `FFTRouter.h:18-22` says as
 much itself. The live path is `MainWindow::dispatchFftFrameToPans`
-(`MainWindow.cpp:2187`), which deliberately uses the router as a synchronous
+(`MainWindow.cpp:2188`), which deliberately uses the router as a synchronous
 oracle rather than a signal hop, for the reason stated at `:2025-2028`
 ("routing through its own signal would add a queued hop on the render path for
 no gain").
