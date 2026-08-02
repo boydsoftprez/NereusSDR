@@ -650,6 +650,11 @@ set(CORE_SOURCES
     # server_main.cpp (R1 Task 9) run the identical sequence instead of a
     # daemon-first install running against an unmigrated settings store.
     src/core/CoreInit.cpp
+    # R1 Task 9: nereusd's own "key = value" config file parser (default
+    # /etc/nereusd.conf). Widget-free by construction (QString/QFile/
+    # QTextStream only) so it links into nereusd alongside NereusCore with
+    # no NereusGui dependency.
+    src/core/daemon/DaemonConfig.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the
@@ -1104,6 +1109,28 @@ if(APPLE)
         VERBATIM
     )
 endif()
+
+# --------------------------------------------------------------------------
+# nereusd -- headless daemon (R1 Task 9; see
+# docs/architecture/2026-08-02-remote-daemon-r1-plan.md Task 9 and
+# docs/architecture/2026-07-28-remote-daemon-architecture-design.md section 4).
+#
+# Links NereusCore ONLY: no NereusGui, no NereusSDRObjs, no LTO twin. This is
+# the acceptance test the whole R1 CMake split (Task 1) exists to make
+# possible -- a build failure here on a widget symbol means an extraction
+# from Tasks 2 through 7 is incomplete and must be fixed at the source, not
+# papered over by linking NereusGui. A plain console executable (no
+# WIN32_EXECUTABLE, no MACOSX_BUNDLE): it has no window to show, and a Pi
+# running it under systemd wants stdout/stderr and an exit code, not an
+# app bundle. No LTO twin for the same reason NereusSDR gets one and this
+# does not yet: nereusd is a new, still-growing binary (R1 Tasks 10-13 add
+# to it), and NereusCore/NereusCore_LTO's dependency sets are kept identical
+# by nereus_apply_core_deps() below regardless, so adding one is a
+# non-behavioural follow-up whenever the daemon's own performance profile
+# asks for it, not a Task 9 concern.
+# --------------------------------------------------------------------------
+add_executable(nereusd src/server_main.cpp)
+target_link_libraries(nereusd PRIVATE NereusCore)
 
 # --------------------------------------------------------------------------
 # NereusCore / NereusGui dependency application (R1 Task 1; see

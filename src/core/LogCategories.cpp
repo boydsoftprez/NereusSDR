@@ -10,6 +10,9 @@
 namespace NereusSDR {
 
 // --- Category Definitions ---
+// lcApp: see the usage comment in LogCategories.h -- deliberately not in
+// LogManager::m_categories below (no GUI toggle row).
+Q_LOGGING_CATEGORY(lcApp,        "nereus.app")
 Q_LOGGING_CATEGORY(lcDiscovery,  "nereus.discovery")
 Q_LOGGING_CATEGORY(lcConnection, "nereus.connection")
 Q_LOGGING_CATEGORY(lcProtocol,   "nereus.protocol")

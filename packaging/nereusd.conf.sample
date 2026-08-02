@@ -1,0 +1,38 @@
+# NereusSDR headless daemon (nereusd) configuration.
+#
+# Format: key = value, one per line. '#' starts a comment, whether it is
+# the whole line (like this one) or trails a value on the same line.
+# Leading and trailing whitespace around both the key and the value is
+# trimmed. Blank lines are ignored. Unknown keys are logged as a warning
+# but do not stop the daemon, so a config file written for a newer nereusd
+# still starts an older one.
+#
+# Default location: /etc/nereusd.conf. Override with nereusd --config <path>.
+# See src/core/daemon/DaemonConfig.{h,cpp} for the parser this file feeds.
+
+# MAC address of the radio to connect to, colon-separated hex
+# (e.g. 00:1C:2D:05:37:2A). Leave unset to connect to the first radio
+# nereusd discovers on the network.
+# Default: (unset -- first discovered)
+radio_mac =
+
+# Hardware I/Q sample rate in Hz. Must be a rate the connected board
+# actually supports; see docs/protocols/openhpsdr-protocol2.md.
+# Default: 192000
+sample_rate_hz = 192000
+
+# Number of receive slices to bring up. Must be at least 1; further
+# clamped to the connected board's own maximum (2 to 5 depending on SKU)
+# once a radio is discovered.
+# Default: 1
+slice_count = 1
+
+# Local audio output device name, for monitoring on a Pi with a sound
+# card attached. Leave unset to run with no local audio at all -- a
+# headless Pi with no sound card is a supported configuration.
+# Default: (unset -- no local audio)
+audio_device =
+
+# Logging verbosity: debug, info, warning, or critical.
+# Default: info
+log_level = info

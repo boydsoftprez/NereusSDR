@@ -5980,6 +5980,14 @@ nereus_add_test(tst_popup_placement)
 # replaying main()'s pre-QApplication argv scan.
 nereus_add_test(tst_core_init)
 
+# R1 Task 9: DaemonConfig parses nereusd's "key = value" config file
+# (src/core/daemon/DaemonConfig.{h,cpp}). Pins the on-disk format (# full
+# and trailing comments, whitespace trimmed), that a missing file yields
+# defaults() plus a non-empty error rather than a crash, and the generic
+# validate() floor (slice_count >= 1) that does not depend on any specific
+# radio being connected.
+nereus_add_test(tst_daemon_config)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
