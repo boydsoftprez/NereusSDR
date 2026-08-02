@@ -124,6 +124,7 @@
 #include "dbm_strip_math.h"
 #include "popup_placement.h"
 #include "models/BandPlanManager.h"
+#include "models/NotchModel.h"
 #include "spectrum/SpectrumDetector.h"
 
 #include <QApplication>
@@ -6191,6 +6192,154 @@ QRect SpectrumWidget::notchSpecRect() const
     const int specH = specHFromHeight(height(), m_spectrumFrac,
                                       kFreqScaleH + kDividerH);
     return QRect(0, 0, width() - effectiveStripW(), specH);
+}
+
+// ===========================================================================
+// Notch (TNF) interaction -- design section 7
+// ===========================================================================
+
+// From Thetis console.cs:49039 [v2.10.3.15]: if (nHpx - nLpx > 8)
+static constexpr int kNotchEdgeZoneMinPx = 8;
+// From Thetis console.cs:49042 [v2.10.3.15]: if (Math.Abs(e.X - nLpx) < 4)
+// and console.cs:49047 [v2.10.3.15]: else if (Math.Abs(e.X - nHpx) < 4)
+static constexpr int kNotchEdgeGrabPx = 4;
+
+const SpectrumWidget::NotchMarker* SpectrumWidget::notchMarkerById(int id) const
+{
+    for (const NotchMarker& n : m_notchMarkers) {
+        if (n.id == id) {
+            return &n;
+        }
+    }
+    return nullptr;
+}
+
+// Pixel-space port of Thetis MNotchDB.NotchThatSurroundsFrequencyInBW:
+// first-found in list order, with the pad applied only when the notch is
+// narrower than twice the pad.  AetherSDR's nearest-centre tnfAtPixel
+// (src/gui/SpectrumWidget.cpp:13648-13681 [@c6481cbf]) is deliberately NOT
+// what governs here; design section 7.3.
+//
+// From Thetis radio.cs:4296-4325 [v2.10.3.15]
+//MW0LGE return first notch found that surrounds a given frequency in the given bandwidth
+//   [original inline comment from radio.cs:4296]
+//MW0LGE return list of notches in given bandwidth
+//notch is included if filter width is enough to be within the BW
+//   [original inline comments from radio.cs:4274-4275, the NotchesInBW
+//   prefilter this folds in]
+//
+// The call site supplies the arguments: Thetis passes HzInNPixels(1) as the
+// pad ("we pad it with 1pixel worth of hz to make it selectable at low
+// zoom", console.cs:49920 [v2.10.3.15]) and widens the bandwidth window by
+// _max_filter_width on both sides (console.cs:49921 [v2.10.3.15]).
+int SpectrumWidget::notchAtPixel(int x, const QRect& specRect) const
+{
+    if (m_notchMarkers.isEmpty() || specRect.width() <= 0) {
+        return -1;
+    }
+    // Off-screen rejection: neither hzToX nor xToHz clamps, so a pixel
+    // outside the plot maps to a frequency outside the displayed span.
+    if (x < specRect.left() || x > specRect.right()) {
+        return -1;
+    }
+
+    const double freqHz = xToHz(x, specRect);
+    const double padHz  = m_bandwidthHz / static_cast<double>(specRect.width());
+    const double windowLowHz  = m_centerHz - m_bandwidthHz / 2.0
+                                - NotchModel::kMaxNotchWidthHz;
+    const double windowHighHz = m_centerHz + m_bandwidthHz / 2.0
+                                + NotchModel::kMaxNotchWidthHz;
+
+    for (const NotchMarker& n : m_notchMarkers) {
+        const double centreHz = n.freqMhz * 1.0e6;
+        const double halfHz   = n.widthHz / 2.0;
+
+        // NotchesInBW inclusive edge overlap.
+        // From Thetis radio.cs:4286 [v2.10.3.15]
+        if (centreHz + halfHz < windowLowHz) {
+            continue;
+        }
+        if (centreHz - halfHz > windowHighHz) {
+            continue;
+        }
+
+        double lowHz  = centreHz - halfHz;
+        double highHz = centreHz + halfHz;
+        // From Thetis radio.cs:4310 [v2.10.3.15]:
+        //   if (n.FWidth < (nPadWidth * 2))
+        if (n.widthHz < padHz * 2.0) {
+            lowHz  -= padHz;
+            highHz += padHz;
+        }
+        if (freqHz >= lowHz && freqHz <= highHz) {
+            return n.id;
+        }
+    }
+    return -1;
+}
+
+int SpectrumWidget::notchAtPixelForTest(int x) const
+{
+    return notchAtPixel(x, notchSpecRect());
+}
+
+// Edge-vs-centre discrimination for a press on a notch.
+// From Thetis console.cs:49024-49067 [v2.10.3.15]
+//NOTCH MW0LGE  [original section marker from console.cs:48981]
+SpectrumWidget::NotchGrab SpectrumWidget::notchGrabAt(
+    int id, int x, bool shiftHeld, const QRect& specRect) const
+{
+    const NotchMarker* n = notchMarkerById(id);
+    if (!n || specRect.width() <= 0) {
+        return NotchGrab::None;
+    }
+
+    const double centreHz = n->freqMhz * 1.0e6;
+
+    // upper and lower sides of the notch
+    //   [original comment from console.cs:49024]
+    const double dL = centreHz - (n->widthHz / 2.0);
+    const double dH = centreHz + (n->widthHz / 2.0);
+
+    // convert the upper and lower sides into pixels from left edge of pnlDisplay
+    //   [original comment from console.cs:49028]
+    const int nLpx = hzToX(dL, specRect);
+    const int nHpx = hzToX(dH, specRect);
+
+    bool bNearEdge = false;
+
+    // default this based on which side of middle the mouse is
+    // so that we get inuative feeling when using shift modifier to resize
+    // ie we are not draggin an edge
+    //   [original comments from console.cs:49034-49036]
+    NotchGrab grab = (xToHz(x, specRect) >= centreHz) ? NotchGrab::HighEdge
+                                                      : NotchGrab::LowEdge;
+
+    if (nHpx - nLpx > kNotchEdgeZoneMinPx) {
+        // ok, the edges are far enough appart in pixels to actually check to see if we are over low or high side
+        //   [original comment from console.cs:49041]
+        if (std::abs(x - nLpx) < kNotchEdgeGrabPx) {
+            grab = NotchGrab::LowEdge;
+            bNearEdge = true;
+        } else if (std::abs(x - nHpx) < kNotchEdgeGrabPx) {
+            grab = NotchGrab::HighEdge;
+            bNearEdge = true;
+        }
+    }
+
+    // can also hold shift drag to resize the notch
+    //   [original comment from console.cs:49056]
+    // near edge of notch, let us drag the width
+    //   [original comment from console.cs:49058]
+    // drag whole notch, as we are not near the edge
+    //   [original comment from console.cs:49064]
+    return (bNearEdge || shiftHeld) ? grab : NotchGrab::Centre;
+}
+
+SpectrumWidget::NotchGrab SpectrumWidget::notchGrabAtForTest(
+    int id, int x, bool shiftHeld) const
+{
+    return notchGrabAt(id, x, shiftHeld, notchSpecRect());
 }
 
 void SpectrumWidget::mousePressEvent(QMouseEvent* event)

@@ -174,6 +174,7 @@ mw0lge@grange-lane.co.uk
 
 QT_BEGIN_NAMESPACE
 class QLabel;
+class QMenu;
 QT_END_NAMESPACE
 
 // GPU spectrum: QRhiWidget base class for Metal/Vulkan/D3D12 rendering.
@@ -1218,10 +1219,29 @@ public:
     }
     QRect notchSpecRectForTest() const { return notchSpecRect(); }
     // Selection and hover are written by the interaction layer (design
-    // section 7.4); until it lands these give the render tests a writer
-    // for the Chartreuse highlight branch.
+    // section 7.4); these also give the render tests a writer for the
+    // Chartreuse highlight branch.
     void setSelectedNotchIdForTest(int id) { m_selectedNotchId = id; }
     void setHoveredNotchIdForTest(int id)  { m_hoveredNotchId = id; }
+
+    // ---- TNF / notch interaction (design section 7) ----
+    // Which part of a notch a press at a given pixel would grab.
+    // From Thetis console.cs:49032-49067 [v2.10.3.15]: a side-of-centre
+    // default, an 8 px minimum on-screen width before edge zones exist at
+    // all, a +/- 4 px edge zone, and Shift as an explicit alternative to
+    // being near an edge.  Centre is upstream's m_bDraggingNotch; LowEdge
+    // and HighEdge are m_bDraggingNotchBW plus the side flag
+    // m_BDragginNotchBWRightSide, folded into one value because they are
+    // never independently meaningful.
+    enum class NotchGrab { None, Centre, LowEdge, HighEdge };
+
+    // Test seams, following the spotMarkersForTest convention above.
+    // Public read-only views onto the private pixel-space logic so
+    // tst_notch_hit_test can pin the Thetis rules without a real mouse.
+    int       notchAtPixelForTest(int x) const;
+    NotchGrab notchGrabAtForTest(int id, int x, bool shiftHeld) const;
+    int       selectedNotchIdForTest() const { return m_selectedNotchId; }
+    int       hoveredNotchIdForTest()  const { return m_hoveredNotchId; }
 
     // Overlay-cache seam.  Returns false on a CPU-only build, where there
     // is no cached texture to invalidate.
@@ -1480,6 +1500,16 @@ private:
     // paint sites' own specRect construction on both render paths through
     // specHFromHeight, which already encodes the GPU/CPU layout split.
     QRect notchSpecRect() const;
+
+    // ---- TNF / notch interaction (design section 7) ----
+    // notchMarkerById: linear id lookup over the render-side mirror.
+    // notchAtPixel:    pixel-space port of Thetis
+    //                  MNotchDB.NotchThatSurroundsFrequencyInBW.
+    // notchGrabAt:     edge-vs-centre discrimination for a press.
+    const NotchMarker* notchMarkerById(int id) const;
+    int       notchAtPixel(int x, const QRect& specRect) const;
+    NotchGrab notchGrabAt(int id, int x, bool shiftHeld,
+                          const QRect& specRect) const;
 
     // ---- TX filter overlay (Plan 4 D9, Cluster E) ----
     // drawTxFilterOverlay: panadapter band fill + border lines + label.
@@ -1921,6 +1951,21 @@ private:
     // both.
     int    m_selectedNotchId{-1};
     int    m_hoveredNotchId{-1};
+
+    // ---- TNF / notch drag state (design section 7.2) ----
+    // From Thetis console.cs:33284-33288 [v2.10.3.15], the drag-state
+    // block.  m_notchGrab folds upstream's m_bDraggingNotch /
+    // m_bDraggingNotchBW / m_BDragginNotchBWRightSide trio into one value;
+    // m_notchDragStartX is _drag_notch_start_point.X (the press pixel, the
+    // delta is worked in the move handler); m_notchDragStartData is
+    // drag_notch_start_data, which carries the notch WIDTH for an edge
+    // drag and the notch CENTRE for a whole-notch drag.  m_nNotchRX has no
+    // analogue: the pan the drag started on is the widget receiving the
+    // events.
+    //NOTCH MW0LGE  [original section marker from console.cs:33283]
+    NotchGrab m_notchGrab{NotchGrab::None};
+    int       m_notchDragStartX{0};
+    double    m_notchDragStartData{0.0};
 
     // ── QStaticText label cache ──────────────────────────────────────────
     // Pre-shaped (HarfBuzz-run-once) labels for the high-rate paint

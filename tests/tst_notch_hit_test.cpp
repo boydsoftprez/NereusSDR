@@ -12,16 +12,43 @@
 // one executable so the suite gains a single new binary, not two.
 // Task 6 creates and registers this file; Task 7 appends slots and
 // registers nothing.
+//
+// Task 7 additions pin the panadapter-side interaction (design
+// section 7):
+//   * the pixel-space hit test, which follows Thetis
+//     MNotchDB.NotchThatSurroundsFrequencyInBW (radio.cs:4296-4325
+//     [v2.10.3.15]): first-found in list order, pad applied only when
+//     the notch is narrower than twice the pad, off-screen reject;
+//   * edge-vs-centre grab discrimination (console.cs:49037-49067
+//     [v2.10.3.15]): 8 px minimum on-screen width before edge zones
+//     exist at all, +/- 4 px edge zone, side-of-centre default, Shift
+//     as an explicit resize;
+//   * hover-driven selection, centre/edge drag, wheel resize gated on
+//     the selection (console.cs:31141-31145 + :33299-33321
+//     [v2.10.3.15]), Ctrl + right-click add (console.cs:49614,
+//     49629-49646 [v2.10.3.15]) and the notch context menu (AetherSDR
+//     src/gui/SpectrumWidget.cpp:8517-8572 [@c6481cbf]).
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QAction>
+#include <QApplication>
+#include <QEvent>
 #include <QImage>
+#include <QMenu>
+#include <QMouseEvent>
 #include <QPainter>
+#include <QPoint>
+#include <QPointF>
 #include <QSignalSpy>
+#include <QWheelEvent>
 
 #include <algorithm>
+#include <cmath>
 
+#include "core/ConnectionState.h"
 #include "gui/MainWindow.h"
+#include "gui/SpectrumOverlayMenu.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/PanadapterStack.h"
 #include "models/NotchModel.h"
@@ -112,6 +139,83 @@ QImage renderNotches(SpectrumWidget& sw)
     sw.drawNotchMarkersForTest(p, specRect());
     p.end();
     return img;
+}
+
+// ── Task 7 interaction fixture (design section 7) ────────────────────
+//
+// Deliberately separate geometry from the render fixture above: 1000 px
+// of spectrum across 128 kHz gives exactly 128 Hz per pixel, and the
+// centre frequency lands on an exact binary fraction of the span, so
+// every hand-computed pixel below is exact rather than "within a
+// rounding error".  The `kUi` prefix keeps the two fixtures from
+// colliding in this one translation unit.
+constexpr double kUiCentreHz    = 14'200'000.0;
+constexpr double kUiBandwidthHz = 128'000.0;
+constexpr double kUiHzPerPx     = 128.0;      // kUiBandwidthHz / kUiWidgetW
+constexpr int    kUiWidgetW     = 1000;
+constexpr int    kUiWidgetH     = 400;
+constexpr int    kUiCentreX     = 500;
+// specHFromHeight(400, 0.40f, 28 + 4) is 147 on the QRhi layout and 160
+// on the QPainter one; any y well below both is inside the spectrum plot
+// on either render path.
+constexpr int    kUiSpecY       = 50;
+
+// Mirrors SpectrumWidget::hzToX (src/gui/SpectrumWidget.cpp:4059-4064)
+// exactly, truncating int cast included, so expected pixels cannot drift
+// from the widget's own mapping.
+int uiXForHz(double hz)
+{
+    const double lowHz = kUiCentreHz - kUiBandwidthHz / 2.0;
+    return static_cast<int>((hz - lowHz) / kUiBandwidthHz * kUiWidgetW);
+}
+
+// Mirrors SpectrumWidget::xToHz (src/gui/SpectrumWidget.cpp:4066-4070).
+double uiHzForX(int x)
+{
+    const double lowHz = kUiCentreHz - kUiBandwidthHz / 2.0;
+    return lowHz + (static_cast<double>(x) / kUiWidgetW) * kUiBandwidthHz;
+}
+
+void configureUi(SpectrumWidget& w)
+{
+    w.resize(kUiWidgetW, kUiWidgetH);
+    // dBm strip off -> reservedRightEdgeWidth() == 0 -> the spectrum rect
+    // is the full widget width, so uiXForHz above IS the widget's mapping.
+    w.setDbmScaleVisible(false);
+    w.setFrequencyRange(kUiCentreHz, kUiBandwidthHz);
+    // mousePressEvent swallows left clicks while not Connected.
+    w.setConnectionState(ConnectionState::Connected);
+}
+
+// QTest::mouseMove with no button held only calls QCursor::setPos and
+// never delivers an event to the widget, so the hover tests synthesise
+// the QMouseEvent directly.
+void sendMouse(QWidget* w, QEvent::Type type, QPoint pos,
+               Qt::MouseButton button, Qt::MouseButtons buttons,
+               Qt::KeyboardModifiers mods = Qt::NoModifier)
+{
+    QMouseEvent me(type, QPointF(pos), w->mapToGlobal(QPointF(pos)),
+                   button, buttons, mods);
+    QApplication::sendEvent(w, &me);
+}
+
+void sendWheel(QWidget* w, QPoint pos, int angleDeltaY,
+               Qt::KeyboardModifiers mods = Qt::NoModifier)
+{
+    QWheelEvent we(QPointF(pos), w->mapToGlobal(QPointF(pos)),
+                   QPoint(0, 0), QPoint(0, angleDeltaY),
+                   Qt::NoButton, mods, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(w, &we);
+}
+
+QAction* actionByText(const QList<QAction*>& actions, const QString& text)
+{
+    for (QAction* a : actions) {
+        if (a->text() == text) {
+            return a;
+        }
+    }
+    return nullptr;
 }
 
 } // namespace
@@ -720,6 +824,169 @@ private slots:
                                                "duplicate")
                                     .arg(QLatin1String(sig))));
         }
+    }
+
+    // ==================================================================
+    // Task 7: panadapter interaction (design section 7)
+    // ==================================================================
+
+    // -- section 7.3 hit test: the Thetis notchSurrounding rule ---------
+
+    void hit_test_returns_id_at_notch_centre()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(7, kUiCentreHz, 400.0)});
+
+        QCOMPARE(w.notchAtPixelForTest(kUiCentreX), 7);
+    }
+
+    void hit_test_returns_minus_one_off_notch()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(7, kUiCentreHz, 400.0)});
+
+        // 100 px away is 12800 Hz off centre, far outside a 400 Hz notch.
+        QCOMPARE(w.notchAtPixelForTest(kUiCentreX + 100), -1);
+    }
+
+    void hit_test_returns_first_match_in_list_order()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        // Two notches covering the same pixel.  Thetis returns the first
+        // one found walking the list, not the nearest centre; AetherSDR's
+        // nearest-centre tnfAtPixel would return 9 here.
+        w.setNotchMarkers({makeNotch(3, kUiCentreHz, 2000.0),
+                           makeNotch(9, kUiCentreHz + 256.0, 2000.0)});
+
+        QCOMPARE(w.notchAtPixelForTest(kUiCentreX), 3);
+    }
+
+    void hit_test_pads_sub_pixel_notch_by_one_pixel()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        // 10 Hz wide is 0.08 px: unhittable without the pad.  10 < 2*128,
+        // so the pad applies and the reach becomes 5 + 128 = 133 Hz.
+        w.setNotchMarkers({makeNotch(4, kUiCentreHz, 10.0)});
+
+        QCOMPARE(w.notchAtPixelForTest(kUiCentreX), 4);          // 0 Hz off
+        QCOMPARE(w.notchAtPixelForTest(kUiCentreX + 1), 4);      // 128 Hz off
+        QCOMPARE(w.notchAtPixelForTest(kUiCentreX - 1), 4);      // 128 Hz off
+        QCOMPARE(w.notchAtPixelForTest(kUiCentreX + 2), -1);     // 256 Hz off
+    }
+
+    void hit_test_does_not_pad_a_notch_wider_than_two_pixels()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        // 400 >= 2*128, so no pad: reach is its own half width, 200 Hz.
+        // With the pad it would have been 328 Hz and +2 px (256 Hz) would
+        // hit.  That asymmetry is the whole point of the branch.
+        w.setNotchMarkers({makeNotch(5, kUiCentreHz, 400.0)});
+
+        QCOMPARE(w.notchAtPixelForTest(kUiCentreX + 1), 5);      // 128 Hz off
+        QCOMPARE(w.notchAtPixelForTest(kUiCentreX + 2), -1);     // 256 Hz off
+    }
+
+    void hit_test_rejects_pixels_outside_the_spectrum_rect()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(7, kUiCentreHz, 400.0)});
+
+        QCOMPARE(w.notchAtPixelForTest(-1), -1);
+        QCOMPARE(w.notchAtPixelForTest(kUiWidgetW), -1);
+    }
+
+    // -- section 7.2 edge-vs-centre drag discrimination -----------------
+    //
+    // A 2000 Hz notch at 128 Hz/px is 15 px wide on screen (low edge at
+    // x=492, high edge at x=507), comfortably past the 8 px gate.
+
+    void grab_defaults_to_centre_in_the_notch_body()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 2000.0)});
+
+        // x=500 is 8 px from the low edge and 7 px from the high edge:
+        // outside both +/- 4 px zones, so the whole notch drags.
+        QCOMPARE(w.notchGrabAtForTest(1, kUiCentreX, false),
+                 SpectrumWidget::NotchGrab::Centre);
+    }
+
+    void grab_returns_low_edge_within_four_px_of_the_low_edge()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 2000.0)});
+        const int lowX = uiXForHz(kUiCentreHz - 1000.0);   // 492
+
+        QCOMPARE(w.notchGrabAtForTest(1, lowX, false),
+                 SpectrumWidget::NotchGrab::LowEdge);
+        QCOMPARE(w.notchGrabAtForTest(1, lowX + 3, false),
+                 SpectrumWidget::NotchGrab::LowEdge);
+        // 4 px is NOT near: Thetis tests Math.Abs(...) < 4.
+        QCOMPARE(w.notchGrabAtForTest(1, lowX + 4, false),
+                 SpectrumWidget::NotchGrab::Centre);
+    }
+
+    void grab_returns_high_edge_within_four_px_of_the_high_edge()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 2000.0)});
+        const int highX = uiXForHz(kUiCentreHz + 1000.0);  // 507
+
+        QCOMPARE(w.notchGrabAtForTest(1, highX, false),
+                 SpectrumWidget::NotchGrab::HighEdge);
+        QCOMPARE(w.notchGrabAtForTest(1, highX - 3, false),
+                 SpectrumWidget::NotchGrab::HighEdge);
+        QCOMPARE(w.notchGrabAtForTest(1, highX - 4, false),
+                 SpectrumWidget::NotchGrab::Centre);
+    }
+
+    void grab_offers_no_edge_zone_below_eight_px_on_screen_width()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        // 400 Hz is 3 px wide on screen: nHpx - nLpx == 3, not > 8, so
+        // Thetis never enters the edge-zone check at all.
+        w.setNotchMarkers({makeNotch(2, kUiCentreHz, 400.0)});
+        const int highX = uiXForHz(kUiCentreHz + 200.0);
+
+        QCOMPARE(w.notchGrabAtForTest(2, highX, false),
+                 SpectrumWidget::NotchGrab::Centre);
+    }
+
+    void grab_with_shift_resizes_from_the_side_of_centre()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        // Same 3 px notch: the edge zones are still suppressed, but Shift
+        // forces a resize and the side-of-centre default picks the edge.
+        w.setNotchMarkers({makeNotch(2, kUiCentreHz, 400.0)});
+
+        QCOMPARE(w.notchGrabAtForTest(2, kUiCentreX + 1, true),
+                 SpectrumWidget::NotchGrab::HighEdge);
+        QCOMPARE(w.notchGrabAtForTest(2, kUiCentreX - 1, true),
+                 SpectrumWidget::NotchGrab::LowEdge);
+        // Exactly on centre counts as the high side (>=).
+        QCOMPARE(w.notchGrabAtForTest(2, kUiCentreX, true),
+                 SpectrumWidget::NotchGrab::HighEdge);
+    }
+
+    void grab_on_unknown_id_is_none()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 2000.0)});
+
+        QCOMPARE(w.notchGrabAtForTest(99, kUiCentreX, false),
+                 SpectrumWidget::NotchGrab::None);
     }
 };
 
