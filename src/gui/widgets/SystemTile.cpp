@@ -25,10 +25,7 @@ SystemTile::SystemTile(QWidget* parent)
     m_paRow->setVisible(false);
     vbox->addWidget(m_paRow);
 
-    // "--" matches the house placeholder convention used elsewhere for a
-    // metric with no reading yet (PgxlAdvancedPage, TgxlAdvancedPage,
-    // RadeApplet, Hl2OptionsTab, MeterItem).
-    m_cpuRow = new MetricLabel(QStringLiteral("CPU"), QStringLiteral("--"), this);
+    m_cpuRow = new MetricLabel(QStringLiteral("CPU"), QStringLiteral("—"), this);
     vbox->addWidget(m_cpuRow);
 
     // MetricLabel's child QLabels would otherwise eat the press before it
