@@ -3,7 +3,7 @@
 // Ported from AetherSDR SpectrumOverlayMenu — same visual style, adapted
 // for NereusSDR's OpenHPSDR/Thetis feature set.
 //
-// 10 buttons (68×22px, stacked vertically) + 5 flyout sub-panels.
+// 8 buttons (68×22px, stacked vertically) + 4 flyout sub-panels.
 // Positioned via move() as a child of the spectrum widget.
 
 // =================================================================
@@ -121,8 +121,13 @@ signals:
     /// the consumer never has to guess which pan the operator meant.
     void addRxClicked(const QString& panId);
 
-    // NYI placeholder
-    void addTnfClicked();
+    /// Add a notch on the pan this strip belongs to. Carries the pan id for
+    /// the same reason addRxClicked does: a control rendered on a pan acts on
+    /// THAT pan, never on whichever pan is implicitly "active".
+    ///
+    /// A pure signal. The notch centre is composed by NotchModel and the add
+    /// is issued by MainWindow, so no DSP logic lands in this file.
+    void addTnfClicked(const QString& panId);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -165,7 +170,7 @@ private:
 
     // ── Main button strip ────────────────────────────────────────────────
     QPushButton*         m_collapseBtn{nullptr};
-    QVector<QPushButton*> m_menuBtns;   // indices 0-8 (buttons 2-10)
+    QVector<QPushButton*> m_menuBtns;   // indices 0-6 (buttons 2-8)
     bool                 m_expanded{true};
 
     // ── Active flyout tracking (one visible at a time) ───────────────────
