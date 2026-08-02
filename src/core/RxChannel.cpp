@@ -1454,7 +1454,7 @@ void RxChannel::setShiftFrequency(double offsetHz)
     m_shiftOffsetHz = offsetHz;
 
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:1419-1420 [v2.10.3.15] — both calls use the same
+    // From Thetis radio.cs:1419-1420 [v2.10.3.15]: both calls use the same
     // sign, and both fire on EVERY RXOsc change, including a change back to
     // zero. Thetis has no run gate at all: SetRXAShiftRun appears nowhere in
     // its Console tree, so the gate below is NereusSDR-original and now
@@ -1480,7 +1480,7 @@ void RxChannel::setShiftFrequency(double offsetHz)
     // m_shiftOffsetHz: notchShiftHz() exists to say whether the push above
     // really happened.
     m_notchShiftHz = offsetHz;
-    // No offset — disable shift for efficiency. The run flag is the only
+    // No offset: disable shift for efficiency. The run flag is the only
     // thing the magnitude gate still controls.
     SetRXAShiftRun(m_channelId, std::abs(offsetHz) < 0.5 ? 0 : 1);
 #else

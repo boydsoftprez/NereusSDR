@@ -8889,7 +8889,7 @@ void RadioModel::seedConnectFrequency(SliceModel* slice)
 }
 
 // ---------------------------------------------------------------------------
-// composedShiftHz — the one WDSP shift every writer pushes.
+// composedShiftHz: the one WDSP shift every writer pushes.
 //
 // The RX mirror of txFrequencyForSlice above: one answer for five callers,
 // because they had drifted apart. bindSliceToStream, activateSliceChannel,
@@ -8918,13 +8918,13 @@ double RadioModel::composedShiftHz(const SliceModel* slice) const
 
     // RIT (Receive Incremental Tuning): client-side demodulation offset that
     // does NOT retune the hardware VFO.
-    // From Thetis console.cs:31782-31784 [v2.10.3.15] — udRIT adjusts
+    // From Thetis console.cs:31782-31784 [v2.10.3.15]: udRIT adjusts
     // receive demodulation without moving the hardware DDC center.
     if (slice->ritEnabled()) {
         offset += static_cast<double>(slice->ritHz());
     }
 
-    // DIG offset per mode — Thetis console.cs:14659 (DIGUClickTuneOffset,
+    // DIG offset per mode. Thetis console.cs:14659 (DIGUClickTuneOffset,
     // default 1500) and :14694 (DIGLClickTuneOffset, default 2210)
     // [v2.10.3.15]. Both are int offsets in Hz; Thetis uses per-mode filter
     // re-centering internally, but NereusSDR implements DIG offset as an
@@ -9784,7 +9784,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     //
     // RIT (Receive Incremental Tuning): client-side demodulation offset that
     // does NOT retune the hardware VFO.
-    // From Thetis console.cs:31782-31784 [v2.10.3.15] — udRIT adjusts receive
+    // From Thetis console.cs:31782-31784 [v2.10.3.15]: udRIT adjusts receive
     // demodulation without moving the hardware DDC center.
     //
     // DIG offset: per-mode click-tune demodulation offset for DIGL/DIGU.

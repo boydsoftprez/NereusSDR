@@ -362,7 +362,7 @@ void SetRXAShiftRun(int channel, int run);
 void SetRXAShiftFreq(int channel, double fshift);
 
 // ---------------------------------------------------------------------------
-// Notch bandpass shift (nbp.h) — From Thetis radio.cs:1420 [v2.10.3.15]
+// Notch bandpass shift (nbp.h). From Thetis radio.cs:1420 [v2.10.3.15]
 // ---------------------------------------------------------------------------
 
 void RXANBPSetShiftFrequency(int channel, double shift);
