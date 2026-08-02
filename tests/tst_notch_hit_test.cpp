@@ -463,6 +463,85 @@ private slots:
                  QColor::fromRgb(qRgb(0xFF, 0xFF, 0x00)));
     }
 
+    // -- section 8.1 inbound signals -------------------------------------
+    // Emitters land with the interaction layer (design section 12 step 7);
+    // this is the signature gate MainWindow::wirePanNotchHandlers connects
+    // against.
+    void notch_interaction_signals_exist_with_expected_signatures()
+    {
+        SpectrumWidget sw;
+        QSignalSpy create(&sw, &SpectrumWidget::notchCreateRequested);
+        QSignalSpy move(&sw,   &SpectrumWidget::notchMoveRequested);
+        QSignalSpy width(&sw,  &SpectrumWidget::notchWidthRequested);
+        QSignalSpy active(&sw, &SpectrumWidget::notchActiveRequested);
+        QSignalSpy remove(&sw, &SpectrumWidget::notchRemoveRequested);
+
+        QVERIFY(create.isValid());
+        QVERIFY(move.isValid());
+        QVERIFY(width.isValid());
+        QVERIFY(active.isValid());
+        QVERIFY(remove.isValid());
+    }
+
+    // Every notch frequency crossing these signals is absolute RF in Hz,
+    // never MHz: NotchMarker::freqMhz is the single MHz quantity in the
+    // stack.  Pinned through the metaobject so a later signature drift is
+    // caught at the seam rather than 1e6 downstream in Tasks 7 and 10.
+    void notch_signal_frequencies_are_declared_in_hz()
+    {
+        const QMetaObject& mo = SpectrumWidget::staticMetaObject;
+        for (const char* sig : {"notchCreateRequested(double,bool)",
+                                "notchMoveRequested(int,double)",
+                                "notchWidthRequested(int,double)",
+                                "notchActiveRequested(int,bool)",
+                                "notchRemoveRequested(int)"}) {
+            const int idx = mo.indexOfSignal(sig);
+            QVERIFY2(idx >= 0, sig);
+            QCOMPARE(mo.method(idx).methodType(), QMetaMethod::Signal);
+        }
+    }
+
+    // section 8.1: under D1 the notch list is global, so EVERY pan gets
+    // the same push and each converts it into its own pixel space.
+    // Deliberately NOT the spot overlay's activeSpectrumWidget()-only
+    // shape, which leaves secondary pans blank.
+    void two_pans_map_the_same_notch_to_their_own_pixel_space()
+    {
+        PanadapterStack stack;
+        stack.applyLayout(QStringLiteral("2v"),
+                          {QStringLiteral("pan-0"), QStringLiteral("pan-1")});
+        QCOMPARE(stack.count(), 2);
+
+        SpectrumWidget* a = stack.spectrum(QStringLiteral("pan-0"));
+        SpectrumWidget* b = stack.spectrum(QStringLiteral("pan-1"));
+        QVERIFY(a != nullptr);
+        QVERIFY(b != nullptr);
+
+        a->resize(kPanW, kPanH);
+        b->resize(kPanW, kPanH);
+        a->setFrequencyRange(kCentreHz, kBandwidthHz);
+        // pan-1 is parked 2 kHz low, so the same absolute-RF notch has to
+        // land 200 px to the right of where it lands on pan-0.
+        b->setFrequencyRange(kCentreHz - 2'000.0, kBandwidthHz);
+
+        const QVector<SpectrumWidget::NotchMarker> markers{
+            makeNotch(1, kCentreHz, 200.0)};
+        a->setNotchMarkers(markers);
+        b->setNotchMarkers(markers);
+
+        QCOMPARE(a->notchMarkersForTest().size(), 1);
+        QCOMPARE(b->notchMarkersForTest().size(), 1);
+
+        const QImage imgA = renderNotches(*a);
+        const QImage imgB = renderNotches(*b);
+
+        QVERIFY(imgA.pixelColor(400, kSpecH / 2) != QColor(Qt::black));
+        QCOMPARE(imgA.pixelColor(600, kSpecH / 2), QColor(Qt::black));
+
+        QVERIFY(imgB.pixelColor(600, kSpecH / 2) != QColor(Qt::black));
+        QCOMPARE(imgB.pixelColor(400, kSpecH / 2), QColor(Qt::black));
+    }
+
     // AetherSDR :13527-13528 -- "Skip if fully off-screen".
     void off_screen_markers_are_skipped()
     {

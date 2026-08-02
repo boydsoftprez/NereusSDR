@@ -1273,6 +1273,22 @@ signals:
     // panadapter <-> Spot List hover sync.
     void spotHoverIndexChanged(int spotIndex);
 
+    // ---- TNF / notch overlay (design section 8.1) ----
+    // Wired per pan by MainWindow::wirePanNotchHandlers, so a marker drawn
+    // on a pan acts through that pan's own frequency mapping while the
+    // NotchModel the handlers mutate stays global (design D1).  `narrow` is
+    // the Shift-held 100 Hz add (Thetis console.cs:40269 [v2.10.3.15]).
+    //
+    // UNIT BOUNDARY: every frequency here is absolute RF in Hz.  The only
+    // MHz quantity in the TNF stack is NotchMarker::freqMhz, converted once
+    // in MainWindow::refreshPanNotchMarkers.  Emitters land with the
+    // interaction layer (design sections 7.1 through 7.4).
+    void notchCreateRequested(double freqHz, bool narrow);
+    void notchMoveRequested(int id, double newFreqHz);
+    void notchWidthRequested(int id, double widthHz);
+    void notchActiveRequested(int id, bool active);
+    void notchRemoveRequested(int id);
+
     // Emitted when user drags a filter edge
     void filterEdgeDragged(int lowHz, int highHz);
     // Emitted when pan center changes (drag, auto-scroll)

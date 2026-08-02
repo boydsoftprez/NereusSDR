@@ -3058,6 +3058,17 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     drawGrid(p, specRect);
     drawSpectrum(p, specRect);
     drawWaterfall(p, wfRect);
+    // TNF notch overlay immediately before the spots, matching upstream's
+    // paint order: AetherSDR src/gui/SpectrumWidget.cpp:12903-12904
+    // [@c6481cbf] draws drawTnfMarkers then drawSpotMarkers.  No visibility
+    // gate: an empty marker list IS the off state, and the master TNF flag
+    // recolours the markers rather than hiding them (Thetis
+    // display.cs:8704-8707 [v2.10.3.15]).
+    //
+    // notchSpecRect() rather than the local specRect above: it is the
+    // single notch geometry source the hit test also builds from, and the
+    // two agree by construction on this path.
+    drawNotchMarkers(p, notchSpecRect());
     // Phase 3J-2 Task E1: spot overlay between spectrum/waterfall and the
     // VFO marker so the spot label tick + pill sit on top of the trace
     // but below the slice/VFO marker chrome. Mirrors AetherSDR
@@ -7464,6 +7475,14 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             p.fillRect(0, specH, w, kDividerH, QColor(0x30, 0x40, 0x50));
             drawFreqScale(p, QRect(0, specH + kDividerH, w - effectiveStripW(), kFreqScaleH));
             drawTimeScale(p, wfRectFull);
+            // TNF notch overlay, GPU static-overlay path.  Same relative
+            // ordering as the CPU paintEvent above and as AetherSDR
+            // src/gui/SpectrumWidget.cpp:12013-12016 [@c6481cbf], where
+            // drawTnfMarkers likewise precedes drawSpotMarkers in the
+            // frequency-plane painter.  Missing THIS call site while
+            // having the CPU one is a silent GPU-only regression, since
+            // NEREUS_GPU_SPECTRUM is the shipping path.
+            drawNotchMarkers(p, notchSpecRect());
             // Phase 3J-2 Task E1: spot overlay before VFO marker so labels
             // sit below the slice marker chrome. Mirrors the CPU paintEvent
             // ordering and AetherSDR SpectrumWidget.cpp:3787 [@0cd4559]
