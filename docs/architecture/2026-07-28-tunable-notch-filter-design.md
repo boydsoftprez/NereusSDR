@@ -560,8 +560,8 @@ the source of truth.
 | Constrain centre to radio min/max frequency | min_freq..max_freq | `console.cs:40257, 40077 [v2.10.3.15]` |
 | Reject edit while Settings page is mid-edit | `NotchAdminBusy` | `console.cs:40009, 40079, 40125, 40161, 40200, 40224, 40315 [v2.10.3.15]` |
 | Wheel resize must keep both edges inside 0..max | n/a | `console.cs:33317-33318 [v2.10.3.15]` |
-| Wheel step, no modifier | 10 Hz per detent | `console.cs:33305-33308 [v2.10.3.15]` |
-| Wheel step with Shift | 1 Hz per detent | `console.cs:33305-33309 [v2.10.3.15]` |
+| Wheel step, no modifier | 10 Hz per detent | `console.cs:33309 [v2.10.3.15]` (block `:33305-33310`) |
+| Wheel step with Shift | 1 Hz per detent | `console.cs:33306 [v2.10.3.15]` (block `:33305-33310`) |
 | Maximum notch width | 10000 Hz (`_max_filter_width`) | `console.cs:13221 [v2.10.3.15]` |
 | Wheel resize requires a selected notch | `SelectedNotch != null` | `console.cs:31141-31145 [v2.10.3.15]` (see §7.4) |
 
@@ -922,8 +922,8 @@ Two clamps from `notchMouseWheel` belong in §5.4 and are easy to miss:
 
 | Guard | Value | Thetis source |
 | --- | --- | --- |
-| Wheel step, no modifier | 10 Hz per detent | `console.cs:33305-33308 [v2.10.3.15]` |
-| Wheel step with Shift | 1 Hz per detent | `console.cs:33305-33309 [v2.10.3.15]` |
+| Wheel step, no modifier | 10 Hz per detent | `console.cs:33309 [v2.10.3.15]` (block `:33305-33310`) |
+| Wheel step with Shift | 1 Hz per detent | `console.cs:33306 [v2.10.3.15]` (block `:33305-33310`) |
 | Maximum notch width | 10000 Hz (`_max_filter_width`) | `console.cs:13221 [v2.10.3.15]` |
 
 ### 7.5 `+TNF` and RIT: porting the intent, not the arithmetic
