@@ -113,6 +113,29 @@ private slots:
         c.relayout(180);
         QVERIFY(sys->isHidden());
     }
+
+    void widthIsCachedAtRegistrationNotReReadOnRelayout() {
+        ChromeBarController c;
+        QLabel* anchor = makeItem(100);
+        // Unlike makeItem's fixed-width labels, this one's sizeHint() is
+        // driven by real text, so growing the text is a genuine content
+        // change a live re-measurement would see.
+        auto* sys = new QLabel(QStringLiteral("Sys"), host);
+        c.addItem(anchor, nullptr, 0, QString());
+        c.addItem(sys, nullptr, 1, QStringLiteral("System"));
+
+        c.relayout(300);
+        const bool before = sys->isHidden();
+        QVERIFY(!before);
+
+        // Grow the content drastically without calling setNaturalWidth.
+        // The cached-at-registration contract says the fold decision must
+        // not move; only an explicit setNaturalWidth call may move it.
+        sys->setText(QStringLiteral(
+            "SystemSystemSystemSystemSystemSystemSystemSystemSystemSystem"));
+        c.relayout(300);
+        QCOMPARE(sys->isHidden(), before);
+    }
 };
 QTEST_MAIN(TstChromeBarController)
 #include "tst_chrome_bar_controller.moc"

@@ -19,12 +19,19 @@ void ChromeBarController::addItem(QWidget* widget, QWidget* separator,
         return;
     }
     Registered r;
-    r.widget       = widget;
-    r.separator    = separator;
-    r.rung         = rung;
+    r.widget    = widget;
+    r.separator = separator;
+    r.rung      = rung;
+    r.label     = overflowLabel;
+    // ensurePolished() forces stylesheet-driven font/metric resolution that
+    // would otherwise wait for first show, so this measurement is final
+    // rather than merely usually-final. Without it, a widget whose
+    // setStyleSheet() effect is deferred to QStyle::polish() would bake a
+    // wrong width into the cache for its entire lifetime, silently.
+    widget->ensurePolished();
     r.naturalWidth = widget->sizeHint().width();
-    r.label        = overflowLabel;
     if (separator) {
+        separator->ensurePolished();
         r.naturalWidth += separator->sizeHint().width() + ChromeFoldPlan::kGapPx;
     }
     m_indexByWidget.insert(widget, m_items.size());

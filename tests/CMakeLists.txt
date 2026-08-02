@@ -4208,10 +4208,12 @@ nereus_add_test(tst_network_diagnostics_dialog)
 nereus_add_test(tst_chrome_fold_plan)
 
 # ── Bottom-banner cleanup Task A2: ChromeBarController ────────────────────
-# 7 tests: wide bar shows everything, narrow bar folds rung 1, separator
+# 8 tests: wide bar shows everything, narrow bar folds rung 1, separator
 # folds with its item, relayout is idempotent, no oscillation across
 # neighbouring widths, foldStateChanged only fires on an actual change,
-# setNaturalWidth changes the decision. QTEST_MAIN, constructs real QLabels.
+# setNaturalWidth changes the decision, width cached at registration is not
+# re-read on relayout after content grows. QTEST_MAIN, constructs real
+# QLabels.
 nereus_add_test(tst_chrome_bar_controller)
 
 # -- Phase 3M-3a-ii follow-up Batch 1: ParametricEqWidget skeleton --

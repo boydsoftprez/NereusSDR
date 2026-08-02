@@ -33,6 +33,20 @@ public:
     /// when present it is hidden and shown with its item so the dot run
     /// never dangles. Natural width is taken from the widget's sizeHint at
     /// registration; override it later with setNaturalWidth.
+    ///
+    /// Precondition and contract: the width measured here is authoritative
+    /// for the widget's entire lifetime in this controller. It is cached,
+    /// not re-read, on every subsequent relayout (design §5.1 point 2).
+    /// addItem calls ensurePolished() on widget (and separator, if given)
+    /// before measuring, so a stylesheet-driven font or metric change that
+    /// would otherwise wait for QStyle::polish() on first show is resolved
+    /// first and the measurement is final rather than merely usually-final.
+    /// Any later change that alters a registered widget's width MUST be
+    /// reported via setNaturalWidth; there is no other way for this
+    /// controller to learn about it. This controller also assumes it is the
+    /// sole writer of visibility for every item it registers; calling
+    /// setVisible directly on a registered widget or separator from
+    /// elsewhere will desync it from the next relayout's decision.
     void addItem(QWidget* widget, QWidget* separator, int rung,
                  const QString& overflowLabel);
 
