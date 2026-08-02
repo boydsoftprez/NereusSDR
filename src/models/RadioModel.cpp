@@ -3233,6 +3233,15 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
     // here would silently discard the RIT term that call had just pushed.
     ch->setShiftFrequency(composedShiftHz(slice));
 
+    // TNF design section 6.3: the notch set, the master run flag, the
+    // auto-increase flag and the NBP tune frequency. syncNotchesToAllChannels
+    // covers every channel the pool opened, but a slice added afterwards binds
+    // to a channel that has been sitting open and unreconciled since, and the
+    // signal fan-out only walks slices that already exist. This is the hook
+    // for that case. No-op on retune, because the early return above already
+    // fired.
+    syncNotchesToChannel(ch, slice->sliceIndex());
+
     ch->setActive(true);
 }
 

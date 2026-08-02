@@ -221,6 +221,40 @@ private slots:
         QCOMPARE(ch->notchTuneFrequencyHz(),
                  model.streamCentreHzForTest(model.sliceById(a)->streamIndex()));
     }
+
+    // -- section 6.3: "keep the activateSliceChannel hook for the
+    // later-added-slice case". The discriminating sequence is a notch added
+    // AFTER the pool reconcile: the live fan-out walks slices(), and slice B
+    // does not exist yet, so channel 1 is left open, bound to nothing and
+    // empty. Binding B is the only remaining chance to seed it.
+    void a_slice_added_after_a_live_notch_add_inherits_the_set()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(5, 5, kRateHz);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+
+        NotchModel* nm = model.notchModel();
+        nm->setGlobalEnabled(true);
+        nm->setAutoIncrease(true);
+        QVERIFY(nm->addNotch(14074000.0, 200.0) >= 0);
+
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(kSliceBFreqHz);
+        QVERIFY(model.sliceById(b)->streamIndex() >= 0);
+
+        RxChannel* ch = engine->rxChannel(b);
+        QVERIFY(ch != nullptr);
+        QCOMPARE(ch->notchCount(), 1);
+        QVERIFY(ch->notchesRun());
+        QVERIFY(ch->notchAutoIncrease());
+        QCOMPARE(ch->notchTuneFrequencyHz(),
+                 model.streamCentreHzForTest(model.sliceById(b)->streamIndex()));
+    }
 };
 
 QTEST_MAIN(TestNotchChannelSync)
