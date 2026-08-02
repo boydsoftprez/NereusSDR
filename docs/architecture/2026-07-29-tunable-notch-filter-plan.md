@@ -34,6 +34,40 @@ cmake --build build --target tst_notch_model_guards -j$(sysctl -n hw.ncpu) && ct
 
 Build only the target you need. A full suite build costs roughly 32 minutes; see `docs/development/fast-test-loop.md`.
 
+### Line numbers: locate by symbol, not by line
+
+**The base changed after this plan was written.** It now sits on `main`
+after PR #312 merged `feature/nereussdr-multipan`, which is 189 files and
+roughly 28k lines beyond the integration base the plan was authored
+against. Upstream cites (Thetis, AetherSDR, WDSP) are unaffected, since
+those trees are pinned. **NereusSDR line numbers in this plan and in the
+design spec are advisory.** Locate every in-tree anchor by grepping its
+symbol, and update the cite to the line you actually find.
+
+Re-verified anchors, as of this base:
+
+| Symbol | Spec/plan says | Actually at |
+| --- | --- | --- |
+| `setShiftFrequency(placement.shiftOffsetHz)` in `bindSliceToStream` | `RadioModel.cpp:3676` | **`:4110`** |
+| `activateSliceChannel` early return | `RadioModel.cpp:3119` | **`:3179`** |
+| `openRxChannelPool` | `RadioModel.cpp:3068` | **`:3083`** |
+| `activateBoundSliceChannels()` call | `RadioModel.cpp:3068` | **`:3118`** |
+| `wireSliceSignals` slice-frequency seed | `RadioModel.cpp:9206` | **`:9904`** |
+| `updateShiftFrequency` lambda | `RadioModel.cpp:8966-8988` | **`:9669`** |
+| `RadioModel::rxNf` TCI stub | `RadioModel.cpp:11412` | **`:12454`** |
+| `spotModel()` accessor | `RadioModel.h:768` | **`:967`** |
+| `RxChannel::setShiftFrequency` | `RxChannel.cpp:1468` | **`:1448`** |
+| `RXANBPSetShiftFrequency` call site | `RxChannel.cpp:1483` | **`:1463`** |
+| `RXANBPSetShiftFrequency` decl | `wdsp_api.h:357` | `:357` (unchanged) |
+| `MnfSetupPage` ctor | `DspSetupPages.cpp:2110` | **`:2143`** |
+| `registerPage(dsp, "MNF", ...)` | `SetupDialog.cpp:609` | **`:610`** |
+| `SpectrumOverlayPanel` MNF stub | `SpectrumOverlayPanel.cpp:273` | **`:276`** |
+| `Placement::shiftOffsetHz` | `SliceStreamAllocator.h:48` | `:48` (unchanged) |
+
+Re-confirmed on this base: `RXANBPSetTuneFrequency` still appears nowhere
+in `src/` or `tests/`, so design §4's premise holds. The tag-preservation
+check passes clean at 3441 cites.
+
 ---
 
 ## Normative cross-task corrections
