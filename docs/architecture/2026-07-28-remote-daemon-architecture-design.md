@@ -501,6 +501,47 @@ optional at runtime and its absence is not an error.
 headless daemon has different RT-scheduling constraints from a desktop app and
 this is where they are expressed.
 
+### 4.5 Hardware floor, and what it forces
+
+**Floor: Raspberry Pi 4 Model B Rev 1.5, 8 GB, quad Cortex-A72. Target:
+Raspberry Pi 5, quad Cortex-A76.** The floor is roughly 2.5x to 3x slower
+than the target, which is wide enough that "it runs on a Pi 5" says almost
+nothing about whether it runs at all.
+
+Three consequences the design has to absorb rather than discover at bench:
+
+**Capacity is a runtime property, not a SKU property.** §7.0's capability
+descriptor currently advertises `maxSlices` and `userDdcCount` straight from
+`BoardCapabilities`, which describes what the *radio* supports. On the floor
+the *daemon* may not sustain that. The descriptor therefore advertises
+**effective** limits: sustainable slice count, maximum aggregate spectrum
+pixel-rate, and whether the display codec is available at all. The client
+gates its UI on the effective values, never the board values.
+
+**A stated degradation ladder, applied in this order**, so the daemon sheds
+load predictably instead of collapsing unpredictably:
+
+1. Reduce spectrum frame rate, then pixel count, per §9.5's budget.
+2. Increase frames-per-line so the waterfall advances less often.
+3. Disable spectrum endpoints for pans the client has not marked visible.
+4. Refuse additional slices beyond the sustainable count.
+5. Never degrade audio, and never drop TX. Audio starvation is audible and TX
+   loss is a safety event (§12); spectrum degradation is cosmetic.
+
+`PerfMonitor` drives the ladder, and every step is reported to the client so
+the operator can see why the waterfall slowed rather than assuming a fault.
+
+**The shared FFT thread is the first thing to break.** `MainWindow.h:597-606`
+already flags `m_fftThread` carrying every pooled engine as unresolved at
+5 streams and 1536 kHz, with per-engine threads noted as a follow-up needing
+sign-off. On four A72 cores that is far more likely to bind than on a Pi 5,
+and the daemon has to resolve it rather than inherit the open question.
+
+**One useful consequence.** The CM4 inside the Saturn board is also a
+Cortex-A72. Making the Pi 4 the floor therefore makes the on-board daemon in
+§16 a CPU-budget question we will have already answered, rather than a
+separate unknown.
+
 ### 4.4 Packaging, and the two-writer problem
 
 **One installer, two binaries, daemon off by default.** The desktop package
@@ -1676,7 +1717,13 @@ it.
 
 1. **`libdatachannel` licensing and current state** (§10.4). Verify before the
    dependency is accepted. Fallback documented.
-2. **CPU headroom on target hardware.** Scope the spike as **5 streams at the
+2. **CPU headroom on target hardware.** **The hardware floor is a Raspberry
+   Pi 4 Model B Rev 1.5 (8 GB), quad Cortex-A72. A Pi 5 (quad Cortex-A76) is
+   the preferred target, not the minimum.** That is roughly a 2.5x to 3x
+   spread between floor and target, so a configuration that is comfortable on
+   a Pi 5 may not run at all on the floor, and the spike must be run on the
+   Pi 4 first. See §4.5 for what the floor implies for the design.
+   Scope the spike as **5 streams at the
    SKU's top rate with FFT at `kMaxFftSize` on the single shared `m_fftThread`**
    (`MainWindow.h:597-606` flags thread saturation as unresolved: "splitting to
    one thread per engine is a follow-up needing maintainer sign-off"), plus
