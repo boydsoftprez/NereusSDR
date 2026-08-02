@@ -434,6 +434,21 @@ private:
     /// pointer member), and calling a method on it needs the complete type.
     FFTEngine* primaryFftEngine() const;
 
+    /// Fix round 1 finding 1 (coordinator spec review): re-reads the four
+    /// display AppSettings keys (DisplaySpectrumFps / DisplayFftSize /
+    /// DisplayFftWindow / DisplayHzPerBinTarget) into an FftPoolConfig and
+    /// calls m_fftEnginePool->setConfig(). Called from ensureStreamWired()
+    /// immediately before building a stream that does not exist yet, so a
+    /// stream created after a live Setup -> Display change picks up the
+    /// current value rather than whatever setConfig() last held -- restores
+    /// the per-stream freshness the pre-extraction createFftEngineForStream
+    /// had (it read these keys inside its own per-engine construction).
+    /// Deliberately a MainWindow method, not something FftEnginePool does
+    /// itself: the pool must stay settings-agnostic so the Task 9/10 daemon
+    /// can supply its own config with no AppSettings dependency in
+    /// src/core. No-op if the pool does not exist yet.
+    void refreshFftPoolConfig();
+
     /// R1 Task 6: wires a pool-provided engine into MainWindow's other
     /// subsystems the first time streamIndex is seen -- the raw I/Q feed
     /// from RadioModel, this stream's initial sample rate, and its own

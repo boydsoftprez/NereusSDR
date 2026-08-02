@@ -61,6 +61,51 @@ private slots:
         QCOMPARE(late->outputFps(),  15);
     }
 
+    // Fix round 1 finding 1 (coordinator spec review): MainWindow's
+    // ensureStreamWired() now re-reads AppSettings and calls setConfig()
+    // again immediately before building any stream that does not exist
+    // yet ("refresh-before-create"), because setConfig() has no other call
+    // site and is otherwise a one-time snapshot taken at buildUI() time --
+    // a stream built later (e.g. RX2 activated after the user changes
+    // Setup -> Display) would silently run on launch-time settings
+    // instead of the current ones.
+    //
+    // This pins the pool-side half of that fix: unlike
+    // configAppliesToExistingAndFutureEngines above, which calls
+    // setConfig() exactly ONCE, this calls it TWICE with a stream created
+    // between each call, and checks that the SECOND stream picks up the
+    // SECOND config, not the first one ever set (i.e. setConfig() is not
+    // "sticky from the first call" -- each call's values are what the
+    // next newly-created engine gets). FftEnginePool itself was never
+    // broken -- the regression was MainWindow only calling setConfig()
+    // once -- so this test does not exercise MainWindow's wiring and
+    // would pass against the pool code from before this fix round too;
+    // it documents the exact contract MainWindow::ensureStreamWired's
+    // refresh-before-create call now depends on.
+    void secondSetConfigCallReachesTheStreamCreatedAfterIt()
+    {
+        FftEnginePool pool;
+
+        FftPoolConfig first;
+        first.fftSize = 8192;
+        pool.setConfig(first);
+        FFTEngine* streamA = pool.engineForStream(0);
+        QCOMPARE(streamA->fftSize(), 8192);
+
+        // A live Setup -> Display change happens here; MainWindow's fix
+        // re-reads AppSettings and calls setConfig() again before
+        // building the next new stream.
+        FftPoolConfig second;
+        second.fftSize = 32768;
+        pool.setConfig(second);
+        FFTEngine* streamB = pool.engineForStream(1);
+
+        QCOMPARE(streamB->fftSize(), 32768);
+        // setConfig() reaches existing engines too (its documented
+        // contract), so streamA follows the second call as well.
+        QCOMPARE(streamA->fftSize(), 32768);
+    }
+
     // Coordinator decision beyond the brief's baseline three: the
     // destructor must quit() and wait() on every worker thread BEFORE
     // deleting the engines parked on it, or a still-running thread can be

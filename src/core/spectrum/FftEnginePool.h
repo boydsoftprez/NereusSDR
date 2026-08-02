@@ -42,6 +42,14 @@ namespace NereusSDR {
 struct FftPoolConfig {
     int    fps            {30};
     int    fftSize        {4096};
+    // Trap for a Task 9/10 daemon-config author (coordinator spec review,
+    // fix round 1, finding 2): this struct literal defaults to 4 (Hamming),
+    // but every production caller configures 1 (WindowFunction::
+    // BlackmanHarris4) to match FFTEngine's own constructor default -- see
+    // MainWindow::refreshFftPoolConfig()'s DisplayFftWindow fallback. A
+    // caller that builds an FftPoolConfig and never calls setConfig() (as
+    // two of this class's own brief-specified unit tests do) gets Hamming,
+    // not the window the app actually ships with.
     int    windowType     {4};
     double hzPerBinTarget {0.0};
     // 1 = today's shared thread. Design section 4.5a measured only a

@@ -30,7 +30,6 @@
 
 #include "core/spectrum/FftEnginePool.h"
 
-#include "core/LogCategories.h"
 #include "core/audio/RealtimeAudioPriority.h"
 
 #include <QThread>

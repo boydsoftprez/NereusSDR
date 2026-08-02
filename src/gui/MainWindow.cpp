@@ -1446,6 +1446,44 @@ FFTEngine* MainWindow::primaryFftEngine() const
     return m_fftEnginePool ? m_fftEnginePool->engineForStream(0) : nullptr;
 }
 
+// Fix round 1 finding 1 (coordinator spec review): re-reads the four
+// display AppSettings keys and pushes them to the pool. This is the ONLY
+// thing MainWindow does with those keys now -- the clamping / fallback
+// logic is unchanged from what createFftEngineForStream used to do inline,
+// just moved here so it can run more than once. Called from
+// ensureStreamWired() immediately before a stream that does not exist yet
+// is built, so a stream created after a live Setup -> Display change picks
+// up the CURRENT value rather than whatever was true the first time this
+// ran. Deliberately NOT inside FftEnginePool itself: the pool must stay
+// settings-agnostic (design section 9.4a) so the Task 9/10 daemon can
+// supply its own config with no AppSettings dependency in src/core at all.
+void MainWindow::refreshFftPoolConfig()
+{
+    if (!m_fftEnginePool) { return; }
+    auto& s = AppSettings::instance();
+    FftPoolConfig cfg;
+    cfg.fps = qBound(1,
+        s.value(QStringLiteral("DisplaySpectrumFps"),
+                QStringLiteral("30")).toString().toInt(),
+        60);
+    cfg.fftSize = s.value(QStringLiteral("DisplayFftSize"),
+                          QStringLiteral("4096")).toString().toInt();
+    // Fallback default matches FFTEngine's own constructor default
+    // (WindowFunction::BlackmanHarris4 == 1).  The pre-extraction code
+    // computed this by querying a freshly constructed engine's
+    // windowFunction(); there is no throwaway engine to query here now
+    // that engine construction lives inside the pool, so the equivalent
+    // literal is used directly.
+    const int defaultWin = static_cast<int>(WindowFunction::BlackmanHarris4);
+    cfg.windowType = qBound(0,
+        s.value(QStringLiteral("DisplayFftWindow"),
+                QString::number(defaultWin)).toString().toInt(),
+        static_cast<int>(WindowFunction::Count) - 1);
+    cfg.hzPerBinTarget = s.value(QStringLiteral("DisplayHzPerBinTarget"),
+                                 QStringLiteral("0")).toString().toDouble();
+    m_fftEnginePool->setConfig(cfg);
+}
+
 // ── Phase 3F Sub-Epic I Task 8: one FFTEngine per DDC stream ────────────────
 //
 // The panadapter belongs to the DDC, not to the sub-receiver: ChannelMaster
@@ -1455,15 +1493,28 @@ FFTEngine* MainWindow::primaryFftEngine() const
 // pool is sized by stream, not by slice.
 //
 // R1 Task 6: engine creation/reuse, the four display AppSettings-sourced
-// knobs, and thread parking moved into FftEnginePool (constructed and
-// configured in buildUI(), see the FftPoolConfig block below). This function
-// is what is left in MainWindow: the pool has no notion of RadioModel or of
-// this stream's NoiseFloorTracker, so wiring both stays here, run once per
+// knobs, and thread parking moved into FftEnginePool. This function is what
+// is left in MainWindow: the pool has no notion of RadioModel or of this
+// stream's NoiseFloorTracker, so wiring both stays here, run once per
 // stream the first time it is seen.
+//
+// Fix round 1 finding 1: refreshFftPoolConfig() runs here, before
+// requesting the engine, and ONLY for a stream that does not exist yet --
+// not on every call. Pre-extraction, createFftEngineForStream read
+// AppSettings inside its own per-engine construction, so a stream built
+// after a live Setup -> Display change picked up the current value. The
+// pool's setConfig() is otherwise a one-time snapshot with no other call
+// site (by design -- see FftEnginePool.h: the pool itself must stay
+// settings-agnostic so the Task 9/10 daemon can supply its own config), so
+// without this refresh here, every stream after the first would silently
+// run on whatever was captured back at buildUI() time.
 FFTEngine* MainWindow::ensureStreamWired(int streamIndex)
 {
     if (!m_fftEnginePool) { return nullptr; }
     const bool isNewStream = !m_fftEnginePool->streams().contains(streamIndex);
+    if (isNewStream) {
+        refreshFftPoolConfig();
+    }
     FFTEngine* engine = m_fftEnginePool->engineForStream(streamIndex);
     if (!engine || !isNewStream) { return engine; }
 
@@ -3031,37 +3082,22 @@ void MainWindow::buildUI()
     //
     // R1 Task 6: per-stream engine lifecycle, the four global display
     // AppSettings keys, and the shared FFT thread now live in FftEnginePool
-    // (src/core/spectrum/FftEnginePool.h) instead of this QWidget.  MainWindow
-    // reads the four keys ONCE here and hands them to the pool via
-    // FftPoolConfig.  Only stream 0's engine is built here: the SKU's stream
-    // count is not known until connect, and the rest are built on demand as
-    // the allocator claims their DDCs (see the streamCentreChanged handler
-    // below).
+    // (src/core/spectrum/FftEnginePool.h) instead of this QWidget.
+    //
+    // Fix round 1 finding 1: this used to load the config here, once, with
+    // no other call site ever refreshing it -- so a stream built later (a
+    // second DDC claimed after the user changed Setup -> Display) came up
+    // on whatever was captured at this exact moment, not the live value.
+    // Pre-extraction, createFftEngineForStream read AppSettings inside its
+    // own per-engine construction, so every new stream was current as of
+    // ITS OWN creation. refreshFftPoolConfig() restores that: it is called
+    // from ensureStreamWired() immediately before building any stream that
+    // does not exist yet, stream 0 here included, so there is nothing left
+    // to do in this function beyond creating the pool itself. Only stream
+    // 0's engine is built here: the SKU's stream count is not known until
+    // connect, and the rest are built on demand as the allocator claims
+    // their DDCs (see the streamCentreChanged handler below).
     m_fftEnginePool = new FftEnginePool(this);
-    {
-        auto& s = AppSettings::instance();
-        FftPoolConfig cfg;
-        cfg.fps = qBound(1,
-            s.value(QStringLiteral("DisplaySpectrumFps"),
-                    QStringLiteral("30")).toString().toInt(),
-            60);
-        cfg.fftSize = s.value(QStringLiteral("DisplayFftSize"),
-                              QStringLiteral("4096")).toString().toInt();
-        // Fallback default matches FFTEngine's own constructor default
-        // (WindowFunction::BlackmanHarris4 == 1).  The pre-extraction code
-        // computed this by querying a freshly constructed engine's
-        // windowFunction(); there is no throwaway engine to query here now
-        // that engine construction lives inside the pool, so the equivalent
-        // literal is used directly.
-        const int defaultWin = static_cast<int>(WindowFunction::BlackmanHarris4);
-        cfg.windowType = qBound(0,
-            s.value(QStringLiteral("DisplayFftWindow"),
-                    QString::number(defaultWin)).toString().toInt(),
-            static_cast<int>(WindowFunction::Count) - 1);
-        cfg.hzPerBinTarget = s.value(QStringLiteral("DisplayHzPerBinTarget"),
-                                     QStringLiteral("0")).toString().toDouble();
-        m_fftEnginePool->setConfig(cfg);
-    }
     ensureStreamWired(0);
 
     // Linear-power frame -> every pan subscribed to its stream.  One
