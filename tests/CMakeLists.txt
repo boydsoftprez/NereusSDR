@@ -6047,6 +6047,20 @@ nereus_add_test(tst_pan_flag_positions)
 # edge on the lower pan of a 2v layout. Bench-reported 2026-07-28.
 nereus_add_test(tst_popup_placement)
 
+# ── TNF build-order step 8: +TNF button, status-bar light, menu action ─────
+# The operator-facing TNF controls that live outside the panadapter:
+#   - SpectrumOverlayPanel's +TNF button is enabled and carries its pan id;
+#     the disabled "MNF" twin is gone (design section 9).
+#   - NotchModel::tnfAddCenterHz composes VFO + RIT + sideband shift
+#     (section 7.5).
+#   - MainWindow's TNF indicator stylesheet / tooltip / accelerator statics,
+#     the menu-action two-way sync, and the reject notice (section 10.2: the
+#     chord is fixed because no shortcut-assignment subsystem exists).
+# Source: NereusSDR-original test; surfaces fixed by
+# docs/architecture/2026-07-28-tunable-notch-filter-design.md sections 7.5,
+# 9 and 10.2.
+nereus_add_test(tst_tnf_ui_wiring)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

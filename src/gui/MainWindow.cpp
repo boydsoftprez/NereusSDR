@@ -1716,6 +1716,51 @@ void MainWindow::onNotchRemoveRequested(int id)
     m_radioModel->notchModel()->removeNotch(id);
 }
 
+// The +TNF button on one pan's control strip. Distinct from
+// onNotchCreateRequested above because a panadapter click already knows its
+// frequency and this does not: the centre is composed from the pan's own
+// slice, so a strip drawn on pan-2 notches pan-2's signal.
+//
+// From Thetis console.cs:40313-40331 [v2.10.3.15], TNFAdd(rx): VFO, plus RIT,
+// shifted into the sideband, then AddNotch. The arithmetic lives in
+// NotchModel::tnfAddCenterHz (design sections 7.5 and 10.2, which keeps the
+// Thetis-derived maths out of the AetherSDR-registered overlay panel), and the
+// admin-busy guard upstream repeats at console.cs:40315 is already enforced
+// inside NotchModel::addNotch (console.cs:40224), so the reject path is the
+// model's.
+void MainWindow::onAddTnfClicked(const QString& panId)
+{
+    if (!m_radioModel) { return; }
+    NotchModel* notches = m_radioModel->notchModel();
+    SliceModel* slice   = sliceForPan(panId);
+    if (!notches || !slice) { return; }
+    notches->addNotch(NotchModel::tnfAddCenterHz(
+        slice->effectiveRxFrequency(), slice->filterLow(), slice->filterHigh()));
+}
+
+// A rejected add is not a failure worth an error badge, but it must not be
+// silent either: pressing +TNF twice on the same signal lands inside the 10 Hz
+// dedupe window (console.cs:40259-40260 [v2.10.3.15]) and would otherwise do
+// nothing at all, which reads as a dead button.
+void MainWindow::onNotchAddRejected(const QString& reason)
+{
+    showToast(tnfAddRejectedNotice(reason), ToastSeverity::Warning, 3000);
+}
+
+// Repaint the status-bar TNF light. Both halves of what it shows can move
+// independently: the master enable from this label, the DSP menu or TCI, and
+// the count from any pan's panadapter or the MNF settings page.
+void MainWindow::refreshTnfIndicator()
+{
+    if (!m_tnfLabel || !m_radioModel) { return; }
+    NotchModel* notches = m_radioModel->notchModel();
+    if (!notches) { return; }
+    const bool on    = notches->globalEnabled();
+    const int  count = static_cast<int>(notches->notches().size());
+    m_tnfLabel->setStyleSheet(tnfIndicatorStyleSheet(on, count));
+    m_tnfLabel->setToolTip(tnfIndicatorTooltip(count, on));
+}
+
 // Phase 3F: badge-click fan-out. Third sibling of refreshPanWideBadges and
 // wirePanStatusOverlayTriggers above, on the same hook and for the same
 // reason: a pan that comes into existence after startup has to be wired
@@ -2026,6 +2071,13 @@ void MainWindow::ensureOverlayPanels()
             if (!m_radioModel || id.isEmpty()) { return; }
             m_radioModel->addSliceOnPan(id);
         });
+
+        // +TNF adds a notch on the slice THIS pan is showing, at the frequency
+        // the operator is actually listening to. The composition lives in
+        // onAddTnfClicked; a named slot, so re-arming this loop on a layout
+        // switch cannot stack duplicate connections.
+        connect(panel, &SpectrumOverlayPanel::addTnfClicked, this,
+                &MainWindow::onAddTnfClicked, Qt::UniqueConnection);
 
         // Band clicks act on this pan's active slice rather than the globally
         // active one, for the same reason (#118 fixed the mode-vs-frequency
@@ -5580,11 +5632,28 @@ void MainWindow::buildMenuBar()
         if (slice) { slice->setBinauralEnabled(on); }
     });
 
-    {
-        QAction* tnfAction = dspMenu->addAction(QStringLiteral("&TNF"));
-        tnfAction->setCheckable(true);
-        tnfAction->setEnabled(false);
-        tnfAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    // TNF: enable or bypass every notch at once. Global rather than per-slice
+    // because the notch list itself is global (design decision D1), which is
+    // also how Thetis models it: TNFActive is a single flag despite the
+    // per-rx command shape (console.cs:52317-52326 [v2.10.3.15], where GetMNF
+    // is documented "mnf enabled globally").
+    m_tnfAction = dspMenu->addAction(QStringLiteral("&TNF"));
+    m_tnfAction->setCheckable(true);
+    m_tnfAction->setShortcut(tnfToggleShortcut());
+    m_tnfAction->setToolTip(
+        QStringLiteral("Enable or bypass all tunable notch filters"));
+    if (NotchModel* notches = m_radioModel->notchModel()) {
+        m_tnfAction->setChecked(notches->globalEnabled());
+        connect(m_tnfAction, &QAction::toggled,
+                notches, &NotchModel::setGlobalEnabled);
+        // The blocker is what keeps one operator gesture from reaching the
+        // model twice: setChecked re-emits toggled, which would write the
+        // model again.
+        connect(notches, &NotchModel::globalEnabledChanged,
+                m_tnfAction, [this](bool on) {
+            QSignalBlocker block(m_tnfAction);
+            m_tnfAction->setChecked(on);
+        });
     }
 
     dspMenu->addSeparator();
@@ -6186,6 +6255,88 @@ void MainWindow::buildMenuBar()
     }
 }
 
+// ── TNF operator controls (design sections 7, 7.5, 10.2) ──────────────────
+//
+// Four pure statics behind the status-bar light, the DSP-menu chord and the
+// rejected-add notice. Static because MainWindow boots WDSP, the audio engine
+// and the discovery thread, so nothing that needs an instance can be tested.
+
+QString MainWindow::tnfIndicatorStyleSheet(bool globalEnabled, int notchCount)
+{
+    // ON reads accent cyan, matching AetherSDR's status-bar TNF light
+    // (MainWindow_Wiring.cpp:3306-3311 [@c6481cbf], #00b4d8 on / #404858
+    // off).
+    //
+    // The OFF half diverges from upstream, deliberately. AetherSDR's notch
+    // list mirrors radio state and defaults its global flag ON, so its off
+    // state is a rare, transient thing. Ours ships OFF (maintainer decision
+    // D-a, matching Thetis's unchecked chkTNF and WDSP's master run 0 at
+    // RXA.c:87), which means the operator's very first notch does nothing
+    // until they find this switch. A dim grey label sitting in a row of
+    // three permanently dim NYI labels does not communicate that, so:
+    //
+    //   off, no notches  -> dim #404858 + struck through. Idle, matched to
+    //                       the CWX / DVK / FDX siblings but visibly a
+    //                       toggle rather than a stub.
+    //   off, notches set -> amber + struck through. Notches exist and are
+    //                       being bypassed; that is the D-a hazard and it
+    //                       gets the palette's warning colour.
+    //   on               -> accent cyan, no strike, whatever the count.
+    const bool bypassing = (!globalEnabled && notchCount > 0);
+    const QString color = globalEnabled
+                              ? QString::fromLatin1(Style::kAccent)
+                              : (bypassing ? QString::fromLatin1(Style::kAmberWarn)
+                                           : QStringLiteral("#404858"));
+    const QString decoration = globalEnabled ? QStringLiteral("none")
+                                             : QStringLiteral("line-through");
+    return QStringLiteral("QLabel { color: %1; font-weight: bold; "
+                          "font-size: 11px; text-decoration: %2; }")
+        .arg(color, decoration);
+}
+
+QString MainWindow::tnfIndicatorTooltip(int notchCount, bool globalEnabled)
+{
+    // Shape from AetherSDR buildTnfTooltip (MainWindowHelpers.cpp:233-247
+    // [@c6481cbf]): name the feature, say how many notches exist, say the
+    // click toggles them. Upstream renders an HTML table of every notch;
+    // ours stays a single plain line because the Settings > DSP > MNF table
+    // (design section 9) is where the per-notch list lives.
+    if (notchCount <= 0) {
+        return QStringLiteral("Tunable Notch Filter: no notches. "
+                              "Click to toggle all notches.");
+    }
+    return QStringLiteral("Tunable Notch Filter: %1 notch%2, %3. "
+                          "Click to toggle all notches.")
+        .arg(notchCount)
+        .arg(notchCount == 1 ? QString() : QStringLiteral("es"),
+             globalEnabled ? QStringLiteral("enabled")
+                           : QStringLiteral("bypassed"));
+}
+
+QKeySequence MainWindow::tnfToggleShortcut()
+{
+    // Design section 10.2: KeyboardSetupPages.cpp is a 100% NYI stub, no
+    // ShortcutManager or registerAction exists in src/, and every shipped
+    // shortcut is a plain QAction::setShortcut in this file. AetherSDR
+    // registers "tnf_toggle" with an empty default sequence
+    // (MainWindow_Shortcuts.cpp:1093 [@c6481cbf]) precisely because it HAS a
+    // manager to bind it later; we ship a fixed chord instead. Building the
+    // assignment subsystem is a separate epic and explicitly out of scope.
+    //
+    // Ctrl+Shift+N (maintainer decision D-f), consistent with the existing
+    // Ctrl+Shift+S and Ctrl+Shift+R chords and verified unclaimed.
+    return QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N);
+}
+
+QString MainWindow::tnfAddRejectedNotice(const QString& reason)
+{
+    // NotchModel's reject reasons are already operator-legible sentences
+    // ("A notch already exists within 10 Hz"), so this only names what was
+    // refused. Without it a +TNF press inside the dedupe window is entirely
+    // silent (plan correction 16).
+    return QStringLiteral("Notch not added: %1.").arg(reason);
+}
+
 void MainWindow::buildStatusBar()
 {
     // AetherSDR double-height status bar (46px fixed height, 3-section layout)
@@ -6307,13 +6458,38 @@ void MainWindow::buildStatusBar()
     // Use a property to mark it.
     panelToggleLabel->setProperty("isPanelToggle", true);
 
-    // TNF toggle
+    // TNF light. Click toggles every notch at once; colour and tooltip follow
+    // NotchModel::globalEnabled.
+    // From AetherSDR MainWindow.cpp:4422-4436 [@c6481cbf] (indicator label +
+    // tooltip refresh on list changes) and MainWindow_Wiring.cpp:3306-3311
+    // [@c6481cbf] (globalEnabledChanged drives the stylesheet).
+    //
+    // Not gated on isConnected the way AetherSDR's is: under design decision
+    // D3 the notch list is persisted client-side operator state, not a mirror
+    // of radio state, so it is meaningful before a radio is attached.
     m_tnfLabel = new QLabel(QStringLiteral("TNF"), barWidget);
-    m_tnfLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
-    m_tnfLabel->setToolTip(QStringLiteral("Tracking Notch Filter (NYI)"));
     m_tnfLabel->setCursor(Qt::PointingHandCursor);
+    m_tnfLabel->setProperty("isTnfToggle", true);
+    m_tnfLabel->installEventFilter(this);
     hbox->addWidget(m_tnfLabel);
+
+    if (NotchModel* notches = m_radioModel->notchModel()) {
+        // Named slot, not a lambda: Qt::UniqueConnection is silently ignored
+        // for lambda targets in Qt6, and every one of these five signals can
+        // fire while the bar is being rebuilt.
+        connect(notches, &NotchModel::globalEnabledChanged, this,
+                &MainWindow::refreshTnfIndicator, Qt::UniqueConnection);
+        connect(notches, &NotchModel::notchAdded, this,
+                &MainWindow::refreshTnfIndicator, Qt::UniqueConnection);
+        connect(notches, &NotchModel::notchRemoved, this,
+                &MainWindow::refreshTnfIndicator, Qt::UniqueConnection);
+        connect(notches, &NotchModel::notchesReset, this,
+                &MainWindow::refreshTnfIndicator, Qt::UniqueConnection);
+        connect(notches, &NotchModel::notchAddRejected, this,
+                &MainWindow::onNotchAddRejected, Qt::UniqueConnection);
+        // Seed from whatever restoreFromSettings already loaded.
+        refreshTnfIndicator();
+    }
 
     // CWX
     auto* cwxLabel = new QLabel(QStringLiteral("CWX"), barWidget);
@@ -8265,6 +8441,23 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
                 }
                 label->setStyleSheet(QStringLiteral(
                     "QLabel { color: #8aa8c0; font-weight: bold; font-size: 16px; }"));
+            }
+            return true;  // event consumed
+        }
+    }
+
+    // Status-bar TNF light: click toggles every notch at once.
+    // From AetherSDR MainWindow_Shortcuts.cpp:612-614 [@c6481cbf], which
+    // flips the model flag straight from the indicator's mouse press. The
+    // DSP > TNF menu item follows through globalEnabledChanged, so either
+    // surface can originate the flip and neither echoes it back.
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto* label = qobject_cast<QLabel*>(watched);
+        if (label && label->property("isTnfToggle").toBool()) {
+            NotchModel* notches =
+                m_radioModel ? m_radioModel->notchModel() : nullptr;
+            if (notches) {
+                notches->setGlobalEnabled(!notches->globalEnabled());
             }
             return true;  // event consumed
         }
