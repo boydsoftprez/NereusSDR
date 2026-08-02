@@ -270,6 +270,129 @@ private slots:
                  qPrintable(QStringLiteral("waterfall dent span %1 px, "
                                            "expected ~219").arg(span)));
     }
+
+    // ---- Cycle D: what reads the undented copy, and what does not ----
+
+    void noise_floor_estimate_reads_the_undented_copy()
+    {
+        // The accumulator only counts pixels BELOW the running estimate, and
+        // the estimate starts at -200 dBm and drifts up 1 dB per frame until
+        // it reaches the synthetic floor. One frame therefore proves nothing:
+        // both cases would sit in the same drift branch. Feed long enough for
+        // the dented skirt to start qualifying and the two to diverge.
+        constexpr int kFramesToConverge = 80;
+
+        SpectrumWidget off;
+        configure(off);
+        off.setNotchMarkers(oneNotch(200.0));
+        feed(off, kFramesToConverge);
+
+        SpectrumWidget on;
+        configure(on);
+        on.setNotchMarkers(oneNotch(200.0));
+        on.setVisualNotchEnabled(true);
+        feed(on, kFramesToConverge);
+
+        // Sanity: the dent really is on the trace for this frame, so the
+        // comparison below is not vacuous.
+        QVERIFY(off.renderedPixels()[kTonePixel]
+                    - on.renderedPixels()[kTonePixel] > 150.0f);
+
+        // A display preference must not move a measurement.
+        QCOMPARE(on.nfFftBinAverageForTest(), off.nfFftBinAverageForTest());
+    }
+
+    void max_bin_passband_peak_reads_the_undented_copy()
+    {
+        SpectrumWidget off;
+        configure(off);
+        off.setNotchMarkers(oneNotch(200.0));
+        feed(off, 1);
+
+        SpectrumWidget on;
+        configure(on);
+        on.setNotchMarkers(oneNotch(200.0));
+        on.setVisualNotchEnabled(true);
+        feed(on, 1);
+
+        const double offPeak = off.peakDbmInSlicePassband();
+        const double onPeak  = on.peakDbmInSlicePassband();
+
+        // Guard against the -400 sentinel making this pass for free.
+        QVERIFY2(offPeak > -400.0,
+                 "passband peak hit the sentinel; fixture geometry is wrong");
+        // The analog S-Meter's MaxBin mode is fed from this. Notching a loud
+        // carrier must not drop the needle.
+        QCOMPARE(onPeak, offPeak);
+    }
+
+    void active_peak_hold_sees_the_dent()
+    {
+        SpectrumWidget off;
+        configure(off);
+        off.setActivePeakHoldEnabled(true);
+        off.setNotchMarkers(oneNotch(200.0));
+        feed(off, 1);
+
+        SpectrumWidget on;
+        configure(on);
+        on.setActivePeakHoldEnabled(true);
+        on.setNotchMarkers(oneNotch(200.0));
+        on.setVisualNotchEnabled(true);
+        feed(on, 1);
+
+        QCOMPARE(on.activePeakHoldPeaksForTest().size(),
+                 off.activePeakHoldPeaksForTest().size());
+        QVERIFY(off.activePeakHoldPeaksForTest().size() > kTonePixel);
+
+        // Thetis-faithful and deliberate: spectral peak hold reads the DENTED
+        // array (display.cs:5337 [v2.10.3.15] feeds off `max`, not
+        // `max_copy`). Do not "fix" this into a divergence.
+        QVERIFY(off.activePeakHoldPeaksForTest()[kTonePixel]
+                    - on.activePeakHoldPeaksForTest()[kTonePixel] > 150.0f);
+    }
+
+    void peak_blobs_see_the_dent()
+    {
+        SpectrumWidget off;
+        configure(off);
+        off.setPeakBlobsEnabled(true);
+        off.setNotchMarkers(oneNotch(200.0));
+        feed(off, 1);
+
+        SpectrumWidget on;
+        configure(on);
+        on.setPeakBlobsEnabled(true);
+        on.setNotchMarkers(oneNotch(200.0));
+        on.setVisualNotchEnabled(true);
+        feed(on, 1);
+
+        int   offEnabled = 0;
+        float offTop     = -400.0f;
+        for (const PeakBlob& b : off.peakBlobsForTest()) {
+            if (b.enabled) {
+                ++offEnabled;
+                offTop = qMax(offTop, b.max_dBm);
+            }
+        }
+        QVERIFY2(offEnabled > 0, "undented frame produced no peak blob");
+
+        float onTop = -400.0f;
+        for (const PeakBlob& b : on.peakBlobsForTest()) {
+            if (b.enabled) {
+                onTop = qMax(onTop, b.max_dBm);
+            }
+        }
+
+        // Also Thetis-faithful: the blob detector reads the dented array
+        // (display.cs:5280 [v2.10.3.15]), so notching the only carrier in the
+        // frame takes the top blob down with it.
+        QVERIFY2(offTop - onTop > 50.0f,
+                 qPrintable(QStringLiteral("top blob %1 dBm undented vs %2 dBm "
+                                           "dented; blobs did not see the dent")
+                                .arg(static_cast<double>(offTop))
+                                .arg(static_cast<double>(onTop))));
+    }
 };
 
 QTEST_MAIN(TestNotchVisualDoesNotPerturbNoiseFloorOrMaxbin)

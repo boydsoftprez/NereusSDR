@@ -397,11 +397,11 @@ public:
 
     // 2026-05-22 bench fix for MaxBin meter accuracy.
     // Returns the strongest dBm pixel inside the active slice's IF
-    // passband, computed from m_renderedPixels (post detector + avenger
-    // pipeline -- the same data the operator sees on the spectrum).
-    // Falls back to -400 sentinel when m_renderedPixels is empty (cold
-    // start) or when the slice passband falls entirely outside the
-    // visible spectrum window.
+    // passband, computed from the undented spectrum pixels
+    // (measurementPixels(), post detector + avenger pipeline -- see the
+    // visual-notch note in the definition). Falls back to -400 sentinel
+    // when those pixels are empty (cold start) or when the slice passband
+    // falls entirely outside the visible spectrum window.
     //
     // The raw per-bin FFT power that MaxBin previously scanned (via
     // WdspEngine::onSpectrumBinsForMaxBin reading FFTEngine::fftReady)
@@ -409,7 +409,7 @@ public:
     // because the spectrum's detector + invEnb window-normalization +
     // avenger time-smoothing reconstructs the integrated signal power
     // that a single FFT bin can't show on its own. Sourcing MaxBin
-    // from m_renderedPixels makes the meter read what the operator
+    // from the display pipeline makes the meter read what the operator
     // visually sees on the trace.
     double peakDbmInSlicePassband() const;
 
@@ -1447,7 +1447,8 @@ private:
     // Source-first port of Thetis processNoiseFloor — display.cs:5866-5912
     // [v2.10.3.13].  Called once per spectrum frame from
     // updateSpectrumLinear after m_renderedPixels is finalised; iterates
-    // those pixels to accumulate (count, linear-sum) of bins below the
+    // measurementPixels() (the UNDENTED copy, design section 8.3) to
+    // accumulate (count, linear-sum) of bins below the
     // previous-frame estimate (averageCount/averageSum), then updates
     // m_nfFftBinAverage (per-frame) and m_nfLerpAverage (smoothed).
     // Also runs the fast-attack convergence-gated auto-clear from

@@ -1873,7 +1873,12 @@ void SpectrumWidget::setNoiseFloorFastAttack(bool on)
 // because NereusSDR's renderer doesn't share the averaging loop.
 void SpectrumWidget::processNoiseFloor()
 {
-    const int width = m_renderedPixels.size();
+    // The noise floor is a MEASUREMENT, so it reads the undented pixels
+    // (design section 8.3).  Upstream does the same: its accumulator takes
+    // max_copy from the pristine array while everything else in that loop
+    // takes the dented max - display.cs:5256-5259 [v2.10.3.15].
+    const QVector<float>& src = measurementPixels();
+    const int width = src.size();
     if (width <= 0) { return; }
 
     // Per-pixel accumulator — Thetis display.cs:5253-5258 [v2.10.3.13]:
@@ -1887,7 +1892,7 @@ void SpectrumWidget::processNoiseFloor()
     double averageSum = 0.0;
     int    averageCount = 0;
     for (int i = 0; i < width; ++i) {
-        const float dB = m_renderedPixels[i];
+        const float dB = src[i];
         if (dB < currentAverage) {
             averageSum += std::pow(10.0, static_cast<double>(dB) / 10.0);
             averageCount++;
@@ -2964,7 +2969,15 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
 // return -400 sentinel.
 double SpectrumWidget::peakDbmInSlicePassband() const
 {
-    const int n = m_renderedPixels.size();
+    // Deliberate NereusSDR-specific divergence from the dent-in-place rule
+    // (design section 8.3, decision recorded 2026-07-28): this feeds
+    // WdspEngine's MaxBin detector and therefore the analog S-Meter. Thetis
+    // reads MaxBin from WDSP upstream of its display code (console.cs:46959,
+    // dsp.cs:849-850 [v2.10.3.15]), so its visual notch structurally cannot
+    // move its meter; ours would if this scanned the dented array. A display
+    // preference must not change a measurement.
+    const QVector<float>& src = measurementPixels();
+    const int n = src.size();
     if (n < 2 || m_bandwidthHz <= 0.0) { return -400.0; }
 
     const double loHz = m_vfoHz + static_cast<double>(m_filterLowHz);
@@ -2988,7 +3001,7 @@ double SpectrumWidget::peakDbmInSlicePassband() const
 
     float peak = -400.0f;
     for (int i = firstPx; i <= lastPx; ++i) {
-        if (m_renderedPixels[i] > peak) { peak = m_renderedPixels[i]; }
+        if (src[i] > peak) { peak = src[i]; }
     }
     return static_cast<double>(peak);
 }
