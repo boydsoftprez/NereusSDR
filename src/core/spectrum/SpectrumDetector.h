@@ -1,7 +1,7 @@
 #pragma once
 
 // =================================================================
-// src/gui/spectrum/SpectrumDetector.h  (NereusSDR)
+// src/core/spectrum/SpectrumDetector.h  (NereusSDR)
 // =================================================================
 //
 // Ported from WDSP source:
@@ -29,6 +29,11 @@
 //                 and pix_per_bin > 1.0 — multi-pixel per bin)
 //                 included.  Type-narrowed from double to float
 //                 to match NereusSDR's spectrum pipeline.
+//   2026-08-02  J.J. Boyd / KG4VCF  Relocated from src/gui/spectrum/ to
+//                                    src/core/spectrum/ for the headless
+//                                    daemon build split (R1).  No logic
+//                                    change.  AI-assisted transformation via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 //=================================================================

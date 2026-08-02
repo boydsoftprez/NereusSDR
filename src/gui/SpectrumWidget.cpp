@@ -124,7 +124,7 @@
 #include "dbm_strip_math.h"
 #include "popup_placement.h"
 #include "models/BandPlanManager.h"
-#include "spectrum/SpectrumDetector.h"
+#include "core/spectrum/SpectrumDetector.h"
 
 #include <QApplication>
 #include <QClipboard>

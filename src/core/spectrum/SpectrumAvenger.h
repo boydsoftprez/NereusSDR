@@ -1,7 +1,7 @@
 #pragma once
 
 // =================================================================
-// src/gui/spectrum/SpectrumAvenger.h  (NereusSDR)
+// src/core/spectrum/SpectrumAvenger.h  (NereusSDR)
 // =================================================================
 //
 // Ported from WDSP source:
@@ -34,6 +34,11 @@
 //                 owns the per-channel state arrays (av_sum,
 //                 av_buff, indices) so SpectrumWidget can hold
 //                 separate spectrum + waterfall instances.
+//   2026-08-02  J.J. Boyd / KG4VCF  Relocated from src/gui/spectrum/ to
+//                                    src/core/spectrum/ for the headless
+//                                    daemon build split (R1).  No logic
+//                                    change.  AI-assisted transformation via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 //=================================================================

@@ -165,7 +165,7 @@ mw0lge@grange-lane.co.uk
 
 #include "spectrum/ActivePeakHoldTrace.h"
 #include "spectrum/PeakBlobDetector.h"
-#include "spectrum/SpectrumAvenger.h"
+#include "core/spectrum/SpectrumAvenger.h"
 
 #include <utility>
 
@@ -405,7 +405,7 @@ public:
     // Static helper for detector math. Exposed for unit tests.
     // Note: legacy bin-reduction helper, kept for tst_detector_modes;
     // production rendering uses applySpectrumDetector() (free function in
-    // spectrum/SpectrumDetector.h, verbatim WDSP analyzer.c port) instead.
+    // core/spectrum/SpectrumDetector.h, verbatim WDSP analyzer.c port) instead.
     // From Thetis specHPSDR.cs:302-321 [v2.10.3.13] DetTypePan / DetTypeWF.
     static void applyDetector(const QVector<float>& input, QVector<float>& output,
                               SpectrumDetector mode, int outputBins);

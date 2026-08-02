@@ -622,6 +622,11 @@ set(CORE_SOURCES
     # scratch, audio ring) so the kernel can not compress / page them
     # under heavy memory pressure (parallel builds, Spotlight, etc.).
     src/core/MemoryLock.cpp
+    # R1 Task 3: SpectrumDetector/SpectrumAvenger relocated from
+    # src/gui/spectrum/ -- verbatim WDSP analyzer.c ports with no GUI
+    # dependency, needed by the headless daemon build split.
+    src/core/spectrum/SpectrumDetector.cpp
+    src/core/spectrum/SpectrumAvenger.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the
@@ -690,8 +695,6 @@ set(GUI_SOURCES
     src/gui/VaxFirstRunDialog.cpp
     src/gui/spectrum/ActivePeakHoldTrace.cpp
     src/gui/spectrum/PeakBlobDetector.cpp
-    src/gui/spectrum/SpectrumDetector.cpp
-    src/gui/spectrum/SpectrumAvenger.cpp
     src/gui/SpectrumWidget.cpp
     src/gui/PanadapterApplet.cpp
     src/gui/PanadapterStack.cpp
