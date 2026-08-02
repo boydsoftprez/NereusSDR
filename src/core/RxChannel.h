@@ -626,6 +626,15 @@ public:
     void setNotchTuneFrequency(double absoluteHz);
     double notchTuneFrequencyHz() const { return m_notchTuneFrequencyHz; }
 
+    // The shift value last handed to RXANBPSetShiftFrequency. Deliberately
+    // distinct from shiftOffsetHz(): it is written next to that call, so it
+    // is what tells a caller (and the test suite) whether the push actually
+    // happened. NOTCHDB->shift is write-only from the host side
+    // (third_party/wdsp/src/nbp.c:487-496 is its sole writer) and
+    // calc_nbp_lightweight reads it with no reference to any run flag
+    // (nbp.c:192), so a shift that stops being pushed fails silently.
+    double notchShiftHz() const { return m_notchShiftHz; }
+
     // --- Filter convenience setters (single-axis) ---
     // Thin wrappers that remember the pending low/high and call setFilterFreqs.
     // Carry-only for state preservation in captureState/applyState; WDSP wiring
@@ -952,6 +961,12 @@ private:
     // authoritative notch database and the audio thread never reads this,
     // so it is main-thread-only state.
     double m_notchTuneFrequencyHz{0.0};
+
+    // Notch shift carry (mirrors what was last passed to
+    // RXANBPSetShiftFrequency). Main-thread-only, same reasoning as
+    // m_notchTuneFrequencyHz. Do NOT move this write away from the WDSP
+    // call it mirrors in setShiftFrequency; that co-location is the point.
+    double m_notchShiftHz{0.0};
 
     // NB enabled carry (NbFamily is the primary API; this is a convenience bool
     // that reflects whether NbMode != Off)

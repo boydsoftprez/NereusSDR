@@ -1454,17 +1454,37 @@ void RxChannel::setShiftFrequency(double offsetHz)
     m_shiftOffsetHz = offsetHz;
 
 #ifdef HAVE_WDSP
-    if (std::abs(offsetHz) < 0.5) {
-        // No offset — disable shift for efficiency
-        SetRXAShiftRun(m_channelId, 0);
-    } else {
-        // From Thetis radio.cs:1417-1418 — both calls use the same sign
-        SetRXAShiftFreq(m_channelId, offsetHz);
-        RXANBPSetShiftFrequency(m_channelId, offsetHz);
-        SetRXAShiftRun(m_channelId, 1);
-    }
+    // From Thetis radio.cs:1419-1420 [v2.10.3.15] — both calls use the same
+    // sign, and both fire on EVERY RXOsc change, including a change back to
+    // zero. Thetis has no run gate at all: SetRXAShiftRun appears nowhere in
+    // its Console tree, so the gate below is NereusSDR-original and now
+    // covers only the run flag.
+    //
+    // The two frequency pushes used to sit inside the else of an
+    // if (std::abs(offsetHz) < 0.5) branch, so returning to zero skipped
+    // them. SetRXAShiftRun writes rxa[channel].shift.p->run (shift.c:113-118)
+    // and never touches NOTCHDB->shift, RXANBPSetShiftFrequency is that
+    // field's sole writer (nbp.c:487-496), and calc_nbp_lightweight consumes
+    // it unconditionally (nbp.c:192). The stored shift therefore went stale
+    // on every RIT-off, DIGU/DIGL exit, band jump and CTUN-off, and every
+    // notch would have been mapped off its carrier.
+    //
+    // No sign change. Thetis's -value is not a divergence: rx_osc is already
+    // the negated quantity upstream (console.cs:31916-31922,
+    // rx2_osc = RXOsc - diff), so Thetis's -rx_osc equals the offsetHz handed
+    // in here, which equals frequencyHz - centreHz at
+    // SliceStreamAllocator.cpp:70.
+    SetRXAShiftFreq(m_channelId, offsetHz);
+    RXANBPSetShiftFrequency(m_channelId, offsetHz);
+    // Written here, next to the call it mirrors, and not up beside
+    // m_shiftOffsetHz: notchShiftHz() exists to say whether the push above
+    // really happened.
+    m_notchShiftHz = offsetHz;
+    // No offset — disable shift for efficiency. The run flag is the only
+    // thing the magnitude gate still controls.
+    SetRXAShiftRun(m_channelId, std::abs(offsetHz) < 0.5 ? 0 : 1);
 #else
-    Q_UNUSED(offsetHz);
+    m_notchShiftHz = offsetHz;
 #endif
 }
 

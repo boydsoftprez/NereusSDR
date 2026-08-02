@@ -112,6 +112,35 @@ private slots:
         ch->setShiftFrequency(10000.0);
         QCOMPARE(ch->shiftOffsetHz(), 10000.0);
     }
+
+    // -- 4.3: the shift must reach the notch DB on the way back to zero ----
+
+    void shift_reaches_the_notch_database_on_the_way_back_to_zero()
+    {
+        WdspEngine engine;
+        engine.m_initialized = true;
+        RxChannel* ch = engine.createRxChannel(0, bufferSizeForRate(kRateHz),
+                                               4096, kRateHz, 48000, 48000);
+        QVERIFY(ch != nullptr);
+
+        ch->setShiftFrequency(10000.0);
+        QCOMPARE(ch->notchShiftHz(), 10000.0);
+
+        // 4.3. RXANBPSetShiftFrequency is the sole writer of NOTCHDB->shift
+        // (third_party/wdsp/src/nbp.c:487-496) and calc_nbp_lightweight
+        // consumes that field with no reference to any run flag (nbp.c:192),
+        // so the old near-zero branch, which called SetRXAShiftRun(channel, 0)
+        // and nothing else, left the notch database holding a stale shift on
+        // every RIT-off, DIG-exit, band jump and CTUN-off. Thetis has no such
+        // branch: radio.cs:1419-1420 [v2.10.3.15] pushes both setters on every
+        // RXOsc change including a change to zero, and SetRXAShiftRun appears
+        // nowhere in its Console tree. notchShiftHz() is written next to the
+        // WDSP call it mirrors, so it goes stale here if the gate ever comes
+        // back.
+        ch->setShiftFrequency(0.0);
+        QCOMPARE(ch->shiftOffsetHz(), 0.0);
+        QCOMPARE(ch->notchShiftHz(), 0.0);
+    }
 };
 
 QTEST_MAIN(TestNotchTuneFrequency)
