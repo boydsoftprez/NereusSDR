@@ -207,6 +207,65 @@ bool NotchModel::notchNearFreq(double hz, int deltaHz) const
     return false;
 }
 
+//MW0LGE return list of notches in given bandwidth
+//notch is included if filter width is enough to be within the BW
+// From Thetis radio.cs:4276-4293 [v2.10.3.15], MNotchDB.NotchesInBW.
+// Overlap test at radio.cs:4286 is inclusive on both sides.
+QList<Notch> NotchModel::notchesInBandwidth(double centreHz,
+                                            int lowHz, int highHz) const
+{
+    QList<Notch> l;
+    const double min = centreHz + lowHz;
+    const double max = centreHz + highHz;
+
+    for (const Notch& n : m_notches) {
+        if (((n.centerHz + n.widthHz / 2) >= min)
+            && ((n.centerHz - n.widthHz / 2) <= max)) {
+            l.append(n);
+        }
+    }
+
+    return l;
+}
+
+//MW0LGE return first notch found that surrounds a given frequency in the given bandwidth
+// From Thetis radio.cs:4297-4325 [v2.10.3.15],
+// MNotchDB.NotchThatSurroundsFrequencyInBW.
+// Upstream materialises NotchesInBW() and walks the copy. NereusSDR folds
+// the same predicate into one pass over m_notches so the returned pointer
+// stays valid; iteration order is identical because NotchesInBW preserves
+// list order.
+const Notch* NotchModel::notchSurrounding(double centreHz, int lowHz,
+                                          int highHz, double hz,
+                                          int padWidthHz) const
+{
+    const double min = centreHz + lowHz;
+    const double max = centreHz + highHz;
+
+    for (int i = 0; i < m_notches.size(); ++i) {
+        const Notch& n = m_notches.at(i);
+
+        if (!(((n.centerHz + n.widthHz / 2) >= min)
+              && ((n.centerHz - n.widthHz / 2) <= max))) {
+            continue;
+        }
+
+        double dLf = n.centerHz - n.widthHz / 2;
+        double dHf = n.centerHz + n.widthHz / 2;
+
+        if (n.widthHz < (padWidthHz * 2)) {
+            dLf -= padWidthHz;
+            dHf += padWidthHz;
+        }
+
+        if (hz >= dLf && hz <= dHf) {
+            return &m_notches.at(i);
+        }
+    }
+
+    return nullptr;
+}
+
 // ---------------------------------------------------------------------------
 // Mutations
 // ---------------------------------------------------------------------------

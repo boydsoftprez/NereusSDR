@@ -5914,6 +5914,16 @@ nereus_add_test(tst_notch_model_guards)
 #         section 5.2.
 nereus_add_test(tst_notch_model_index_invariant)
 
+# TNF section 5.3: MNotchDB spatial helpers ported from Thetis radio.cs.
+# notchNearFreq strict `<` (radio.cs:4267), notchesInBandwidth inclusive
+# edge overlap (radio.cs:4286), notchSurrounding with and without
+# padWidthHz covering the pad-applies-only-when-FWidth<padWidth*2 branch
+# (radio.cs:4310), first-found-in-list-order.
+# Source: Thetis radio.cs:4261-4272; 4276-4293; 4297-4325 [v2.10.3.15].
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         section 5.3.
+nereus_add_test(tst_notch_spatial_helpers)
+
 # ── PR #291 Codex review fixes ────────────────────────────────────────────
 # Capture-path helpers behind the native-rate mic resampling path.  The
 # defects only appear on a device whose native rate differs from the
