@@ -278,11 +278,11 @@ private slots:
         QCOMPARE(static_cast<int>(M::Rms),       4);
     }
 
-    // The whole point of the extraction: this header must not pull in a widget.
-    void headerIsWidgetFree()
-    {
-        QVERIFY(true);   // compiling this TU at all proves it
-    }
+    // NOTE: an earlier draft had a headerIsWidgetFree() test here that was a
+    // bare QVERIFY(true).  It asserted nothing.  The property it claimed to
+    // check is genuinely verified by tst_core_has_no_gui_includes in Task 4,
+    // which walks src/core and src/models and fails on any '#include "gui/'.
+    // Do not reintroduce a tautological test here.
 };
 
 QTEST_MAIN(TstSpectrumDetectorMode)
