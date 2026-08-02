@@ -2167,10 +2167,16 @@ static constexpr double kMnfWidthStepHz = 1.0;
 // upstream (there is no comboMNFWindow anywhere in Thetis v2.10.3.15) and the
 // bandpass window is out of scope, so it is dropped rather than wired.
 MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
-    : SetupPage("MNF", model, parent)
+    : SetupPage("TNF", model, parent)
 {
-    // From Thetis setup.designer.cs:44165 [v2.10.3.15] — grpDSPMNF.Text.
-    QGroupBox* mnfGrp = addSection(QStringLiteral("Multi Notch Filter"));
+    // Thetis captions this group "Multi Notch Filter" and names the tab
+    // MNF (setup.designer.cs:44165, :44141 [v2.10.3.15]). NereusSDR says TNF
+    // everywhere instead (maintainer decision, 2026-08-02): Thetis is itself
+    // split, MNF on the Setup tab and chkTNF on the console, and carrying
+    // that split through meant the same feature had two names on screen at
+    // once. Deliberate naming divergence; the control objectNames below stay
+    // on Thetis's spellings because they are the source-first mapping.
+    QGroupBox* mnfGrp = addSection(QStringLiteral("Tunable Notch Filter"));
     QVBoxLayout* mnfLay = qobject_cast<QVBoxLayout*>(mnfGrp->layout());
 
     if (!model || !model->notchModel() || !mnfLay) {

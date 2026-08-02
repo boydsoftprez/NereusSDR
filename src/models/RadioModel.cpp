@@ -3313,6 +3313,44 @@ void RadioModel::syncNotchesToChannel(RxChannel* ch, int channelId)
         return;
     }
 
+    // Notch DATA and notch ORIGIN are all-or-nothing. A channel whose slice or
+    // stream cannot be resolved has no RF origin to map from, and installing
+    // notches into it anyway produces a channel that looks entirely healthy
+    // (correct notch count, master_run 1, fnfrun 1) while every notch maps
+    // from tunefreq 0.
+    //
+    // 2026-08-02 bench (JJ, ANAN-G2E). openRxChannelPool opens every pool
+    // channel, but at connect only slice 0 exists, so channels 1..4 were
+    // handed the notch list with no resolvable origin:
+    //
+    //   WRN: notch origin unresolved for channel 1 (slice=-1 streamIndex=-1);
+    //        1 notch(es) on this channel will map from a stale origin
+    //
+    // Opening a second pan later binds its slice onto one of those channels,
+    // which is already carrying a notch pinned to the wrong origin. The marker
+    // drew over the carrier, WDSP genuinely held the notch, and the audio was
+    // untouched until a retune reached bindSliceToStream -> pushNotchOrigin.
+    // That is exactly the "pan 1 works, pan 2 needs a tune joggle" report.
+    //
+    // An unbound pool channel carries no notches at all. activateSliceChannel
+    // and bindSliceToStream both call back here once a slice owns the channel,
+    // and at that point the origin resolves and data and origin land together.
+    SliceModel* owner = sliceById(channelId);
+    const bool originResolvable = (owner != nullptr && owner->streamIndex() >= 0);
+    if (!originResolvable) {
+        if (ch->notchCount() > 0) {
+            // Leaving stale notches on a channel we are declining to own is
+            // how the bug survived a reconnect.
+            ch->syncNotches({});
+        }
+        qCDebug(lcDsp).nospace()
+            << "notch sync skipped for channel " << channelId
+            << " (slice=" << (owner ? owner->sliceIndex() : -1)
+            << " streamIndex=" << (owner ? owner->streamIndex() : -1)
+            << "): unbound pool channel, no RF origin to map from";
+        return;
+    }
+
     ch->syncNotches(m_notchModel->notches());
 
     // Every channel's notch database is built inert: create_notchdb takes
@@ -3397,6 +3435,7 @@ void RadioModel::wireNotchModel()
                 ch->syncNotches(m_notchModel->notches());
             }
             reconcileNotchCount(ch);
+
         }
     });
 

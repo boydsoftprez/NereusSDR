@@ -6517,15 +6517,45 @@ void SpectrumWidget::buildNotchContextMenu(int id, QMenu& menu)
     menu.addSeparator();
 
     // From AetherSDR src/gui/SpectrumWidget.cpp:8548-8554 [@c6481cbf]
+    //
+    // Presets below the filter's achievable minimum are disabled, not hidden,
+    // so the floor is visible rather than mysterious.
+    //
+    // 2026-08-02 bench (JJ): the list was offered unconditionally, and 50 Hz
+    // is below the minimum at our default nc of 4096
+    // (min_width = 1600 / (nc / 256) * (rate / 48000) = 100 Hz,
+    // third_party/wdsp/src/nbp.c:88). WDSP's autoincr defaults on
+    // (RXA.c:105; Thetis ships chkMNFAutoIncrease.Checked = true,
+    // setup.designer.cs:44197) and silently widens a sub-minimum notch back
+    // to the minimum (nbp.c:122-125). So picking 50 Hz stored 50, drew a
+    // 50 Hz marker and notched 100 Hz: the menu, the marker, the settings
+    // table and the DSP all disagreed with no indication.
+    //
+    // Thetis has no preset list at all (it uses the udMNFWidth spinner) and
+    // its own widths are 200 and 100, both at or above the floor, so this
+    // list is a NereusSDR addition and this clamp is what makes it honest.
+    // To go genuinely narrower, raise nc: 8192 gives 50 Hz, 16384 gives 25,
+    // at proportional filter cost on every channel.
+    const int minWidthHz = static_cast<int>(std::ceil(m_notchMinWidthHz));
     QMenu* widthMenu = menu.addMenu(QStringLiteral("Width"));
     for (int presetHz : {50, 100, 200, 500}) {
+        const bool realisable = (presetHz >= minWidthHz);
         QAction* a = widthMenu->addAction(
-            QString("%1 Hz").arg(presetHz), this,
+            realisable ? QString("%1 Hz").arg(presetHz)
+                       : QString("%1 Hz  (min %2 Hz)").arg(presetHz).arg(minWidthHz),
+            this,
             [this, id, presetHz]() {
                 emit notchWidthRequested(id, presetHz);
             });
         a->setCheckable(true);
         a->setChecked(widthHz == presetHz);
+        a->setEnabled(realisable);
+        if (!realisable) {
+            a->setToolTip(
+                QStringLiteral("Below the narrowest notch this filter can "
+                               "realise (%1 Hz). Raise the DSP filter size to "
+                               "go narrower.").arg(minWidthHz));
+        }
     }
 
     menu.addSeparator();

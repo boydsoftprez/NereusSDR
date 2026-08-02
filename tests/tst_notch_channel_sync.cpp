@@ -416,6 +416,71 @@ private slots:
         QVERIFY(engine->rxChannel(a)->notchAutoIncrease());
         QVERIFY(engine->rxChannel(b)->notchAutoIncrease());
     }
+
+    // 2026-08-02 bench regression (JJ, ANAN-G2E): "pan 1 works, pan 2 needs a
+    // tune joggle".
+    //
+    // openRxChannelPool opens every pool channel, but at connect only slice 0
+    // exists. syncNotchesToChannel installed the notch list into ALL of them
+    // while only channel 0 had a resolvable RF origin, so channels 1..N held
+    // notches anchored to tunefreq 0. Opening a second pan later bound its
+    // slice onto one of those pre-poisoned channels: the marker drew over the
+    // carrier, WDSP genuinely held the notch, master_run and fnfrun both read
+    // 1, and the audio was untouched until a retune reached
+    // bindSliceToStream -> pushNotchOrigin.
+    //
+    // Notch data and notch origin are all-or-nothing. An unbound pool channel
+    // carries no notches at all.
+    void unbound_pool_channels_hold_no_notches()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        NotchModel* nm = model.notchModel();
+        QVERIFY(nm != nullptr);
+        nm->setGlobalEnabled(true);
+        QVERIFY(nm->addNotch(7245000.0) >= 0);
+
+        // Deliberately more channels than slices, which is the real connect
+        // shape: the pool opens maxSlices channels and only slice 0 exists.
+        model.configureStreamPool(/*userDdcCount*/ 2, /*maxSlices*/ 4, kRateHz);
+        model.openRxChannelPool(4, bufferSizeForRate(kRateHz), kRateHz);
+
+        const int aId = model.addSlice();
+        SliceModel* a = model.sliceById(aId);
+        QVERIFY(a != nullptr);
+        a->setFrequency(kSliceAFreqHz);
+
+        RxChannel* bound = engine->rxChannel(aId);
+        QVERIFY(bound != nullptr);
+        QCOMPARE(bound->notchCount(), 1);          // the owner gets it
+
+        for (int ch = 0; ch < 4; ++ch) {
+            if (ch == aId) { continue; }
+            if (RxChannel* idle = engine->rxChannel(ch)) {
+                QVERIFY2(idle->notchCount() == 0,
+                         qPrintable(QStringLiteral(
+                             "unbound pool channel %1 was handed %2 notch(es) "
+                             "with no RF origin to map them from")
+                             .arg(ch).arg(idle->notchCount())));
+            }
+        }
+
+        // And a slice claiming one of those channels later gets BOTH the
+        // notches and a resolved origin, with no retune needed.
+        const int bId = model.addSlice();
+        SliceModel* b = model.sliceById(bId);
+        QVERIFY(b != nullptr);
+        b->setFrequency(kSliceAFreqHz + 15000.0);
+
+        RxChannel* claimed = engine->rxChannel(bId);
+        QVERIFY(claimed != nullptr);
+        QCOMPARE(claimed->notchCount(), 1);
+        QVERIFY2(claimed->notchTuneFrequencyHz() > 0.0,
+                 "a slice claiming a pool channel must get a resolved notch "
+                 "origin without needing a retune first");
+    }
 };
 
 QTEST_MAIN(TestNotchChannelSync)
