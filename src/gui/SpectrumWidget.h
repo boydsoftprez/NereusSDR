@@ -1242,6 +1242,12 @@ public:
     NotchGrab notchGrabAtForTest(int id, int x, bool shiftHeld) const;
     int       selectedNotchIdForTest() const { return m_selectedNotchId; }
     int       hoveredNotchIdForTest()  const { return m_hoveredNotchId; }
+    // Populate a caller-owned QMenu with the notch actions.  Exists as a
+    // seam because QMenu::exec() blocks, so the menu contents cannot be
+    // asserted through a synthetic right-click.
+    void buildNotchContextMenuForTest(int id, QMenu& menu) {
+        buildNotchContextMenu(id, menu);
+    }
 
     // Overlay-cache seam.  Returns false on a CPU-only build, where there
     // is no cached texture to invalidate.
@@ -1506,10 +1512,12 @@ private:
     // notchAtPixel:    pixel-space port of Thetis
     //                  MNotchDB.NotchThatSurroundsFrequencyInBW.
     // notchGrabAt:     edge-vs-centre discrimination for a press.
+    // buildNotchContextMenu: right-click menu over a notch marker.
     const NotchMarker* notchMarkerById(int id) const;
     int       notchAtPixel(int x, const QRect& specRect) const;
     NotchGrab notchGrabAt(int id, int x, bool shiftHeld,
                           const QRect& specRect) const;
+    void      buildNotchContextMenu(int id, QMenu& menu);
 
     // ---- TX filter overlay (Plan 4 D9, Cluster E) ----
     // drawTxFilterOverlay: panadapter band fill + border lines + label.

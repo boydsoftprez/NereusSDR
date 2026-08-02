@@ -1247,6 +1247,184 @@ private slots:
         QCOMPARE(widthSpy.count(), 0);
         QCOMPARE(tuneSpy.count(), 1);
     }
+
+    // -- section 7.1 the add gesture is Thetis's: Ctrl + right-click ----
+
+    void ctrl_right_click_requests_a_notch_at_the_clicked_frequency()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        QSignalSpy spy(&w, &SpectrumWidget::notchCreateRequested);
+
+        sendMouse(&w, QEvent::MouseButtonPress, QPoint(600, kUiSpecY),
+                  Qt::RightButton, Qt::RightButton, Qt::ControlModifier);
+
+        QCOMPARE(spy.count(), 1);
+        QVERIFY(std::abs(spy.at(0).at(0).toDouble() - uiHzForX(600)) < 1e-3);
+        QCOMPARE(spy.at(0).at(1).toBool(), false);
+    }
+
+    // macOS swaps Control and Command, so the physical Ctrl key arrives as
+    // Qt::MetaModifier.  The zoom wheel already accepts either; the add
+    // gesture has to as well or D2's gesture is unreachable on a trackpad,
+    // which is the whole reason section 7.1 picked it.
+    void meta_right_click_also_requests_a_notch()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        QSignalSpy spy(&w, &SpectrumWidget::notchCreateRequested);
+
+        sendMouse(&w, QEvent::MouseButtonPress, QPoint(600, kUiSpecY),
+                  Qt::RightButton, Qt::RightButton, Qt::MetaModifier);
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(1).toBool(), false);
+    }
+
+    void ctrl_shift_right_click_requests_a_narrow_notch()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        QSignalSpy spy(&w, &SpectrumWidget::notchCreateRequested);
+
+        sendMouse(&w, QEvent::MouseButtonPress, QPoint(600, kUiSpecY),
+                  Qt::RightButton, Qt::RightButton,
+                  Qt::ControlModifier | Qt::ShiftModifier);
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(1).toBool(), true);
+    }
+
+    void ctrl_right_click_below_the_spectrum_plot_does_not_create()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        QSignalSpy spy(&w, &SpectrumWidget::notchCreateRequested);
+
+        // Deep in the waterfall: outside the spectrum plot on both render
+        // path layouts, so there is no frequency-under-cursor to add at.
+        sendMouse(&w, QEvent::MouseButtonPress, QPoint(600, kUiWidgetH - 10),
+                  Qt::RightButton, Qt::RightButton, Qt::ControlModifier);
+
+        QCOMPARE(spy.count(), 0);
+    }
+
+    // -- section 7 right-click on a notch -------------------------------
+    //
+    // Driven through the builder seam rather than a synthetic right-click,
+    // because QMenu::exec() would block the test's event loop.
+
+    void context_menu_header_shows_frequency_and_is_disabled()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 200.0)});
+
+        QMenu menu;
+        w.buildNotchContextMenuForTest(1, menu);
+
+        QVERIFY(!menu.actions().isEmpty());
+        QVERIFY(!menu.actions().first()->isEnabled());
+        QVERIFY(menu.actions().first()->text().contains(
+            QStringLiteral("14.200000")));
+    }
+
+    void context_menu_width_preset_emits_width_request()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 200.0)});
+        QSignalSpy spy(&w, &SpectrumWidget::notchWidthRequested);
+
+        QMenu menu;
+        w.buildNotchContextMenuForTest(1, menu);
+
+        QAction* widthAct = actionByText(menu.actions(),
+                                         QStringLiteral("Width"));
+        QVERIFY(widthAct != nullptr);
+        QVERIFY(widthAct->menu() != nullptr);
+
+        QAction* w500 = actionByText(widthAct->menu()->actions(),
+                                     QStringLiteral("500 Hz"));
+        QVERIFY(w500 != nullptr);
+        w500->trigger();
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 1);
+        QVERIFY(std::abs(spy.at(0).at(1).toDouble() - 500.0) < 1e-9);
+
+        // The preset matching the current width is checked.
+        QAction* w200 = actionByText(widthAct->menu()->actions(),
+                                     QStringLiteral("200 Hz"));
+        QVERIFY(w200 != nullptr);
+        QVERIFY(w200->isChecked());
+    }
+
+    void context_menu_bypass_emits_active_false()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 200.0, /*active*/ true)});
+        QSignalSpy spy(&w, &SpectrumWidget::notchActiveRequested);
+
+        QMenu menu;
+        w.buildNotchContextMenuForTest(1, menu);
+        QAction* bypass = actionByText(menu.actions(),
+                                       QStringLiteral("Bypass Notch"));
+        QVERIFY(bypass != nullptr);
+        bypass->trigger();
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 1);
+        QCOMPARE(spy.at(0).at(1).toBool(), false);
+    }
+
+    void context_menu_activate_shown_for_a_bypassed_notch()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 200.0, /*active*/ false)});
+        QSignalSpy spy(&w, &SpectrumWidget::notchActiveRequested);
+
+        QMenu menu;
+        w.buildNotchContextMenuForTest(1, menu);
+        QAction* activate = actionByText(menu.actions(),
+                                         QStringLiteral("Activate Notch"));
+        QVERIFY(activate != nullptr);
+        activate->trigger();
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(1).toBool(), true);
+    }
+
+    void context_menu_remove_emits_remove_request()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 200.0)});
+        QSignalSpy spy(&w, &SpectrumWidget::notchRemoveRequested);
+
+        QMenu menu;
+        w.buildNotchContextMenuForTest(1, menu);
+        QAction* remove = actionByText(menu.actions(),
+                                       QStringLiteral("Remove Notch"));
+        QVERIFY(remove != nullptr);
+        remove->trigger();
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 1);
+    }
+
+    void context_menu_on_unknown_id_adds_nothing()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 200.0)});
+
+        QMenu menu;
+        w.buildNotchContextMenuForTest(99, menu);
+        QVERIFY(menu.actions().isEmpty());
+    }
 };
 
 QTEST_MAIN(TestNotchHitTest)

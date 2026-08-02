@@ -6342,6 +6342,63 @@ SpectrumWidget::NotchGrab SpectrumWidget::notchGrabAtForTest(
     return notchGrabAt(id, x, shiftHeld, notchSpecRect());
 }
 
+// Notch right-click menu.  Contents from AetherSDR
+// src/gui/SpectrumWidget.cpp:8517-8572 [@c6481cbf], minus the Depth
+// submenu and the Permanent toggle: WDSP's NBP notch database carries
+// neither, so per design section 1.2 the per-notch Active flag takes the
+// Permanent slot.  Thetis has no notch menu at all: it suppresses every
+// right-click action while a notch is highlighted (console.cs:49615-49616
+// [v2.10.3.15]), so the whole surface is AetherSDR's.
+void SpectrumWidget::buildNotchContextMenu(int id, QMenu& menu)
+{
+    const NotchMarker* n = notchMarkerById(id);
+    if (!n) {
+        return;
+    }
+    const double freqMhz = n->freqMhz;
+    const int    widthHz = qRound(n->widthHz);
+    const bool   active  = n->active;
+
+    // Info header.  AetherSDR renders it as a disabled QWidgetAction with
+    // a two-line styled label (src/gui/SpectrumWidget.cpp:8521-8545
+    // [@c6481cbf]); a disabled QAction carries the same text with no
+    // styling to maintain.
+    QAction* info = menu.addAction(QString("%1 MHz    %2 Hz")
+                                       .arg(freqMhz, 0, 'f', 6)
+                                       .arg(widthHz));
+    info->setEnabled(false);
+    menu.addSeparator();
+
+    // From AetherSDR src/gui/SpectrumWidget.cpp:8548-8554 [@c6481cbf]
+    QMenu* widthMenu = menu.addMenu(QStringLiteral("Width"));
+    for (int presetHz : {50, 100, 200, 500}) {
+        QAction* a = widthMenu->addAction(
+            QString("%1 Hz").arg(presetHz), this,
+            [this, id, presetHz]() {
+                emit notchWidthRequested(id, presetHz);
+            });
+        a->setCheckable(true);
+        a->setChecked(widthHz == presetHz);
+    }
+
+    menu.addSeparator();
+    // Replaces AetherSDR's Make Permanent / Make Temporary pair
+    // (src/gui/SpectrumWidget.cpp:8565-8571 [@c6481cbf]) with the WDSP
+    // notch's own active flag (third_party/wdsp/src/nbp.c:362,
+    // RXANBPAddNotch takes fcenter / fwidth / active only).
+    menu.addAction(active ? QStringLiteral("Bypass Notch")
+                          : QStringLiteral("Activate Notch"),
+                   this, [this, id, active]() {
+                       emit notchActiveRequested(id, !active);
+                   });
+
+    menu.addSeparator();
+    // From AetherSDR src/gui/SpectrumWidget.cpp:8547 [@c6481cbf]
+    // ("Remove TNF").
+    menu.addAction(QStringLiteral("Remove Notch"), this,
+                   [this, id]() { emit notchRemoveRequested(id); });
+}
+
 void SpectrumWidget::mousePressEvent(QMouseEvent* event)
 {
     // Phase 3Q-8: while disconnected, swallow all left-clicks and signal
@@ -6372,6 +6429,48 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
     }
 
     if (event->button() == Qt::RightButton) {
+        // Ctrl + right-click adds a notch at the clicked frequency; Shift
+        // makes it narrow.  Checked before the spot menu and the overlay
+        // menu, so plain right-click behaviour is unchanged when Ctrl is
+        // not held (design section 7.3).
+        //
+        // From Thetis console.cs:49614-49646 [v2.10.3.15]:
+        //   case MouseButtons.Right: -> if (Common.CtrlKeyDown) ->
+        //   AddNotch(dFreq, rx).  The "add notch from cross hair mode with
+        //   middle mouse" comment at console.cs:49633 is stale: the only
+        //   MouseButtons.Middle branch (console.cs:49725) toggles active or
+        //   removes on Shift, and never adds (design section 7.1).
+        //
+        // Both Control and Meta count: macOS swaps them, so the physical
+        // Ctrl key arrives as Qt::MetaModifier.  The zoom wheel below
+        // already accepts either.
+        const bool notchCtrlHeld =
+            (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)) != 0;
+        if (notchCtrlHeld && my < specH && mx <= specRect.right()) {
+            const bool narrow = (event->modifiers() & Qt::ShiftModifier) != 0;
+            emit notchCreateRequested(xToHz(mx, specRect), narrow);
+            event->accept();
+            return;
+        }
+
+        // Right-click on a notch marker opens the notch menu.  Thetis
+        // suppresses every other right-click action while a notch is
+        // highlighted:
+        // if we have a notch highlighted, then all other right click is ignored
+        //   [original comment from console.cs:49615, guarding the return at
+        //   console.cs:49616 [v2.10.3.15]].  NereusSDR fills that suppressed
+        //   slot with AetherSDR's notch menu rather than doing nothing.
+        if (my < specH && mx <= specRect.right()) {
+            const int hitNotch = notchAtPixel(mx, specRect);
+            if (hitNotch >= 0) {
+                QMenu menu(this);
+                buildNotchContextMenu(hitNotch, menu);
+                menu.exec(event->globalPosition().toPoint());
+                event->accept();
+                return;
+            }
+        }
+
         // 2026-05-12 bench fix (Gaps #3 + #5 — right-click context menu
         // on spot labels + memory-spot variant).  Ported from
         // AetherSDR SpectrumWidget.cpp:1779-1822 [@0cd4559].  Without
