@@ -1880,9 +1880,24 @@ that stays. 130 px leaves the banner."
 ## Task A8: Wire the controller in, delete both old ladders
 
 **Files:**
+- Create: `src/gui/chrome/ChromeBarItems.h`, `src/gui/chrome/ChromeBarItems.cpp`
 - Modify: `src/gui/MainWindow.cpp` (`buildStatusBar()`, `resizeEvent`), `src/gui/MainWindow.h`
-- Test: `tests/tst_chrome_bar_integration.cpp` (create)
-- Modify: `tests/CMakeLists.txt`
+- Test: `tests/tst_chrome_bar_items.cpp` (create)
+- Modify: `tests/CMakeLists.txt`, `CMakeLists.txt`
+
+**Why the item list is extracted.** `MainWindow` cannot be constructed in a
+test in this harness. Doing so starts real `RadioDiscovery` UDP broadcasts on
+the LAN, spends roughly 9 s building the auto-opened `ConnectionPanel`, and
+SIGABRTs the binary on teardown with `SpectrumThread` still running. This is
+documented independently in `tests/tst_mainwindow_status_bar_safety.cpp:29-38`,
+`tests/tst_pan_active_slice_sync.cpp` and `tests/tst_pan_badge_click_wiring.cpp`,
+and was reconfirmed empirically during Task A6 by building and running it.
+
+So the fold ladder's composition moves into a free function that takes the
+widgets as a plain struct. `buildStatusBar()` fills the struct and calls it;
+the test fills the struct with sized stand-in widgets and calls the same
+function. The regression sweep therefore exercises the real rung assignments
+rather than a hand-copied table that could silently drift.
 
 **Interfaces:**
 - Consumes: everything produced by Tasks A1 through A7.
@@ -1895,122 +1910,317 @@ call sites at `:6473`, `:6642`, `:6686`, `:7127`.
 
 - [ ] **Step 1: Write the failing test**
 
-**Pre-flight defect found during A6 (2026-08-02):** the four `MainWindow w;`
-constructions below will not work as written. `MainWindow`'s constructor
-unconditionally calls `m_radioModel->discovery()->startDiscovery()` and
-schedules `tryAutoReconnect()` via `QTimer::singleShot(0, ...)`, so building
-one in a test starts real UDP radio discovery on the LAN and can spend
-several seconds constructing an auto-opened `ConnectionPanel`. Worse,
-`SpectrumWidget`'s QRhi backend spins up a `SpectrumThread` at construction
-time (before `.show()`), and nothing in this harness runs the app's normal
-shutdown path, so the thread is still running when `w` goes out of scope --
-`QFATAL: QThread: Destroyed while thread 'SpectrumThread' is still running`,
-which `SIGABRT`s the whole test binary, not just one slot. Confirmed by
-actually building and running this exact pattern (not just inspecting code):
-`narrowingFoldsInRungOrder`'s resize loop would hit this on top of the
-discovery/ConnectionPanel cost.
-`tst_pan_active_slice_sync.cpp` ("MainWindow is not constructible in this
-harness") and `tst_pan_badge_click_wiring.cpp` ("MainWindow cannot be stood
-up in a test") already document the same conclusion independently; A6
-mirrored `buildStatusBar()`'s new `addSlot()`/`dimSafetyBadge()` logic
-against a standalone host `QWidget` instead (see
-`tests/tst_mainwindow_status_bar_safety.cpp`) and `ChromeBarController`'s
-own fold math is unit-testable directly per Task A1/A2 without a real
-`MainWindow` at all -- prefer driving `ChromeBarController` against a
-standalone host widget the same way, rather than a live `MainWindow`, if
-that gives equivalent coverage for what this integration test needs to
-prove. If genuine `MainWindow` integration coverage is still wanted, it
-will need test-only seams in `MainWindow`'s constructor (e.g. an
-opt-out of `startDiscovery()`/`tryAutoReconnect()`) and a fix for the
-`SpectrumThread` teardown-ordering bug first; both are out of scope for
-A8 as currently written.
+`MainWindow` cannot be constructed in this harness. Doing so starts real
+`RadioDiscovery` UDP broadcasts on the LAN, spends roughly 9 s building the
+auto-opened `ConnectionPanel`, and SIGABRTs the binary on teardown with
+`SpectrumThread` still running. This is documented independently in
+`tests/tst_mainwindow_status_bar_safety.cpp:29-38`,
+`tests/tst_pan_active_slice_sync.cpp` and `tests/tst_pan_badge_click_wiring.cpp`,
+and was reconfirmed empirically during Task A6.
 
-Create `tests/tst_chrome_bar_integration.cpp`:
+So the ladder's composition is extracted into a free function taking a plain
+struct of widgets. `buildStatusBar()` fills the struct and calls it; the test
+fills it with sized stand-ins and calls the same function. The sweep then
+exercises the real rung assignments rather than a hand-copied table that could
+drift. Making `MainWindow` testable is the better long-term fix and is tracked
+separately; it needs test-only seams in the constructor plus a fix for the
+`SpectrumThread` teardown ordering, both out of scope here.
+
+Create `tests/tst_chrome_bar_items.cpp`:
 
 ```cpp
 // no-port-check: NereusSDR-original. No upstream port.
 #include <QtTest/QtTest>
-#include "gui/MainWindow.h"
+#include <QLabel>
+#include <QWidget>
+
 #include "gui/chrome/ChromeBarController.h"
-#include "gui/widgets/StatusBadge.h"
+#include "gui/chrome/ChromeBarItems.h"
 
 using namespace NereusSDR;
 
-class TstChromeBarIntegration : public QObject {
+class TstChromeBarItems : public QObject {
     Q_OBJECT
-private slots:
-    void wideWindowFoldsNothing() {
-        MainWindow w;
-        w.resize(1512, 900);
-        w.show();
-        QVERIFY(QTest::qWaitForWindowExposed(&w));
-        auto* c = w.findChild<ChromeBarController*>();
-        QVERIFY(c);
-        QCOMPARE(c->foldedThroughRung(), 0);
-        QVERIFY(c->foldedLabels().isEmpty());
+
+private:
+    QWidget* host{nullptr};
+
+    QLabel* w(int px) {
+        auto* l = new QLabel(host);
+        l->setFixedWidth(px);
+        return l;
     }
 
-    void narrowingFoldsInRungOrder() {
-        MainWindow w;
-        w.resize(1512, 900);
-        w.show();
-        QVERIFY(QTest::qWaitForWindowExposed(&w));
-        auto* c = w.findChild<ChromeBarController*>();
-        QVERIFY(c);
+    // Natural widths from the design doc's section 4.6 ledger.
+    ChromeBarWidgets makeWidgets() {
+        ChromeBarWidgets g;
+        g.panButton        = w(48);
+        g.panelToggle      = w(18);
+        g.placeholderGroup = w(132);
+        g.placeholderSep   = w(14);
+        g.chain0           = w(52);
+        g.rxDashRow        = w(96);
+        g.psaIndicator     = w(66);
+        g.stationBlock     = w(168);
+        g.catIndicator     = w(60);
+        g.catSep           = w(14);
+        g.tciIndicator     = w(60);
+        g.tciSep           = w(14);
+        g.tgxlChip         = w(62);
+        g.systemTile       = w(60);
+        g.systemTileSep    = w(14);
+        g.safetyGroup      = w(200);
+        for (int r = 5; r <= 9; ++r) { g.pillByRung[r] = w(22); }
+        return g;
+    }
 
+private slots:
+    void init()    { host = new QWidget; }
+    void cleanup() { delete host; host = nullptr; }
+
+    void everythingShowsWhenWide() {
+        ChromeBarController c;
+        ChromeBarWidgets g = makeWidgets();
+        registerChromeBarItems(c, g);
+        c.relayout(2400);
+        QCOMPARE(c.foldedThroughRung(), 0);
+        QVERIFY(c.foldedLabels().isEmpty());
+    }
+
+    void foldRungNeverGoesBackwardsAsWidthShrinks() {
+        ChromeBarController c;
+        ChromeBarWidgets g = makeWidgets();
+        registerChromeBarItems(c, g);
         int prev = 0;
-        for (int width = 1512; width >= 800; width -= 4) {
-            w.resize(width, 900);
-            QCoreApplication::processEvents();
-            const int rung = c->foldedThroughRung();
+        for (int width = 2400; width >= 300; --width) {
+            c.relayout(width);
+            const int rung = c.foldedThroughRung();
             QVERIFY2(rung >= prev,
                      qPrintable(QStringLiteral("rung %1 < %2 at width %3")
                                     .arg(rung).arg(prev).arg(width)));
             prev = rung;
         }
-        QVERIFY(prev > 0);
+        QVERIFY2(prev > 0, "nothing ever folded; fixture widths are wrong");
     }
 
-    void safetyBadgesSurviveEveryWidth() {
-        MainWindow w;
-        w.show();
-        QVERIFY(QTest::qWaitForWindowExposed(&w));
-        auto* tx = w.findChild<StatusBadge*>(QStringLiteral("txStatusBadge"));
-        QVERIFY(tx);
-        for (int width = 1512; width >= 800; width -= 8) {
-            w.resize(width, 900);
-            QCoreApplication::processEvents();
-            QVERIFY2(!tx->isHidden(),
-                     qPrintable(QStringLiteral("TX folded at %1").arg(width)));
+    void oneWidthAlwaysYieldsOneLayout() {
+        ChromeBarController c;
+        ChromeBarWidgets g = makeWidgets();
+        registerChromeBarItems(c, g);
+        for (int width = 300; width <= 2400; width += 7) {
+            c.relayout(width);
+            const int cold = c.foldedThroughRung();
+            c.relayout(width + 1);
+            c.relayout(width - 1);
+            c.relayout(width);
+            QCOMPARE(c.foldedThroughRung(), cold);
         }
     }
 
-    void panButtonAndPanelToggleNeverFold() {
-        MainWindow w;
-        w.show();
-        QVERIFY(QTest::qWaitForWindowExposed(&w));
-        auto* pan = w.findChild<QWidget*>(QStringLiteral("addPanButton"));
-        QVERIFY(pan);
-        for (int width = 1512; width >= 800; width -= 8) {
-            w.resize(width, 900);
-            QCoreApplication::processEvents();
-            QVERIFY(!pan->isHidden());
+    void neverFoldingItemsSurviveEveryWidth() {
+        ChromeBarController c;
+        ChromeBarWidgets g = makeWidgets();
+        registerChromeBarItems(c, g);
+        const QList<QWidget*> mustSurvive = {
+            g.panButton, g.panelToggle, g.stationBlock, g.safetyGroup
+        };
+        for (int width = 2400; width >= 300; width -= 3) {
+            c.relayout(width);
+            for (QWidget* keep : mustSurvive) {
+                QVERIFY2(!keep->isHidden(),
+                         qPrintable(QStringLiteral("never-fold item folded at %1")
+                                        .arg(width)));
+            }
         }
+    }
+
+    void ladderFoldsInTheDesignedOrder() {
+        ChromeBarController c;
+        ChromeBarWidgets g = makeWidgets();
+        registerChromeBarItems(c, g);
+        // Design section 6: system tile, then TGXL, then the CAT/TCI pair,
+        // then the chain tags, then the RX pills, then the placeholders.
+        const QList<QWidget*> order = {
+            g.systemTile, g.tgxlChip, g.catIndicator, g.chain0,
+            g.pillByRung[5], g.placeholderGroup
+        };
+        QList<int> foldWidth;
+        for (QWidget* item : order) {
+            int found = -1;
+            for (int width = 2400; width >= 200; --width) {
+                c.relayout(width);
+                if (item->isHidden()) { found = width; break; }
+            }
+            QVERIFY2(found > 0, "an item on the ladder never folded");
+            foldWidth << found;
+        }
+        for (int i = 1; i < foldWidth.size(); ++i) {
+            QVERIFY2(foldWidth[i] <= foldWidth[i - 1],
+                     qPrintable(QStringLiteral("ladder out of order at index %1")
+                                    .arg(i)));
+        }
+    }
+
+    void catAndTciFoldTogether() {
+        ChromeBarController c;
+        ChromeBarWidgets g = makeWidgets();
+        registerChromeBarItems(c, g);
+        for (int width = 2400; width >= 300; --width) {
+            c.relayout(width);
+            QCOMPARE(g.catIndicator->isHidden(), g.tciIndicator->isHidden());
+        }
+    }
+
+    void nullWidgetsAreSkippedNotCrashed() {
+        ChromeBarController c;
+        ChromeBarWidgets g = makeWidgets();
+        g.chain1 = nullptr;   // single-ADC SKU
+        g.tgxlChip = nullptr; // no tuner present
+        registerChromeBarItems(c, g);
+        c.relayout(1512);
+        QVERIFY(!g.panButton->isHidden());
     }
 };
-QTEST_MAIN(TstChromeBarIntegration)
-#include "tst_chrome_bar_integration.moc"
+QTEST_MAIN(TstChromeBarItems)
+#include "tst_chrome_bar_items.moc"
 ```
 
 - [ ] **Step 2: Register and run to verify it fails**
 
-Add `nereus_add_test(tst_chrome_bar_integration)` to `tests/CMakeLists.txt`.
+Add `nereus_add_test(tst_chrome_bar_items)` to `tests/CMakeLists.txt`.
 
 ```bash
-cmake --build build --target tst_chrome_bar_integration
+cmake --build build --target tst_chrome_bar_items
 ```
 
-Expected: FAIL, no `ChromeBarController` child.
+Expected: FAIL to compile, `gui/chrome/ChromeBarItems.h` not found.
+
+- [ ] **Step 2b: Write the extracted registration unit**
+
+Create `src/gui/chrome/ChromeBarItems.h`:
+
+```cpp
+// no-port-check: NereusSDR-original. No upstream port. The banner's fold
+// ladder composition, extracted from buildStatusBar so it can be tested
+// without constructing MainWindow.
+
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+
+#include <QHash>
+
+class QWidget;
+
+namespace NereusSDR {
+
+class ChromeBarController;
+
+/// Every widget the banner registers. Any member may be null; registration
+/// skips nulls, which is how single-ADC SKUs omit chain 1.
+struct ChromeBarWidgets {
+    QWidget* panButton{nullptr};
+    QWidget* panelToggle{nullptr};
+    QWidget* stationBlock{nullptr};
+    QWidget* safetyGroup{nullptr};
+    QWidget* psaIndicator{nullptr};
+
+    QWidget* systemTile{nullptr};
+    QWidget* systemTileSep{nullptr};
+    QWidget* tgxlChip{nullptr};
+    QWidget* catIndicator{nullptr};
+    QWidget* catSep{nullptr};
+    QWidget* tciIndicator{nullptr};
+    QWidget* tciSep{nullptr};
+    QWidget* chain0{nullptr};
+    QWidget* chain1{nullptr};
+    QWidget* rxDashRow{nullptr};
+    QWidget* placeholderGroup{nullptr};
+    QWidget* placeholderSep{nullptr};
+
+    /// Rung to pill widget, rungs 5..9 only (SQL, APF, NB, NR, AGC).
+    /// Mode and filter never fold and are deliberately absent.
+    QHash<int, QWidget*> pillByRung;
+};
+
+/// Single source of truth for which banner item folds at which rung.
+/// Rung 0 never folds. See design doc section 6.
+void registerChromeBarItems(ChromeBarController& controller,
+                            const ChromeBarWidgets& widgets);
+
+} // namespace NereusSDR
+```
+
+Create `src/gui/chrome/ChromeBarItems.cpp`:
+
+```cpp
+// no-port-check: NereusSDR-original. No upstream port.
+
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "gui/chrome/ChromeBarItems.h"
+
+#include "gui/chrome/ChromeBarController.h"
+
+#include <QCoreApplication>
+#include <QWidget>
+
+namespace NereusSDR {
+
+namespace {
+/// Skip-on-null so callers need no per-item guard.
+void add(ChromeBarController& c, QWidget* widget, QWidget* sep, int rung,
+         const QString& label)
+{
+    if (!widget) { return; }
+    c.addItem(widget, sep, rung, label);
+}
+} // namespace
+
+void registerChromeBarItems(ChromeBarController& c, const ChromeBarWidgets& w)
+{
+    // Rung 0: nothing else reaches these. +PAN and the panel toggle have no
+    // menu equivalent at all; the safety slots have no menu, dialog or
+    // applet. Reachability audit: design doc section 3.4.
+    add(c, w.panButton,    nullptr, 0, QString());
+    add(c, w.panelToggle,  nullptr, 0, QString());
+    add(c, w.stationBlock, nullptr, 0, QString());
+    add(c, w.safetyGroup,  nullptr, 0, QString());
+    add(c, w.psaIndicator, nullptr, 0, QString());
+
+    add(c, w.systemTile, w.systemTileSep, 1,
+        QCoreApplication::translate("ChromeBar", "PA / CPU"));
+    add(c, w.tgxlChip, nullptr, 2,
+        QCoreApplication::translate("ChromeBar", "TGXL"));
+
+    // CAT and TCI share rung 3 so they fold as a pair, avoiding a
+    // "TCI but no CAT" half-state.
+    add(c, w.catIndicator, w.catSep, 3,
+        QCoreApplication::translate("ChromeBar", "CAT"));
+    add(c, w.tciIndicator, w.tciSep, 3,
+        QCoreApplication::translate("ChromeBar", "TCI"));
+
+    // Both chain tags share rung 4. Chain 1 is null on single-ADC SKUs.
+    add(c, w.chain0, nullptr, 4,
+        QCoreApplication::translate("ChromeBar", "CH"));
+    add(c, w.chain1, nullptr, 4, QString());
+
+    // Rungs 5..9, one pill each, right to left.
+    static const char* const kPillNames[] = {"SQL", "APF", "NB", "NR", "AGC"};
+    for (int rung = 5; rung <= 9; ++rung) {
+        add(c, w.pillByRung.value(rung), nullptr, rung,
+            QCoreApplication::translate("ChromeBar", kPillNames[rung - 5]));
+    }
+
+    // Rung 10, last resort: placeholders fold only after every live
+    // reading has already gone.
+    add(c, w.placeholderGroup, w.placeholderSep, 10,
+        QCoreApplication::translate("ChromeBar", "TNF / CWX / DVK / FDX"));
+}
+
+} // namespace NereusSDR
+```
+
+Add both new sources to the root `CMakeLists.txt` beside the existing
+`src/gui/chrome/` entries.
 
 - [ ] **Step 3: Register every item**
 
@@ -2020,40 +2230,33 @@ At the end of `buildStatusBar()`, before `sb->addWidget(barWidget, 1)`:
     // ── Layout authority (design §5) ─────────────────────────────────────
     // One controller replaces RxDashboard's internal ladder, this file's
     // reapplyRightStripDropPriority, and Qt's squeeze in the left section.
-    // Rung 0 never folds; 1..10 fold in ascending order. Same rung folds
-    // together.
+    // The rung assignments live in registerChromeBarItems so they can be
+    // tested without constructing MainWindow; do not inline them here.
     m_chromeBar = new ChromeBarController(this);
 
-    m_chromeBar->addItem(panBtn,             nullptr, 0, QString());
-    m_chromeBar->addItem(panelToggleLabel,   nullptr, 0, QString());
-    m_chromeBar->addItem(m_stationBlock,     nullptr, 0, QString());
-    m_chromeBar->addItem(m_safetyGroup,      nullptr, 0, QString());
-    m_chromeBar->addItem(m_psaIndicator,     nullptr, 0, QString());
-
-    m_chromeBar->addItem(m_systemTile,   m_systemTileSep, 1, tr("PA / CPU"));
-    m_chromeBar->addItem(m_tgxlChip,     nullptr,         2, tr("TGXL"));
-    m_chromeBar->addItem(m_catIndicator, m_catSep,        3, tr("CAT"));
-    m_chromeBar->addItem(m_tciIndicator, m_tciSep,        3, tr("TCI"));
-    m_chromeBar->addItem(m_chain0IndicatorWidget, nullptr, 4, tr("CH"));
-    // CH 1 exists only on 2-ADC SKUs. It is registered at the same rung so
-    // both chain tags fold together when the ladder reaches rung 4, but the
-    // existing capability gate in the currentRadioChanged handler still owns
-    // whether it is ever shown at all.
-    if (m_chain1IndicatorWidget) {
-        m_chromeBar->addItem(m_chain1IndicatorWidget, nullptr, 4, QString());
-    }
-
-    // Rungs 5..9 are the RX pills, right to left. Mode and filter never fold.
+    ChromeBarWidgets bar;
+    bar.panButton        = panBtn;
+    bar.panelToggle      = panelToggleLabel;
+    bar.stationBlock     = m_stationBlock;
+    bar.safetyGroup      = m_safetyGroup;
+    bar.psaIndicator     = m_psaIndicator;
+    bar.systemTile       = m_systemTile;
+    bar.systemTileSep    = m_systemTileSep;
+    bar.tgxlChip         = m_tgxlChip;
+    bar.catIndicator     = m_catIndicator;
+    bar.catSep           = m_catSep;
+    bar.tciIndicator     = m_tciIndicator;
+    bar.tciSep           = m_tciSep;
+    bar.chain0           = m_chain0IndicatorWidget;
+    bar.chain1           = m_chain1IndicatorWidget;  // null on 1-ADC SKUs
+    bar.rxDashRow        = m_rxDashboard;
+    bar.placeholderGroup = m_placeholderGroup;
+    bar.placeholderSep   = m_placeholderSep;
     for (int rung = 5; rung <= 9; ++rung) {
-        if (StatusBadge* b = m_rxDashboard->badgeForRung(rung)) {
-            static const char* const kNames[] = {"SQL", "APF", "NB", "NR", "AGC"};
-            m_chromeBar->addItem(b, nullptr, rung,
-                                 QString::fromLatin1(kNames[rung - 5]));
-        }
+        bar.pillByRung[rung] = m_rxDashboard->badgeForRung(rung);
     }
 
-    // Rung 10, last resort per design §6: the placeholder row.
-    m_chromeBar->addItem(m_placeholderGroup, makeSep(), 10, tr("TNF / CWX / DVK / FDX"));
+    registerChromeBarItems(*m_chromeBar, bar);
 
     connect(m_chromeBar, &ChromeBarController::foldStateChanged,
             m_overflowChip, &OverflowChip::setDroppedItems);
@@ -2111,6 +2314,25 @@ Content-change sites call `setNaturalWidth` then `relayout` instead of
     m_chromeBar->setNaturalWidth(m_systemTile, m_systemTile->sizeHint().width());
     m_chromeBar->relayout(m_chromeBarWidget->width());
 ```
+
+- [ ] **Step 4b: Retire two comments that now assert the opposite of the code**
+
+Found during Task A5's review, deferred to here because this task rewrites
+the same block.
+
+`MainWindow.cpp` around lines 8846-8849 says the dashboard "is always bound
+to slice(0) ... No per-connect rebind needed". Task A5 made that false.
+Delete or correct it.
+
+`MainWindow.cpp` around lines 6249-6250 says "Bound to slice(0)", and the
+call a few lines below it still reads `m_rxDashboard->bindSlice(slices.at(0))`.
+That call is dead in practice: `buildStatusBar()` runs during construction,
+and `RadioModel::addSlice` is only ever invoked from the connect flow, so
+`slices()` is provably empty there. Delete both the comment and the call;
+Task A5's `rebindDashboard` lambda is the only binding path now.
+
+Do NOT touch the comment near line 9152. An earlier note of mine wrongly
+flagged it; its claim is still accurate.
 
 - [ ] **Step 5: Delete the old ladder**
 
@@ -2182,10 +2404,10 @@ and the right-click menu policy moves from `m_cpuMetric` to `m_systemTile`.
 Also delete `RxDashboard::resizeEvent` if Task A5 left it, and confirm nothing
 still references `m_timeWidget` after Task A7.
 
-- [ ] **Step 6: Run the integration test**
+- [ ] **Step 6: Run the extracted-registration test**
 
 ```bash
-cmake --build build --target tst_chrome_bar_integration && ctest --test-dir build -R tst_chrome_bar_integration --output-on-failure
+cmake --build build --target tst_chrome_bar_items && ctest --test-dir build -R tst_chrome_bar_items --output-on-failure
 ```
 
 Expected: PASS, 4 of 4.
@@ -2203,7 +2425,8 @@ do not carry it forward.
 
 ```bash
 git add src/gui/MainWindow.cpp src/gui/MainWindow.h \
-        tests/tst_chrome_bar_integration.cpp tests/CMakeLists.txt
+        src/gui/chrome/ChromeBarItems.h src/gui/chrome/ChromeBarItems.cpp \
+        tests/tst_chrome_bar_items.cpp tests/CMakeLists.txt CMakeLists.txt
 git commit -S -m "refactor(chrome): one layout authority, both old ladders deleted
 
 buildStatusBar now registers every banner item with ChromeBarController
