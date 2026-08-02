@@ -79,6 +79,12 @@
 #include <QMap>
 #include <QVector>
 
+// R1 Task 7: m_topology below is a plain value member (FftTopology has no
+// QObject parent to own it through, unlike the pointer members this header
+// otherwise forward-declares), so the complete type is needed here rather
+// than just in MainWindow.cpp.
+#include "core/spectrum/FftTopology.h"
+
 class QProgressDialog;
 class QSplitter;
 class QMenu;
@@ -660,6 +666,16 @@ private:
     // shows it saturating, raising it is a follow-up needing maintainer
     // sign-off (thread architecture), per design section 4.5a.
     FftEnginePool* m_fftEnginePool{nullptr};
+
+    /// R1 Task 7: consumer-to-stream subscription set of record.
+    /// rebuildFftRouting() resolves its pan/slice walk into this, and
+    /// disconnectPanadapter() also updates it when a pan is torn down (see
+    /// that method's comment for why); applyTo() is the only thing that
+    /// then writes m_radioModel->fftRouter() itself, rebuilding it wholesale
+    /// from whatever this member currently holds. Plain value member: it is
+    /// a QMap wrapper with no signals and no heap ownership question, not a
+    /// QObject that needs a pointer + parent.
+    FftTopology m_topology;
 
     /// One NoiseFloorTracker per stream, fed by that stream's FFT engine.
     /// Auto AGC-T needs the noise floor of the band a slice is actually on;

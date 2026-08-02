@@ -638,6 +638,12 @@ set(CORE_SOURCES
     # knobs (as FftPoolConfig), and the shared worker thread(s), so the
     # daemon can produce spectrum with no widget toolkit in the process.
     src/core/spectrum/FftEnginePool.cpp
+    # R1 Task 7: consumer-to-stream subscription set extracted from the
+    # router-mutation half of MainWindow::rebuildFftRouting. Rebuilds an
+    # FFTRouter from its own subscription set on demand, so the daemon can
+    # drive the same router from remote-endpoint ids with no PanadapterStack
+    # (a QWidget) in the process.
+    src/core/spectrum/FftTopology.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the

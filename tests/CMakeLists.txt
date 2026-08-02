@@ -1730,6 +1730,18 @@ nereus_add_test(tst_wdsp_channel_id_map)
 # 1.35x aggregate throughput, the workload being memory-bandwidth bound).
 nereus_add_test(tst_fft_engine_pool)
 
+# ── R1 Task 7: FftTopology -- consumer-to-stream subscription algebra ──────
+# Extracted from the router-mutation half of MainWindow::rebuildFftRouting:
+# holds a QMap<QString,int> of consumer to stream (one active stream per
+# consumer -- resubscribing moves it, it does not add a second mapping) and
+# rebuilds an FFTRouter from that set on applyTo(). Covers subscription
+# algebra FftTopology owns itself (dedup by construction, unsubscribe,
+# rebuild-not-patch idempotency, resubscribe-moves) that
+# tst_fft_router_fanout.cpp and tst_fft_router_topology.cpp do not touch --
+# both of those pin FFTRouter's own pan/receiver mapping contract directly
+# and never construct an FftTopology.
+nereus_add_test(tst_fft_topology)
+
 # ── Phase 3F Sub-Epic D Task 8: PanFloatingWindow (multi-monitor detach) ────
 # Top-level QWidget wrapper for detaching a PanadapterApplet to a second
 # monitor. Structurally ported from AetherSDR src/gui/PanFloatingWindow.{h,cpp}

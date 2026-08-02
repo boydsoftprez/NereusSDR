@@ -272,6 +272,7 @@ warren@wpratt.com
 #include "core/WdspEngine.h"
 #include "core/FFTEngine.h"
 #include "core/spectrum/FftEnginePool.h"
+#include "core/spectrum/FftTopology.h"
 #include "core/NbFamily.h"
 #include "core/ClarityController.h"
 #include "core/StepAttenuatorController.h"
@@ -2181,29 +2182,39 @@ void MainWindow::rebuildFftRouting()
     auto* router = m_radioModel->fftRouter();
     if (!router) { return; }
 
-    // Wholesale rebuild, not an incremental edit. A pan can host several
-    // slices and FFTRouter::removePan drops a pan from EVERY receiver, so a
-    // remove-then-add on one slice's migration would silently unsubscribe
-    // its co-hosted neighbours. Binding signals also fire before sliceAdded
-    // (plan discovery item 7), so only a rebuild-from-model consumer is
-    // safe.
+    // R1 Task 7: the router-mutation half of this rebuild -- turning a
+    // resolved subscription set into FFTRouter calls, wholesale rather than
+    // as an incremental edit -- now lives in FftTopology (src/core/spectrum/
+    // FftTopology.h), core state a headless daemon can drive from
+    // remote-endpoint ids instead of pan ids. What stays here is the walk
+    // that resolves which pan each live slice actually feeds: it needs
+    // PanadapterStack (a QWidget) and SliceModel, neither of which core may
+    // depend on (tests/tst_core_has_no_gui_includes.cpp).
     //
-    // Snapshot the pre-rebuild topology first so a brand-new subscription
-    // can be told apart from one that merely survived. Only new ones get
-    // the stream window pushed: streamBindingsChanged fires on every bind,
-    // so on every VFO tick, and re-pushing the allocator's centre each time
+    // Snapshot the pre-rebuild subscriptions first so a brand-new one can
+    // be told apart from one that merely survived. Only new ones get the
+    // stream window pushed: streamBindingsChanged fires on every bind, so
+    // on every VFO tick, and re-pushing the allocator's centre each time
     // would yank a CTUN pan back after an operator pan-drag (that path
     // retunes the DDC through forceHardwareFrequency without going through
     // the allocator).
-    QHash<QString, QList<int>> before;
+    QHash<QString, int> before;
+    for (const SpectrumSubscription& sub : m_topology.subscriptions()) {
+        before.insert(sub.consumerId, sub.streamIndex);
+    }
+
+    // Wholesale rebuild, not an incremental edit. A pan can host several
+    // slices, and unsubscribing one pan at a time here (rather than
+    // clearing every live pan up front) would let a slice's migration
+    // silently strand its co-hosted neighbours' subscriptions on whatever
+    // they last held. Binding signals also fire before sliceAdded (plan
+    // discovery item 7), so only a rebuild-from-model consumer is safe.
     if (m_panStack) {
         // PanadapterStack::allApplets (PanadapterStack.h:70) and
         // PanadapterApplet::panId (PanadapterApplet.h:65) both already exist.
         for (auto* applet : m_panStack->allApplets()) {
             if (!applet) { continue; }
-            const QString panId = applet->panId();
-            before.insert(panId, router->receiversForPan(panId));
-            router->removePan(panId);
+            m_topology.unsubscribe(applet->panId());
         }
     }
 
@@ -2240,14 +2251,17 @@ void MainWindow::rebuildFftRouting()
         if (panId.isEmpty()) { panId = m_panStack->activePanId(); }
         if (panId.isEmpty()) { continue; }
 
-        const bool isNewSubscription = !before.value(panId).contains(stream);
-        // mapPanToReceiver de-duplicates (FFTRouter.cpp:17), so two slices
-        // sharing a stream and a pan produce one subscription, not two.
-        router->mapPanToReceiver(panId, stream);
+        const bool isNewSubscription = before.value(panId, -1) != stream;
+        // subscribe() replaces any previous stream for this pan (one active
+        // stream per consumer), so two slices sharing a stream and a pan
+        // collapse to the one subscription applyTo() below actually applies.
+        m_topology.subscribe(panId, stream);
         if (isNewSubscription) {
             applyStreamWindowToPan(panId, stream);
         }
     }
+
+    m_topology.applyTo(*router);
 }
 
 void MainWindow::dispatchFftFrameToPans(int streamIndex,
@@ -2287,6 +2301,15 @@ void MainWindow::disconnectPanadapter(const QString& panId)
     }
     applet->disconnect(this);
 
+    // R1 Task 7: m_topology is now what rebuildFftRouting() rebuilds the
+    // router from, so a destroyed pan has to leave it too -- otherwise the
+    // very next rebuild pass would resurrect this panId's mapping (applyTo()
+    // only knows a consumer is gone if unsubscribe() was called; it has no
+    // way to learn a widget was destroyed on its own). The direct router
+    // removal stays alongside it for the reason it was already here:
+    // disconnect-before-removal needs the fan-out to stop in this same
+    // tick, not just by the next rebuild.
+    m_topology.unsubscribe(panId);
     if (m_radioModel) {
         if (auto* router = m_radioModel->fftRouter()) {
             router->removePan(panId);
