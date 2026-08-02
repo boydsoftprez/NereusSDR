@@ -12,6 +12,8 @@
 
 #include <QtTest/QtTest>
 #include <QSignalSpy>
+
+#include "core/AppSettings.h"
 #include "models/NotchModel.h"
 
 using namespace NereusSDR;
@@ -371,6 +373,46 @@ private slots:
         m.setAdminBusy(true);
         QVERIFY(!m.setActive(id, false));
         QVERIFY(m.notchById(id)->active);
+    }
+
+    // Codex review of PR #313, P2. Every WDSP notch database holds exactly
+    // kMaxNotches (RXA.c:88) and RXANBPAddNotch returns -1 without mutating
+    // past that (nbp.c:368). An accepted 1025th notch would sit in the UI and
+    // in AppSettings while the DSP never applied it, and syncNotches truncates
+    // identically, so the two could never be reconciled.
+    void add_refuses_past_the_wdsp_notch_capacity()
+    {
+        NotchModel m;
+        // Space the notches past the 10 Hz dedupe window so the cap, not the
+        // dedupe, is what stops the fill.
+        for (int i = 0; i < NotchModel::kMaxNotches; ++i) {
+            QVERIFY2(m.addNotch(7000000.0 + i * 100.0) >= 0,
+                     qPrintable(QStringLiteral("fill failed at %1").arg(i)));
+        }
+        QCOMPARE(m.notches().size(), NotchModel::kMaxNotches);
+
+        QSignalSpy rejected(&m, &NotchModel::notchAddRejected);
+        QCOMPARE(m.addNotch(14000000.0), -1);
+        QCOMPARE(m.notches().size(), NotchModel::kMaxNotches);
+        QCOMPARE(rejected.count(), 1);
+    }
+
+    // The same refusal on the restore path: a settings file carrying more than
+    // WDSP can hold must not repopulate the state addNotch now refuses.
+    void restore_truncates_at_the_wdsp_notch_capacity()
+    {
+        auto& s = AppSettings::instance();
+        s.clear();
+        s.setValue(QStringLiteral("NotchCount"),
+                   QString::number(NotchModel::kMaxNotches + 5));
+        for (int i = 0; i < NotchModel::kMaxNotches + 5; ++i) {
+            s.setValue(QStringLiteral("Notch%1Center").arg(i),
+                       QString::number(7000000.0 + i * 100.0, 'f', 6));
+        }
+
+        NotchModel m;
+        m.restoreFromSettings();
+        QCOMPARE(m.notches().size(), NotchModel::kMaxNotches);
     }
 };
 

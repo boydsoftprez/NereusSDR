@@ -327,7 +327,19 @@ int NotchModel::addNotch(double centerHz, double widthHz)
     // From Thetis console.cs:40224 [v2.10.3.15]
     if (m_adminBusy) { // dont add if using add/edit on the setup form
         emit notchAddRejected(
-            QStringLiteral("The MNF settings page is mid-edit"));
+            QStringLiteral("The TNF settings page is mid-edit"));
+        return -1;
+    }
+
+    // Refuse at WDSP's capacity rather than append and report success.
+    // Every notch database holds exactly kMaxNotches (RXA.c:88) and
+    // RXANBPAddNotch returns -1 without mutating past that (nbp.c:368), so an
+    // accepted 1025th notch would live in the UI and in AppSettings while the
+    // DSP never applied it, and syncNotches truncates identically, leaving the
+    // two permanently unreconcilable. Codex review of PR #313.
+    if (m_notches.size() >= kMaxNotches) {
+        emit notchAddRejected(
+            QStringLiteral("Maximum of %1 notches reached").arg(kMaxNotches));
         return -1;
     }
 
@@ -630,8 +642,19 @@ void NotchModel::restoreFromSettings()
 
     const bool hasList = s.contains(QStringLiteral("NotchCount"));
     if (hasList) {
-        const int count =
-            s.value(QStringLiteral("NotchCount")).toString().toInt();
+        int count = s.value(QStringLiteral("NotchCount")).toString().toInt();
+        // Same capacity refusal as addNotch, on the restore path. A settings
+        // file carrying more than WDSP can hold (RXA.c:88) would otherwise
+        // repopulate exactly the unreconcilable state addNotch now refuses to
+        // create. Codex review of PR #313.
+        if (count > kMaxNotches) {
+            qCWarning(lcDsp).nospace()
+                << "NotchModel: persisted notch count " << count
+                << " exceeds the WDSP capacity of " << kMaxNotches
+                << "; restoring the first " << kMaxNotches
+                << " and dropping the rest";
+            count = kMaxNotches;
+        }
         m_notches.clear();
 
         for (int i = 0; i < count; ++i) {

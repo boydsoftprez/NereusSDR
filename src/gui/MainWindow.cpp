@@ -1750,9 +1750,31 @@ void MainWindow::onNotchCreateRequested(double freqHz, bool narrow)
     if (!m_radioModel || !m_radioModel->notchModel()) { return; }
     // Narrow is the Shift-held add. Both widths live on NotchModel because
     // they are Thetis constants (console.cs:40268-40269 [v2.10.3.15]).
-    m_radioModel->notchModel()->addNotch(
-        freqHz, narrow ? NotchModel::kNarrowNotchWidthHz
-                       : NotchModel::kDefaultNotchWidthHz);
+    double widthHz = narrow ? NotchModel::kNarrowNotchWidthHz
+                            : NotchModel::kDefaultNotchWidthHz;
+
+    // Clamp to what the filter can actually realise, exactly as the width
+    // presets do. min_notch_width is 1600 / (nc / 256) * (rate / 48000)
+    // (third_party/wdsp/src/nbp.c:88), so at the smaller supported filter
+    // sizes it is 400 Hz (nc 1024) or 200 Hz (nc 2048), both above these
+    // Thetis defaults. Without this, WDSP's auto-increase (on by default,
+    // RXA.c:105) silently widens the notch while the marker, the context
+    // menu and the settings table all keep showing the smaller number; with
+    // auto-increase off the requested attenuation is simply not realisable.
+    //
+    // This is the same defect JJ found on the bench in the width presets on
+    // 2026-08-02. It was fixed there and not swept for siblings, and this
+    // creation path is the sibling. Codex review of PR #313.
+    if (SliceModel* slice = m_radioModel->activeSlice()) {
+        if (RxChannel* ch = m_radioModel->rxChannelForSlice(slice->sliceIndex())) {
+            const double minHz = ch->minNotchWidthHz();
+            if (minHz > 0.0 && widthHz < minHz) {
+                widthHz = minHz;
+            }
+        }
+    }
+
+    m_radioModel->notchModel()->addNotch(freqHz, widthHz);
 }
 
 void MainWindow::onNotchMoveRequested(int id, double newFreqHz)

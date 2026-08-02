@@ -186,6 +186,15 @@ public:
     // From Thetis console.cs:13221 [v2.10.3.15]: _max_filter_width = 10000
     static constexpr double kMaxNotchWidthHz = 10000.0;
 
+    /// Hard capacity. Every WDSP notch database is created with room for
+    /// exactly this many (third_party/wdsp/src/RXA.c:88), and RXANBPAddNotch
+    /// returns -1 with no mutation once nn reaches it (nbp.c:368). The model
+    /// must refuse past this point rather than append and report success:
+    /// otherwise the UI and AppSettings hold a notch the DSP has never
+    /// applied, and syncNotches truncates at the same limit, so the two can
+    /// never be reconciled. Codex review of PR #313.
+    static constexpr int kMaxNotches = 1024;
+
     // Wheel-resize step per detent, applied by the panadapter wheel handler
     // and folded through setWidth (which owns the clamping).
     // From Thetis console.cs:33305-33310 [v2.10.3.15]: Shift held adds the
