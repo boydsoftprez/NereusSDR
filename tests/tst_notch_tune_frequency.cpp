@@ -447,6 +447,76 @@ private slots:
         QCOMPARE(spy.first().at(1).toULongLong(),
                  static_cast<quint64>(kSliceAFreqHz));
     }
+
+    // 2026-08-02 bench regression (JJ, ANAN-G2E). Notches placed correctly on
+    // the panadapter had no audible effect until the slice was retuned.
+    //
+    // WDSP maps a notch with offset = tunefreq + shift (nbp.c:192). Those two
+    // terms had two owners with two different notions of the stream centre:
+    // reshiftSlicesOnStream pushes the real DDC position (a CTUN drag writes
+    // hardware directly and deliberately leaves the allocator where it was),
+    // while bindSliceToStream pushes the allocator's centre, and the shift was
+    // read from a stored offset computed against the allocator. After a CTUN
+    // drag the pair described different origins and the sum was wrong by the
+    // drag distance.
+    //
+    // The old test asserted the invariant at a single bind call, so it passed
+    // while this hole was open. This one drives the real sequence: CTUN drag,
+    // then a bind, and asserts the invariant holds after EACH.
+    void the_origin_survives_a_ctun_drag_followed_by_a_bind()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        model.configureStreamPool(/*userDdcCount*/ 2, /*maxSlices*/ 2, kRateHz);
+        model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+
+        const int aId = model.addSlice();
+        SliceModel* a = model.sliceById(aId);
+        QVERIFY(a != nullptr);
+        a->setFrequency(kSliceAFreqHz);
+
+        // A second slice on the same stream, so the first is NOT the sole
+        // occupant and therefore carries a non-zero shift. With shift == 0 the
+        // sum is right even when tunefreq is wrong, which is exactly how the
+        // original test passed over this hole.
+        const int bId = model.addSlice();
+        SliceModel* b = model.sliceById(bId);
+        QVERIFY(b != nullptr);
+        b->setFrequency(kSliceAFreqHz + 15000.0);
+
+        RxChannel* ch = engine->rxChannel(bId);
+        QVERIFY(ch != nullptr);
+        QVERIFY(b->streamIndex() >= 0);
+
+        const auto invariantHolds = [&](const char* whenLabel) {
+            const double sum = ch->notchTuneFrequencyHz() + ch->notchShiftHz();
+            const double want = b->frequency();
+            if (std::abs(sum - want) > 1.0) {
+                qWarning("%s: tunefreq %.1f + shift %.1f = %.1f, slice at %.1f",
+                         whenLabel, ch->notchTuneFrequencyHz(),
+                         ch->notchShiftHz(), sum, want);
+                return false;
+            }
+            return true;
+        };
+
+        QVERIFY2(invariantHolds("after bind"), "invariant broken at bind");
+
+        // CTUN drag: move the window without moving the allocator, exactly as
+        // MainWindow's pan drag does.
+        const double draggedCentreHz = b->frequency() - 12000.0;
+        model.reshiftSlicesOnStream(b->streamIndex(), draggedCentreHz);
+        QVERIFY2(invariantHolds("after CTUN drag"),
+                 "tunefreq and shift disagreed after a CTUN drag: this is the "
+                 "2026-08-02 bench failure");
+
+        // Now retune the slice, which is what made it start working by
+        // accident on the bench.
+        model.bindSliceToStream(b, b->frequency() + 4000.0);
+        QVERIFY2(invariantHolds("after retune"), "invariant broken at retune");
+    }
 };
 
 QTEST_MAIN(TestNotchTuneFrequency)

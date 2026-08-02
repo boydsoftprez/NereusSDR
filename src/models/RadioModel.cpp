@@ -3235,7 +3235,9 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
     // well. Composed, not bare: this call runs at the TAIL of
     // bindSliceToStream on a first bind, so a plain slice->shiftOffsetHz()
     // here would silently discard the RIT term that call had just pushed.
-    ch->setShiftFrequency(composedShiftHz(slice));
+    // Same single owner as every other origin write. The slice already holds
+    // its stream term here, so the stored-origin form supplies the centre.
+    pushNotchOrigin(slice, ch, slice->frequency() - slice->shiftOffsetHz());
 
     // TNF design section 6.3: the notch set, the master run flag, the
     // auto-increase flag and the NBP tune frequency. syncNotchesToAllChannels
@@ -3338,11 +3340,23 @@ void RadioModel::syncNotchesToChannel(RxChannel* ch, int channelId)
     // Thetis proves the intent: it gives the sub-receiver its own shift
     // (console.cs:31922 [v2.10.3.15]) while pushing the identical tunefreq to
     // both ids (console.cs:31940-31941 [v2.10.3.15]).
-    if (SliceModel* s = sliceById(channelId)) {
-        if (s->streamIndex() >= 0) {
-            ch->setNotchTuneFrequency(
-                m_streamAllocator.streamCentreHz(s->streamIndex()));
-        }
+    SliceModel* s = sliceById(channelId);
+    if (s && s->streamIndex() >= 0) {
+        pushNotchOrigin(s, ch,
+                        m_streamAllocator.streamCentreHz(s->streamIndex()));
+    } else if (!m_notchModel->notches().isEmpty()) {
+        // Loud, because it used to be silent. This channel holds notches but
+        // has no resolvable stream centre, so NOTCHDB::tunefreq keeps whatever
+        // it had and every notch on it maps from the wrong RF origin. That is
+        // the 2026-08-02 bench failure's shape, and it produced no diagnostic
+        // at all: the markers drew correctly and the audio was simply
+        // unaffected.
+        qCWarning(lcDsp).nospace()
+            << "notch origin unresolved for channel " << channelId
+            << " (slice=" << (s ? s->sliceIndex() : -1)
+            << " streamIndex=" << (s ? s->streamIndex() : -1)
+            << "); " << m_notchModel->notches().size()
+            << " notch(es) on this channel will map from a stale origin";
     }
 }
 
@@ -3622,20 +3636,7 @@ void RadioModel::reshiftSlicesOnStream(int streamIndex, double newCentreHz)
         // reads.
         if (m_wdspEngine) {
             if (RxChannel* ch = m_wdspEngine->rxChannel(s->sliceIndex())) {
-                ch->setShiftFrequency(composedShiftHz(s));
-                // The notch database's RF origin moves with the window it
-                // maps from. WDSP sums the two terms (offset = b->tunefreq +
-                // b->shift, third_party/wdsp/src/nbp.c:192), so re-shifting
-                // without re-tuning leaves every notch on this stream short
-                // by the whole drag distance. Design doc 4.2 requires the
-                // re-push on stream retune, and this is that path.
-                //
-                // newCentreHz, NOT m_streamAllocator.streamCentreHz: a CTUN
-                // drag writes the hardware directly through
-                // forceHardwareFrequency and deliberately leaves the
-                // allocator where it was, so the argument is the only
-                // quantity that describes where the DDC actually sits.
-                ch->setNotchTuneFrequency(newCentreHz);
+                pushNotchOrigin(s, ch, newCentreHz);
             }
         }
     }
@@ -4068,14 +4069,7 @@ void RadioModel::commitStreamSampleRateChange(
         if (m_wdspEngine) {
             if (RxChannel* channel =
                     m_wdspEngine->rxChannel(planned.sliceId)) {
-                channel->setShiftFrequency(composedShiftHz(slice));
-                // Same pairing as bindSliceToStream and
-                // reshiftSlicesOnStream: a re-plan can move a slice onto a
-                // stream with a different centre, and the notch database's
-                // RF origin has to follow it (nbp.c:192). m_streamAllocator
-                // is already plan.allocator by this point, so it is
-                // authoritative here.
-                channel->setNotchTuneFrequency(
+                pushNotchOrigin(slice, channel,
                     m_streamAllocator.streamCentreHz(
                         planned.placement.streamIndex));
             }
@@ -4404,8 +4398,7 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     // (nbp.c:479), so pushing on every bind costs nothing.
     if (m_wdspEngine) {
         if (RxChannel* ch = m_wdspEngine->rxChannel(slice->sliceIndex())) {
-            ch->setShiftFrequency(composedShiftHz(slice));
-            ch->setNotchTuneFrequency(
+            pushNotchOrigin(slice, ch,
                 m_streamAllocator.streamCentreHz(placement.streamIndex));
         }
     }
@@ -9151,16 +9144,59 @@ void RadioModel::seedConnectFrequency(SliceModel* slice)
 //
 // See docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.4.
 // ---------------------------------------------------------------------------
+void RadioModel::pushNotchOrigin(SliceModel* slice, RxChannel* ch,
+                                 double streamCentreHz)
+{
+    if (!slice || !ch) {
+        return;
+    }
+    // The only place these two are written. WDSP sums them (nbp.c:192), so a
+    // caller that set one without the other, or set them from two different
+    // notions of the stream centre, would silently displace every notch on
+    // this channel. See composedShiftHz(slice, centre) for the bench failure
+    // that produced this.
+    ch->setNotchTuneFrequency(streamCentreHz);
+    ch->setShiftFrequency(composedShiftHz(slice, streamCentreHz));
+}
+
 double RadioModel::composedShiftHz(const SliceModel* slice) const
 {
     if (!slice) {
         return 0.0;
     }
+    // Stored-origin form: the stream term was committed to the slice by
+    // whichever writer ran before this. Prefer pushNotchOrigin(), which
+    // derives the term from an explicit centre so it cannot disagree with
+    // the tune frequency written alongside it.
+    return composedShiftHz(slice, slice->frequency() - slice->shiftOffsetHz());
+}
 
-    // The stream term: "slice freq minus stream centre"
-    // (SliceStreamAllocator.h:48), committed to the slice by whichever
-    // writer is calling before it gets here.
-    double offset = slice->shiftOffsetHz();
+double RadioModel::composedShiftHz(const SliceModel* slice,
+                                   double streamCentreHz) const
+{
+    if (!slice) {
+        return 0.0;
+    }
+
+    // The stream term, derived from the centre the CALLER is about to write
+    // as NOTCHDB::tunefreq, not from a separately stored copy.
+    //
+    // 2026-08-02 bench (JJ, ANAN-G2E): notches were placed correctly on the
+    // panadapter and had no audible effect until the slice was retuned. WDSP
+    // maps a notch with offset = tunefreq + shift (nbp.c:192), and those two
+    // terms had two different owners: reshiftSlicesOnStream pushes the real
+    // DDC position (a CTUN drag writes hardware directly and deliberately
+    // leaves the allocator where it was), while bindSliceToStream pushes the
+    // allocator's centre, and the shift came from a stored offset computed
+    // against the allocator. After a CTUN drag the pair described different
+    // origins, the sum was wrong by the drag distance, and every notch landed
+    // outside the passband. Probe on the failing run: tunefreq 7231100 +
+    // shift 3500 = 7234600 for a slice actually at 7250800, a 16.2 kHz error.
+    //
+    // Design section 4.1 states the invariant tunefreq + shift == the slice's
+    // demodulated RF. Stating it was not enough; deriving both terms from one
+    // argument is what enforces it.
+    double offset = slice->frequency() - streamCentreHz;
 
     // RIT (Receive Incremental Tuning): client-side demodulation offset that
     // does NOT retune the hardware VFO.
@@ -10048,7 +10084,10 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     auto updateShiftFrequency = [this, slice]() {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
         if (!rxCh) { return; }
-        rxCh->setShiftFrequency(composedShiftHz(slice));
+        // RIT / DIG changed, not the stream. Re-push both terms from the
+        // slice's current stream centre so the pair stays coherent.
+        pushNotchOrigin(slice, rxCh,
+                        slice->frequency() - slice->shiftOffsetHz());
     };
     connect(slice, &SliceModel::ritEnabledChanged,  this, updateShiftFrequency);
     connect(slice, &SliceModel::ritHzChanged,        this, updateShiftFrequency);

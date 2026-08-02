@@ -2643,6 +2643,12 @@ private:
     // term to the model before calling.
     // See docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.4.
     double composedShiftHz(const SliceModel* slice) const;
+    /// Shift derived from an EXPLICIT stream centre, so it cannot disagree
+    /// with the NOTCHDB::tunefreq written alongside it. Design section 4.1.
+    double composedShiftHz(const SliceModel* slice, double streamCentreHz) const;
+    /// The ONLY writer of the notch RF origin. Writes tunefreq and shift
+    /// together from one centre; WDSP sums them (nbp.c:192).
+    void pushNotchOrigin(SliceModel* slice, RxChannel* ch, double streamCentreHz);
 
     // The connect-time DDC seed, factored out of the wireSliceSignals
     // singleShot so it can be driven without a live connection. Commands the
