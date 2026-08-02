@@ -1094,12 +1094,16 @@ endif()
 # the NereusCore dependencies transitively because they link their
 # NereusCore twin PUBLIC (below).
 #
-# Qt6::Svg is GUI-only. Qt6::Widgets and Qt6::GuiPrivate are NOT, despite
-# being the two names the R1 plan expected to be GUI-only: an existing
-# #include chain (src/models/RadioModel.cpp -> gui/SpectrumWidget.h, a
-# QRhiWidget subclass) means NereusCore needs both too today. See the
-# comments in nereus_apply_core_deps() for the specific call sites and the
-# follow-up task (R1 Task 4, ISpectrumSink) that removes the coupling.
+# Qt6::Svg is GUI-only. Qt6::Widgets and Qt6::GuiPrivate are still on
+# NereusCore too, despite being the two names the R1 plan expected to be
+# GUI-only. R1 Task 4 removed the #include chain that used to force this
+# (src/models/RadioModel.cpp no longer reaches gui/SpectrumWidget.h), but
+# the links themselves stay here on purpose: dropping them is a separate
+# build-and-fix pass that has to verify nothing else compiled into
+# NereusCore still needs Qt Widgets or GuiPrivate transitively, and
+# removing them without that verification could break the app link in
+# ways a source-only change cannot catch. See the comments in
+# nereus_apply_core_deps() for detail.
 # --------------------------------------------------------------------------
 function(nereus_apply_warnings target)
     if(MSVC)
@@ -1125,13 +1129,16 @@ function(nereus_apply_core_deps target)
     )
 
     # Qt6::Widgets is NOT GUI-only in this codebase today, however much it
-    # should be: src/models/RadioModel.cpp:299 #includes gui/SpectrumWidget.h
-    # (a QWidget subclass) to call m_spectrumWidget->setHighSwrOverlay(...)
-    # directly (RadioModel.cpp:720,726). RadioModel.cpp is a NereusCore
-    # source (MODEL_SOURCES), so NereusCore fails to compile without this
-    # link; verified by an actual build, not by inspection. This is exactly
-    # the coupling R1 Task 4 ("Extract ISpectrumSink from RadioModel") is
-    # meant to remove; until that lands, NereusCore keeps this link.
+    # should be. R1 Task 4 ("Extract ISpectrumSink from RadioModel") has
+    # landed and removed the reason this link used to be load-bearing:
+    # RadioModel.cpp no longer includes gui/SpectrumWidget.h, and its former
+    # direct m_spectrumWidget->setHighSwrOverlay(...) calls now go through
+    # the abstract NereusSDR::ISpectrumSink interface instead. The link
+    # stays here anyway, kept deliberately rather than dropped as a
+    # drive-by: nobody has yet verified, with an actual build, that nothing
+    # else compiled into NereusCore still needs Qt6::Widgets transitively.
+    # That verification, and the removal if it holds, is a separate
+    # follow-up task's job.
     target_link_libraries(${target} PUBLIC Qt6::Widgets)
 
     if(APPLE)
@@ -1231,12 +1238,13 @@ function(nereus_apply_core_deps target)
     if(NEREUS_GPU_SPECTRUM)
         target_compile_definitions(${target} PUBLIC NEREUS_GPU_SPECTRUM)
 
-        # Same RadioModel.cpp -> gui/SpectrumWidget.h coupling as the
-        # Qt6::Widgets link above: SpectrumWidget.h is a QRhiWidget
-        # subclass, so it includes <rhi/qrhi.h> (Qt6::GuiPrivate) whenever
-        # GPU spectrum is enabled. NereusCore needs this to compile
-        # RadioModel.cpp for the same reason and pending the same R1 Task 4
-        # follow-up.
+        # Same history as the Qt6::Widgets link above: this used to be
+        # load-bearing only because RadioModel.cpp (a NereusCore source)
+        # reached gui/SpectrumWidget.h, a QRhiWidget subclass that pulls in
+        # <rhi/qrhi.h> (Qt6::GuiPrivate) whenever GPU spectrum is enabled.
+        # R1 Task 4 removed that include. The link is kept here for the
+        # same reason as Qt6::Widgets above, pending the same follow-up
+        # verification before either is dropped.
         target_link_libraries(${target} PUBLIC Qt6::GuiPrivate)
     endif()
 
@@ -1625,9 +1633,11 @@ if(NEREUS_USE_PCH)
         <QTimer>
         <QDebug>
         # GUI commons (every applet + dialog + widget TU). Still resolves
-        # on NereusCore: Qt6::Widgets is a NereusCore link too today (see
-        # nereus_apply_core_deps()'s RadioModel.cpp comment), pending R1
-        # Task 4's ISpectrumSink extraction.
+        # on NereusCore: Qt6::Widgets stays a NereusCore link even after R1
+        # Task 4's ISpectrumSink extraction landed. See
+        # nereus_apply_core_deps()'s Qt6::Widgets comment for why the link
+        # was kept rather than dropped alongside the include it used to
+        # justify.
         <QWidget>
         <QPainter>
         <QPaintEvent>

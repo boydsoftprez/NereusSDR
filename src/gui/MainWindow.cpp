@@ -873,6 +873,22 @@ SpectrumWidget* MainWindow::activeSpectrumWidget() const
     return applet ? applet->spectrumWidget() : nullptr;
 }
 
+// R1 Task 4 fix round 1 (reviewer Finding 2): the only place that sets
+// RadioModel's two spectrum view hooks. Both must always name the same
+// widget -- setSpectrumWidget() feeds the 82 Setup-page call sites that
+// need the concrete SpectrumWidget API, setSpectrumSink() feeds the
+// abstract ISpectrumSink RadioModel's own SWR-overlay and
+// applyClaritySmoothDefaults calls use. Routing every caller through here
+// instead of two adjacent statements at each call site means a future
+// third wiring site cannot forget the second call and silently leave the
+// two hooks pointing at different widgets.
+void MainWindow::setSpectrumHooks(SpectrumWidget* sw)
+{
+    if (!m_radioModel) { return; }
+    m_radioModel->setSpectrumWidget(sw);
+    m_radioModel->setSpectrumSink(sw);
+}
+
 // Phase 3F multi-pan: resolve the SpectrumWidget that owns this slice's
 // panadapter from the slice's panKey(), falling back to the active pan when
 // the key is empty (Slice A pre-seed) or the pan was removed.
@@ -2377,13 +2393,7 @@ void MainWindow::buildUI()
             [this](const QString& panId) {
         if (!m_radioModel || !m_panStack) { return; }
         if (SpectrumWidget* sw = m_panStack->spectrum(panId)) {
-            m_radioModel->setSpectrumWidget(sw);
-            // R1 Task 4: RadioModel's own DSP-facing calls (SWR overlay,
-            // applyClaritySmoothDefaults) go through the abstract
-            // ISpectrumSink pointer, not m_spectrumWidget, so it has to
-            // follow the active pan too. Same object, set from the same
-            // sw at the same time; only the static type differs.
-            m_radioModel->setSpectrumSink(sw);
+            setSpectrumHooks(sw);
         }
     });
 
@@ -3126,12 +3136,11 @@ void MainWindow::buildUI()
 
     // Phase 3G-8: expose view hooks on RadioModel so Display setup pages can
     // reach the renderer / FFT engine without depending on MainWindow.
-    m_radioModel->setSpectrumWidget(activeSpectrumWidget());
-    // R1 Task 4: same object as the line above, fed to the abstract
-    // ISpectrumSink pointer RadioModel's own DSP-facing calls use. See the
-    // activePanChanged handler earlier in this file for the matching
-    // re-wire when the active pan changes.
-    m_radioModel->setSpectrumSink(activeSpectrumWidget());
+    // R1 Task 4 fix round 1: setSpectrumHooks sets both of RadioModel's
+    // spectrum pointers from one cached widget; see its declaration in
+    // MainWindow.h and the activePanChanged handler earlier in this file
+    // for the matching re-wire when the active pan changes.
+    setSpectrumHooks(activeSpectrumWidget());
     m_radioModel->setFftEngine(primaryFftEngine());
 
     // Phase 3F Sub-Epic I Task 8: follow each stream's DDC centre + rate.

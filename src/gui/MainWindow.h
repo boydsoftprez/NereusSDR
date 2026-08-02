@@ -409,6 +409,19 @@ private:
     void tryAutoReconnect();
     void wireSliceToSpectrum();
 
+    /// R1 Task 4 fix round 1 (reviewer Finding 2): the one place that sets
+    /// both of RadioModel's spectrum view hooks to the same widget --
+    /// the concrete m_spectrumWidget (82 Setup-page call sites) and the
+    /// abstract m_spectrumSink (RadioModel's own SWR-overlay and
+    /// applyClaritySmoothDefaults calls). Before this helper existed the
+    /// two calls were convention only: a future call site that wrote
+    /// setSpectrumWidget() without the matching setSpectrumSink() would
+    /// compile clean and pass every test, and would silently leave the SWR
+    /// overlay and Reset-to-Smooth-Defaults acting on a stale widget while
+    /// Setup pages kept following the live one. Routing every caller
+    /// through here makes that impossible instead of merely undocumented.
+    void setSpectrumHooks(SpectrumWidget* sw);
+
     /// Stream 0's engine. Back-compat accessor for call sites that still
     /// address "the" FFT engine (display settings, Max Bin, auto-zoom).
     FFTEngine* primaryFftEngine() const { return m_fftEngines.value(0, nullptr); }
