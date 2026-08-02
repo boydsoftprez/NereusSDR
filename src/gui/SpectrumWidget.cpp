@@ -5326,12 +5326,29 @@ void SpectrumWidget::setNotchMinWidthHz(double hz)
     markOverlayDirty();
 }
 
-// Provisional while the marker geometry lands; the Thetis four-state
-// machine replaces this body in the next commit.
+// From Thetis display.cs:8691-8722 [v2.10.3.15]: handleNotches' brush
+// selection, flattened to a colour because our pen and fill derive from one
+// base (upstream keeps a Pen and a Brush per state and they never disagree).
 QColor SpectrumWidget::notchColor(const NotchMarker& n) const
 {
-    Q_UNUSED(n);
-    return QColor::fromRgb(kNotchActiveColour);
+    // From Thetis display.cs:8710-8722 [v2.10.3.15]:
+    //   //overide if highlighed  [original inline comment from display.cs:8710]
+    // The highlight is applied AFTER the master-off branch upstream, so it
+    // wins over every other state.  Guarded on a real id because both
+    // selection members and a default-constructed marker share -1.
+    if (n.id >= 0 && (n.id == m_selectedNotchId || n.id == m_hoveredNotchId)) {
+        return QColor::fromRgb(kNotchHighlightColour);
+    }
+
+    // From Thetis display.cs:8704-8707 [v2.10.3.15]: master TNF off repaints
+    // every marker olive rather than hiding it.
+    if (!m_notchGlobalEnabled) {
+        return QColor::fromRgb(kNotchTnfOffColour);
+    }
+
+    // From Thetis display.cs:8693-8702 [v2.10.3.15]
+    return n.active ? QColor::fromRgb(kNotchActiveColour)
+                    : QColor::fromRgb(kNotchInactiveColour);
 }
 
 // From AetherSDR src/gui/SpectrumWidget.cpp:13503-13554 [@c6481cbf]

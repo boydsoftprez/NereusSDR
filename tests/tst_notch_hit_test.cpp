@@ -82,6 +82,15 @@ int expectSpecH(int widgetH)
 #endif
 }
 
+// Left edge column of a 200 Hz notch centred on `freqHz`.  The edge lines
+// are the only part of a marker drawn at full alpha, so this is where the
+// base colour reads back undimmed by the alpha-92 fill.
+int leftEdgeX(double freqHz = kCentreHz)
+{
+    const int cx = expectX(freqHz);
+    return cx - std::max(2, expectX(freqHz + 100.0) - cx);
+}
+
 SpectrumWidget::NotchMarker makeNotch(int id, double freqHz, double widthHz,
                                       bool active = true)
 {
@@ -230,6 +239,9 @@ private slots:
         SpectrumWidget sw;
         sw.resize(kPanW, kPanH);
         sw.setFrequencyRange(kCentreHz, kBandwidthHz);
+        // Master TNF on so the base colour is the active yellow rather
+        // than the olive master-off colour (design section 8.2).
+        sw.setNotchGlobalEnabled(true);
         sw.setNotchMarkers({makeNotch(1, kCentreHz, 200.0)});
 
         const int cx    = expectX(kCentreHz);
@@ -321,6 +333,7 @@ private slots:
         SpectrumWidget sw;
         sw.resize(kPanW, kPanH);
         sw.setFrequencyRange(kCentreHz, kBandwidthHz);
+        sw.setNotchGlobalEnabled(true);
         sw.setNotchMarkers({makeNotch(1, kCentreHz, 200.0)});
 
         const int cx    = expectX(kCentreHz);
@@ -341,6 +354,113 @@ private slots:
         for (int i = 1; i < hatchColumns.size(); ++i) {
             QCOMPARE(hatchColumns.at(i) - hatchColumns.at(i - 1), 8);
         }
+    }
+
+    // -- section 8.2 colours, from Thetis display.cs:8691-8722 [v2.10.3.15]
+    //
+    // The base colour is read back off an edge line, which is drawn at
+    // full alpha; the fill beside it is changeAlpha(colour, 92)
+    // (display.cs:400-408 [v2.10.3.15]) and would compare against a
+    // dimmed value instead.
+    void active_notch_is_yellow()
+    {
+        SpectrumWidget sw;
+        sw.resize(kPanW, kPanH);
+        sw.setFrequencyRange(kCentreHz, kBandwidthHz);
+        sw.setNotchGlobalEnabled(true);
+        sw.setNotchMarkers({makeNotch(1, kCentreHz, 200.0, /*active*/ true)});
+
+        QCOMPARE(renderNotches(sw).pixelColor(leftEdgeX(), kSpecH / 2),
+                 QColor::fromRgb(qRgb(0xFF, 0xFF, 0x00)));
+    }
+
+    void bypassed_notch_is_gray()
+    {
+        SpectrumWidget sw;
+        sw.resize(kPanW, kPanH);
+        sw.setFrequencyRange(kCentreHz, kBandwidthHz);
+        sw.setNotchGlobalEnabled(true);
+        sw.setNotchMarkers({makeNotch(1, kCentreHz, 200.0, /*active*/ false)});
+
+        QCOMPARE(renderNotches(sw).pixelColor(leftEdgeX(), kSpecH / 2),
+                 QColor::fromRgb(qRgb(0x80, 0x80, 0x80)));
+    }
+
+    // display.cs:8704-8707 -- master TNF off repaints every marker olive
+    // rather than hiding it, so the operator can still see where the
+    // notches are while the master switch is down.
+    void master_tnf_off_is_olive_even_for_an_active_notch()
+    {
+        SpectrumWidget sw;
+        sw.resize(kPanW, kPanH);
+        sw.setFrequencyRange(kCentreHz, kBandwidthHz);
+        sw.setNotchMarkers({makeNotch(1, kCentreHz, 200.0, /*active*/ true)});
+        sw.setNotchGlobalEnabled(false);
+
+        QCOMPARE(renderNotches(sw).pixelColor(leftEdgeX(), kSpecH / 2),
+                 QColor::fromRgb(qRgb(0x80, 0x80, 0x00)));
+    }
+
+    // display.cs:8710-8722 "overide if highlighed" -- the highlight is
+    // applied AFTER the master-off branch upstream, so it wins over every
+    // other state.
+    void selected_notch_is_chartreuse_and_overrides_master_off()
+    {
+        SpectrumWidget sw;
+        sw.resize(kPanW, kPanH);
+        sw.setFrequencyRange(kCentreHz, kBandwidthHz);
+        sw.setNotchMarkers({makeNotch(4, kCentreHz, 200.0, /*active*/ false)});
+        sw.setNotchGlobalEnabled(false);
+        sw.setSelectedNotchIdForTest(4);
+
+        QCOMPARE(renderNotches(sw).pixelColor(leftEdgeX(), kSpecH / 2),
+                 QColor::fromRgb(qRgb(0x7F, 0xFF, 0x00)));
+    }
+
+    void hovered_notch_is_chartreuse()
+    {
+        SpectrumWidget sw;
+        sw.resize(kPanW, kPanH);
+        sw.setFrequencyRange(kCentreHz, kBandwidthHz);
+        sw.setNotchGlobalEnabled(true);
+        sw.setNotchMarkers({makeNotch(9, kCentreHz, 200.0, /*active*/ true)});
+        sw.setHoveredNotchIdForTest(9);
+
+        QCOMPARE(renderNotches(sw).pixelColor(leftEdgeX(), kSpecH / 2),
+                 QColor::fromRgb(qRgb(0x7F, 0xFF, 0x00)));
+    }
+
+    // Only the marker whose id matches highlights. A second notch on the
+    // same pan must keep its own state.
+    void highlight_applies_only_to_the_matching_marker()
+    {
+        SpectrumWidget sw;
+        sw.resize(kPanW, kPanH);
+        sw.setFrequencyRange(kCentreHz, kBandwidthHz);
+        sw.setNotchGlobalEnabled(true);
+        sw.setNotchMarkers({makeNotch(1, kCentreHz - 2'000.0, 200.0, true),
+                            makeNotch(2, kCentreHz + 2'000.0, 200.0, true)});
+        sw.setSelectedNotchIdForTest(2);
+
+        const QImage img = renderNotches(sw);
+        QCOMPARE(img.pixelColor(leftEdgeX(kCentreHz - 2'000.0), kSpecH / 2),
+                 QColor::fromRgb(qRgb(0xFF, 0xFF, 0x00)));
+        QCOMPARE(img.pixelColor(leftEdgeX(kCentreHz + 2'000.0), kSpecH / 2),
+                 QColor::fromRgb(qRgb(0x7F, 0xFF, 0x00)));
+    }
+
+    // m_selectedNotchId / m_hoveredNotchId default to -1, and so does a
+    // default-constructed NotchMarker.  They must not match each other.
+    void unset_selection_does_not_highlight_an_unidentified_marker()
+    {
+        SpectrumWidget sw;
+        sw.resize(kPanW, kPanH);
+        sw.setFrequencyRange(kCentreHz, kBandwidthHz);
+        sw.setNotchGlobalEnabled(true);
+        sw.setNotchMarkers({makeNotch(-1, kCentreHz, 200.0, /*active*/ true)});
+
+        QCOMPARE(renderNotches(sw).pixelColor(leftEdgeX(), kSpecH / 2),
+                 QColor::fromRgb(qRgb(0xFF, 0xFF, 0x00)));
     }
 
     // AetherSDR :13527-13528 -- "Skip if fully off-screen".

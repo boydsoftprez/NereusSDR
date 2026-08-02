@@ -1217,6 +1217,11 @@ public:
         drawNotchMarkers(p, specRect);
     }
     QRect notchSpecRectForTest() const { return notchSpecRect(); }
+    // Selection and hover are written by the interaction layer (design
+    // section 7.4); until it lands these give the render tests a writer
+    // for the Chartreuse highlight branch.
+    void setSelectedNotchIdForTest(int id) { m_selectedNotchId = id; }
+    void setHoveredNotchIdForTest(int id)  { m_hoveredNotchId = id; }
 
     // Overlay-cache seam.  Returns false on a CPU-only build, where there
     // is no cached texture to invalidate.
