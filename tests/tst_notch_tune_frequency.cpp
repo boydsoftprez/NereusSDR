@@ -351,6 +351,60 @@ private slots:
                  sliceB->effectiveRxFrequency());
     }
 
+    // -- 4.2 tail: "re-push on stream retune" -----------------------------
+    //
+    // The spec's push site (bindSliceToStream) is not the only writer of a
+    // stream's centre in this tree. A CTUN pan drag recentres the DDC
+    // through MainWindow -> forceHardwareFrequency ->
+    // reshiftSlicesOnStream, deliberately bypassing the allocator, and it
+    // re-shifts every member of the stream. Without a matching tune-frequency
+    // push, tunefreq + shift lands short by the whole drag distance for every
+    // slice on the pan, which is the exact failure 4.1 exists to prevent.
+    //
+    // The authoritative centre here is the newCentreHz argument, NOT
+    // m_streamAllocator.streamCentreHz: the drag does not move the allocator
+    // (MainWindow.cpp:1794-1796 writes the hardware directly).
+
+    void a_ctun_pan_drag_carries_the_tune_frequency_for_every_stream_member()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(2, 2, kRateHz);
+        model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+
+        const int a = model.addSlice();
+        SliceModel* sliceA = model.sliceById(a);
+        sliceA->setFrequency(kSliceAFreqHz);
+
+        const int b = model.addSlice();
+        SliceModel* sliceB = model.sliceById(b);
+        sliceB->setFrequency(kSliceBFreqHz);
+        QCOMPARE(sliceB->streamIndex(), 0);
+
+        RxChannel* chA = engine->rxChannel(a);
+        RxChannel* chB = engine->rxChannel(b);
+        QVERIFY(chA != nullptr);
+        QVERIFY(chB != nullptr);
+
+        // Drag the pan 50 kHz up. Both members stay on stream 0 and both
+        // pick up a negative shift from the new centre.
+        constexpr double kDraggedCentreHz = 14250000.0;
+        model.reshiftSlicesOnStream(0, kDraggedCentreHz);
+
+        QCOMPARE(chA->shiftOffsetHz(), kSliceAFreqHz - kDraggedCentreHz);
+        QCOMPARE(chB->shiftOffsetHz(), kSliceBFreqHz - kDraggedCentreHz);
+
+        QCOMPARE(chA->notchTuneFrequencyHz(), kDraggedCentreHz);
+        QCOMPARE(chB->notchTuneFrequencyHz(), kDraggedCentreHz);
+
+        QCOMPARE(chA->notchTuneFrequencyHz() + chA->shiftOffsetHz(),
+                 sliceA->effectiveRxFrequency());
+        QCOMPARE(chB->notchTuneFrequencyHz() + chB->shiftOffsetHz(),
+                 sliceB->effectiveRxFrequency());
+    }
+
     // -- 4.5: the connect-time DDC seed -----------------------------------
 
     void the_connect_seed_commands_the_stream_centre_not_the_slice_frequency()

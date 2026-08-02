@@ -3377,6 +3377,19 @@ void RadioModel::reshiftSlicesOnStream(int streamIndex, double newCentreHz)
         if (m_wdspEngine) {
             if (RxChannel* ch = m_wdspEngine->rxChannel(s->sliceIndex())) {
                 ch->setShiftFrequency(composedShiftHz(s));
+                // The notch database's RF origin moves with the window it
+                // maps from. WDSP sums the two terms (offset = b->tunefreq +
+                // b->shift, third_party/wdsp/src/nbp.c:192), so re-shifting
+                // without re-tuning leaves every notch on this stream short
+                // by the whole drag distance. Design doc 4.2 requires the
+                // re-push on stream retune, and this is that path.
+                //
+                // newCentreHz, NOT m_streamAllocator.streamCentreHz: a CTUN
+                // drag writes the hardware directly through
+                // forceHardwareFrequency and deliberately leaves the
+                // allocator where it was, so the argument is the only
+                // quantity that describes where the DDC actually sits.
+                ch->setNotchTuneFrequency(newCentreHz);
             }
         }
     }
@@ -3810,6 +3823,15 @@ void RadioModel::commitStreamSampleRateChange(
             if (RxChannel* channel =
                     m_wdspEngine->rxChannel(planned.sliceId)) {
                 channel->setShiftFrequency(composedShiftHz(slice));
+                // Same pairing as bindSliceToStream and
+                // reshiftSlicesOnStream: a re-plan can move a slice onto a
+                // stream with a different centre, and the notch database's
+                // RF origin has to follow it (nbp.c:192). m_streamAllocator
+                // is already plan.allocator by this point, so it is
+                // authoritative here.
+                channel->setNotchTuneFrequency(
+                    m_streamAllocator.streamCentreHz(
+                        planned.placement.streamIndex));
             }
         }
     }
