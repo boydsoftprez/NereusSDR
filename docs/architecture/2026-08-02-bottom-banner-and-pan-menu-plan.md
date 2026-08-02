@@ -2404,6 +2404,44 @@ and the right-click menu policy moves from `m_cpuMetric` to `m_systemTile`.
 Also delete `RxDashboard::resizeEvent` if Task A5 left it, and confirm nothing
 still references `m_timeWidget` after Task A7.
 
+- [ ] **Step 5b: Verify A6's deferred finding is actually resolved**
+
+Task A6's review found that `reapplyRightStripDropPriority()` still listed
+`m_paStatusBadge` in its `priorityGroups` table and called `setVisible()` on
+it. Once A6 nested that badge inside a fixed-width slot, two problems
+followed: the badge could still be hidden outright by an ordinary resize,
+outside the new dim mechanism entirely; and hiding it saved no width at all,
+because `requiredWidth()` walks only direct children of the outer `hbox` and
+`m_safetyGroup`'s sizeHint is pinned at 4 x 50 px regardless of what is
+visible inside it. The ladder therefore over-dropped CAT, TCI, PA telemetry
+and the clock chasing a saving that never materialised.
+
+A6 was forbidden from touching that function because this task deletes it.
+Confirm the deletion actually resolved it. All three must hold:
+
+```bash
+# 1. The function and its table are gone.
+grep -n "reapplyRightStripDropPriority\|priorityGroups" src/gui/MainWindow.cpp src/gui/MainWindow.h
+# Expected: no output.
+
+# 2. No safety badge is setVisible()'d anywhere outside its own dim helper.
+grep -n "m_paStatusBadge->setVisible\|m_txStatusBadge->setVisible\|m_adcOvlBadge->setVisible\|m_txInhibitLabel->setVisible" src/gui/MainWindow.cpp
+# Expected: no output. Dimming is the only mechanism.
+
+# 3. The controller measures m_safetyGroup once, at rung 0.
+grep -n "safetyGroup" src/gui/MainWindow.cpp
+```
+
+If any of the first two produce output, stop and report it rather than
+working around it.
+
+Also retire the stale mirror in `tests/tst_mainwindow_status_bar_safety.cpp`
+around lines 80-100: `txInhibitLabel_hiddenByDefault` still asserts the full
+`"TX INHIBIT"` text, `setVisible(false)`, and an em-dash tooltip, none of
+which `buildStatusBar()` does any more. It passes because it is a
+self-contained mirror, so it documents a superseded state with nothing
+flagging it. Update it to `INH`, dimming, and the current tooltip.
+
 - [ ] **Step 6: Run the extracted-registration test**
 
 ```bash
