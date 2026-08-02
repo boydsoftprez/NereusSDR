@@ -128,6 +128,27 @@ private slots:
                                   Q_RETURN_ARG(bool, out), Q_ARG(int, 7));
         QVERIFY(!out);
     }
+
+    // -- The set handler must not queue a frame of its own -----------------
+
+    void set_does_not_queue_its_own_single_index_notification()
+    {
+        RadioModel m;
+        TciProtocol p(&m);
+        QVERIFY(m.notchModel());
+
+        p.handleCommand(QStringLiteral("rx_nf_enable:0,true;"));
+
+        // Thetis's set branch sends nothing (TCIServer.cs:3394-3398
+        // [v2.10.3.15]); the wire frames come from TNFChangedHandlers ->
+        // OnTnfChanged -> NfChanged, which sends BOTH indices
+        // (TCIServer.cs:1315-1320 [v2.10.3.15]). A single-index push from
+        // the handler is a wrong-arity duplicate of that pair.
+        const QStringList queued = drain(&p);
+        QVERIFY2(queued.isEmpty(),
+                 qPrintable(QStringLiteral("handler queued: %1")
+                                .arg(queued.join(QLatin1Char('|')))));
+    }
 };
 
 QTEST_MAIN(TestNotchTciRxNfEnable)
