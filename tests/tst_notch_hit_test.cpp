@@ -988,6 +988,177 @@ private slots:
         QCOMPARE(w.notchGrabAtForTest(99, kUiCentreX, false),
                  SpectrumWidget::NotchGrab::None);
     }
+
+    // -- section 7.4 hover drives selection (and so the wheel gate) -----
+
+    void hover_over_notch_sets_hovered_and_selected_ids()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 2000.0)});
+
+        sendMouse(&w, QEvent::MouseMove, QPoint(kUiCentreX, kUiSpecY),
+                  Qt::NoButton, Qt::NoButton);
+
+        QCOMPARE(w.hoveredNotchIdForTest(), 1);
+        QCOMPARE(w.selectedNotchIdForTest(), 1);
+    }
+
+    void hover_off_notch_clears_hovered_and_selected_ids()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 2000.0)});
+
+        sendMouse(&w, QEvent::MouseMove, QPoint(kUiCentreX, kUiSpecY),
+                  Qt::NoButton, Qt::NoButton);
+        QCOMPARE(w.selectedNotchIdForTest(), 1);
+
+        sendMouse(&w, QEvent::MouseMove, QPoint(kUiCentreX + 100, kUiSpecY),
+                  Qt::NoButton, Qt::NoButton);
+
+        QCOMPARE(w.hoveredNotchIdForTest(), -1);
+        QCOMPARE(w.selectedNotchIdForTest(), -1);
+    }
+
+    void leave_event_clears_notch_hover_state()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 2000.0)});
+
+        sendMouse(&w, QEvent::MouseMove, QPoint(kUiCentreX, kUiSpecY),
+                  Qt::NoButton, Qt::NoButton);
+        QCOMPARE(w.selectedNotchIdForTest(), 1);
+
+        QEvent leave(QEvent::Leave);
+        QApplication::sendEvent(&w, &leave);
+
+        QCOMPARE(w.hoveredNotchIdForTest(), -1);
+        QCOMPARE(w.selectedNotchIdForTest(), -1);
+    }
+
+    // -- section 7.2 drag: whole notch, and width from either edge ------
+
+    void press_on_notch_latches_selection()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 2000.0)});
+
+        sendMouse(&w, QEvent::MouseButtonPress, QPoint(kUiCentreX, kUiSpecY),
+                  Qt::LeftButton, Qt::LeftButton);
+
+        QCOMPARE(w.selectedNotchIdForTest(), 1);
+    }
+
+    void drag_body_emits_notch_move_requested()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 2000.0)});
+        QSignalSpy spy(&w, &SpectrumWidget::notchMoveRequested);
+
+        sendMouse(&w, QEvent::MouseButtonPress, QPoint(kUiCentreX, kUiSpecY),
+                  Qt::LeftButton, Qt::LeftButton);
+        sendMouse(&w, QEvent::MouseMove, QPoint(kUiCentreX + 10, kUiSpecY),
+                  Qt::NoButton, Qt::LeftButton);
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 1);
+        // 10 px right at 128 Hz/px = +1280 Hz.
+        QVERIFY(std::abs(spy.at(0).at(1).toDouble()
+                         - (kUiCentreHz + 10 * kUiHzPerPx)) < 1e-3);
+    }
+
+    void drag_high_edge_emits_double_the_pixel_delta_as_width()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 2000.0)});
+        QSignalSpy spy(&w, &SpectrumWidget::notchWidthRequested);
+        const int highX = uiXForHz(kUiCentreHz + 1000.0);   // 507
+
+        sendMouse(&w, QEvent::MouseButtonPress, QPoint(highX, kUiSpecY),
+                  Qt::LeftButton, Qt::LeftButton);
+        sendMouse(&w, QEvent::MouseMove, QPoint(highX + 10, kUiSpecY),
+                  Qt::NoButton, Qt::LeftButton);
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 1);
+        // "we want double the diff, as we are doing 'both sides'":
+        // 2000 + 2 * (10 * 128) = 4560 Hz.
+        QVERIFY(std::abs(spy.at(0).at(1).toDouble() - 4560.0) < 1e-3);
+    }
+
+    void drag_low_edge_grows_the_notch_when_dragged_left()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 2000.0)});
+        QSignalSpy spy(&w, &SpectrumWidget::notchWidthRequested);
+        // The LEFTMOST HITTABLE column, which is not uiXForHz(centre-1000).
+        // hzToX truncates, so the pixel holding the low edge frequency maps
+        // back one pixel BELOW it (x=492 -> 14198976 Hz, outside the notch)
+        // and the hit test rejects it.  drawNotchMarkers mirrors the upper
+        // half-width about cx for exactly the same reason, so the drawn
+        // left edge is 493 too: hit box and painted marker agree, and 493
+        // is still 1 px from nLpx so the grab is LowEdge.
+        const int halfWpx = uiXForHz(kUiCentreHz + 1000.0) - kUiCentreX;
+        const int lowX    = kUiCentreX - halfWpx;           // 493
+
+        sendMouse(&w, QEvent::MouseButtonPress, QPoint(lowX, kUiSpecY),
+                  Qt::LeftButton, Qt::LeftButton);
+        sendMouse(&w, QEvent::MouseMove, QPoint(lowX - 10, kUiSpecY),
+                  Qt::NoButton, Qt::LeftButton);
+
+        QCOMPARE(spy.count(), 1);
+        QVERIFY(std::abs(spy.at(0).at(1).toDouble() - 4560.0) < 1e-3);
+    }
+
+    // section 7.3: the drag latches the notch that was under the press, so
+    // an overlapping neighbour cannot steal it mid-gesture.  This is the
+    // job AetherSDR's tnfAtPixel(preferredId) short-circuit does upstream.
+    void drag_keeps_the_notch_it_started_on()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        // Two overlapping 2000 Hz notches.  A bare hit test at the moved-to
+        // pixel still returns the FIRST in list order, so this pins the
+        // latch by dragging until the cursor is clear of notch 3 entirely.
+        w.setNotchMarkers({makeNotch(3, kUiCentreHz, 2000.0),
+                           makeNotch(9, kUiCentreHz + 2560.0, 2000.0)});
+        QSignalSpy spy(&w, &SpectrumWidget::notchMoveRequested);
+
+        sendMouse(&w, QEvent::MouseButtonPress, QPoint(kUiCentreX, kUiSpecY),
+                  Qt::LeftButton, Qt::LeftButton);
+        QCOMPARE(w.selectedNotchIdForTest(), 3);
+        // +20 px lands at 14202560, dead centre of notch 9.
+        sendMouse(&w, QEvent::MouseMove, QPoint(kUiCentreX + 20, kUiSpecY),
+                  Qt::NoButton, Qt::LeftButton);
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 3);
+        QCOMPARE(w.selectedNotchIdForTest(), 3);
+    }
+
+    void release_clears_the_notch_grab()
+    {
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 2000.0)});
+        QSignalSpy spy(&w, &SpectrumWidget::notchMoveRequested);
+
+        sendMouse(&w, QEvent::MouseButtonPress, QPoint(kUiCentreX, kUiSpecY),
+                  Qt::LeftButton, Qt::LeftButton);
+        sendMouse(&w, QEvent::MouseButtonRelease, QPoint(kUiCentreX, kUiSpecY),
+                  Qt::LeftButton, Qt::NoButton);
+        // A move after release is a hover, not a drag.
+        sendMouse(&w, QEvent::MouseMove, QPoint(kUiCentreX + 10, kUiSpecY),
+                  Qt::NoButton, Qt::NoButton);
+
+        QCOMPARE(spy.count(), 0);
+    }
 };
 
 QTEST_MAIN(TestNotchHitTest)

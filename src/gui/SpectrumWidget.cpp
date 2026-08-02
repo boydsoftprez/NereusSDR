@@ -6601,6 +6601,46 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         return;
     }
 
+    // 3b. Notch (TNF) grab.  Thetis runs its notch block first inside
+    // case MouseButtons.Left:, ahead of every filter drag, so a notch
+    // marker sitting on a filter edge still drags as a notch.  The dBm
+    // strip / divider / freq-scale rows above are NereusSDR chrome outside
+    // the spectrum plot and keep their existing precedence, so the notch
+    // test is guarded on my < specH.
+    //
+    // The press also writes m_selectedNotchId, so a press is
+    // self-contained rather than relying on a prior hover, and the grab
+    // latches the notch for the whole gesture: hover stops writing until
+    // release, so an overlapping neighbour cannot steal the drag
+    // (design section 7.3).
+    //
+    // From Thetis console.cs:48981-48998 [v2.10.3.15]
+    //NOTCH MW0LGE  [original section marker from console.cs:48981]
+    if (my < specH) {
+        const int hitNotch = notchAtPixel(mx, specRect);
+        if (m_selectedNotchId != hitNotch) {
+            m_selectedNotchId = hitNotch;
+            markOverlayDirty();
+        }
+        if (hitNotch >= 0) {
+            const bool shiftHeld =
+                (event->modifiers() & Qt::ShiftModifier) != 0;
+            m_notchGrab = notchGrabAt(hitNotch, mx, shiftHeld, specRect);
+            const NotchMarker* n = notchMarkerById(hitNotch);
+            // the inital click point, delta is worked in mouse_move
+            //   [original comment from console.cs:48997]
+            m_notchDragStartX = mx;
+            // From Thetis console.cs:49059 [v2.10.3.15] (width, edge drag)
+            // and console.cs:49065 [v2.10.3.15] (centre, whole-notch drag).
+            m_notchDragStartData = (m_notchGrab == NotchGrab::Centre)
+                ? (n ? n->freqMhz * 1.0e6 : 0.0)
+                : (n ? n->widthHz : 0.0);
+            setCursor(Qt::SizeHorCursor);
+            event->accept();
+            return;
+        }
+    }
+
     // Compute filter edge pixel positions for hit-testing
     double loHz = m_vfoHz + m_filterLowHz;
     double hiHz = m_vfoHz + m_filterHighHz;
@@ -6714,6 +6754,45 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         }
 
         setCursor(Qt::SizeVerCursor);
+        event->accept();
+        return;
+    }
+
+    // Notch drag: whole-notch move, or width from the latched edge.  The
+    // pixel delta is worked here from the press point recorded above; the
+    // NotchModel owns every clamp (min/max centre, 0..10000 width), so
+    // this layer emits the raw request.  AetherSDR's y-axis width gesture
+    // (src/gui/SpectrumWidget.cpp:9051-9070 [@c6481cbf]) is deliberately
+    // declined, so vertical movement during a centre drag cannot silently
+    // change the width (design section 7.2).
+    //
+    // From Thetis console.cs:49928-49968 [v2.10.3.15] (centre)
+    //MW0LGE [2.9.0.7] update on drag
+    //   [original inline comment from console.cs:49967 — Thetis pushes on
+    //   every mouse-move by named design; design section 6.2 says do not
+    //   add throttling here.]
+    // From Thetis console.cs:49971-49987 [v2.10.3.15] (width)
+    if (m_notchGrab != NotchGrab::None && m_selectedNotchId >= 0
+        && specRect.width() > 0) {
+        const double hzPerPx = m_bandwidthHz / specRect.width();
+        if (m_notchGrab == NotchGrab::Centre) {
+            // drag the whole notch  [original comment from console.cs:49930]
+            const double diff = (mx - m_notchDragStartX) * hzPerPx;
+            emit notchMoveRequested(m_selectedNotchId,
+                                    m_notchDragStartData + diff);
+        } else {
+            // drag the bw edges of the notch
+            //   [original comment from console.cs:49973]
+            const double diff = (m_notchGrab == NotchGrab::HighEdge)
+                ? (mx - m_notchDragStartX) * hzPerPx
+                : (m_notchDragStartX - mx) * hzPerPx;
+            // we want double the diff, as we are doing 'both sides'
+            //   [original comment from console.cs:49984]
+            emit notchWidthRequested(m_selectedNotchId,
+                                     m_notchDragStartData + (diff * 2.0));
+        }
+        setCursor(Qt::SizeHorCursor);
+        markOverlayDirty();
         event->accept();
         return;
     }
@@ -6932,6 +7011,47 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         }
     }
 
+    // Notch hover: highlight, frequency/width readout, and the selection
+    // the wheel resize is gated on.  Thetis re-evaluates the selected notch
+    // on every non-dragging move and clears it when the cursor is not over
+    // one, which is what keeps a plain scroll tuning the VFO.
+    //
+    // ok are we over the top of a notch?
+    //   [original comment from console.cs:49919]
+    // From Thetis console.cs:49917-49926 [v2.10.3.15]
+    if (my < specH) {
+        const int hoverNotch = notchAtPixel(mx, specRect);
+        if (hoverNotch != m_hoveredNotchId) {
+            m_hoveredNotchId = hoverNotch;
+            if (hoverNotch < 0) {
+                QToolTip::hideText();
+            }
+            markOverlayDirty();
+        }
+        if (hoverNotch != m_selectedNotchId) {
+            m_selectedNotchId = hoverNotch;
+            markOverlayDirty();
+        }
+        if (hoverNotch >= 0) {
+            const NotchMarker* n = notchMarkerById(hoverNotch);
+            if (n) {
+                // AetherSDR renders this in a styled QLabel popup
+                // (m_tnfHoverPopup, src/gui/SpectrumWidget.cpp:13591-13646
+                // [@c6481cbf]); NereusSDR routes the same frequency +
+                // width readout through QToolTip, the path the spot
+                // overlay above already uses.
+                QToolTip::showText(event->globalPosition().toPoint(),
+                    QString("<b>%1 MHz</b><br>Width: %2 Hz")
+                        .arg(n->freqMhz, 0, 'f', 6)
+                        .arg(qRound(n->widthHz)),
+                    this);
+            }
+            setCursor(Qt::SizeHorCursor);
+            event->accept();
+            return;
+        }
+    }
+
     // Sub-epic E: hit-test against the actual dBm-strip width, not the
     // effectiveStripW() layout reservation (which widens to 72px when paused
     // to make room for the time-scale strip's UTC labels — but the dBm strip
@@ -7051,6 +7171,8 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         m_draggingDivider = false;
         m_draggingPan = false;
         m_draggingBandwidth = false;
+        // Ends the notch gesture; hover resumes writing the selection.
+        m_notchGrab = NotchGrab::None;
         setCursor(Qt::CrossCursor);
     }
     QWidget::mouseReleaseEvent(event);
@@ -7070,6 +7192,15 @@ void SpectrumWidget::leaveEvent(QEvent* event)
     if (m_hoverSpotIndex != -1) {
         m_hoverSpotIndex = -1;
         emit spotHoverIndexChanged(-1);
+    }
+    // Same reasoning for the notch overlay: the cursor never crosses a
+    // "not over a notch" boundary inside mouseMoveEvent when it leaves the
+    // widget outright, so the Chartreuse highlight would stay lit and the
+    // wheel would keep resizing a notch the operator is no longer near.
+    if (m_hoveredNotchId != -1 || m_selectedNotchId != -1) {
+        m_hoveredNotchId = -1;
+        m_selectedNotchId = -1;
+        markOverlayDirty();
     }
     QWidget::leaveEvent(event);
 }
