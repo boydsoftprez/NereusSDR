@@ -372,6 +372,27 @@ bool NotchModel::setActive(int id, bool active)
     return true;
 }
 
+// From Thetis console.cs:40198-40219 [v2.10.3.15], removeNotch(notch).
+// WDSP shifts its own notch array down inside RXANBPDeleteNotch, so erasing
+// at the same position keeps the two in lockstep (design section 5.2).
+bool NotchModel::removeNotch(int id)
+{
+    // From Thetis console.cs:40200 [v2.10.3.15]
+    if (m_adminBusy) { // cant remove it if setup is adding/editing
+        return false;
+    }
+
+    const int index = indexOfId(id);
+    if (index < 0) {
+        return false;
+    }
+
+    m_notches.removeAt(index);
+    persist();
+    emit notchRemoved(id, index);
+    return true;
+}
+
 void NotchModel::setAdminBusy(bool busy)
 {
     // Transient edit lock, not persisted: it exists only for the lifetime of

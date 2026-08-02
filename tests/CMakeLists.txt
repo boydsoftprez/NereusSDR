@@ -5905,6 +5905,15 @@ nereus_add_test(tst_rxchannel_notch_wrappers)
 #         section 5.4.
 nereus_add_test(tst_notch_model_guards)
 
+# TNF section 5.2: the index invariant. List position tracks the WDSP notch
+# index across add / edit / delete including deleting from the middle, and
+# stable ids survive an index shift (the AetherSDR TnfEntry::id addition
+# that retires Thetis's GetFirstNotchThatMatches selection recovery).
+# Source: Thetis console.cs:40198-40219; 40262-40266 [v2.10.3.15].
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         section 5.2.
+nereus_add_test(tst_notch_model_index_invariant)
+
 # ── PR #291 Codex review fixes ────────────────────────────────────────────
 # Capture-path helpers behind the native-rate mic resampling path.  The
 # defects only appear on a device whose native rate differs from the
