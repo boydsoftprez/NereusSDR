@@ -446,7 +446,7 @@ The daemon build drops Qt Widgets, Qt Svg, the QRhi shader pipeline, and all
 
 ### 4.2 Prerequisites for the split
 
-Seven, not three. An earlier revision listed only items 1, 3, and 7, which
+Nine, not three. An earlier revision listed only items 1, 3, and 7, which
 would have produced a daemon that connects to a radio and emits no spectrum
 at all.
 
@@ -1714,7 +1714,8 @@ its own implementation plan document. This design is the umbrella.
 prerequisites in §4.2** (including the FFT pool owner, the topology builder and
 the crop-and-reduce extraction, which are build-and-target surgery and must not
 be deferred to R3), `nereusd` with config file and systemd unit, a thread for
-the wideband FFT (§9.6), and the daemon's slice and pan orchestration.
+the wideband FFT (§9.6), and the daemon's slice and **endpoint**
+orchestration (not pan orchestration; §9.4 places pans client-side).
 
 **R1 must resolve slice creation.** Every `addSliceOnPan` call site is
 GUI-resident (five in `MainWindow.cpp`; the definition is `Q_INVOKABLE` on
