@@ -1022,6 +1022,35 @@ private slots:
         QCOMPARE(w.selectedNotchIdForTest(), -1);
     }
 
+    // The hover branch returns early, skipping the repaint at the tail of
+    // mouseMoveEvent.  drawCursorInfo (the frequency readout that follows
+    // the pointer) is painted into the SAME cached static overlay, so a
+    // hover branch that only invalidated on an id CHANGE would freeze the
+    // readout for as long as the pointer stayed over a marker.
+    void hover_within_one_notch_keeps_invalidating_the_overlay()
+    {
+#ifdef NEREUS_GPU_SPECTRUM
+        SpectrumWidget w;
+        configureUi(w);
+        w.setNotchMarkers({makeNotch(1, kUiCentreHz, 2000.0)});
+
+        sendMouse(&w, QEvent::MouseMove, QPoint(kUiCentreX, kUiSpecY),
+                  Qt::NoButton, Qt::NoButton);
+        QCOMPARE(w.hoveredNotchIdForTest(), 1);
+
+        // Second move, same notch, so the id does not change.
+        w.clearOverlayStaticDirtyForTest();
+        sendMouse(&w, QEvent::MouseMove, QPoint(kUiCentreX + 2, kUiSpecY),
+                  Qt::NoButton, Qt::NoButton);
+
+        QVERIFY2(w.overlayStaticDirtyForTest(),
+                 "moving within one notch did not invalidate the static "
+                 "overlay; the cursor frequency readout would freeze");
+#else
+        QSKIP("no cached overlay texture on the CPU-only spectrum path");
+#endif
+    }
+
     void leave_event_clears_notch_hover_state()
     {
         SpectrumWidget w;

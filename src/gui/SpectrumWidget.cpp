@@ -7158,6 +7158,11 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
                     this);
             }
             setCursor(Qt::SizeHorCursor);
+            // Unconditional, not just when the hovered id changes: the
+            // cursor-frequency readout is painted into the same cached
+            // static overlay (drawCursorInfo), so skipping this would
+            // freeze it for as long as the pointer stayed over a marker.
+            markOverlayDirty();
             event->accept();
             return;
         }
