@@ -175,7 +175,26 @@ is how they drift.
 Leave `target_link_libraries(${name} PRIVATE NereusSDRObjs Qt6::Test)` alone. That is the
 whole point of keeping the name.
 
-- [ ] **Step 6: Prove the target graph is unchanged**
+- [ ] **Step 6: Preserve the build-tag wiring and fix its stale comment**
+
+`main` carries a build-tag mechanism at `CMakeLists.txt:1359-1403`, ending in
+`add_dependencies(NereusSDR nereus_build_tag)`. It references only the
+`NereusSDR` executable, which this task preserves, so **no change is needed
+there**. Verify it survived:
+
+```bash
+grep -n "add_dependencies(NereusSDR nereus_build_tag)" CMakeLists.txt
+```
+
+Expected: one hit, unchanged.
+
+Its explanatory comment (and the matching one in `src/main.cpp`) says the
+generated header is kept out of `NereusSDRObjs` because "~450 test
+executables" link it. After this task that object library is `NereusCore`, and
+the real count is 589. Update both comments to name `NereusCore` and 589. The
+reasoning is still correct; only the target name and the number changed.
+
+- [ ] **Step 7: Prove the target graph is unchanged**
 
 ```bash
 cmake -B /tmp/r1-after -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo >/dev/null
@@ -187,7 +206,7 @@ diff <(grep -v 'NereusCore\|NereusGui' /tmp/targets-before.txt) \
 Expected: `TARGET GRAPH UNCHANGED`. Any other output means a test target was lost; fix
 before continuing.
 
-- [ ] **Step 7: Build the app and a sample of tests**
+- [ ] **Step 8: Build the app and a sample of tests**
 
 ```bash
 cmake --build /tmp/r1-after --target NereusSDR -j$(sysctl -n hw.ncpu)
@@ -197,10 +216,10 @@ ctest --test-dir /tmp/r1-after -R 'tst_radio_model|tst_fft_engine' --output-on-f
 
 Expected: app links, both tests build and pass.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add CMakeLists.txt tests/CMakeLists.txt
+git add CMakeLists.txt tests/CMakeLists.txt src/main.cpp
 git commit -S -m "build(r1): split NereusSDRObjs into NereusCore and NereusGui
 
 NereusSDRObjs survives as an INTERFACE aggregate over the two, so all 589
@@ -1826,7 +1845,7 @@ ANAN with N slices, with per-thread CPU recorded against the design section
 
 ## Self-Review
 
-**Spec coverage.** All nine §4.2 prerequisites map to tasks: 1 to Task 4, 2 to Task 2, 3 to Task 3, 4 to Task 6, 5 to Task 7, 6 to Task 5, 7 to Task 8, 8 to Task 1, 9 to Task 1 Step 7 and Task 9 Step 6. §15's other R1 items: config file and systemd in Tasks 9 and 12, wideband thread in Task 11, slice and endpoint orchestration in Task 10, Pi verification in Task 13.
+**Spec coverage.** All nine §4.2 prerequisites map to tasks: 1 to Task 4, 2 to Task 2, 3 to Task 3, 4 to Task 6, 5 to Task 7, 6 to Task 5, 7 to Task 8, 8 to Task 1, 9 to Task 1 Step 8 and Task 9 Step 6. §15's other R1 items: config file and systemd in Tasks 9 and 12, wideband thread in Task 11, slice and endpoint orchestration in Task 10, Pi verification in Task 13.
 
 **Deliberately out of scope**, all R2 or later: `StateMirror`, `SettingsProxy`, the transport, TLS, the display codec, Opus encoding, and the two-shared-FFT tier. `FftEnginePool::threadCount` exists so the tier can be added without reopening the pool, but R1 does not implement it.
 
