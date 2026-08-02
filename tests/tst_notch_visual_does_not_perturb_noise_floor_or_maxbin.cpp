@@ -393,6 +393,85 @@ private slots:
                                 .arg(static_cast<double>(offTop))
                                 .arg(static_cast<double>(onTop))));
     }
+
+    // ---- Cycle E: suppression gates ----
+    //
+    // Characterisation slots. They pin the shape of visualNotchWillDent()
+    // and the per-notch skip at the head of applyVisualNotchDent against
+    // later edits; no implementation change went with them.
+
+    void mox_suppresses_the_dent_on_both_planes()
+    {
+        SpectrumWidget base;
+        configure(base);
+        feed(base, 1);
+        const QVector<float> clean   = base.renderedPixels();
+        const QVector<float> cleanWf = base.wfRenderedPixels();
+
+        SpectrumWidget w;
+        configure(w);
+        w.setNotchMarkers(oneNotch(200.0));
+        w.setVisualNotchEnabled(true);
+        // From Thetis display.cs:5235 [v2.10.3.15] - the visual notch is
+        // gated on !local_mox, on both planes (:6579 for the waterfall).
+        w.setMoxOverlay(true);
+        feed(w, 1);
+
+        QCOMPARE(dentedSpanPixels(clean, w.renderedPixels()), 0);
+        QCOMPARE(dentedSpanPixels(cleanWf, w.wfRenderedPixels()), 0);
+    }
+
+    void master_tnf_off_suppresses_the_dent()
+    {
+        SpectrumWidget base;
+        configure(base);
+        feed(base, 1);
+        const QVector<float> clean = base.renderedPixels();
+
+        SpectrumWidget w;
+        configure(w);
+        w.setNotchMarkers(oneNotch(200.0));
+        w.setVisualNotchEnabled(true);
+        w.setNotchGlobalEnabled(false);
+        feed(w, 1);
+
+        QCOMPARE(dentedSpanPixels(clean, w.renderedPixels()), 0);
+    }
+
+    void inactive_notch_is_not_dented()
+    {
+        SpectrumWidget base;
+        configure(base);
+        feed(base, 1);
+        const QVector<float> clean = base.renderedPixels();
+
+        SpectrumWidget w;
+        configure(w);
+        w.setNotchMarkers(oneNotch(200.0, /*active*/ false));
+        w.setVisualNotchEnabled(true);
+        feed(w, 1);
+
+        QCOMPARE(dentedSpanPixels(clean, w.renderedPixels()), 0);
+    }
+
+    void turning_the_toggle_off_drops_the_stale_pristine_copy()
+    {
+        SpectrumWidget w;
+        configure(w);
+        w.setNotchMarkers(oneNotch(200.0));
+        w.setVisualNotchEnabled(true);
+        feed(w, 1);
+        QCOMPARE(w.undentedPixelsForTest().size(), kDisplayWidth);
+        QVERIFY(w.undentedPixelsForTest()[kTonePixel]
+                    - w.renderedPixels()[kTonePixel] > 150.0f);
+
+        w.setVisualNotchEnabled(false);
+        feed(w, 1);
+        // The fallback returns the live array once the copy is dropped, so a
+        // stale pristine frame can never outlive the toggle.
+        QCOMPARE(w.undentedPixelsForTest()[kTonePixel],
+                 w.renderedPixels()[kTonePixel]);
+    }
 };
 
 QTEST_MAIN(TestNotchVisualDoesNotPerturbNoiseFloorOrMaxbin)
