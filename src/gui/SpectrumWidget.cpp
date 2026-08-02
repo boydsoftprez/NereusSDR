@@ -5268,6 +5268,44 @@ std::pair<int,int> SpectrumWidget::txAudioToIq(int audioLow, int audioHigh,
 // exactly the four states we do have (display.cs:386-390 [v2.10.3.15]).
 // ---------------------------------------------------------------------------
 
+// From Thetis display.cs:389 [v2.10.3.15]: notch_active_colour = Color.Yellow.
+static constexpr QRgb kNotchActiveColour = qRgb(0xFF, 0xFF, 0x00);
+// From Thetis display.cs:390 [v2.10.3.15]: notch_inactive_colour = Color.Gray.
+// System.Drawing.Color.Gray is #808080 while Qt::gray is #A0A0A4, so the
+// literal is spelled out rather than reaching for the Qt global colour.
+static constexpr QRgb kNotchInactiveColour = qRgb(0x80, 0x80, 0x80);
+// From Thetis display.cs:387 [v2.10.3.15]: notch_tnf_off_colour = Color.Olive.
+static constexpr QRgb kNotchTnfOffColour = qRgb(0x80, 0x80, 0x00);
+// From Thetis display.cs:386 [v2.10.3.15]:
+// notch_highlight_color = Color.Chartreuse.
+static constexpr QRgb kNotchHighlightColour = qRgb(0x7F, 0xFF, 0x00);
+
+// From Thetis display.cs:400-408 [v2.10.3.15]: every notch fill brush is
+// changeAlpha(colour, 92); changeAlpha itself is display.cs:2939-2942.
+static constexpr int kNotchFillAlpha = 92;
+
+// Fixed, replacing AetherSDR's depth-derived
+// (depthDb <= 1) ? 12 : (depthDb == 2 ? 8 : 5) at
+// src/gui/SpectrumWidget.cpp:13535 [@c6481cbf].
+static constexpr int kNotchHatchSpacingPx = 8;
+
+// Fixed, replacing AetherSDR's 8 + depthDb * 2 at
+// src/gui/SpectrumWidget.cpp:13545 [@c6481cbf].
+static constexpr int kNotchHandleHeightPx = 10;
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13547-13548 [@c6481cbf]:
+// tri << QPoint(cx - 5, ...) << QPoint(cx + 5, ...).
+static constexpr int kNotchHandleHalfWidthPx = 5;
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13523 [@c6481cbf]:
+// std::max(2, ...), so a sub-2-pixel notch stays grabbable.
+static constexpr int kNotchMinHalfWidthPx = 2;
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13551 [@c6481cbf]: the grab
+// handle dims with the master flag as well as changing colour.
+static constexpr int kNotchHandleAlphaOn  = 200;
+static constexpr int kNotchHandleAlphaOff = 80;
+
 // From AetherSDR src/gui/SpectrumWidget.cpp:13436-13440 [@c6481cbf]
 void SpectrumWidget::setNotchMarkers(const QVector<NotchMarker>& markers)
 {
@@ -5286,6 +5324,86 @@ void SpectrumWidget::setNotchMinWidthHz(double hz)
 {
     m_notchMinWidthHz = hz;
     markOverlayDirty();
+}
+
+// Provisional while the marker geometry lands; the Thetis four-state
+// machine replaces this body in the next commit.
+QColor SpectrumWidget::notchColor(const NotchMarker& n) const
+{
+    Q_UNUSED(n);
+    return QColor::fromRgb(kNotchActiveColour);
+}
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13503-13554 [@c6481cbf]
+void SpectrumWidget::drawNotchMarkers(QPainter& p, const QRect& specRect)
+{
+    if (m_notchMarkers.isEmpty()) {
+        return;
+    }
+
+    // From AetherSDR src/gui/SpectrumWidget.cpp:13507-13519 [@c6481cbf]:
+    // the drawDepthHatch lambda, renamed because the depth argument is gone.
+    const auto drawHatch = [&](const QRect& rect, const QColor& colour,
+                               int left, int right, int spacing) {
+        if (rect.isEmpty()) {
+            return;
+        }
+        p.save();
+        p.setClipRect(rect);
+        p.setPen(QPen(colour, 1));
+        const int height = rect.height();
+        for (int x = left - height; x < right; x += spacing) {
+            p.drawLine(x, rect.bottom(), x + height, rect.top());
+        }
+        p.restore();
+    };
+
+    for (const NotchMarker& n : m_notchMarkers) {
+        // NereusSDR coordinate mapping: hzToX(double hz, QRect) takes Hz.
+        // AetherSDR upstream uses mhzToX(freqMhz) at :13522-13523; multiply
+        // by 1e6, exactly as drawSpotMarkers already does.
+        const double centreHz = n.freqMhz * 1.0e6;
+        const int cx    = hzToX(centreHz, specRect);
+        const int halfW = std::max(kNotchMinHalfWidthPx,
+                                   hzToX(centreHz + n.widthHz / 2.0, specRect) - cx);
+        const int left  = cx - halfW;
+        const int right = cx + halfW;
+
+        // From AetherSDR src/gui/SpectrumWidget.cpp:13527-13528 [@c6481cbf]
+        // Skip if fully off-screen
+        if (right < 0 || left > width()) {
+            continue;
+        }
+
+        const QColor base = notchColor(n);
+        QColor fill(base);
+        fill.setAlpha(kNotchFillAlpha);
+
+        const QRect notchRect(left, specRect.top(), right - left, specRect.height());
+        p.fillRect(notchRect, fill);
+        drawHatch(notchRect, base, left, right, kNotchHatchSpacingPx);
+
+        // From AetherSDR src/gui/SpectrumWidget.cpp:13538-13542 [@c6481cbf]
+        // Edge lines
+        p.setPen(QPen(base, 1, Qt::SolidLine));
+        p.drawLine(left,  specRect.top(), left,  specRect.bottom());
+        p.drawLine(right, specRect.top(), right, specRect.bottom());
+
+        // From AetherSDR src/gui/SpectrumWidget.cpp:13544-13552 [@c6481cbf]
+        // Center triangle (grab handle) at top of spectrum
+        QPolygon tri;
+        tri << QPoint(cx - kNotchHandleHalfWidthPx, specRect.top())
+            << QPoint(cx + kNotchHandleHalfWidthPx, specRect.top())
+            << QPoint(cx, specRect.top() + kNotchHandleHeightPx);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(base.red(), base.green(), base.blue(),
+                          m_notchGlobalEnabled ? kNotchHandleAlphaOn
+                                               : kNotchHandleAlphaOff));
+        p.drawPolygon(tri);
+    }
+
+    p.setBrush(Qt::NoBrush);
+    p.setPen(Qt::NoPen);
 }
 
 // ---------------------------------------------------------------------------
@@ -6025,6 +6143,26 @@ static int specHFromHeight(int widgetH, float spectrumFrac, int chromeH)
     Q_UNUSED(chromeH);
     return static_cast<int>(widgetH * spectrumFrac);
 #endif
+}
+
+// ===========================================================================
+// Notch (TNF) geometry -- design sections 8.1 and 8.2
+// ===========================================================================
+//
+// The single geometry source for the notch overlay.  Reproduces the rect
+// each paint site builds for itself, through the same specHFromHeight helper
+// so the GPU/CPU layout split is honoured without restating it: the QPainter
+// path puts the frequency bar at the bottom of the widget and takes
+// h * spectrumFrac, the QRhi path puts it between spectrum and waterfall and
+// takes (h - chrome) * spectrumFrac.
+//
+// Defined here rather than beside drawNotchMarkers because specHFromHeight is
+// a file-local static defined immediately above.
+QRect SpectrumWidget::notchSpecRect() const
+{
+    const int specH = specHFromHeight(height(), m_spectrumFrac,
+                                      kFreqScaleH + kDividerH);
+    return QRect(0, 0, width() - effectiveStripW(), specH);
 }
 
 void SpectrumWidget::mousePressEvent(QMouseEvent* event)

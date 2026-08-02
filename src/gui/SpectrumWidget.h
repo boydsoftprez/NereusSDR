@@ -1213,6 +1213,10 @@ public:
     const QVector<NotchMarker>& notchMarkersForTest() const { return m_notchMarkers; }
     bool   notchGlobalEnabledForTest() const { return m_notchGlobalEnabled; }
     double notchMinWidthHzForTest()    const { return m_notchMinWidthHz; }
+    void drawNotchMarkersForTest(QPainter& p, const QRect& specRect) {
+        drawNotchMarkers(p, specRect);
+    }
+    QRect notchSpecRectForTest() const { return notchSpecRect(); }
 
     // Overlay-cache seam.  Returns false on a CPU-only build, where there
     // is no cached texture to invalidate.
@@ -1438,6 +1442,23 @@ private:
     //  - Cluster badge popup menu with formatted spot lines.
     void drawSpotMarkers(QPainter& p, const QRect& specRect);
     void showSpotClusterPopup(const SpotCluster& cluster, const QPoint& globalPos);
+
+    // ---- TNF / notch overlay (design section 8.2) ----
+    // Geometry ported unchanged from AetherSDR drawTnfMarkers
+    // (src/gui/SpectrumWidget.cpp:13503-13554 [@c6481cbf]): translucent
+    // fill over the full spectrum height, diagonal hatch clipped to the
+    // notch rect, 1 px edge lines at both boundaries, downward triangle
+    // grab handle at the top.  Colours come from Thetis instead
+    // (display.cs:386-390, 8691-8722 [v2.10.3.15]).
+    void drawNotchMarkers(QPainter& p, const QRect& specRect);
+    QColor notchColor(const NotchMarker& n) const;
+
+    // The SINGLE notch geometry source.  Both paint call sites pass this
+    // rect, and the interaction layer's pixel hit test builds from it, so
+    // hit boxes cannot drift away from the drawn markers.  Reproduces the
+    // paint sites' own specRect construction on both render paths through
+    // specHFromHeight, which already encodes the GPU/CPU layout split.
+    QRect notchSpecRect() const;
 
     // ---- TX filter overlay (Plan 4 D9, Cluster E) ----
     // drawTxFilterOverlay: panadapter band fill + border lines + label.
