@@ -1,0 +1,318 @@
+// =================================================================
+// src/models/NotchModel.cpp  (NereusSDR)
+// =================================================================
+//
+// Ported from Thetis sources [v2.10.3.15] (commit 3759d096):
+//   Project Files/Source/Console/radio.cs
+//     MNotchDB spatial helpers NotchNearFreq / NotchesInBW /
+//     NotchThatSurroundsFrequencyInBW at radio.cs:4260-4325.
+//   Project Files/Source/Console/console.cs
+//     NotchAdminBusy guards, ChangeNotchBW, ChangeNotchCentreFrequency,
+//     changeNotchActive, removeNotch, AddNotch, notchSidebandShift,
+//     notchMouseWheel clamps, _max_filter_width and max_freq at
+//     console.cs:13221; 15552; 33299-33321; 39987-40005; 40007-40047;
+//     40050-40120; 40123-40156; 40198-40219; 40222-40280; 40281-40307.
+// The original licences from both Thetis sources are included below.
+//
+// Source attribution (AetherSDR, GPL-3.0-or-later):
+//
+//   Copyright (C) 2024-2026  Jeremy (KK7GWY) / AetherSDR contributors
+//     - per https://github.com/ten9876/AetherSDR (GPLv3; see LICENSE
+//       and About dialog for the live contributor list)
+//
+//   AetherSDR has no per-file copyright header, so per
+//   docs/attribution/HOW-TO-PORT.md rule 6 the project URL and primary
+//   author are cited at NereusSDR block level rather than copying a
+//   verbatim header that does not exist. The stable-id notch-store shape
+//   is a port of AetherSDR src/models/TnfModel.{h,cpp} [@c6481cbf].
+//   AetherSDR is licensed under the GNU General Public License v3 or
+//   later. NereusSDR is also GPLv3. Attribution follows GPLv3 section 5
+//   requirements.
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-08-01  J.J. Boyd / KG4VCF  TNF (tunable notch filter) Task 3.
+//                 Reimplemented in C++20/Qt6 for NereusSDR, with
+//                 AI-assisted transformation via Anthropic Claude Code.
+//                 Thetis's index-is-identity MNotchDB gains a stable
+//                 monotonic `id` (the AetherSDR TnfModel addition), which
+//                 removes the upstream GetFirstNotchThatMatches
+//                 selection-recovery dance. AetherSDR's TnfEntry::depthDb
+//                 and ::permanent are dropped: both are SmartSDR
+//                 capabilities with no WDSP equivalent (design section
+//                 1.2). The Thetis CW-pitch correction
+//                 (console.cs:40228) and the XVTR min/max override
+//                 (console.cs:40051-40077, :40232-40254) are deliberately
+//                 NOT ported; see design sections 1.2 and 5.4.
+// =================================================================
+
+// --- From radio.cs ---
+
+//=================================================================
+// radio.cs
+//=================================================================
+// PowerSDR is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2010-2020  Doug Wigley
+// Copyright (C) 2019-2026  Richard Samphire
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to:
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
+// --- From console.cs ---
+
+//=================================================================
+// console.cs
+//=================================================================
+// Thetis is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2010-2020  Doug Wigley
+// Credit is given to Sizenko Alexander of Style-7 (http://www.styleseven.com/) for the Digital-7 font.
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to:
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
+//
+//=================================================================
+// Modifications to support the Behringer Midi controllers
+// by Chris Codella, W2PA, May 2017.  Indicated by //-W2PA comment lines.
+// Modifications for using the new database import function.  W2PA, 29 May 2017
+// Support QSK, possible with Protocol-2 firmware v1.7 (Orion-MkI and Orion-MkII), and later.  W2PA, 5 April 2019
+// Modfied heavily - Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+// ApacheLabs G2E support added throughout Thetis in various files, all changes marked  //N1GP G2E added
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
+#include "NotchModel.h"
+
+#include "core/AppSettings.h"
+#include "core/LogCategories.h"
+
+#include <QVariant>
+
+#include <cmath>
+
+namespace NereusSDR {
+
+namespace {
+
+// Boolean to the AppSettings canonical string, matching how SliceModel
+// stores its own flags.
+QString boolStr(bool v)
+{
+    return v ? QStringLiteral("True") : QStringLiteral("False");
+}
+
+}  // namespace
+
+NotchModel::NotchModel(QObject* parent)
+    : QObject(parent)
+{
+}
+
+// ---------------------------------------------------------------------------
+// Queries
+// ---------------------------------------------------------------------------
+
+int NotchModel::indexOfId(int id) const
+{
+    for (int i = 0; i < m_notches.size(); ++i) {
+        if (m_notches.at(i).id == id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+const Notch* NotchModel::notchById(int id) const
+{
+    const int index = indexOfId(id);
+    if (index < 0) {
+        return nullptr;
+    }
+    return &m_notches.at(index);
+}
+
+//MW0LGE check if notch close by
+// From Thetis radio.cs:4261-4272 [v2.10.3.15], MNotchDB.NotchNearFreq.
+// Strict `<` at radio.cs:4267, so a notch exactly deltaHz away does NOT
+// block an add.
+bool NotchModel::notchNearFreq(double hz, int deltaHz) const
+{
+    for (const Notch& n : m_notches) {
+        if (std::abs(hz - n.centerHz) < deltaHz) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// Mutations
+// ---------------------------------------------------------------------------
+
+// From Thetis console.cs:40222-40280 [v2.10.3.15], AddNotch(fFreqHZ, sourceRX).
+// Guard order is upstream's: admin-busy, round, constrain, dedupe, with the
+// round-before-constrain ordering that //[2.10.3.7]MW0LGE introduced. The
+// CW-pitch shift (:40228, GetDSPcwPitchShiftToZero) and the XVTR min/max
+// override (:40232-40254, //MW0LGE_21e XVTR) are deliberately not ported;
+// see design sections 1.2 and 5.4.
+int NotchModel::addNotch(double centerHz, double widthHz)
+{
+    // From Thetis console.cs:40224 [v2.10.3.15]
+    if (m_adminBusy) { // dont add if using add/edit on the setup form
+        emit notchAddRejected(
+            QStringLiteral("The MNF settings page is mid-edit"));
+        return -1;
+    }
+
+    // From Thetis console.cs:40230 [v2.10.3.15]. C# Math.Round(double) is
+    // MidpointRounding.ToEven, which is what std::nearbyint does under the
+    // default FE_TONEAREST rounding mode.
+    centerHz = std::nearbyint(centerHz); //[2.10.3.7]MW0LGE moved from below
+
+    //constrain
+    // From Thetis console.cs:40256-40257 [v2.10.3.15]
+    if (centerHz < kMinNotchCentreHz || centerHz > kMaxNotchCentreHz) {
+        emit notchAddRejected(
+            QStringLiteral("Frequency is outside the radio tuning range"));
+        return -1;
+    }
+
+    // if there is a notch within 10hz ignore
+    // From Thetis console.cs:40259-40260 [v2.10.3.15]
+    if (notchNearFreq(centerHz, kNotchDedupeWindowHz)) {
+        emit notchAddRejected(
+            QStringLiteral("A notch already exists within 10 Hz"));
+        return -1;
+    }
+
+    // Design section 5.2: append at position n, so the list position IS the
+    // WDSP notch index the fan-out will pass to RXANBPAddNotch.
+    Notch n;
+    n.id       = m_nextId++;
+    n.centerHz = centerHz;
+    n.widthHz  = widthHz;
+    n.active   = true;
+    m_notches.append(n);
+
+    persist();
+    emit notchAdded(n.id);
+    return n.id;
+}
+
+void NotchModel::setAdminBusy(bool busy)
+{
+    // Transient edit lock, not persisted: it exists only for the lifetime of
+    // an open MNF settings-page edit.
+    m_adminBusy = busy;
+}
+
+// ---------------------------------------------------------------------------
+// Persistence (AppSettings, global scope; design section 5.5)
+// ---------------------------------------------------------------------------
+
+void NotchModel::persist()
+{
+    if (m_restoring) {
+        return;
+    }
+    saveToSettings();
+}
+
+void NotchModel::saveToSettings() const
+{
+    auto& s = AppSettings::instance();
+
+    // Prune the tail left by a previously longer list before writing the new
+    // count, otherwise a shrink leaves orphan Notch<i>* entries behind and a
+    // later grow would read stale values back.
+    const int previousCount =
+        s.value(QStringLiteral("NotchCount"), QStringLiteral("0"))
+            .toString().toInt();
+    for (int i = m_notches.size(); i < previousCount; ++i) {
+        s.remove(QStringLiteral("Notch%1Center").arg(i));
+        s.remove(QStringLiteral("Notch%1Width").arg(i));
+        s.remove(QStringLiteral("Notch%1Active").arg(i));
+    }
+
+    s.setValue(QStringLiteral("NotchGlobalEnabled"), boolStr(m_globalEnabled));
+    s.setValue(QStringLiteral("NotchVisualEnabled"), boolStr(m_visualEnabled));
+    s.setValue(QStringLiteral("NotchAutoIncrease"),  boolStr(m_autoIncrease));
+    s.setValue(QStringLiteral("NotchCount"),
+               QString::number(m_notches.size()));
+
+    for (int i = 0; i < m_notches.size(); ++i) {
+        const Notch& n = m_notches.at(i);
+        // Explicit fixed formatting: AppSettings stores QVariant::toString()
+        // of whatever it is handed, and an 'f' with 6 decimals is lossless
+        // for the whole-Hz centres this model produces.
+        s.setValue(QStringLiteral("Notch%1Center").arg(i),
+                   QString::number(n.centerHz, 'f', 6));
+        s.setValue(QStringLiteral("Notch%1Width").arg(i),
+                   QString::number(n.widthHz, 'f', 6));
+        s.setValue(QStringLiteral("Notch%1Active").arg(i), boolStr(n.active));
+    }
+}
+
+}  // namespace NereusSDR

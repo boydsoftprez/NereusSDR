@@ -5892,6 +5892,19 @@ nereus_add_test(tst_diversity_dialog_persistence)
 #         sections 6.2 and 11.1.
 nereus_add_test(tst_rxchannel_notch_wrappers)
 
+# ── Tunable Notch Filter Task 3: NotchModel ───────────────────────────────
+# TNF section 5.4: NotchModel ported guards. 10 Hz dedupe (exact boundary,
+# strict `<` per radio.cs:4267), 200/100 Hz width defaults, whole-Hz
+# midpoint-to-even rounding, min/max centre constrain, NotchAdminBusy
+# rejection, wheel-resize edge clamp, and the section 1.2 CW case (a notch
+# added at F stores at exactly F because the Thetis CW-pitch correction is
+# deliberately not ported).
+# Source: Thetis console.cs:13221; 33299-33321; 40007-40047; 40050-40120;
+#         40222-40280 [v2.10.3.15]; radio.cs:4261-4272 [v2.10.3.15].
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         section 5.4.
+nereus_add_test(tst_notch_model_guards)
+
 # ── PR #291 Codex review fixes ────────────────────────────────────────────
 # Capture-path helpers behind the native-rate mic resampling path.  The
 # defects only appear on a device whose native rate differs from the
