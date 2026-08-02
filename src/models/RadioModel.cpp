@@ -4105,9 +4105,27 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     // Push the offset into WDSP. RxChannel::setShiftFrequency is the Thetis
     // RXOsc port (radio.cs:1409-1420 [v2.10.3.15]): SetRXAShiftFreq +
     // RXANBPSetShiftFrequency.
+    //
+    // The notch database's tune frequency goes with it, unconditionally.
+    // From Thetis console.cs:31940-31941 [v2.10.3.15], where RX1DDSFreq is
+    // CentreFrequency (console.cs:31932) and the SAME value is pushed to
+    // both subrx ids on the stream. WDSP sums the two terms
+    // (offset = b->tunefreq + b->shift, third_party/wdsp/src/nbp.c:192), so
+    // the stream centre is exactly what makes tunefreq + shift land on the
+    // slice's demodulated RF. The slice frequency would compute
+    // 2*sliceFreq - streamCentre.
+    //
+    // Sourced from the allocator, never from placement.newStreamCentreHz:
+    // that field is left at 0.0 on the JoinedExisting path
+    // (SliceStreamAllocator.cpp:66-73), which is the normal case, and
+    // activateStream has already run above so the allocator is
+    // authoritative. RXANBPSetTuneFrequency is internally idempotent
+    // (nbp.c:479), so pushing on every bind costs nothing.
     if (m_wdspEngine) {
         if (RxChannel* ch = m_wdspEngine->rxChannel(slice->sliceIndex())) {
             ch->setShiftFrequency(placement.shiftOffsetHz);
+            ch->setNotchTuneFrequency(
+                m_streamAllocator.streamCentreHz(placement.streamIndex));
         }
     }
 

@@ -141,6 +141,133 @@ private slots:
         QCOMPARE(ch->shiftOffsetHz(), 0.0);
         QCOMPARE(ch->notchShiftHz(), 0.0);
     }
+
+    // -- 4.1 / 4.2: bindSliceToStream pushes the hosting stream's centre ---
+
+    void bind_pushes_the_hosting_streams_centre_sole_owner()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        model.configureStreamPool(/*userDdcCount*/ 2, /*maxSlices*/ 2, kRateHz);
+        // Pool BEFORE the slices. bindSliceToStream is the push site (4.2)
+        // and it can only reach a channel that already exists; the real
+        // connect ordering (openRxChannelPool after the binds) is closed by
+        // syncNotchesToAllChannels in the fan-out task, per design doc 6.3.
+        model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+
+        RxChannel* ch = engine->rxChannel(a);
+        QVERIFY(ch != nullptr);
+
+        // Sole occupant: the allocator retunes the stream under the slice
+        // (SliceStreamAllocator.cpp:128 sets shiftOffsetHz = 0.0), so the
+        // centre and the slice frequency coincide. This half of 4.1 cannot
+        // catch the double-count bug on its own; the next slot can.
+        QCOMPARE(model.streamCentreHzForTest(0), kSliceAFreqHz);
+        QCOMPARE(ch->notchTuneFrequencyHz(), kSliceAFreqHz);
+        QCOMPARE(ch->shiftOffsetHz(), 0.0);
+    }
+
+    void bind_pushes_the_hosting_streams_centre_joined_existing()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(2, 2, kRateHz);
+        model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+
+        const int b = model.addSlice();
+        SliceModel* sliceB = model.sliceById(b);
+        sliceB->setFrequency(kSliceBFreqHz);
+
+        // Two slices, one stream, 10 kHz apart inside a 192 kHz window.
+        // This is Thetis's own topology: console.cs:31922 gives the subrx
+        // its own shift while console.cs:31940-31941 [v2.10.3.15] push the
+        // IDENTICAL tunefreq to id(0,0) and id(0,1).
+        QCOMPARE(sliceB->streamIndex(), 0);
+        QCOMPARE(sliceB->shiftOffsetHz(), 10000.0);
+
+        RxChannel* chB = engine->rxChannel(b);
+        QVERIFY(chB != nullptr);
+
+        // Half (a) of the 4.1 invariant: tunefreq is the STREAM centre.
+        // Driving it from the slice frequency computes
+        // 2*sliceFreq - streamCentre, which the sum assertion below would
+        // not catch on its own.
+        QCOMPARE(chB->notchTuneFrequencyHz(), kSliceAFreqHz);
+        QCOMPARE(chB->shiftOffsetHz(), 10000.0);
+
+        // Half (b): the two terms WDSP adds (nbp.c:192) land on the RF this
+        // slice is demodulating.
+        QCOMPARE(chB->notchTuneFrequencyHz() + chB->shiftOffsetHz(),
+                 sliceB->effectiveRxFrequency());
+    }
+
+    void a_sole_occupant_retune_carries_the_tune_frequency_to_the_new_centre()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(2, 2, kRateHz);
+        model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+
+        const int a = model.addSlice();
+        SliceModel* sliceA = model.sliceById(a);
+        sliceA->setFrequency(kSliceAFreqHz);
+
+        RxChannel* ch = engine->rxChannel(a);
+        QVERIFY(ch != nullptr);
+
+        // 200 kHz away is outside the 192 kHz window, so the sole occupant
+        // drags its own DDC rather than claiming a second one.
+        sliceA->setFrequency(kFarFreqHz);
+
+        QCOMPARE(sliceA->streamIndex(), 0);
+        QCOMPARE(model.streamCentreHzForTest(0), kFarFreqHz);
+        QCOMPARE(ch->notchTuneFrequencyHz(), kFarFreqHz);
+        QCOMPARE(ch->shiftOffsetHz(), 0.0);
+    }
+
+    void panning_a_shifted_slice_onto_the_centre_clears_the_notch_shift()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(2, 2, kRateHz);
+        model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+
+        const int b = model.addSlice();
+        SliceModel* sliceB = model.sliceById(b);
+        sliceB->setFrequency(kSliceBFreqHz);
+
+        RxChannel* chB = engine->rxChannel(b);
+        QVERIFY(chB != nullptr);
+        QCOMPARE(chB->notchShiftHz(), 10000.0);
+
+        // Pan out and back (4.3 at the model level). Slice A still holds the
+        // stream, so B is not the sole occupant and this is a JoinedExisting
+        // placement with a zero shift, not a retune.
+        sliceB->setFrequency(kSliceAFreqHz);
+
+        QCOMPARE(chB->shiftOffsetHz(), 0.0);
+        QCOMPARE(chB->notchShiftHz(), 0.0);
+        QCOMPARE(chB->notchTuneFrequencyHz(), kSliceAFreqHz);
+        QCOMPARE(chB->notchTuneFrequencyHz() + chB->shiftOffsetHz(),
+                 sliceB->effectiveRxFrequency());
+    }
 };
 
 QTEST_MAIN(TestNotchTuneFrequency)
