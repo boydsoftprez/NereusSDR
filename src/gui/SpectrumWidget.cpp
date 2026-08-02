@@ -5254,6 +5254,41 @@ std::pair<int,int> SpectrumWidget::txAudioToIq(int audioLow, int audioHigh,
 }
 
 // ---------------------------------------------------------------------------
+// TNF / notch overlay: setters, colour resolution, render
+// (design sections 8.1 and 8.2).
+//
+// Geometry is AetherSDR's drawTnfMarkers ported unchanged
+// (src/gui/SpectrumWidget.cpp:13503-13554 [@c6481cbf]).  The only two
+// divergences are the ones the missing depth axis forces: the hatch spacing
+// is fixed instead of depth-derived (upstream :13535) and the handle height
+// is fixed instead of 8 + depthDb * 2 (upstream :13545).
+//
+// Colours are Thetis's, not AetherSDR's: upstream encodes permanent versus
+// temporary in green/yellow and we have no permanence, while Thetis encodes
+// exactly the four states we do have (display.cs:386-390 [v2.10.3.15]).
+// ---------------------------------------------------------------------------
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13436-13440 [@c6481cbf]
+void SpectrumWidget::setNotchMarkers(const QVector<NotchMarker>& markers)
+{
+    m_notchMarkers = markers;
+    markOverlayDirty();
+}
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13497-13501 [@c6481cbf]
+void SpectrumWidget::setNotchGlobalEnabled(bool on)
+{
+    m_notchGlobalEnabled = on;
+    markOverlayDirty();
+}
+
+void SpectrumWidget::setNotchMinWidthHz(double hz)
+{
+    m_notchMinWidthHz = hz;
+    markOverlayDirty();
+}
+
+// ---------------------------------------------------------------------------
 // drawTxFilterOverlay()
 //
 // ---------------------------------------------------------------------------

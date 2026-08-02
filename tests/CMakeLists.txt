@@ -5981,6 +5981,23 @@ if(Qt6WebSockets_FOUND)
     target_link_libraries(tst_notch_tci_rx_nf_enable PRIVATE Qt6::WebSockets)
 endif()
 
+# ── Tunable Notch Filter Tasks 6 + 7: SpectrumWidget notch overlay ────────
+# Step 6 pins the section 8.1 push API (setNotchMarkers /
+# setNotchGlobalEnabled / setNotchMinWidthHz plus the ForTest read seams),
+# notchSpecRect() as the single geometry source both paint sites and the
+# step-7 hit test share, the section 8.2 render geometry (fill, hatch,
+# 1 px edge lines, +/-5 px triangle grab handle), the four Thetis marker
+# colours, and the every-pan push each SpectrumWidget converts into its own
+# pixel space.  Step 7 appends the pixel hit test to this SAME executable
+# via notchAtPixelForTest and registers nothing: two add_executable() calls
+# under one target name is a CMake configure error.
+# Source: AetherSDR src/gui/SpectrumWidget.cpp:13436-13554 [@c6481cbf]
+# (setTnfMarkers / setTnfGlobalEnabled / drawTnfMarkers) for geometry;
+# Thetis display.cs:386-390, 8691-8722 [v2.10.3.15] for colours.
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         sections 8.1 and 8.2.
+nereus_add_test(tst_notch_hit_test)
+
 # ── PR #291 Codex review fixes ────────────────────────────────────────────
 # Capture-path helpers behind the native-rate mic resampling path.  The
 # defects only appear on a device whose native rate differs from the

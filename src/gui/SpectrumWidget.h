@@ -1172,6 +1172,63 @@ public:
     QColor spotColorForTest()           const { return m_spotColor; }
     QColor spotBgColorForTest()         const { return m_spotBgColor; }
 
+    // ---- TNF / notch overlay (design section 8.1) ----
+    // Ported from AetherSDR's TnfMarker (src/gui/SpectrumWidget.h:575-581
+    // [@c6481cbf]) with depthDb + permanent replaced by `active`: WDSP's
+    // notch DB carries neither depth nor permanence, its add entry point
+    // taking fcenter / fwidth / active only
+    // (third_party/wdsp/src/nbp.c:362, RXANBPAddNotch).
+    //
+    // UNIT BOUNDARY: freqMhz is the ONLY MHz quantity in the TNF stack.
+    // NotchModel::centerHz, all five notch*Requested signals,
+    // setNotchMinWidthHz and the visual-notch dent maths are Hz.
+    // MainWindow::refreshPanNotchMarkers is the only conversion site.
+    struct NotchMarker {
+        int    id{-1};
+        double freqMhz{0.0};
+        double widthHz{200.0};
+        bool   active{true};
+    };
+
+    // From AetherSDR src/gui/SpectrumWidget.cpp:13436-13440 [@c6481cbf].
+    // markOverlayDirty(), not the bare update() the spot push uses: notch
+    // chrome is cached in the GPU static-overlay texture, so a dragged
+    // marker would otherwise not move on the shipping path.
+    void setNotchMarkers(const QVector<NotchMarker>& markers);
+
+    // From AetherSDR src/gui/SpectrumWidget.cpp:13497-13501 [@c6481cbf].
+    // Master TNF flag.  Repaints every marker in the TNF-off colour rather
+    // than hiding it (Thetis display.cs:8704-8707 [v2.10.3.15]).
+    void setNotchGlobalEnabled(bool on);
+
+    // WDSP's minimum notch width for the channel feeding this pan
+    // (third_party/wdsp/src/nbp.c:594, RXANBPGetMinNotchWidth).  Pushed
+    // rather than pulled because it varies with nc and sample rate; Thetis
+    // caches it the same way (display.cs:1082 [v2.10.3.15]) and refreshes
+    // it on filter-size change (console.cs:39052-39054 [v2.10.3.15],
+    // UpdateMinimumNotchWidthRX).  Consumed by the visual-notch dent.
+    void setNotchMinWidthHz(double hz);
+
+    // Test seams, following the spotMarkersForTest convention above.
+    const QVector<NotchMarker>& notchMarkersForTest() const { return m_notchMarkers; }
+    bool   notchGlobalEnabledForTest() const { return m_notchGlobalEnabled; }
+    double notchMinWidthHzForTest()    const { return m_notchMinWidthHz; }
+
+    // Overlay-cache seam.  Returns false on a CPU-only build, where there
+    // is no cached texture to invalidate.
+    bool overlayStaticDirtyForTest() const {
+#ifdef NEREUS_GPU_SPECTRUM
+        return m_overlayStaticDirty;
+#else
+        return false;
+#endif
+    }
+    void clearOverlayStaticDirtyForTest() {
+#ifdef NEREUS_GPU_SPECTRUM
+        m_overlayStaticDirty = false;
+#endif
+    }
+
 signals:
     // 2026-05-22 bench fix: emitted after each updateSpectrumLinear
     // completes (m_renderedPixels populated). MainWindow consumes this
@@ -1796,6 +1853,32 @@ private:
     // panadapter visibility toggle is off.  SpotHubDialog Display tab
     // drives this via setSpotSourceVisible.
     QHash<QString, bool> m_spotSourceVisible;
+
+    // ---- TNF / notch overlay state (design section 8.1) ----
+    // Main-thread only.  Both the paint path and the interaction layer run
+    // there, so plain members rather than atomics; NotchModel is the
+    // authoritative store and this is a render-side mirror of it.
+    // Shape mirrors AetherSDR src/gui/SpectrumWidget.h:1608-1609 and
+    // :1648 [@c6481cbf].
+    QVector<NotchMarker> m_notchMarkers;
+    // Master TNF enable, default OFF.  Matches NotchModel::globalEnabled()
+    // (also false) and both upstreams: Thetis ships chkTNF unchecked, and
+    // WDSP creates the notch database with master run 0
+    // (third_party/wdsp/src/RXA.c:87).  A widget default of true would
+    // paint every marker in the active colour for the one frame between
+    // construction and the first MainWindow::refreshPanNotchMarkers push.
+    bool   m_notchGlobalEnabled{false};
+    // 100 Hz on this tree: nc = 4096 at a 48 kHz dsp rate through the
+    // wintype-0 arm of min_notch_width (third_party/wdsp/src/nbp.c:88,
+    // 1600.0 / (nc / 256) * (rate / 48000)).  Overwritten by
+    // setNotchMinWidthHz once a channel is open.
+    double m_notchMinWidthHz{100.0};
+    // Written by the interaction layer (design section 7.4); drive the
+    // Chartreuse highlight and the hover popup respectively.  Declared
+    // here rather than in the interaction layer because notchColor() reads
+    // both.
+    int    m_selectedNotchId{-1};
+    int    m_hoveredNotchId{-1};
 
     // ── QStaticText label cache ──────────────────────────────────────────
     // Pre-shaped (HarfBuzz-run-once) labels for the high-rate paint
