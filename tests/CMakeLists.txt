@@ -2460,6 +2460,23 @@ nereus_add_test(tst_speech_processor_page)
 # for grpPhRot).
 nereus_add_test(tst_cfc_setup_page)
 
+# ── TNF design section 9 / build-order step 9: MnfSetupPage ──────────────────
+# Verifies Setup → DSP → MNF stops being a placeholder: the auto-increase
+# checkbox (default TRUE, per WDSP RXA.c:105 and Thetis
+# setup.designer.cs:44197 [v2.10.3.15]), the chkVisualNotch toggle (default
+# FALSE; the control has no Checked assignment at :44167-44179), the notch
+# table (one row per NotchModel entry, Thetis object names udMNFFreq /
+# udMNFWidth / chkMNFActive / btnMNFDelete), the Add button seeding from the
+# active slice's VFO, the adminBusy edit lock (Thetis SetupForm.NotchAdminBusy,
+# setup.cs:17728-17735 [v2.10.3.15]) cleared before the commit writes, exactly
+# as btnMNFEnter_Click does (setup.cs:17744, :17759 [v2.10.3.15]), and the
+# minimum-notch-width readout (RXANBPGetMinNotchWidth,
+# third_party/wdsp/src/nbp.c:594) following RxChannel::minNotchWidthChanged.
+# Layout follows Thetis grpDSPMNF (setup.designer.cs:44145-44412 [v2.10.3.15]).
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         sections 9, 5.3, 8.3.
+nereus_add_test(tst_mnf_setup_page)
+
 # ── Phase 3M-3a-iii Task 14: DexpVoxPage full implementation ─────────────────
 # Verifies the three group boxes (VOX / DEXP, Audio LookAhead, Side-Channel
 # Trigger Filter) construct, all 14 controls exist with verbatim Thetis object

@@ -243,11 +243,21 @@ private:
 };
 
 // ── MNF ──────────────────────────────────────────────────────────────────────
+//
+// Setup → DSP → MNF. Thetis's own tab name (setup.designer.cs:44141
+// [v2.10.3.15], this.tpDSPMNF.Text = "MNF"); everything operator-facing
+// outside Settings says TNF, mirroring upstream's own tpDSPMNF vs chkTNF
+// split. TNF design section 9.
 
 class MnfSetupPage : public SetupPage {
     Q_OBJECT
 public:
     explicit MnfSetupPage(RadioModel* model, QWidget* parent = nullptr);
+
+private:
+    // ── Multi Notch Filter group ─────────────────────────────────────────
+    QCheckBox* m_autoIncreaseChk{nullptr};
+    QCheckBox* m_visualNotchChk{nullptr};
 };
 
 } // namespace NereusSDR

@@ -66,6 +66,7 @@
 #include "core/BoardCapabilities.h"
 #include "core/RadioConnection.h"
 #include "core/wdsp_api.h"
+#include "models/NotchModel.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
@@ -2137,27 +2138,82 @@ CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
 // MnfSetupPage
 // ══════════════════════════════════════════════════════════════════════════════
 //
-// From Thetis setup.cs — tabDSP / tabPageMNF controls:
-//   chkMNFAutoIncrease, comboMNFWindow, lstNotches (display)
+// Setup → DSP → MNF. The tab keeps Thetis's name (setup.designer.cs:44141
+// [v2.10.3.15], this.tpDSPMNF.Text = "MNF") and the group box keeps Thetis's
+// caption (:44165, grpDSPMNF.Text = "Multi Notch Filter"); everything
+// operator-facing outside Settings says TNF.
 //
+// grpDSPMNF's control set is at setup.designer.cs:44145-44159 [v2.10.3.15].
+// This page keeps those object names and their verbatim tooltips but replaces
+// the upstream one-notch-at-a-time shape (udMNFNotch index spinner plus
+// Add / Edit / Enter / Cancel modal buttons) with a table that edits every
+// notch in place.
+//
+// The prior placeholder carried a "Window" combo. No such control exists
+// upstream (there is no comboMNFWindow anywhere in Thetis v2.10.3.15) and the
+// bandpass window is out of scope, so it is dropped rather than wired.
 MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
     : SetupPage("MNF", model, parent)
 {
-    // ── Manual Notch ──────────────────────────────────────────────────────────
-    QGroupBox* mnfGrp = addSection("Manual Notch");
+    // From Thetis setup.designer.cs:44165 [v2.10.3.15] — grpDSPMNF.Text.
+    QGroupBox* mnfGrp = addSection(QStringLiteral("Multi Notch Filter"));
     QVBoxLayout* mnfLay = qobject_cast<QVBoxLayout*>(mnfGrp->layout());
 
-    auto* autoIncrease = new QPushButton("Enable");
-    addLabeledToggle(mnfLay, "Auto-Increase", autoIncrease);
+    if (!model || !model->notchModel() || !mnfLay) {
+        disableGroup(mnfGrp);
+        return;
+    }
 
-    auto* windowCombo = new QComboBox;
-    windowCombo->addItems({"Blackman-Harris", "Hann", "Flat-Top"});
-    addLabeledCombo(mnfLay, "Window", windowCombo);
+    NotchModel* nm = model->notchModel();
 
-    auto* notchList = new QLabel("(no notches)");
-    addLabeledLabel(mnfLay, "Notch List", notchList);
+    // ── Auto-increase ────────────────────────────────────────────────────────
+    // From Thetis setup.designer.cs:44204 [v2.10.3.15] — chkMNFAutoIncrease.Text.
+    m_autoIncreaseChk = new QCheckBox(
+        QStringLiteral("Auto-Increase width (if needed) to achieve >100dB attenuation"),
+        mnfGrp);
+    m_autoIncreaseChk->setObjectName(QStringLiteral("chkMNFAutoIncrease"));
+    m_autoIncreaseChk->setChecked(nm->autoIncrease());
+    // From Thetis setup.designer.cs:44205 [v2.10.3.15] — chkMNFAutoIncrease tooltip.
+    m_autoIncreaseChk->setToolTip(QStringLiteral(
+        "The notch width will be increased if needed to ensure >100dB of attenuation"));
+    mnfLay->addWidget(m_autoIncreaseChk);
 
-    disableGroup(mnfGrp);
+    // Thetis fans the flag straight to three fixed channel ids from the Setup
+    // form (setup.cs:17925-17931 [v2.10.3.15], chkMNFAutoIncrease_CheckedChanged
+    // → WDSP.RXANBPSetAutoIncrease ×3). NereusSDR routes it through NotchModel
+    // so RadioModel's fan-out reaches every open slice channel instead.
+    connect(m_autoIncreaseChk, &QCheckBox::toggled, nm, &NotchModel::setAutoIncrease);
+    connect(nm, &NotchModel::autoIncreaseChanged, m_autoIncreaseChk, [this](bool on) {
+        QSignalBlocker b(m_autoIncreaseChk);
+        m_autoIncreaseChk->setChecked(on);
+    });
+
+    // ── Visual notch ─────────────────────────────────────────────────────────
+    // From Thetis setup.designer.cs:44167-44179 [v2.10.3.15] — chkVisualNotch,
+    // the last control in grpDSPMNF (:44145). Caption (:44175-44176) and
+    // tooltip (:44177) copied verbatim. The designer makes no `Checked`
+    // assignment, so Windows Forms leaves it unchecked; NotchModel's default
+    // false matches.
+    m_visualNotchChk = new QCheckBox(
+        QStringLiteral("Visual approximation of notch (NOTE: this is not 100% "
+                       "representation of the active notch)"),
+        mnfGrp);
+    m_visualNotchChk->setObjectName(QStringLiteral("chkVisualNotch"));
+    m_visualNotchChk->setChecked(nm->visualEnabled());
+    m_visualNotchChk->setToolTip(QStringLiteral(
+        "This is a simple approximation and does not accurately represent the notch"));
+    mnfLay->addWidget(m_visualNotchChk);
+
+    // From Thetis setup.cs:24376-24380 [v2.10.3.15] —
+    // chkVisualNotch_CheckedChanged sets Display.ShowVisualNotch AND
+    // MiniSpec.ShowVisualNotch. NereusSDR has no mini-spectrum surface, so
+    // only the panadapter half is ported; the fan-out to every pan hangs off
+    // NotchModel::visualEnabledChanged rather than off this widget.
+    connect(m_visualNotchChk, &QCheckBox::toggled, nm, &NotchModel::setVisualEnabled);
+    connect(nm, &NotchModel::visualEnabledChanged, m_visualNotchChk, [this](bool on) {
+        QSignalBlocker b(m_visualNotchChk);
+        m_visualNotchChk->setChecked(on);
+    });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
