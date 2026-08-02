@@ -132,6 +132,11 @@ class TestNotchTuneFrequency;
 // TNF Task 2: the notch-wrapper test opens one real RX channel so the
 // RXANBP* entry points have an rxa[].ndb to dereference.
 class TestRxChannelNotchWrappers;
+// TNF Task 4: the notch fan-out test primes the engine so openRxChannelPool
+// opens real WDSP channels; the RXANBP* wrappers cannot be exercised on an
+// unopened id (design section 11.1 -- rxa[] is sized MAX_CHANNELS and every
+// entry point dereferences before range-checking).
+class TestNotchChannelSync;
 #endif
 
 namespace NereusSDR {
@@ -775,6 +780,10 @@ private:
     // m_initialized so createRxChannel opens a real WDSP channel with a real
     // notch database.
     friend class ::TestRxChannelNotchWrappers;
+    // TNF Task 4: same friendship for the notch channel-sync test, which
+    // drives openRxChannelPool and reads the notch state back off every
+    // channel the pool opened.
+    friend class ::TestNotchChannelSync;
 #endif
 };
 

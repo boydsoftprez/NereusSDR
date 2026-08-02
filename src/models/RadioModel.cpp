@@ -313,6 +313,9 @@ warren@wpratt.com
 #include "models/SpotTableModel.h"  // for SpotTableModel::extractMode (mode guess)
 #include "models/FreeDVStationModel.h"
 #include "models/RxDecodeModel.h"
+// TNF (design sections 5, 6.3): the notch store RadioModel owns and fans
+// out from.
+#include "models/NotchModel.h"
 
 // Phase 3R Task I5: RadeChannel signal-graph wiring. Forward-declared in
 // RadioModel.h; the .cpp pulls the full type for the connect() calls in
@@ -1601,6 +1604,16 @@ RadioModel::RadioModel(QObject* parent)
             emit externalAmpOperateChanged(false);
         }
     });
+
+    // ── TNF (design sections 5, 5.5): notch store construction + restore ──────
+    //
+    // Constructed before anything that can open a WDSP channel, and restored
+    // immediately, so section 5.5's ordering holds: the model is fully
+    // populated by the time openRxChannelPool's tail reconciles the pool
+    // (section 6.3). On a cold start no channel exists yet, which is exactly
+    // why the reconcile lives there rather than at channel-activation time.
+    m_notchModel = std::make_unique<NotchModel>(this);
+    m_notchModel->restoreFromSettings();
 
     // ── Phase 3J-2 H2: spot-system construction + wiring ──────────────────────
     //

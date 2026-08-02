@@ -187,6 +187,11 @@ class SpotModel;
 class SpotTableModel;
 class FreeDVStationModel;
 class RxDecodeModel;
+// TNF (design section 5): the canonical notch store, owned by RadioModel
+// alongside SpotModel. One list shared by every slice (design D1) because
+// notch centres are absolute RF Hz, so a 20 m notch is inherently inert on a
+// 40 m slice.
+class NotchModel;
 struct DxSpot;
 struct FreeDVStation;
 
@@ -982,6 +987,16 @@ public:
     PotaClient*           pota()                const { return m_pota.get(); }
     FreeDVReporterClient* freeDvReporter()      const { return m_freeDvReporter.get(); }
     PskReporterClient*    pskReporter()         const { return m_pskReporter.get(); }
+
+    // ── TNF (design section 8.1): the canonical notch store ─────────────────
+    //
+    // Constructed in the RadioModel ctor and restored from AppSettings there,
+    // before any WDSP channel exists, so the openRxChannelPool-tail reconcile
+    // (section 6.3) always has the full list to install. Non-owning pointer;
+    // lifetime is RadioModel's. Consumed by the TCI rx_nf_enable repoint
+    // (section 6.4), the +TNF button and status-bar light (section 7), and
+    // MnfSetupPage (section 9).
+    NotchModel*           notchModel()          const { return m_notchModel.get(); }
 
     // ── Phase 3J-2 + 3R M3: spot-client auto-start state restore ────────────
     //
@@ -3573,6 +3588,11 @@ private:
     std::unique_ptr<PotaClient>           m_pota;
     std::unique_ptr<FreeDVReporterClient> m_freeDvReporter;
     std::unique_ptr<PskReporterClient>    m_pskReporter;
+
+    // TNF (design section 5): notch store. Persisted globally rather than
+    // per-MAC (design D3) because a notch tracks a QRM source at the
+    // operator's location and band, not a property of the radio.
+    std::unique_ptr<NotchModel>           m_notchModel;
 
     // Phase 3R-bridge: drives the freedv-gui-style RADE "sync-only"
     // rx_report upload (empty callsign, "RADEV1" mode, 1 Hz) into

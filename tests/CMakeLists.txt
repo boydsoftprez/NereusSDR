@@ -5947,6 +5947,22 @@ nereus_add_test(tst_notch_sideband_shift)
 #         sections 5.3 and 5.5.
 nereus_add_test(tst_notch_persistence)
 
+# ── Tunable Notch Filter Task 4: RadioModel notch fan-out ─────────────────
+# Covers the design's section 6.3 gap: connectToRadio activates Slice A's
+# channel BEFORE it opens the pool, and activateSliceChannel early-returns
+# on an already-active channel, so the primary receiver never passes through
+# that hook.  Asserts Slice A gets the notch list, the master run flag, the
+# auto-increase flag and the NBP tune frequency on connect and across a
+# reconnect; that a slice added after a live notch add inherits the set; and
+# that add / edit / remove / reset / master-enable / auto-increase all fan
+# out to every live channel.
+# Source: NereusSDR-original test infrastructure.  Behaviour ported from
+# Thetis console.cs:40271-40273 [v2.10.3.15] (fixed three-id fan-out) and
+# WDSP RXA.c:85-93 + nbp.c:190, 223, 499 (inert-by-default notch database).
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         section 6.3.
+nereus_add_test(tst_notch_channel_sync)
+
 # ── PR #291 Codex review fixes ────────────────────────────────────────────
 # Capture-path helpers behind the native-rate mic resampling path.  The
 # defects only appear on a device whose native rate differs from the
