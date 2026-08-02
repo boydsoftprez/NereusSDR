@@ -20,14 +20,37 @@
 //   2. paStatusBadge_showsOkByDefault      — badge shows "PA OK"
 //   3. setPaTripped_true_changesBadgeText  — text switches to "PA FAULT"
 //   4. setPaTripped_false_changesBadgeText — text reverts to "PA OK"
+//   5. safetySlotsHoldGeometryWhenAnAlarmFires — dimming, not hiding,
+//      a slot's badge leaves a later sibling's position unchanged
+//   6. everySafetySlotIsFixedWidth — each of the 4 safety slots pins
+//      minimumWidth()==maximumWidth()==50
+//
+// Task A6 (design §4.5) added 5/6 and confirmed the note above still
+// holds: a literal MainWindow w; in this harness was built and run
+// (not just assumed) and it starts real RadioDiscovery broadcasts on
+// the LAN, takes ~9 s to construct the auto-opened ConnectionPanel, and
+// SIGABRTs the whole test binary on teardown ("QThread: Destroyed while
+// thread 'SpectrumThread' is still running"). tst_pan_active_slice_sync.cpp
+// and tst_pan_badge_click_wiring.cpp independently document the same
+// "MainWindow is not constructible in this harness" conclusion. 5/6
+// therefore mirror buildStatusBar()'s addSlot() lambda and
+// MainWindow::dimSafetyBadge() logic verbatim against a standalone host
+// widget, same as 1-4 above.
 //
 // Phase 3M-0 Task 14.
 // =================================================================
 
 #include <QtTest/QtTest>
 #include <QLabel>
+#include <QCoreApplication>
+#include <QGraphicsOpacityEffect>
+#include <QHBoxLayout>
+
+#include "gui/widgets/StatusBadge.h"
+#include "gui/widgets/AdcOverloadBadge.h"
 
 using namespace Qt::StringLiterals;
+using namespace NereusSDR;
 
 class TestMainWindowStatusBarSafety : public QObject
 {
@@ -137,6 +160,119 @@ private slots:
         QCOMPARE(badge.text(), u"PA OK"_s);
         QVERIFY(badge.toolTip().contains(u"OK"_s));
         QVERIFY(!badge.toolTip().contains(u"FAULT"_s));
+    }
+
+private:
+    // Mirrors MainWindow::buildStatusBar()'s addSlot() lambda verbatim
+    // (design §4.5): a fixed-50px "safetySlot" QWidget wrapping one badge,
+    // added to a "safetyGroup" host's QHBoxLayout. See file header for why
+    // this is built standalone instead of via a real MainWindow.
+    static void addSlot(QHBoxLayout* safetyRow, QWidget* group, QWidget* badge)
+    {
+        auto* slot = new QWidget(group);
+        slot->setObjectName(QStringLiteral("safetySlot"));
+        slot->setFixedWidth(50);
+        auto* sl = new QHBoxLayout(slot);
+        sl->setContentsMargins(0, 0, 0, 0);
+        sl->addWidget(badge);
+        badge->setParent(slot);
+        safetyRow->addWidget(slot);
+    }
+
+    // Mirrors MainWindow::dimSafetyBadge() verbatim (design §4.5):
+    // opacity-only state change, never setVisible(), so a dimmed slot
+    // never changes the layout's required width.
+    static void dimBadge(QWidget* w, bool active)
+    {
+        auto* fx = qobject_cast<QGraphicsOpacityEffect*>(w->graphicsEffect());
+        if (!fx) {
+            fx = new QGraphicsOpacityEffect(w);
+            w->setGraphicsEffect(fx);
+        }
+        fx->setOpacity(active ? 1.0 : 0.14);
+    }
+
+private slots:
+
+    // ── 5. Reserved safety slots hold geometry when an alarm fires ────────
+    //
+    // Task A6 (design §4.5): the safety group gives TX INHIBIT / PA /
+    // ADC overload / TX four permanently allocated 50 px slots so an
+    // alarm dims the badge inside its slot instead of inserting/removing
+    // a widget and sliding everything after it sideways. Proven here by
+    // showing the host so layout actually runs (see class-level note: an
+    // unshown window's geometry reads are vacuous), then comparing the TX
+    // slot's position before/after the ADC badge is dimmed to "active".
+
+    void safetySlotsHoldGeometryWhenAnAlarmFires()
+    {
+        QWidget host;
+        auto* hbox = new QHBoxLayout(&host);
+        auto* group = new QWidget(&host);
+        group->setObjectName(QStringLiteral("safetyGroup"));
+        auto* safetyRow = new QHBoxLayout(group);
+        safetyRow->setContentsMargins(8, 0, 0, 0);
+        safetyRow->setSpacing(6);
+
+        auto* txInhibit = new QLabel(QStringLiteral("INH"), &host);
+        auto* pa = new StatusBadge(&host);
+        auto* ovl = new AdcOverloadBadge(&host);
+        ovl->setObjectName(QStringLiteral("adcOvlBadge"));
+        auto* tx = new StatusBadge(&host);
+        tx->setObjectName(QStringLiteral("txStatusBadge"));
+
+        addSlot(safetyRow, group, txInhibit);
+        addSlot(safetyRow, group, pa);
+        addSlot(safetyRow, group, ovl);
+        addSlot(safetyRow, group, tx);
+        hbox->addWidget(group);
+        dimBadge(txInhibit, false);
+        dimBadge(ovl, false);
+
+        host.resize(400, 60);
+        host.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&host));
+
+        const QPoint before = tx->mapTo(&host, QPoint(0, 0));
+
+        // Fire the alarm the same way overloadStatusChanged's handler does:
+        // dim to full opacity, never setVisible().
+        ovl->setAdcs(QStringLiteral("0"));
+        ovl->setVariant(AdcOverloadBadge::Variant::Tx);
+        dimBadge(ovl, true);
+        QCoreApplication::processEvents();
+
+        const QPoint after = tx->mapTo(&host, QPoint(0, 0));
+        QCOMPARE(after, before);
+    }
+
+    void everySafetySlotIsFixedWidth()
+    {
+        QWidget host;
+        auto* hbox = new QHBoxLayout(&host);
+        auto* group = new QWidget(&host);
+        group->setObjectName(QStringLiteral("safetyGroup"));
+        auto* safetyRow = new QHBoxLayout(group);
+
+        addSlot(safetyRow, group, new QLabel(QStringLiteral("INH"), &host));
+        addSlot(safetyRow, group, new StatusBadge(&host));
+        addSlot(safetyRow, group, new AdcOverloadBadge(&host));
+        addSlot(safetyRow, group, new StatusBadge(&host));
+        hbox->addWidget(group);
+
+        const QList<QWidget*> slotWidgets =
+            group->findChildren<QWidget*>(QStringLiteral("safetySlot"),
+                                          Qt::FindDirectChildrenOnly);
+        QCOMPARE(slotWidgets.size(), 4);
+        for (QWidget* s : slotWidgets) {
+            // Assert the CONSTRAINT, not the laid-out geometry. Qt does not
+            // lay out an unshown window, so width() would read the default
+            // 100 here and fail for a reason that has nothing to do with
+            // the fix. setFixedWidth pins both bounds, so this is the
+            // property the reserved-slot design actually depends on.
+            QCOMPARE(s->minimumWidth(), 50);
+            QCOMPARE(s->maximumWidth(), 50);
+        }
     }
 };
 

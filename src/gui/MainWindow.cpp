@@ -377,6 +377,7 @@ warren@wpratt.com
 #include <QActionGroup>
 #include <QStatusBar>
 #include <QLabel>
+#include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QSplitter>
@@ -6067,6 +6068,22 @@ void MainWindow::buildMenuBar()
     }
 }
 
+// Reserved safety slot dim helper (design §4.5). Static so both
+// buildStatusBar()'s construction-time state and setTxInhibited() (a
+// separately-wired Task 17 slot outside buildStatusBar()) can drive the
+// same badge through the same opacity-only state change -- a plain
+// setVisible() no longer represents "inactive" once a badge lives in a
+// permanently allocated slot.
+void MainWindow::dimSafetyBadge(QWidget* w, bool active)
+{
+    auto* fx = qobject_cast<QGraphicsOpacityEffect*>(w->graphicsEffect());
+    if (!fx) {
+        fx = new QGraphicsOpacityEffect(w);
+        w->setGraphicsEffect(fx);
+    }
+    fx->setOpacity(active ? 1.0 : 0.14);
+}
+
 void MainWindow::buildStatusBar()
 {
     // AetherSDR double-height status bar (46px fixed height, 3-section layout)
@@ -6578,17 +6595,17 @@ void MainWindow::buildStatusBar()
     hbox->addWidget(m_cpuMetricSep);
 
     // ── Phase 3M-0 Task 14: TX Inhibit indicator ─────────────────────────
-    // Red "TX INHIBIT" pill — hidden by default; shown when
+    // "INH" pill, dimmed by default, full opacity when
     // TxInhibitMonitor::inhibited() asserts. Signal wiring to the monitor
-    // lands in Task 17 (final integration pass).
-    m_txInhibitLabel = new QLabel(QStringLiteral("TX INHIBIT"), barWidget);
+    // lands in Task 17 (final integration pass); setTxInhibited() (Task 17)
+    // drives the same dimSafetyBadge() helper this construction uses.
+    m_txInhibitLabel = new QLabel(QStringLiteral("INH"), barWidget);
     m_txInhibitLabel->setObjectName(QStringLiteral("txInhibitLabel"));
     m_txInhibitLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: #ff6060; font-weight: bold; font-size: 11px;"
         "         padding: 2px 6px; border: 1px solid #ff6060; border-radius: 3px; }"));
-    m_txInhibitLabel->setToolTip(tr("External TX Inhibit asserted — TX is blocked"));
-    m_txInhibitLabel->setVisible(false);  // hidden until inhibit asserts
-    hbox->addWidget(m_txInhibitLabel);
+    m_txInhibitLabel->setToolTip(tr("External TX Inhibit asserted. TX is blocked."));
+    dimSafetyBadge(m_txInhibitLabel, false);  // dimmed until inhibit asserts
 
     // ── sub-PR-8: PA Status StatusBadge ──────────────────────────────────
     // Variant::On (green ✓ PA OK) / Variant::Tx (red ✓ PA FAULT).
@@ -6605,16 +6622,11 @@ void MainWindow::buildStatusBar()
     m_paStatusBadge->setLabel(QStringLiteral("PA"));
     m_paStatusBadge->setVariant(StatusBadge::Variant::On);
     m_paStatusBadge->setToolTip(tr("PA Status — OK"));
-    hbox->addWidget(m_paStatusBadge);
-    m_paStatusBadgeSep = makeSep();
-    hbox->addWidget(m_paStatusBadgeSep);
 
-    // ── ADC overload alarm — stacked badge between PA OK and TX ───────────
-    // Hidden by default; shown when StepAttenuatorController emits an
-    // overload event, hidden again 2 s after the latest event by the
-    // timer below. The trailing separator is captured + toggled with
-    // the badge so the strip closes seamlessly when the alarm clears
-    // (otherwise we'd leave a dangling "··" run).
+    // ── ADC overload alarm: reserved slot between PA and TX ──────────────
+    // Dimmed by default; shown at full opacity when StepAttenuatorController
+    // emits an overload event, dimmed again 2 s after the latest event by
+    // the timer below.
     //
     // Source-first port of Thetis pollOverloadSyncSeqErr + ucInfoBar.Warning
     // [@501e3f5]:
@@ -6626,11 +6638,7 @@ void MainWindow::buildStatusBar()
     //                            Visible=true; _warningTimer.Start()
     m_adcOvlBadge = new AdcOverloadBadge(barWidget);
     m_adcOvlBadge->setObjectName(QStringLiteral("adcOvlBadge"));
-    m_adcOvlBadge->setVisible(false);
-    hbox->addWidget(m_adcOvlBadge);
-    m_adcOvlSep = makeSep();
-    m_adcOvlSep->setVisible(false);
-    hbox->addWidget(m_adcOvlSep);
+    dimSafetyBadge(m_adcOvlBadge, false);
 
     // Auto-hide timer mirrors Thetis ucInfoBar._warningTimer — single-shot
     // 2000 ms, restarts on each overload event so a single hit keeps the
@@ -6641,8 +6649,7 @@ void MainWindow::buildStatusBar()
     m_adcOvlHideTimer->setSingleShot(true);
     m_adcOvlHideTimer->setInterval(2000);
     connect(m_adcOvlHideTimer, &QTimer::timeout, this, [this]() {
-        if (m_adcOvlBadge) { m_adcOvlBadge->setVisible(false); }
-        if (m_adcOvlSep)   { m_adcOvlSep->setVisible(false); }
+        if (m_adcOvlBadge) { dimSafetyBadge(m_adcOvlBadge, false); }
         // Required width of the strip just shrank — recompute drops.
         // force=true: budget hasn't moved but content width has.
         reapplyRightStripDropPriority(/*force=*/true);
@@ -6683,8 +6690,7 @@ void MainWindow::buildStatusBar()
         m_adcOvlBadge->setVariant(anyRed ? AdcOverloadBadge::Variant::Tx
                                          : AdcOverloadBadge::Variant::Warn);
         m_adcOvlBadge->setToolTip(tip);
-        m_adcOvlBadge->setVisible(true);
-        if (m_adcOvlSep) { m_adcOvlSep->setVisible(true); }
+        dimSafetyBadge(m_adcOvlBadge, true);
 
         // Required width of the strip just grew — drop something else
         // if the new total exceeds budget.
@@ -6707,8 +6713,37 @@ void MainWindow::buildStatusBar()
     m_txStatusBadge->setLabel(QStringLiteral("TX"));
     m_txStatusBadge->setVariant(StatusBadge::Variant::Off);
     m_txStatusBadge->setToolTip(tr("Receive (MOX off)"));
-    hbox->addWidget(m_txStatusBadge);
-    hbox->addWidget(makeSep());
+
+    // ── Reserved safety slots (design §4.5) ──────────────────────────────
+    // Every slot is permanently allocated. Only the badge inside changes.
+    // The old code inserted the overload badge BETWEEN the PA and TX badges
+    // and made it visible on overload, so TX slid sideways at the exact
+    // moment something went wrong. Reserving the slot fixes that: an alarm
+    // now lights up in a pixel the operator has already learned.
+    m_safetyGroup = new QWidget(barWidget);
+    m_safetyGroup->setObjectName(QStringLiteral("safetyGroup"));
+    m_safetyGroup->setStyleSheet(QStringLiteral(
+        "QWidget#safetyGroup { border-left: 1px solid #203040; }"));
+    auto* safetyRow = new QHBoxLayout(m_safetyGroup);
+    safetyRow->setContentsMargins(8, 0, 0, 0);
+    safetyRow->setSpacing(6);
+
+    auto addSlot = [&](QWidget* badge) {
+        auto* slot = new QWidget(m_safetyGroup);
+        slot->setObjectName(QStringLiteral("safetySlot"));
+        slot->setFixedWidth(50);
+        auto* sl = new QHBoxLayout(slot);
+        sl->setContentsMargins(0, 0, 0, 0);
+        sl->addWidget(badge);
+        badge->setParent(slot);
+        safetyRow->addWidget(slot);
+    };
+
+    addSlot(m_txInhibitLabel);
+    addSlot(m_paStatusBadge);
+    addSlot(m_adcOvlBadge);
+    addSlot(m_txStatusBadge);
+    hbox->addWidget(m_safetyGroup);
 
     // Wire TX badge to MoxController. MoxController lives on m_radioModel;
     // both are created before buildStatusBar() runs.
@@ -6901,13 +6936,16 @@ void MainWindow::setPaTripped(bool tripped)
     }
 }
 
-// ── Phase 3M-0 Task 14: TX Inhibit label visibility ─────────────────────────
+// ── Phase 3M-0 Task 14: TX Inhibit label state ───────────────────────────────
 // Called by Task 17 wiring when TxInhibitMonitor::txInhibitedChanged fires.
-// Shows or hides the red "TX INHIBIT" pill in the status bar.
+// The "INH" pill lives in a permanently allocated safety slot (design
+// §4.5) -- dims to 14% opacity when inactive rather than hiding, so this
+// never resizes the slot. setVisible() would be a no-op here in the wrong
+// direction: the label stays Qt-visible at all times once inside its slot.
 void MainWindow::setTxInhibited(bool inhibited)
 {
     if (!m_txInhibitLabel) { return; }
-    m_txInhibitLabel->setVisible(inhibited);
+    dimSafetyBadge(m_txInhibitLabel, inhibited);
 }
 
 // ── Phase 23: TCI indicator update + Setup navigation ────────────────────────

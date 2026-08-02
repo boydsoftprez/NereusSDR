@@ -669,19 +669,15 @@ private:
     //  and removed — Thetis never displays AIN6/supply_volts. The PA volt
     //  label below is the sole supply indicator; it lives directly in the
     //  hbox now with no wrapper.)
-    // ADC overload alarm — stacked "ADCx / OVERLOAD" badge living in the
-    // right-side strip between PA OK and TX. Width changes consume the
-    // strip's right stretch space rather than shifting the STATION
-    // anchor (layout-stability rule §278.4). Hidden when no ADC is in
-    // overload; setVariant() flips between Warn (yellow) / Tx (red) per
-    // Thetis severity rules (ucInfoBar.cs:928 [@501e3f5]).
+    // ADC overload alarm: "ADCx / OVERLOAD" badge living in its own
+    // reserved slot inside m_safetyGroup (design §4.5), between the PA
+    // and TX slots. Dimmed when no ADC is in overload; setVariant()
+    // flips between Warn (yellow) / Tx (red) per Thetis severity rules
+    // (ucInfoBar.cs:928 [@501e3f5]).
     AdcOverloadBadge* m_adcOvlBadge{nullptr};
-    // Trailing separator paired with the badge — hides + shows together
-    // so the strip closes seamlessly when the alarm clears.
-    QLabel* m_adcOvlSep{nullptr};
     // 2-second auto-hide timer for the ADC-overload alarm. Mirrors
     // Thetis ucInfoBar._warningTimer: restarts on each overload event,
-    // hides the badge when elapsed — independent of the level-decay
+    // dims the badge when elapsed — independent of the level-decay
     // state tracked in StepAttenuatorController. Source:
     // ucInfoBar.cs:927-932 [@501e3f5]
     QTimer* m_adcOvlHideTimer{nullptr};
@@ -797,14 +793,24 @@ private:
     // QTimer::singleShot callback drop stale invocations.
     qint64 m_pgxlBandPushTokenMs{0};
 
-    // Status bar safety indicators (Phase 3M-0 Task 14 / sub-PR-8 restyle)
-    // m_txInhibitLabel — red "TX INHIBIT" pill, hidden by default,
-    //   shown when TxInhibitMonitor::inhibited() asserts (wired Task 17).
-    // m_paStatusBadge  — PA OK (green ✓) / PA FAULT (red ✓) StatusBadge.
-    // m_txStatusBadge  — TX indicator, solid red when MOX engaged.
+    // Status bar safety indicators (Phase 3M-0 Task 14 / sub-PR-8 restyle;
+    // reserved safety slots added per design §4.5).
+    // m_txInhibitLabel: "INH" pill, dimmed by default, full opacity when
+    //   TxInhibitMonitor::inhibited() asserts (wired Task 17).
+    // m_paStatusBadge:  PA OK (green check) / PA FAULT (red check) StatusBadge.
+    // m_txStatusBadge:  TX indicator, solid red when MOX engaged.
+    // All four safety badges (TX Inhibit, PA, ADC overload, TX) live in
+    // m_safetyGroup's fixed-width slots so an alarm never shifts geometry.
     QLabel*      m_txInhibitLabel{nullptr};
     StatusBadge* m_paStatusBadge{nullptr};
     StatusBadge* m_txStatusBadge{nullptr};
+    // Reserved safety slot group. Registered at rung 0 (never folds).
+    QWidget* m_safetyGroup{nullptr};
+    // Inactive slots dim rather than collapse, so geometry never moves
+    // (design §4.5). Shared by buildStatusBar()'s construction-time state
+    // and setTxInhibited() -- both toggle a safety-group badge's active
+    // state and must agree on how "inactive" is represented.
+    static void dimSafetyBadge(QWidget* w, bool active);
 
     // Phase 3Q Sub-PR-6 (F.1): RxDashboard — always-visible RX1 glance surface.
     // Replaces the Phase 3Q-7 m_statusConnInfo / m_statusLiveDot strip (those
