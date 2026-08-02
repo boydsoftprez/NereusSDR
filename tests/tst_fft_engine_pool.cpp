@@ -3,63 +3,86 @@
 // =================================================================
 // no-port-check: NereusSDR-original test infrastructure.
 //
-// Phase 3F Sub-Epic I Task 8-9: per-stream FFT dispatch topology.
+// R1 Task 6: pins the FftEnginePool contract (src/core/spectrum/
+// FftEnginePool.h) extracted from MainWindow::createFftEngineForStream /
+// m_fftEngines / m_fftThread: one engine per stream, reused on lookup,
+// dropped on removeStream, and a single FftPoolConfig that reaches every
+// engine that exists right now AND every engine created afterwards.
+//
+// This filename previously belonged to a test of FFTRouter's pan/receiver
+// mapping (Phase 3F Sub-Epic I Tasks 8-9); that content is unchanged and
+// now lives in tst_fft_router_topology.cpp, since FftEnginePool did not
+// exist as a class until this task.
 // =================================================================
-#include <QtTest/QtTest>
-#include "core/FFTRouter.h"
+#include <QtTest>
+#include "core/spectrum/FftEnginePool.h"
 
 using namespace NereusSDR;
 
-class TestFftEnginePool : public QObject {
+class TstFftEnginePool : public QObject {
     Q_OBJECT
 private slots:
-    void distinct_streams_reach_distinct_pans()
+    void createsOneEnginePerStreamAndReuses()
     {
-        FFTRouter router;
-        router.mapPanToReceiver(QStringLiteral("pan-0"), 0);
-        router.mapPanToReceiver(QStringLiteral("pan-1"), 1);
-
-        QCOMPARE(router.pansForReceiver(0),
-                 QList<QString>{QStringLiteral("pan-0")});
-        QCOMPARE(router.pansForReceiver(1),
-                 QList<QString>{QStringLiteral("pan-1")});
+        FftEnginePool pool;
+        FFTEngine* a = pool.engineForStream(0);
+        FFTEngine* b = pool.engineForStream(1);
+        QVERIFY(a != nullptr);
+        QVERIFY(b != nullptr);
+        QVERIFY(a != b);
+        QCOMPARE(pool.engineForStream(0), a);   // reuse, not recreate
+        QCOMPARE(pool.engineCount(), 2);
     }
 
-    void slices_sharing_a_stream_share_one_pan_subscription()
+    void removeStreamDropsTheEngine()
     {
-        FFTRouter router;
-        // Slices A and B both on stream 0, both shown on pan-0. The pan
-        // must subscribe once, not twice, or it paints each frame twice.
-        router.mapPanToReceiver(QStringLiteral("pan-0"), 0);
-        router.mapPanToReceiver(QStringLiteral("pan-0"), 0);
-
-        QCOMPARE(router.pansForReceiver(0).size(), 1);
+        FftEnginePool pool;
+        pool.engineForStream(0);
+        pool.engineForStream(1);
+        pool.removeStream(0);
+        QCOMPARE(pool.engineCount(), 1);
+        QCOMPARE(pool.streams(), QList<int>{1});
     }
 
-    void one_stream_can_feed_several_pans_at_different_zooms()
+    // Config must reach engines created BEFORE and AFTER the call, otherwise
+    // stream 0 and stream 4 silently run different FFT sizes.
+    void configAppliesToExistingAndFutureEngines()
     {
-        FFTRouter router;
-        router.mapPanToReceiver(QStringLiteral("pan-0"), 0);
-        router.mapPanToReceiver(QStringLiteral("pan-1"), 0);
-
-        QCOMPARE(router.pansForReceiver(0).size(), 2);
+        FftEnginePool pool;
+        FFTEngine* early = pool.engineForStream(0);
+        FftPoolConfig cfg;
+        cfg.fftSize = 16384;
+        cfg.fps     = 15;
+        pool.setConfig(cfg);
+        FFTEngine* late = pool.engineForStream(1);
+        QCOMPARE(early->fftSize(), 16384);
+        QCOMPARE(late->fftSize(),  16384);
+        QCOMPARE(early->outputFps(), 15);
+        QCOMPARE(late->outputFps(),  15);
     }
 
-    void rebuild_drops_stale_subscriptions()
+    // Coordinator decision beyond the brief's baseline three: the
+    // destructor must quit() and wait() on every worker thread BEFORE
+    // deleting the engines parked on it, or a still-running thread can be
+    // mid-feedIQ() on an engine the main thread is simultaneously freeing
+    // -- a use-after-free racing the pool's own teardown. Queue real work
+    // onto the engine's thread right before destroying the pool, so the
+    // destructor races an actual in-flight call rather than an idle one.
+    void destroysSafelyWithPendingWorkQueued()
     {
-        FFTRouter router;
-        router.mapPanToReceiver(QStringLiteral("pan-0"), 0);
-        router.mapPanToReceiver(QStringLiteral("pan-0"), 1);
-        QCOMPARE(router.receiversForPan(QStringLiteral("pan-0")).size(), 2);
+        auto* pool = new FftEnginePool;
+        FFTEngine* engine = pool->engineForStream(0);
+        QVERIFY(engine != nullptr);
 
-        // A full rebuild clears then re-adds only what the slice set says.
-        router.removePan(QStringLiteral("pan-0"));
-        router.mapPanToReceiver(QStringLiteral("pan-0"), 0);
+        const QVector<float> iq(8192, 0.0f);
+        QMetaObject::invokeMethod(engine, [engine, iq]() {
+            engine->feedIQ(iq);
+        }, Qt::QueuedConnection);
 
-        QCOMPARE(router.receiversForPan(QStringLiteral("pan-0")),
-                 QList<int>{0});
+        delete pool;    // must not crash or hang
+        QVERIFY(true);  // reaching this line is the actual assertion
     }
 };
 
-QTEST_MAIN(TestFftEnginePool)
+QTEST_MAIN(TstFftEnginePool)
 #include "tst_fft_engine_pool.moc"

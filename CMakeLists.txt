@@ -632,6 +632,12 @@ set(CORE_SOURCES
     # than reading widget geometry and widget member state, so the daemon
     # can run the same reduction with no widget in the process.
     src/core/spectrum/SpectrumReducer.cpp
+    # R1 Task 6: per-stream FFTEngine pool extracted from
+    # MainWindow::createFftEngineForStream / m_fftEngines / m_fftThread.
+    # Owns engine lifecycle, the four global display AppSettings-sourced
+    # knobs (as FftPoolConfig), and the shared worker thread(s), so the
+    # daemon can produce spectrum with no widget toolkit in the process.
+    src/core/spectrum/FftEnginePool.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the

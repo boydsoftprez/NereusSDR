@@ -80,7 +80,6 @@
 #include <QVector>
 
 class QProgressDialog;
-class QThread;
 class QSplitter;
 class QMenu;
 
@@ -95,6 +94,7 @@ class ConnectionPanel;
 class SupportDialog;
 class WdspEngine;
 class FFTEngine;
+class FftEnginePool;
 class SpectrumWidget;
 class SliceModel;
 class VfoWidget;
@@ -424,21 +424,30 @@ private:
 
     /// Stream 0's engine. Back-compat accessor for call sites that still
     /// address "the" FFT engine (display settings, Max Bin, auto-zoom).
-    FFTEngine* primaryFftEngine() const { return m_fftEngines.value(0, nullptr); }
-
-    /// Build and register one FFTEngine for `streamIndex`, configured as
-    /// the old single-engine path was, moved onto the shared FFT thread.
-    /// Returns the existing engine if one is already registered.
     ///
-    /// Called on demand rather than once per pool slot: engines subscribe
-    /// to the shared RadioModel::rawIqDataForStream and filter by index, so
-    /// an engine for a stream that is never claimed would still take (and
-    /// discard) a queued event for every packet of every OTHER stream.
-    /// Building one only when the allocator actually claims the DDC keeps
-    /// that cost at zero for the single-stream case. Sizing off
-    /// streamPoolSize() at construction would not work anyway: the pool is
-    /// unsized until RadioModel::configureStreamPool runs at connect.
-    FFTEngine* createFftEngineForStream(int streamIndex);
+    /// R1 Task 6: delegates to m_fftEnginePool, which creates on first use.
+    /// Stream 0's engine is always built during buildUI() before any of
+    /// these call sites can run, so in practice this never triggers that
+    /// creation -- it is a lookup, exactly as the old
+    /// m_fftEngines.value(0, nullptr) was. Defined out-of-line in the .cpp:
+    /// FftEnginePool is only forward-declared here (m_fftEnginePool is a
+    /// pointer member), and calling a method on it needs the complete type.
+    FFTEngine* primaryFftEngine() const;
+
+    /// R1 Task 6: wires a pool-provided engine into MainWindow's other
+    /// subsystems the first time streamIndex is seen -- the raw I/Q feed
+    /// from RadioModel, this stream's initial sample rate, and its own
+    /// NoiseFloorTracker. A no-op beyond the lookup on later calls for a
+    /// stream that is already wired. Returns nullptr only if the pool
+    /// itself is not ready yet or streamIndex is negative.
+    ///
+    /// Engine creation, reuse, the four display AppSettings-sourced
+    /// knobs, and thread parking all moved into FftEnginePool; this is
+    /// what is left of the old createFftEngineForStream once that part
+    /// is extracted -- the MainWindow-specific wiring the pool has no way
+    /// to express (I/Q routing and NoiseFloorTracker are RadioModel- and
+    /// MainWindow-owned concerns, not spectrum-engine concerns).
+    FFTEngine* ensureStreamWired(int streamIndex);
 
     /// Push the stream's cached DDC centre + sample rate onto one pan's
     /// SpectrumWidget so visibleBinRange maps its bins against the right
@@ -614,16 +623,23 @@ private:
     // slices sharing a DDC share its spectrum and appear as separate flags
     // on it.
     //
-    // All engines share m_fftThread. If a 5-stream 1536 kHz bench shows
-    // the thread saturating, splitting to one thread per engine is a
-    // follow-up needing maintainer sign-off (thread architecture).
-    QMap<int, FFTEngine*> m_fftEngines;
+    // R1 Task 6: per-stream engine lifecycle, the four global display
+    // AppSettings keys, and the shared FFT thread (formerly m_fftEngines /
+    // m_fftThread, plus createFftEngineForStream) now live in
+    // FftEnginePool (src/core/spectrum/FftEnginePool.h) -- core work that
+    // used to sit in this QWidget. buildUI() reads the four AppSettings
+    // keys once, fills an FftPoolConfig, and calls setConfig(); every
+    // other call site reaches an engine via primaryFftEngine() or
+    // m_fftEnginePool->engineForStream(streamIndex). threadCount defaults
+    // to 1 (today's single shared thread); if a 5-stream 1536 kHz bench
+    // shows it saturating, raising it is a follow-up needing maintainer
+    // sign-off (thread architecture), per design section 4.5a.
+    FftEnginePool* m_fftEnginePool{nullptr};
 
     /// One NoiseFloorTracker per stream, fed by that stream's FFT engine.
     /// Auto AGC-T needs the noise floor of the band a slice is actually on;
     /// a single tracker fed from stream 0 would mis-set every other slice.
     QMap<int, class NoiseFloorTracker*> m_streamNoiseFloors;
-    QThread*            m_fftThread{nullptr};
 
     /// Last centre + sample rate RadioModel published for each stream, kept
     /// so a pan that subscribes AFTER the stream was centred still learns

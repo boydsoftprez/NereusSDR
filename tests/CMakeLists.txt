@@ -1683,6 +1683,17 @@ nereus_add_test(tst_pan_active_slice_sync)
 # remove).
 nereus_add_test(tst_fft_router_fanout)
 
+# ── Phase 3F Sub-Epic I Tasks 8-9: FFTRouter subscription dedup + rebuild ──
+# Renamed from tst_fft_engine_pool.cpp when R1 Task 6 claimed that filename
+# for the real FftEnginePool class (src/core/spectrum/FftEnginePool.h).
+# Content unchanged: still pins the FFTRouter contract MainWindow's
+# per-stream FFTEngine pool relied on before FftEnginePool existed as a
+# class -- distinct streams reach distinct pans, co-hosted slices subscribe
+# their shared pan once (not once per slice), one stream can feed several
+# pans at different zooms, and a wholesale rebuild (remove + re-add) drops
+# stale receiver bindings.
+nereus_add_test(tst_fft_router_topology)
+
 # ── Phase 3F Sub-Epic I Task 2: SliceStreamAllocator placement policy ──────
 # NereusSDR-original pure-policy class. Decides whether a slice shares an
 # active DDC stream's window (shift offset only) or claims a free DDC.
@@ -1709,11 +1720,14 @@ nereus_add_test(tst_stream_pool_binding)
 # assert which ids it really opens.
 nereus_add_test(tst_wdsp_channel_id_map)
 
-# ── Phase 3F Sub-Epic I Tasks 8-9: per-stream FFT dispatch topology ────────
-# Pins the FFTRouter contract MainWindow's per-stream FFTEngine pool relies
-# on: distinct streams reach distinct pans, co-hosted slices subscribe their
-# shared pan once (not once per slice), one stream can feed several pans at
-# different zooms, and a wholesale rebuild drops stale subscriptions.
+# ── R1 Task 6: FftEnginePool -- per-stream FFTEngine lifecycle ─────────────
+# Extracted from MainWindow::createFftEngineForStream / m_fftEngines /
+# m_fftThread (MainWindow.cpp:1430-1530, MainWindow.h:597-626): one engine
+# per stream, reused on lookup, dropped on removeStream, configured from one
+# FftPoolConfig that reaches engines created before AND after setConfig() so
+# two streams never silently run different FFT sizes. threadCount defaults
+# to 1 per design section 4.5a's Pi 4B measurement (4 threads bought only
+# 1.35x aggregate throughput, the workload being memory-bandwidth bound).
 nereus_add_test(tst_fft_engine_pool)
 
 # ── Phase 3F Sub-Epic D Task 8: PanFloatingWindow (multi-monitor detach) ────
