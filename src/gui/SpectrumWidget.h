@@ -171,6 +171,7 @@ mw0lge@grange-lane.co.uk
 
 #include "core/ConnectionState.h"
 #include "core/WdspTypes.h"  // DSPMode — for TX filter IQ-space mapping (Plan 4 D9)
+#include "core/spectrum/SpectrumDetectorMode.h"
 
 QT_BEGIN_NAMESPACE
 class QLabel;
@@ -240,22 +241,11 @@ enum class AverageMode : int {
     Count
 };
 
-// Spectrum detector type. Ported from Thetis comboDispPanDetector /
-// comboDispWFDetector (setup.designer.cs:34876 + setup.designer.cs:34461
-// [v2.10.3.13]).  Thetis items: Peak / Rosenfell / Average / Sample / RMS
-// (Pan only has RMS; WF has 4 items).
-// Applied during bin reduction: when N FFT bins are mapped to M display
-// pixels, this policy decides which value is chosen.
-// From Thetis specHPSDR.cs:302-321 [v2.10.3.13] DetTypePan / DetTypeWF
-// → SetDisplayDetectorMode(disp, pixout, mode).
-enum class SpectrumDetector : int {
-    Peak       = 0, // take max bin in window (Thetis "Peak")
-    Rosenfell  = 1, // Rosenfell: alternate max/min per pixel (Thetis "Rosenfell")
-    Average    = 2, // arithmetic mean of bins in window (Thetis "Average")
-    Sample     = 3, // take first bin in window (Thetis "Sample")
-    RMS        = 4, // root-mean-square of bins in window — Pan only; Thetis "RMS"
-    Count
-};
+// Spectrum detector type: extracted to core in R1 (src/core/spectrum/
+// SpectrumDetectorMode.h) so this GUI header is no longer required to get
+// the enum; that header carries the full Thetis citation trail. Alias kept
+// so existing call sites (SpectrumDetector::Peak, etc.) are untouched.
+using SpectrumDetector = NereusSDR::SpectrumDetectorMode;
 
 // Spectrum averaging mode (split from legacy AverageMode for Thetis parity).
 // Ported from Thetis comboDispPanAveraging / comboDispWFAveraging

@@ -59,7 +59,7 @@
 //  warren@wpratt.com
 //=================================================================
 
-#include "gui/SpectrumWidget.h"   // SpectrumDetector enum
+#include "core/spectrum/SpectrumDetectorMode.h"
 
 #include <QVector>
 
@@ -86,7 +86,7 @@ namespace NereusSDR {
 ///   detOffset      — output-pixel offset added during pixel-index calc
 ///
 /// For NereusSDR's typical call site: fsclipL=0, fsclipH=m, detOffset=0.
-void applySpectrumDetector(SpectrumDetector detType,
+void applySpectrumDetector(NereusSDR::SpectrumDetectorMode detType,
                            int m,
                            int numPixels,
                            double pixPerBin,
@@ -101,7 +101,7 @@ void applySpectrumDetector(SpectrumDetector detType,
 /// QVector-friendly wrapper.  Resizes `pixels` to `numPixels` if needed.
 /// Defaults fsclipL = 0, fsclipH = bins.size(), detOffset = 0 — the
 /// NereusSDR call shape (no sub-band segmentation).
-void applySpectrumDetector(SpectrumDetector detType,
+void applySpectrumDetector(NereusSDR::SpectrumDetectorMode detType,
                            const QVector<float>& bins,
                            int numPixels,
                            QVector<float>& pixels,

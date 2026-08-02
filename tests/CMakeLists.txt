@@ -4350,6 +4350,14 @@ nereus_add_test(tst_dsp_options_warning_logic)
 # running app.  Direct SpectrumAvenger unit tests are a follow-up item.
 nereus_add_test(tst_detector_modes)
 
+# R1 Task 2 -- SpectrumDetectorMode extraction.  Pins the detector-mode
+# enumerator values (WDSP analyzer.c detector modes, Peak/Rosenfell/Average/
+# Sample/RMS) now that they live in core/spectrum/SpectrumDetectorMode.h
+# instead of gui/SpectrumWidget.h.  gui/SpectrumWidget.h keeps a using-alias
+# (SpectrumDetector = NereusSDR::SpectrumDetectorMode) so this is purely a
+# relocation, not a behavior change.
+nereus_add_test(tst_spectrum_detector_mode)
+
 # Phase 1B verification -- exhaustive sweep of every detector x averaging
 # combination through SpectrumWidget::updateSpectrumLinear():
 #   spectrum  5 detectors x 4 averagings = 20

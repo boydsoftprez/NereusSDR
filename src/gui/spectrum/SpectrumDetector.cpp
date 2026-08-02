@@ -61,7 +61,7 @@
 namespace NereusSDR {
 
 // From WDSP analyzer.c:283-462 [v2.10.3.13] — verbatim port.
-void applySpectrumDetector(SpectrumDetector detType,
+void applySpectrumDetector(NereusSDR::SpectrumDetectorMode detType,
                            int m,
                            int numPixels,
                            double pixPerBin,
@@ -260,7 +260,7 @@ void applySpectrumDetector(SpectrumDetector detType,
     }
 }
 
-void applySpectrumDetector(SpectrumDetector detType,
+void applySpectrumDetector(NereusSDR::SpectrumDetectorMode detType,
                            const QVector<float>& bins,
                            int numPixels,
                            QVector<float>& pixels,
