@@ -255,6 +255,167 @@ private slots:
         QCOMPARE(ch->notchTuneFrequencyHz(),
                  model.streamCentreHzForTest(model.sliceById(b)->streamIndex()));
     }
+
+    // -- section 6.3 live fan-out: add ------------------------------------
+    void a_live_add_reaches_every_bound_channel()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(5, 5, kRateHz);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(kSliceBFreqHz);
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+
+        QVERIFY(model.notchModel()->addNotch(14074000.0, 200.0) >= 0);
+
+        QCOMPARE(engine->rxChannel(a)->notchCount(), 1);
+        QCOMPARE(engine->rxChannel(b)->notchCount(), 1);
+
+        Notch got;
+        QVERIFY(engine->rxChannel(b)->notchAt(0, got));
+        QCOMPARE(got.centerHz, 14074000.0);
+        QCOMPARE(got.widthHz,  200.0);
+        QVERIFY(got.active);
+    }
+
+    // -- section 6.2: an edit is incremental (one UpdateNBPFilters), not a
+    // resync.
+    void a_live_width_edit_reaches_the_channel()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(5, 5, kRateHz);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+
+        const int id = model.notchModel()->addNotch(14074000.0, 200.0);
+        QVERIFY(id >= 0);
+        QVERIFY(model.notchModel()->setWidth(id, 400.0));
+
+        RxChannel* ch = engine->rxChannel(a);
+        QCOMPARE(ch->notchCount(), 1);
+        Notch got;
+        QVERIFY(ch->notchAt(0, got));
+        QCOMPARE(got.widthHz,  400.0);
+        QCOMPARE(got.centerHz, 14074000.0);
+    }
+
+    // -- section 5.2 + 6.3: delete uses the FORMER index, and WDSP shifts its
+    // own array down internally (nbp.c:418-441), so positions stay aligned.
+    void a_live_remove_reaches_the_channel_and_keeps_the_order()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(5, 5, kRateHz);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+
+        NotchModel* nm = model.notchModel();
+        const int first  = nm->addNotch(14074000.0, 200.0);
+        const int second = nm->addNotch(14100000.0, 500.0);
+        QVERIFY(first >= 0);
+        QVERIFY(second >= 0);
+        QCOMPARE(engine->rxChannel(a)->notchCount(), 2);
+
+        QVERIFY(nm->removeNotch(first));
+
+        RxChannel* ch = engine->rxChannel(a);
+        QCOMPARE(ch->notchCount(), 1);
+        Notch got;
+        QVERIFY(ch->notchAt(0, got));
+        QCOMPARE(got.centerHz, 14100000.0);
+        QCOMPARE(got.widthHz,  500.0);
+    }
+
+    // -- section 5.3 clear() contract: a clear that emitted nothing would
+    // leave the channels notched while the model showed none.
+    void clearing_the_model_empties_every_bound_channel()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(5, 5, kRateHz);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(kSliceBFreqHz);
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+
+        NotchModel* nm = model.notchModel();
+        QVERIFY(nm->addNotch(14074000.0, 200.0) >= 0);
+        QVERIFY(nm->addNotch(14100000.0, 500.0) >= 0);
+        QCOMPARE(engine->rxChannel(a)->notchCount(), 2);
+
+        nm->clear();
+
+        QCOMPARE(engine->rxChannel(a)->notchCount(), 0);
+        QCOMPARE(engine->rxChannel(b)->notchCount(), 0);
+    }
+
+    // -- section 6.3: master TNF toggle reaches every channel --------------
+    void master_enable_flips_the_run_flag_on_every_bound_channel()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(5, 5, kRateHz);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(kSliceBFreqHz);
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+
+        // Both directions are load-bearing here: the model ships OFF
+        // (maintainer decision D-a), so the pool reconcile pushed false and
+        // each flip below is a real change the fan-out has to carry.
+        model.notchModel()->setGlobalEnabled(true);
+        QVERIFY(engine->rxChannel(a)->notchesRun());
+        QVERIFY(engine->rxChannel(b)->notchesRun());
+
+        model.notchModel()->setGlobalEnabled(false);
+        QVERIFY(!engine->rxChannel(a)->notchesRun());
+        QVERIFY(!engine->rxChannel(b)->notchesRun());
+    }
+
+    // -- section 6.3: auto-increase is the one that goes missing -----------
+    //
+    // OFF first, deliberately. NotchModel ships autoIncrease true (WDSP
+    // creates nbp0 with autoincr = 1, RXA.c:105) and RxChannel carries the
+    // same default, so a setAutoIncrease(true) opener would assert a value
+    // that was already there and pass with the fan-out unwired.
+    void auto_increase_flips_on_every_bound_channel()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(5, 5, kRateHz);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(kSliceBFreqHz);
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+
+        model.notchModel()->setAutoIncrease(false);
+        QVERIFY(!engine->rxChannel(a)->notchAutoIncrease());
+        QVERIFY(!engine->rxChannel(b)->notchAutoIncrease());
+
+        model.notchModel()->setAutoIncrease(true);
+        QVERIFY(engine->rxChannel(a)->notchAutoIncrease());
+        QVERIFY(engine->rxChannel(b)->notchAutoIncrease());
+    }
 };
 
 QTEST_MAIN(TestNotchChannelSync)

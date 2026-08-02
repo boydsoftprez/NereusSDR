@@ -2592,6 +2592,11 @@ private:
     /// addSlice time.
     void wireSliceSignals(SliceModel* slice);
 
+    /// Connect NotchModel's mutation signals to the per-channel WDSP
+    /// fan-out. Called once from the ctor; NotchModel outlives every
+    /// connection.
+    void wireNotchModel();
+
     /// Push the full notch state at one channel: the list, the master run
     /// flag, the auto-increase flag and the NBP tune frequency. `channelId`
     /// is also the slice index (Sub-Epic I invariant), which is how the

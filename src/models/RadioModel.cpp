@@ -1613,6 +1613,10 @@ RadioModel::RadioModel(QObject* parent)
     // (section 6.3). On a cold start no channel exists yet, which is exactly
     // why the reconcile lives there rather than at channel-activation time.
     m_notchModel = std::make_unique<NotchModel>(this);
+    // Wired before the restore so a restore that replays its list as signals
+    // is handled by the same path a live edit is. Harmless either way here:
+    // no WDSP channel exists yet, so the fan-out has nothing to walk.
+    wireNotchModel();
     m_notchModel->restoreFromSettings();
 
     // ── Phase 3J-2 H2: spot-system construction + wiring ──────────────────────
@@ -3353,6 +3357,106 @@ void RadioModel::syncNotchesToAllChannels()
         // full sweep is safe even when the SKU's maxSlices is smaller.
         syncNotchesToChannel(m_wdspEngine->rxChannel(ch), ch);
     }
+}
+
+void RadioModel::wireNotchModel()
+{
+    NotchModel* nm = m_notchModel.get();
+    if (!nm) {
+        return;
+    }
+
+    connect(nm, &NotchModel::notchAdded, this, [this](int id) {
+        const int    index = m_notchModel->indexOfId(id);
+        const Notch* n     = m_notchModel->notchById(id);
+        if (!n || index < 0) {
+            return;
+        }
+        const QVector<RxChannel*> chans = sliceRxChannels();
+        for (RxChannel* ch : chans) {
+            // RXANBPAddNotch is an INSERT guarded by
+            // "notch <= b->nn && b->nn < b->maxnotches", returning -1 with no
+            // mutation at all (third_party/wdsp/src/nbp.c:362-390). Design
+            // section 6.2: surface it, and recover with a full resync rather
+            // than an assert, which a release build compiles out.
+            if (!ch->addNotch(index, *n)) {
+                ch->syncNotches(m_notchModel->notches());
+            }
+            reconcileNotchCount(ch);
+        }
+    });
+
+    connect(nm, &NotchModel::notchChanged, this, [this](int id) {
+        const int    index = m_notchModel->indexOfId(id);
+        const Notch* n     = m_notchModel->notchById(id);
+        if (!n || index < 0) {
+            return;
+        }
+        const QVector<RxChannel*> chans = sliceRxChannels();
+        for (RxChannel* ch : chans) {
+            // Incremental, not a resync. RXANBPEditNotch runs UpdateNBPFilters
+            // once (nbp.c:345-359), which designs nbp0 AND recalculates bpsnba
+            // (snb.c:814-828); syncNotches would pay that 2N times
+            // (nbp.c:384, :435, :456). Design section 6.2.
+            //
+            // No throttling on drag, deliberately. Thetis pushes on every
+            // mouse-move by named design:
+            //
+            //   From Thetis console.cs:49967 [v2.10.3.15]:
+            //     //MW0LGE [2.9.0.7] update on drag
+            //
+            // and it does strictly more per move than this
+            // (SaveNotchesToDatabase + UpdateNotchDisplay,
+            // console.cs:40105-40106 [v2.10.3.15]).
+            if (!ch->editNotch(index, *n)) {
+                ch->syncNotches(m_notchModel->notches());
+            }
+            reconcileNotchCount(ch);
+        }
+    });
+
+    connect(nm, &NotchModel::notchRemoved, this, [this](int, int formerIndex) {
+        if (formerIndex < 0) {
+            return;
+        }
+        const QVector<RxChannel*> chans = sliceRxChannels();
+        for (RxChannel* ch : chans) {
+            // formerIndex, not indexOfId: the entry is gone from the model by
+            // the time this lands. WDSP shifts its own array down internally
+            // (nbp.c:418-441) and our list does the same, so positions stay
+            // aligned (design section 5.2).
+            if (!ch->deleteNotch(formerIndex)) {
+                ch->syncNotches(m_notchModel->notches());
+            }
+            reconcileNotchCount(ch);
+        }
+    });
+
+    // Whole-list replacement, including NotchModel::clear(). Design section
+    // 5.3: a clear that emitted nothing would leave every channel's notch set
+    // installed while the model showed none.
+    connect(nm, &NotchModel::notchesReset, this, [this]() {
+        const QVector<RxChannel*> chans = sliceRxChannels();
+        for (RxChannel* ch : chans) {
+            ch->syncNotches(m_notchModel->notches());
+        }
+    });
+
+    // Master TNF toggle. Thetis's TNFActive is likewise global despite the
+    // per-rx command shape (console.cs:39987-40005 [v2.10.3.15]).
+    connect(nm, &NotchModel::globalEnabledChanged, this, [this](bool on) {
+        const QVector<RxChannel*> chans = sliceRxChannels();
+        for (RxChannel* ch : chans) {
+            ch->setNotchesRun(on);
+        }
+    });
+
+    connect(nm, &NotchModel::autoIncreaseChanged, this, [this](bool on) {
+        const QVector<RxChannel*> chans = sliceRxChannels();
+        for (RxChannel* ch : chans) {
+            ch->setNotchAutoIncrease(on);
+        }
+    });
 }
 
 // The disable half of the same Thetis pair (console.cs:37398-37400
