@@ -3254,7 +3254,7 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
 // Thetis fans every notch mutation at three fixed WDSP ids, WDSP.id(0, 0),
 // WDSP.id(0, 1) and WDSP.id(2, 0):
 //
-//   From Thetis console.cs:40271-40273 [v2.10.3.15] — AddNotch:
+//   From Thetis console.cs:40271-40273 [v2.10.3.15], AddNotch:
 //     WDSP.RXANBPAddNotch(WDSP.id(0, 0), nNumberofExistingNotches, fFreqHZ, fWidth, true);
 //     WDSP.RXANBPAddNotch(WDSP.id(0, 1), nNumberofExistingNotches, fFreqHZ, fWidth, true);
 //     WDSP.RXANBPAddNotch(WDSP.id(2, 0), nNumberofExistingNotches, fFreqHZ, fWidth, true);

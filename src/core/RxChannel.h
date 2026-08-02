@@ -688,11 +688,11 @@ public:
     double minNotchWidthHz() const;
 
     /// Read one notch straight back out of WDSP's per-channel database.
-    /// From WDSP third_party/wdsp/src/nbp.c:393 (RXANBPGetNotch): 0 on
-    /// success, -1 with sentinel outputs (fcenter -1.0, fwidth 0.0,
-    /// active -1) when `index` is past the end, so a caller that ignored the
-    /// return would read a notch that does not exist. `out.id` is left
-    /// untouched: WDSP's database is positional and carries no id.
+    /// RXANBPGetNotch (third_party/wdsp/src/nbp.c:393) returns 0 on success
+    /// and -1 with sentinel outputs (fcenter -1.0, fwidth 0.0, active -1)
+    /// when `index` is past the end, so a caller that ignored the return
+    /// would read a notch that does not exist. `out.id` is left untouched:
+    /// WDSP's database is positional and carries no id.
     bool notchAt(int index, Notch& out) const;
 
     // --- Filter convenience setters (single-axis) ---
