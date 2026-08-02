@@ -1895,6 +1895,36 @@ call sites at `:6473`, `:6642`, `:6686`, `:7127`.
 
 - [ ] **Step 1: Write the failing test**
 
+**Pre-flight defect found during A6 (2026-08-02):** the four `MainWindow w;`
+constructions below will not work as written. `MainWindow`'s constructor
+unconditionally calls `m_radioModel->discovery()->startDiscovery()` and
+schedules `tryAutoReconnect()` via `QTimer::singleShot(0, ...)`, so building
+one in a test starts real UDP radio discovery on the LAN and can spend
+several seconds constructing an auto-opened `ConnectionPanel`. Worse,
+`SpectrumWidget`'s QRhi backend spins up a `SpectrumThread` at construction
+time (before `.show()`), and nothing in this harness runs the app's normal
+shutdown path, so the thread is still running when `w` goes out of scope --
+`QFATAL: QThread: Destroyed while thread 'SpectrumThread' is still running`,
+which `SIGABRT`s the whole test binary, not just one slot. Confirmed by
+actually building and running this exact pattern (not just inspecting code):
+`narrowingFoldsInRungOrder`'s resize loop would hit this on top of the
+discovery/ConnectionPanel cost.
+`tst_pan_active_slice_sync.cpp` ("MainWindow is not constructible in this
+harness") and `tst_pan_badge_click_wiring.cpp` ("MainWindow cannot be stood
+up in a test") already document the same conclusion independently; A6
+mirrored `buildStatusBar()`'s new `addSlot()`/`dimSafetyBadge()` logic
+against a standalone host `QWidget` instead (see
+`tests/tst_mainwindow_status_bar_safety.cpp`) and `ChromeBarController`'s
+own fold math is unit-testable directly per Task A1/A2 without a real
+`MainWindow` at all -- prefer driving `ChromeBarController` against a
+standalone host widget the same way, rather than a live `MainWindow`, if
+that gives equivalent coverage for what this integration test needs to
+prove. If genuine `MainWindow` integration coverage is still wanted, it
+will need test-only seams in `MainWindow`'s constructor (e.g. an
+opt-out of `startDiscovery()`/`tryAutoReconnect()`) and a fix for the
+`SpectrumThread` teardown-ordering bug first; both are out of scope for
+A8 as currently written.
+
 Create `tests/tst_chrome_bar_integration.cpp`:
 
 ```cpp
@@ -3101,6 +3131,13 @@ stable across radios on a multi-radio bench."
   Task B5 does not depend on it.
 
 - [ ] **Step 1: Write the failing test**
+
+**Same pre-flight defect as Task A8's test:** the three `MainWindow w;`
+constructions below start real radio discovery and will `SIGABRT` the test
+binary on teardown (`SpectrumThread` still running). See the note at the
+top of Task A8's Step 1 for the evidence; find another way to reach
+`addPanButton` (a standalone host widget, or a narrower accessor) before
+using this pattern.
 
 Create `tests/tst_pan_menu_routing.cpp`:
 
