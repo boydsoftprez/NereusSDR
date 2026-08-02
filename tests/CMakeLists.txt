@@ -4207,6 +4207,13 @@ nereus_add_test(tst_network_diagnostics_dialog)
 # construction; the whole ladder is testable without a GUI.
 nereus_add_test(tst_chrome_fold_plan)
 
+# ── Bottom-banner cleanup Task A2: ChromeBarController ────────────────────
+# 7 tests: wide bar shows everything, narrow bar folds rung 1, separator
+# folds with its item, relayout is idempotent, no oscillation across
+# neighbouring widths, foldStateChanged only fires on an actual change,
+# setNaturalWidth changes the decision. QTEST_MAIN, constructs real QLabels.
+nereus_add_test(tst_chrome_bar_controller)
+
 # -- Phase 3M-3a-ii follow-up Batch 1: ParametricEqWidget skeleton --
 nereus_add_test(tst_parametric_eq_widget_skeleton)
 
