@@ -44,6 +44,33 @@
 // QCoreApplication's own teardown is exactly the hazard shutdown() exists
 // to close (see CoreInit.cpp's comment on QThreadStoragePrivate::finish).
 // nereusd calls it for the same reason the GUI does.
+//
+// R1 Task 9 fix round 1: nereusd had no isolation mechanism analogous to
+// main.cpp's --profile, and verifying the SIGTERM reconciliation above
+// against the real binary touched JJ's real ~/Library/Preferences/
+// NereusSDR/ (task-9-report.md section 5) -- the same directory the real
+// GUI client uses, because CoreInit::initialize()'s AppSettings::instance()
+// call resolves there with no override in place. This gap was already
+// flagged in Task 8's own review, before Task 9 existed ("Note for Task
+// 9's daemon caller"), but never reached this task's brief or dispatch.
+// Closed here: --profile/-p, resolved through the SAME QCommandLineParser
+// already built for --config -- no pre-QCoreApplication argv scan needed
+// the way main.cpp's extractProfileFromArgv() is. main.cpp's scan exists
+// because the GUI reads UiScalePercent from the settings file and sets
+// QT_SCALE_FACTOR before constructing QApplication (Qt reads that
+// environment variable at construction time); nereusd has no such
+// constraint (QCoreApplication does not consult QT_SCALE_FACTOR at all),
+// and nothing between this file's QCoreApplication construction and its
+// AppSettings::setProfileOverride() call below touches AppSettings::
+// instance() -- setApplicationName(), the signal handlers, the two
+// qRegisterMetaType calls, and QCommandLineParser's own construction/
+// addOption/process are all pure Qt-or-libc operations with no reach into
+// our AppSettings class. AppSettings::instance() is first touched inside
+// CoreInit::initialize(), which runs after the profile is resolved and
+// (if valid) already pinned, so the ordinary post-construction parser path
+// is sufficient. See DaemonConfig.h's resolveDaemonProfileArgument() for
+// why an invalid name is fatal here rather than a silent fallback to the
+// shared directory the way a mistyped GUI --profile is.
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-08-02: original implementation for NereusSDR by J.J. Boyd
@@ -51,6 +78,7 @@
 //               Claude Code.
 // =================================================================
 
+#include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/CoreInit.h"
 #include "core/LogCategories.h"
@@ -105,9 +133,36 @@ int main(int argc, char* argv[])
         QStringLiteral("Config file path."), QStringLiteral("path"),
         QStringLiteral("/etc/nereusd.conf"));
     parser.addOption(cfgOpt);
+    QCommandLineOption profileOpt({QStringLiteral("p"), QStringLiteral("profile")},
+        QStringLiteral(
+            "Run against an isolated settings/log profile instead of the "
+            "shared default directory. Lets two nereusd instances on the "
+            "same machine (or a developer workstation that also runs the "
+            "GUI client) avoid clobbering each other's state. Name must "
+            "match [A-Za-z0-9_-]+."),
+        QStringLiteral("name"));
+    parser.addOption(profileOpt);
     parser.process(app);
 
-    if (!NereusSDR::CoreInit::initialize()) {
+    // Resolve and validate --profile BEFORE CoreInit::initialize(), which
+    // is where AppSettings::instance() is first touched in this process
+    // (see the file header above for why the ordinary post-construction
+    // parser path is sufficient here, unlike main.cpp). An invalid name is
+    // fatal: unlike main.cpp, which warns and falls back to the shared
+    // directory, a daemon provisioning mistake should stop the daemon
+    // rather than silently share state with something else on the box.
+    QString profileErr;
+    const QString profile =
+        NereusSDR::resolveDaemonProfileArgument(parser.value(profileOpt), &profileErr);
+    if (!profileErr.isEmpty()) {
+        qCCritical(NereusSDR::lcApp) << profileErr;
+        return 3;
+    }
+    if (!profile.isEmpty()) {
+        NereusSDR::AppSettings::setProfileOverride(profile);
+    }
+
+    if (!NereusSDR::CoreInit::initialize(profile)) {
         qCCritical(NereusSDR::lcApp) << "core initialisation failed";
         return 1;
     }

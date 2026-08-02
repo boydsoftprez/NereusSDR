@@ -9,6 +9,13 @@
 #
 # Default location: /etc/nereusd.conf. Override with nereusd --config <path>.
 # See src/core/daemon/DaemonConfig.{h,cpp} for the parser this file feeds.
+#
+# Running more than one nereusd against different radios on the same
+# machine (or testing nereusd on a workstation that also runs the GUI
+# client) needs its own settings/log directory per instance: pass
+# nereusd --profile <name> (name must match [A-Za-z0-9_-]+) to keep this
+# instance's AppSettings store and log files out of the shared default
+# directory. See nereusd --help for the full option list.
 
 # MAC address of the radio to connect to, colon-separated hex
 # (e.g. 00:1C:2D:05:37:2A). Leave unset to connect to the first radio

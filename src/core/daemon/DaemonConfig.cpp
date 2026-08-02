@@ -7,6 +7,7 @@
 
 #include "DaemonConfig.h"
 
+#include "core/AppSettings.h"
 #include "core/LogCategories.h"
 
 #include <QFile>
@@ -122,6 +123,24 @@ bool DaemonConfig::validate(QString* errorOut) const
         errorOut->clear();
     }
     return true;
+}
+
+QString resolveDaemonProfileArgument(const QString& requested, QString* errorOut)
+{
+    if (errorOut) {
+        errorOut->clear();
+    }
+    if (requested.isEmpty()) {
+        return {};
+    }
+    if (!AppSettings::isValidProfileName(requested)) {
+        if (errorOut) {
+            *errorOut = QStringLiteral(
+                "invalid --profile \"%1\" (allowed: [A-Za-z0-9_-]+)").arg(requested);
+        }
+        return {};
+    }
+    return requested;
 }
 
 } // namespace NereusSDR

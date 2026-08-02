@@ -74,4 +74,36 @@ struct DaemonConfig {
     bool validate(QString* errorOut) const;
 };
 
+// Resolves nereusd's --profile command-line argument (R1 Task 9 fix round
+// 1: this gap was flagged in Task 8's review, before Task 9 existed, as
+// "Note for Task 9's daemon caller", but never reached this task's brief).
+// Without it, every invocation of nereusd on a developer workstation reads
+// and writes the SAME ~/.config/NereusSDR (or ~/Library/Preferences/
+// NereusSDR on macOS) the real GUI client uses -- there is no isolation
+// analogous to main.cpp's --profile, which is exactly the trap that
+// produced task-9-report.md section 5.
+//
+// `requested` is the raw --profile value from QCommandLineParser (empty if
+// the option was not given). An empty value always succeeds and resolves
+// to an empty string, meaning "no profile, use the shared default
+// directory" -- this is a deliberate default, not an oversight; nereusd's
+// primary deployment (a single systemd-managed daemon on a Pi) has no
+// other process contending for that directory.
+//
+// A non-empty value must pass AppSettings::isValidProfileName(); on
+// failure, returns an empty string and *errorOut is set to a human-
+// readable reason. The caller (src/server_main.cpp) treats a non-empty
+// *errorOut as fatal and refuses to start, rather than silently falling
+// back to the shared directory the way a mistyped GUI --profile does
+// (main.cpp only warns and continues) -- a daemon provisioning mistake in
+// a systemd unit file should be loud, not silently ignored.
+//
+// Pure function: does not call AppSettings::setProfileOverride() itself.
+// The caller is responsible for that (and must do so before AppSettings::
+// instance() is first touched anywhere in the process -- see
+// server_main.cpp's own comment on why the ordinary post-QCoreApplication
+// QCommandLineParser path is sufficient here, unlike main.cpp's pre-
+// QApplication argv scan).
+QString resolveDaemonProfileArgument(const QString& requested, QString* errorOut);
+
 } // namespace NereusSDR
