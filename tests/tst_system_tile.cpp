@@ -1,5 +1,6 @@
 // no-port-check: NereusSDR-original. No upstream port.
 #include <QtTest/QtTest>
+#include "core/PaTempUnit.h"
 #include "gui/widgets/SystemTile.h"
 
 using namespace NereusSDR;
@@ -35,10 +36,12 @@ private slots:
         t.setPaVolts(13.8);
         t.setPaTempCelsius(42.5);
         QVERIFY(t.hasPaRow());
-        QVERIFY2(t.paRowText().contains(QStringLiteral("13.8V")),
-                 qPrintable(t.paRowText()));
-        QVERIFY2(t.paRowText().contains(QStringLiteral("42.5")),
-                 qPrintable(t.paRowText()));
+        // Composed-string comparison, not two independent .contains() calls:
+        // a regression that dropped the separator ("13.8V42.5C") would still
+        // satisfy two independent .contains() checks but must fail this one.
+        const QString expected =
+            QStringLiteral("13.8V ") + PaTempUnitNotifier::format(42.5);
+        QCOMPARE(t.paRowText(), expected);
     }
 
     void cpuSurvivesWhenBothPaReadingsArrive() {
@@ -56,6 +59,15 @@ private slots:
         t.clearPaVolts();
         t.clearPaTemp();
         QVERIFY(!t.hasPaRow());
+    }
+
+    void clearingBothResetsCursorToArrow() {
+        SystemTile t;
+        t.setPaTempCelsius(42.5);
+        QCOMPARE(t.cursor().shape(), Qt::PointingHandCursor);
+        t.clearPaVolts();
+        t.clearPaTemp();
+        QCOMPARE(t.cursor().shape(), Qt::ArrowCursor);
     }
 
     void paLabelIsSettableForG2ePsu() {

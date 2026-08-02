@@ -91,6 +91,7 @@ void SystemTile::refreshPaRow()
     if (!hasPaRow()) {
         m_paRow->setValue(QString());
         m_paRow->setVisible(false);
+        setCursor(Qt::ArrowCursor);
         setToolTip(QString());
         return;
     }
