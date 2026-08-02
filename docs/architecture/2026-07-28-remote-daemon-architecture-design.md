@@ -542,6 +542,83 @@ Cortex-A72. Making the Pi 4 the floor therefore makes the on-board daemon in
 §16 a CPU-budget question we will have already answered, rather than a
 separate unknown.
 
+### 4.5a Measured floor capacity (2026-08-02)
+
+Measured on the floor hardware: Raspberry Pi 4 Model B Rev 1.5, quad
+Cortex-A72, governor pinned to `performance` at 1.8 GHz, Debian 13 aarch64,
+FFTW 3.3.10, Opus 1.5.2, `-O3 -march=native`. The harness mirrors
+`FFTEngine::processFrame`: Hann window multiply, complex forward FFT, then
+linear power, which is what `fftReadyLinear` emits.
+
+**Per-stream spectrum cost, one core:**
+
+| FFT size | us/frame | max fps, 1 core | % core at 30 fps | 5 streams at 30 fps |
+| --- | --- | --- | --- | --- |
+| 4,096 | 59 | 16,971 | 0.2% | 0.9% |
+| 16,384 | 312 | 3,208 | 0.9% | 4.7% |
+| 65,536 | 2,336 | 428 | 7.0% | 35.0% |
+| 262,144 | 11,772 | 85 | 35.3% | **176.6%** |
+
+**Thread scaling at 65,536**, which is the load-bearing measurement:
+
+| Threads | Worst us/frame | fps per thread | Aggregate fps |
+| --- | --- | --- | --- |
+| 1 | 2,352 | 425 | 425 |
+| 2 | 3,631 | 275 | 551 |
+| 4 | 6,993 | 143 | 572 |
+
+**Opus encode** at the §9.3 settings (48 kHz mono, 40 ms, complexity 10,
+24 kbit/s VBR + constrained, `audio`/`music`): 427 us per frame, **1.07% of one
+core continuous**, 5.33% for five slices, producing 23.8 kbit/s against the
+24,000 target. Thermals reached 68 C with `get_throttled` at `0x0`.
+
+**Four conclusions, three of which change the design.**
+
+**1. FFT size dominates everything; stream count is secondary.** Going from
+4,096 to 262,144 costs 200x. Five streams at 4,096 cost less than one tenth of
+what a single stream at 262,144 costs. The expensive axis is zoom depth, not
+slice count.
+
+**2. The single shared `m_fftThread` has a measured breaking point.** Five
+streams at 30 fps need 35% of one thread at 65,536 and **176% of one thread at
+262,144**, which one thread cannot deliver. It holds comfortably to 65,536, is
+marginal around 131,072, and fails at 262,144. §4.5's prediction that this
+binds first is confirmed with a number attached.
+
+**3. Adding threads does not rescue it, and this is the finding that matters
+most.** Four threads yield only **1.35x** the aggregate FFT throughput of one
+(572 fps against 425), because a 65,536-point complex transform moves 512 kB in
+and 512 kB out against a 1 MB shared L2, so the workload is memory-bandwidth
+bound rather than core bound. The "one thread per engine" follow-up flagged at
+`MainWindow.h:597-606` therefore **does not fix the 262,144 case**: single
+thread manages 85 fps, aggregate is roughly 115 fps even granting the same
+1.35x (and the 4x larger working set makes that optimistic), while five streams
+at 30 fps need 150 fps. **Five deep-zoomed pans at maximum FFT size is not
+achievable on the floor hardware at any threading arrangement.**
+
+**4. Opus and the display codec are rounding errors.** At 1.07% of a core per
+slice, audio encoding is not a constraint on this hardware and needs no
+mitigation.
+
+**Consequences.**
+
+The §9.1 two-shared-FFT tier moves from a deferred optimisation to the
+**recommended default**, because the measurement makes its value concrete: one
+wide-and-fast engine at 4,096 (0.2%) plus one narrow-and-fine at 65,536 (7.0%)
+serves a mixed multi-pan layout for **7.2% of one core**, against 176% for five
+independent engines at maximum size. That is a 24x difference for a
+visually equivalent result.
+
+The daemon must **cap effective FFT size from measured capacity**, not from
+`kMaxFftSize`, and advertise the cap through §7.0's effective-limits
+descriptor. §9.1's physics table stands as physics; what changes is that the
+deepest rows are not simultaneously available across many pans on the floor.
+
+**Still unmeasured, and the remaining gap: WDSP RX per slice.** The spike
+covered FFT and Opus, not the demodulation chain, because that needs WDSP built
+on the target. Until it is measured, the per-slice DSP budget is unknown and
+these numbers describe the spectrum and audio-encode paths only.
+
 ### 4.4 Packaging, and the two-writer problem
 
 **One installer, two binaries, daemon off by default.** The desktop package
