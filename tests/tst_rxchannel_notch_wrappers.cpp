@@ -186,6 +186,94 @@ private slots:
         QCOMPARE(ch->notchCount(), 1);
 #endif
     }
+
+    // -- 6.2: edit --------------------------------------------------------
+
+    void edit_notch_rewrites_only_that_index()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("Requires a live WDSP build: the notch database is rxa[].ndb.");
+#else
+        WdspEngine engine;
+        RxChannel* ch = openNotchChannel(engine);
+        ChannelCloser closer{&engine};
+        QVERIFY(ch != nullptr);
+
+        QVERIFY(ch->addNotch(0, Notch{1, 14074000.0, 200.0, true}));
+        QVERIFY(ch->addNotch(1, Notch{2, 14100000.0, 200.0, true}));
+
+        QVERIFY(ch->editNotch(1, Notch{2, 14101234.0, 350.0, false}));
+
+        const RawNotch edited = readRawNotch(kNotchTestChannel, 1);
+        QCOMPARE(edited.centerHz, 14101234.0);
+        QCOMPARE(edited.widthHz, 350.0);
+        QCOMPARE(edited.active, 0);
+
+        const RawNotch untouched = readRawNotch(kNotchTestChannel, 0);
+        QCOMPARE(untouched.centerHz, 14074000.0);
+        QCOMPARE(untouched.widthHz, 200.0);
+        QCOMPARE(untouched.active, 1);
+        QCOMPARE(ch->notchCount(), 2);
+#endif
+    }
+
+    void edit_notch_past_the_end_is_rejected()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("Requires a live WDSP build: the notch database is rxa[].ndb.");
+#else
+        WdspEngine engine;
+        RxChannel* ch = openNotchChannel(engine);
+        ChannelCloser closer{&engine};
+        QVERIFY(ch != nullptr);
+
+        QVERIFY(ch->addNotch(0, Notch{1, 3573000.0, 200.0, true}));
+        QVERIFY(!ch->editNotch(1, Notch{2, 3574000.0, 200.0, true}));
+        QCOMPARE(ch->notchCount(), 1);
+#endif
+    }
+
+    // -- 6.2 / 5.2: delete keeps position == WDSP index -------------------
+
+    void delete_notch_shifts_later_notches_down()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("Requires a live WDSP build: the notch database is rxa[].ndb.");
+#else
+        WdspEngine engine;
+        RxChannel* ch = openNotchChannel(engine);
+        ChannelCloser closer{&engine};
+        QVERIFY(ch != nullptr);
+
+        QVERIFY(ch->addNotch(0, Notch{1, 14074000.0, 200.0, true}));
+        QVERIFY(ch->addNotch(1, Notch{2, 14100000.0, 200.0, true}));
+        QVERIFY(ch->addNotch(2, Notch{3, 14200000.0, 200.0, true}));
+
+        // Delete from the middle: WDSP shifts its array down (nbp.c:426-434),
+        // so index 1 must now be what used to be index 2.
+        QVERIFY(ch->deleteNotch(1));
+
+        QCOMPARE(ch->notchCount(), 2);
+        QCOMPARE(readRawNotch(kNotchTestChannel, 0).centerHz, 14074000.0);
+        QCOMPARE(readRawNotch(kNotchTestChannel, 1).centerHz, 14200000.0);
+        QCOMPARE(readRawNotch(kNotchTestChannel, 2).rval, -1);
+#endif
+    }
+
+    void delete_notch_past_the_end_is_rejected()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("Requires a live WDSP build: the notch database is rxa[].ndb.");
+#else
+        WdspEngine engine;
+        RxChannel* ch = openNotchChannel(engine);
+        ChannelCloser closer{&engine};
+        QVERIFY(ch != nullptr);
+
+        QVERIFY(!ch->deleteNotch(0));
+        QCOMPARE(ch->notchCount(), 0);
+#endif
+    }
 };
 
 QTEST_MAIN(TestRxChannelNotchWrappers)

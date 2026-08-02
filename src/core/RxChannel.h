@@ -656,6 +656,15 @@ public:
     /// nothing was mutated and the caller should resync.
     bool addNotch(int index, const Notch& n);
 
+    /// Overwrite the notch at WDSP index `index`. Returns false when the
+    /// index is past the end, in which case nothing was mutated.
+    bool editNotch(int index, const Notch& n);
+
+    /// Erase the notch at WDSP index `index`. WDSP shifts the remaining
+    /// entries down one slot, so callers must do the same to keep list
+    /// position == WDSP index. Returns false when the index is past the end.
+    bool deleteNotch(int index);
+
     // --- Filter convenience setters (single-axis) ---
     // Thin wrappers that remember the pending low/high and call setFilterFreqs.
     // Carry-only for state preservation in captureState/applyState; WDSP wiring

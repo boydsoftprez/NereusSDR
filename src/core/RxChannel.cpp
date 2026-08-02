@@ -1540,6 +1540,56 @@ bool RxChannel::addNotch(int index, const Notch& n)
 #endif
 }
 
+bool RxChannel::editNotch(int index, const Notch& n)
+{
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:40028-40030 [v2.10.3.15] (ChangeNotchBW) and
+    // console.cs:40100-40102 [v2.10.3.15] (ChangeNotchCentreFrequency). Both
+    // Thetis edit paths read the current tuple back, change one member and
+    // push the whole tuple; NereusSDR's caller already holds the whole tuple,
+    // so the readback is unnecessary.
+    // WDSP: third_party/wdsp/src/nbp.c:444, returns -1 when notch >= nn.
+    //
+    // Not cheap: RXANBPEditNotch runs UpdateNBPFilters (nbp.c:345-359), which
+    // designs nbp0 AND recalc_bpsnba_filter (snb.c:814-828). That is one
+    // filter pair per edit, versus 2N for a full syncNotches, which is why
+    // live edits take this path.
+    const int rval = RXANBPEditNotch(m_channelId, index, n.centerHz, n.widthHz,
+                                     n.active ? 1 : 0);
+    if (rval < 0) {
+        qCWarning(lcDsp) << "RxChannel" << m_channelId
+                         << "RXANBPEditNotch rejected index" << index
+                         << "of" << notchCount();
+        return false;
+    }
+    return true;
+#else
+    Q_UNUSED(index);
+    Q_UNUSED(n);
+    return false;
+#endif
+}
+
+bool RxChannel::deleteNotch(int index)
+{
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:40207-40209 [v2.10.3.15], removeNotch.
+    // WDSP: third_party/wdsp/src/nbp.c:418, erases and shifts the array down,
+    // so the caller's list must shift the same way (design doc section 5.2).
+    const int rval = RXANBPDeleteNotch(m_channelId, index);
+    if (rval < 0) {
+        qCWarning(lcDsp) << "RxChannel" << m_channelId
+                         << "RXANBPDeleteNotch rejected index" << index
+                         << "of" << notchCount();
+        return false;
+    }
+    return true;
+#else
+    Q_UNUSED(index);
+    return false;
+#endif
+}
+
 int RxChannel::notchCount() const
 {
 #ifdef HAVE_WDSP
