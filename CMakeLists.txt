@@ -644,6 +644,12 @@ set(CORE_SOURCES
     # drive the same router from remote-endpoint ids with no PanadapterStack
     # (a QWidget) in the process.
     src/core/spectrum/FftTopology.cpp
+    # R1 Task 8: shared startup sequence (settings load, one-shot schema
+    # migrations, LogManager restore, file-logging install) extracted from
+    # main(), each of which used to have exactly one call site. Lets
+    # server_main.cpp (R1 Task 9) run the identical sequence instead of a
+    # daemon-first install running against an unmigrated settings store.
+    src/core/CoreInit.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the

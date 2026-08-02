@@ -5971,6 +5971,15 @@ nereus_add_test(tst_pan_flag_positions)
 # edge on the lower pan of a 2v layout. Bench-reported 2026-07-28.
 nereus_add_test(tst_popup_placement)
 
+# R1 Task 8: CoreInit bundles the settings-migration sequence and the
+# file-logging install that used to live inline in main(), guarded by a
+# file-static flag so a second call is a genuine no-op. Pins the migration
+# floor (SettingsSchemaVersion >= 6), the idempotency guard via a run
+# counter, and that the profile argument (not AppSettings::profileOverride())
+# drives where the log file lands, so a daemon can call this without
+# replaying main()'s pre-QApplication argv scan.
+nereus_add_test(tst_core_init)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

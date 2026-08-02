@@ -5504,7 +5504,8 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         // hermes-filter-debug Bug 2: read PER-MAC, not global.  The legacy
         // global "hl2IoBoard/n2adrFilter" key has already been migrated into
         // hardware/<mac>/hl2IoBoard/n2adrFilter at app start by
-        // AppSettings::migrateLegacyN2adrFilter (see main.cpp).  This read
+        // AppSettings::migrateLegacyN2adrFilter (see CoreInit::initialize,
+        // R1 Task 8; called from main.cpp).  This read
         // matches the write side (Hl2IoBoardTab::onN2adrToggled →
         // HardwarePage::wire() → setHardwareValue).
         //
