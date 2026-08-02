@@ -812,7 +812,11 @@ private slots:
         const QMetaObject& mo = MainWindow::staticMetaObject;
         for (const char* sig : {"refreshPanNotchMarkers()",
                                 "wirePanNotchHandlers()",
-                                "onNotchCreateRequested(double,bool)",
+                                // Carries the emitting pan's id: the clamp has
+                                // to resolve against the slice on the pan that
+                                // was clicked, not activeSlice(). Codex review
+                                // of PR #313.
+                                "onNotchCreateRequested(QString,double,bool)",
                                 "onNotchMoveRequested(int,double)",
                                 "onNotchWidthRequested(int,double)",
                                 "onNotchActiveRequested(int,bool)",
