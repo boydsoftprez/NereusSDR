@@ -85,6 +85,56 @@ private slots:
         QVERIFY(nm->notches().at(0).active);
         QVERIFY(nm->globalEnabled());
     }
+
+    // -- section 6.2 + 11: the readbacks the fan-out slots assert through --
+    //
+    // notchesRun() / notchAutoIncrease() are C++ carries (the section 4.6
+    // pattern: written outside #ifdef HAVE_WDSP), because WDSP exposes no
+    // getter for NOTCHDB::master_run or NBP::autoincr. notchAt() is the real
+    // thing: RXANBPGetNotch reads WDSP's own per-channel database back
+    // (third_party/wdsp/src/nbp.c:393), so it proves a push landed rather
+    // than echoing a carry.
+    void rx_channel_reports_back_the_notch_state_it_was_handed()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        model.configureStreamPool(5, 5, kRateHz);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+
+        RxChannel* ch = engine->rxChannel(a);
+        QVERIFY(ch != nullptr);
+
+        ch->setNotchesRun(true);
+        QVERIFY(ch->notchesRun());
+        ch->setNotchesRun(false);
+        QVERIFY(!ch->notchesRun());
+
+        ch->setNotchAutoIncrease(true);
+        QVERIFY(ch->notchAutoIncrease());
+        ch->setNotchAutoIncrease(false);
+        QVERIFY(!ch->notchAutoIncrease());
+
+        Notch n;
+        n.centerHz = 14074000.0;
+        n.widthHz  = 250.0;
+        n.active   = true;
+        QVERIFY(ch->addNotch(0, n));
+        QCOMPARE(ch->notchCount(), 1);
+
+        Notch got;
+        QVERIFY(ch->notchAt(0, got));
+        QCOMPARE(got.centerHz, 14074000.0);
+        QCOMPARE(got.widthHz,  250.0);
+        QVERIFY(got.active);
+
+        // Past the end: RXANBPGetNotch returns -1 and writes its sentinels
+        // (nbp.c:406-411), so the wrapper must report failure, not garbage.
+        QVERIFY(!ch->notchAt(1, got));
+    }
 };
 
 QTEST_MAIN(TestNotchChannelSync)

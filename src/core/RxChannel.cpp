@@ -1678,6 +1678,29 @@ double RxChannel::minNotchWidthHz() const
 #endif
 }
 
+bool RxChannel::notchAt(int index, Notch& out) const
+{
+#ifdef HAVE_WDSP
+    double centerHz = 0.0;
+    double widthHz  = 0.0;
+    int    active   = 0;
+    // WDSP: third_party/wdsp/src/nbp.c:393 returns 0 on success; on -1 it
+    // writes fcenter -1.0 / fwidth 0.0 / active -1 (nbp.c:406-411), which
+    // must not reach the caller as if it were a real notch.
+    if (RXANBPGetNotch(m_channelId, index, &centerHz, &widthHz, &active) != 0) {
+        return false;
+    }
+    out.centerHz = centerHz;
+    out.widthHz  = widthHz;
+    out.active   = (active != 0);
+    return true;
+#else
+    Q_UNUSED(index);
+    Q_UNUSED(out);
+    return false;
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // Channel state
 // ---------------------------------------------------------------------------
