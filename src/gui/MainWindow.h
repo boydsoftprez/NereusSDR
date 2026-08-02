@@ -436,17 +436,27 @@ private:
 
     /// Fix round 1 finding 1 (coordinator spec review): re-reads the four
     /// display AppSettings keys (DisplaySpectrumFps / DisplayFftSize /
-    /// DisplayFftWindow / DisplayHzPerBinTarget) into an FftPoolConfig and
-    /// calls m_fftEnginePool->setConfig(). Called from ensureStreamWired()
-    /// immediately before building a stream that does not exist yet, so a
-    /// stream created after a live Setup -> Display change picks up the
-    /// current value rather than whatever setConfig() last held -- restores
-    /// the per-stream freshness the pre-extraction createFftEngineForStream
-    /// had (it read these keys inside its own per-engine construction).
-    /// Deliberately a MainWindow method, not something FftEnginePool does
-    /// itself: the pool must stay settings-agnostic so the Task 9/10 daemon
-    /// can supply its own config with no AppSettings dependency in
-    /// src/core. No-op if the pool does not exist yet.
+    /// DisplayFftWindow / DisplayHzPerBinTarget) into an FftPoolConfig.
+    /// Called from ensureStreamWired() immediately before building a
+    /// stream that does not exist yet, so a stream created after a live
+    /// Setup -> Display change picks up the current value rather than
+    /// whatever was last pushed to the pool -- restores the per-stream
+    /// freshness the pre-extraction createFftEngineForStream had (it read
+    /// these keys inside its own per-engine construction). Deliberately a
+    /// MainWindow method, not something FftEnginePool does itself: the
+    /// pool must stay settings-agnostic so the Task 9/10 daemon can supply
+    /// its own config with no AppSettings dependency in src/core. No-op if
+    /// the pool does not exist yet.
+    ///
+    /// Fix round 2 (coordinator spec review): calls
+    /// m_fftEnginePool->setConfigForNewStreams(), NOT setConfig(). The
+    /// difference matters here specifically because MainWindow's
+    /// auto-zoom lambda calls engine->setFftSize() directly on a single
+    /// stream, a deliberate, never-persisted-to-AppSettings override --
+    /// setConfig() would retroactively snap that stream's engine back to
+    /// the AppSettings baseline the moment ANY new stream appeared. See
+    /// FftEnginePool.h's doc comments on both methods for the full
+    /// reasoning.
     void refreshFftPoolConfig();
 
     /// R1 Task 6: wires a pool-provided engine into MainWindow's other

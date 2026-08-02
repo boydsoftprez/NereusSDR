@@ -1457,6 +1457,20 @@ FFTEngine* MainWindow::primaryFftEngine() const
 // ran. Deliberately NOT inside FftEnginePool itself: the pool must stay
 // settings-agnostic (design section 9.4a) so the Task 9/10 daemon can
 // supply its own config with no AppSettings dependency in src/core at all.
+//
+// Fix round 2 (coordinator spec review): calls setConfigForNewStreams(),
+// NOT setConfig(). setConfig() retroactively re-applies to every existing
+// engine, which is fine for a caller with nothing else that can diverge an
+// engine from it, but AppSettings is not the only source of truth for
+// fftSize here -- the auto-zoom lambda below calls engine->setFftSize()
+// directly on one stream's engine and deliberately never persists that
+// override. Calling setConfig() from here would have silently snapped
+// every OTHER, already-zoomed stream's engine back to the AppSettings
+// baseline the instant any new stream appeared (e.g. RX1 zoomed to FFT
+// 32768, user enables RX2: RX1's panadapter would silently jump back to
+// the 4096 baseline with a visible replan pause, with zero user action on
+// that pan). setConfigForNewStreams() only affects the stream about to be
+// built, leaving every other engine's live state alone.
 void MainWindow::refreshFftPoolConfig()
 {
     if (!m_fftEnginePool) { return; }
@@ -1481,7 +1495,7 @@ void MainWindow::refreshFftPoolConfig()
         static_cast<int>(WindowFunction::Count) - 1);
     cfg.hzPerBinTarget = s.value(QStringLiteral("DisplayHzPerBinTarget"),
                                  QStringLiteral("0")).toString().toDouble();
-    m_fftEnginePool->setConfig(cfg);
+    m_fftEnginePool->setConfigForNewStreams(cfg);
 }
 
 // ── Phase 3F Sub-Epic I Task 8: one FFTEngine per DDC stream ────────────────

@@ -61,27 +61,26 @@ private slots:
         QCOMPARE(late->outputFps(),  15);
     }
 
-    // Fix round 1 finding 1 (coordinator spec review): MainWindow's
-    // ensureStreamWired() now re-reads AppSettings and calls setConfig()
-    // again immediately before building any stream that does not exist
-    // yet ("refresh-before-create"), because setConfig() has no other call
-    // site and is otherwise a one-time snapshot taken at buildUI() time --
-    // a stream built later (e.g. RX2 activated after the user changes
-    // Setup -> Display) would silently run on launch-time settings
-    // instead of the current ones.
+    // Fix round 1 finding 1 (coordinator spec review): pins that
+    // setConfig() is not "sticky from the first call" -- called twice,
+    // with a stream created between each call, the SECOND stream picks up
+    // the SECOND config, not the first one ever set, and (per setConfig()'s
+    // own documented contract) the FIRST stream follows the second call
+    // too. Written to model MainWindow's refresh-before-create pattern
+    // (re-read AppSettings, push to the pool, immediately before building
+    // a stream that does not exist yet) as it stood at the end of fix
+    // round 1.
     //
-    // This pins the pool-side half of that fix: unlike
-    // configAppliesToExistingAndFutureEngines above, which calls
-    // setConfig() exactly ONCE, this calls it TWICE with a stream created
-    // between each call, and checks that the SECOND stream picks up the
-    // SECOND config, not the first one ever set (i.e. setConfig() is not
-    // "sticky from the first call" -- each call's values are what the
-    // next newly-created engine gets). FftEnginePool itself was never
-    // broken -- the regression was MainWindow only calling setConfig()
-    // once -- so this test does not exercise MainWindow's wiring and
-    // would pass against the pool code from before this fix round too;
-    // it documents the exact contract MainWindow::ensureStreamWired's
-    // refresh-before-create call now depends on.
+    // Superseded as a MainWindow model by fix round 2:
+    // MainWindow::refreshFftPoolConfig() now calls
+    // setConfigForNewStreams(), not setConfig(), specifically BECAUSE
+    // setConfig()'s retroactive-touch-existing-engines behaviour pinned
+    // here is wrong for that call site (see
+    // secondSetConfigForNewStreamsCallLeavesExistingEnginesAlone below,
+    // and both methods' doc comments in FftEnginePool.h). This test still
+    // stands on its own as a pin of setConfig()'s own contract -- unchanged
+    // and still brief-mandated -- just no longer as a stand-in for what
+    // MainWindow itself calls.
     void secondSetConfigCallReachesTheStreamCreatedAfterIt()
     {
         FftEnginePool pool;
@@ -104,6 +103,70 @@ private slots:
         // setConfig() reaches existing engines too (its documented
         // contract), so streamA follows the second call as well.
         QCOMPARE(streamA->fftSize(), 32768);
+    }
+
+    // Fix round 2 (coordinator spec review): my round-1 fix made
+    // ensureStreamWired() call setConfig() every time a previously-unseen
+    // stream appears, and setConfig() retroactively touches every
+    // existing engine -- brief-mandated, unchanged, and correct for a
+    // caller with no other source of per-engine truth. It is the WRONG
+    // call for MainWindow specifically, because the auto-zoom lambda
+    // calls engine->setFftSize() directly on one stream's engine, a
+    // transient override that is deliberately never written back to
+    // AppSettings. Concrete, reachable failure: RX1 zoomed to FFT 32768,
+    // user enables RX2 -> ensureStreamWired(1) sees a new stream ->
+    // refreshFftPoolConfig() re-reads AppSettings (still "4096") and
+    // calls setConfig() -> RX1's engine gets setFftSize(4096) too,
+    // silently undoing the zoom with a visible replan pause, on a pan the
+    // user did not touch.
+    //
+    // setConfigForNewStreams() is the fix: it stores cfg for the NEXT
+    // engineForStream() call only, and touches nothing that already
+    // exists. This pins that directly: streamA's live-only override
+    // survives a setConfigForNewStreams() call that creates streamB.
+    void setConfigForNewStreamsLeavesExistingEnginesAlone()
+    {
+        FftEnginePool pool;
+        FFTEngine* streamA = pool.engineForStream(0);
+
+        // Simulate the auto-zoom lambda's direct, deliberately-never-
+        // persisted override on stream 0 (MainWindow.cpp calls
+        // engine->setFftSize() straight on the engine, no AppSettings
+        // write).
+        streamA->setFftSize(32768);
+
+        FftPoolConfig cfg;
+        cfg.fftSize = 4096;
+        pool.setConfigForNewStreams(cfg);
+
+        FFTEngine* streamB = pool.engineForStream(1);
+
+        QCOMPARE(streamB->fftSize(), 4096);   // new stream: current baseline
+        QCOMPARE(streamA->fftSize(), 32768);  // existing stream: untouched
+    }
+
+    // Contrast pinned in the same file as the test above: the SAME
+    // sequence through setConfig() instead DOES retroactively overwrite
+    // streamA's live zoom -- this is setConfig()'s correct, unchanged,
+    // brief-mandated behaviour (see configAppliesToExistingAndFutureEngines
+    // and secondSetConfigCallReachesTheStreamCreatedAfterIt above), not a
+    // bug. Pinning both here, with opposite outcomes on stream 0, makes
+    // the difference between the two methods explicit rather than
+    // something a future reader has to take on faith from a comment.
+    void setConfigInContrastDoesOverwriteExistingEngines()
+    {
+        FftEnginePool pool;
+        FFTEngine* streamA = pool.engineForStream(0);
+        streamA->setFftSize(32768);
+
+        FftPoolConfig cfg;
+        cfg.fftSize = 4096;
+        pool.setConfig(cfg);
+
+        FFTEngine* streamB = pool.engineForStream(1);
+
+        QCOMPARE(streamB->fftSize(), 4096);
+        QCOMPARE(streamA->fftSize(), 4096);   // retroactively overwritten
     }
 
     // Coordinator decision beyond the brief's baseline three: the

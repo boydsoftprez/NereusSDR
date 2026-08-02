@@ -86,8 +86,47 @@ public:
     /// created after this call. Callers must not assume the config only
     /// reaches engines built later -- otherwise stream 0 (configured
     /// before setConfig) and stream 4 (configured after) would silently
-    /// run different FFT sizes.
+    /// run different FFT sizes. Brief-mandated contract; pinned by
+    /// tests/tst_fft_engine_pool.cpp's configAppliesToExistingAndFutureEngines.
+    /// Do not change this method's behaviour to stop touching existing
+    /// engines -- that is setConfigForNewStreams()'s job, not this one's.
+    ///
+    /// Two config-setters exist on this class on purpose (fix round 2,
+    /// coordinator spec review). This one is for a config source that is
+    /// always authoritative for every engine, existing or not -- true for
+    /// a caller with nothing else that can diverge an engine from it. It
+    /// is the wrong one for MainWindow: MainWindow's auto-zoom lambda
+    /// calls engine->setFftSize() directly on a single stream's engine, a
+    /// deliberately transient, never-persisted-to-AppSettings override
+    /// (that is the entire point of auto-zoom). If MainWindow's
+    /// AppSettings-driven refresh used THIS method, creating any new
+    /// stream would silently snap every other, already-zoomed stream back
+    /// to the persisted baseline FFT size -- see setConfigForNewStreams()
+    /// below, which is what MainWindow actually calls.
     void setConfig(const FftPoolConfig& cfg);
+
+    /// Stores cfg for future engineForStream() calls ONLY -- does not
+    /// touch any engine that already exists, unlike setConfig() above.
+    ///
+    /// This is the method MainWindow::refreshFftPoolConfig() actually
+    /// calls (fix round 2, coordinator spec review). MainWindow re-reads
+    /// AppSettings and calls this immediately before building a stream
+    /// that does not exist yet, so that new stream picks up the current
+    /// persisted baseline -- but AppSettings is not the only thing that
+    /// can set an existing engine's fftSize: the auto-zoom lambda
+    /// (MainWindow.cpp, wired to SpectrumWidget::bandwidthChangeRequested)
+    /// calls engine->setFftSize() directly and deliberately never writes
+    /// AppSettings, because the zoom override is transient by design. Had
+    /// MainWindow instead called setConfig() from ensureStreamWired(), the
+    /// AppSettings-sourced baseline would retroactively overwrite that
+    /// live zoom on every OTHER stream's engine the moment any new stream
+    /// appeared -- a real, reachable bug (RX1 zoomed to FFT 32768, user
+    /// enables RX2, RX1's panadapter silently snaps back to the 4096
+    /// baseline with a visible replan pause). Do not merge this back into
+    /// setConfig(): the two methods differ in this one respect
+    /// deliberately, not by oversight.
+    void setConfigForNewStreams(const FftPoolConfig& cfg);
+
     const FftPoolConfig& config() const { return m_config; }
 
     /// Returns the engine for streamIndex, creating and configuring one

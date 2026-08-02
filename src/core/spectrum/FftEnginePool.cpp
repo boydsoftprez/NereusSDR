@@ -95,6 +95,15 @@ void FftEnginePool::setConfig(const FftPoolConfig& cfg)
     }
 }
 
+void FftEnginePool::setConfigForNewStreams(const FftPoolConfig& cfg)
+{
+    // Deliberately no engine loop -- see the header doc comment on this
+    // method and on setConfig() for why. Only m_config changes, which
+    // createEngine()'s applyConfigTo() call reads for the next stream;
+    // nothing already parked in m_engines is touched.
+    m_config = cfg;
+}
+
 FFTEngine* FftEnginePool::engineForStream(int streamIndex)
 {
     if (streamIndex < 0) { return nullptr; }
