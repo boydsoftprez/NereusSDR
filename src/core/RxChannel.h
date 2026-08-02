@@ -648,7 +648,26 @@ public:
     // nothing once nn reaches that (nbp.c:368).
     static constexpr int kMaxNotches = 1024;
 
+    // WDSP sizes rxa[] at MAX_CHANNELS (third_party/wdsp/src/comm.h:110), and
+    // every notch READBACK dereferences a nested pointer inside that slot:
+    // RXANBPGetNumNotches and RXANBPGetNotch reach rxa[ch].ndb.p, and
+    // RXANBPGetMinNotchWidth reaches rxa[ch].nbp0.p (nbp.c:465, :393, :594).
+    // On an out-of-range or never-opened channel that pointer is garbage or
+    // null and the read segfaults, where a plain WDSP setter merely scribbles.
+    //
+    // Test fixtures across this tree construct RxChannel with kTestChannel = 99
+    // for software-only isolation (see design section 11.1), so the readbacks
+    // below must be inert there. Same guard NbFamily already carries for the
+    // same reason (NbFamily.h:269-275, added after Linux CI #238); production
+    // channel ids are 0..maxSlices so this never fires outside tests.
+    static constexpr int kWdspMaxChannels = 32;
+    bool wdspChannelInRange() const
+    {
+        return m_channelId >= 0 && m_channelId < kWdspMaxChannels;
+    }
+
     /// Number of notches currently installed on this channel.
+    /// Returns 0 when the channel id is outside WDSP's range.
     int notchCount() const;
 
     /// Insert `n` at WDSP notch index `index`. Returns false when WDSP

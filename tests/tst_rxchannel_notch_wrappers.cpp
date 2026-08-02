@@ -32,6 +32,9 @@ namespace {
 // is sized MAX_CHANNELS = 32 (comm.h:110), so 99 is an out-of-bounds read
 // rather than a harmless miss. Design doc section 11.1.
 constexpr int kNotchTestChannel = 0;
+// Outside WDSP's [0, MAX_CHANNELS) range (comm.h:110), matching the
+// kTestChannel = 99 convention the rest of the RxChannel suites use.
+constexpr int kOutOfRangeChannel = 99;
 
 // Geometry the fixture opens the channel with. Both values are load-bearing
 // for the min-notch-width expectation in the last cycle: WDSP derives the
@@ -413,6 +416,46 @@ private slots:
         // = 48000 (RXA.c:102), so 1600.0 / 16 * 1 = 100.0 Hz.
         QCOMPARE(ch->minNotchWidthHz(), 100.0);
 #endif
+    }
+
+    // Regression: the three notch READBACKS must be inert on a channel id
+    // outside WDSP's [0, MAX_CHANNELS) range, because each dereferences a
+    // nested pointer inside rxa[] (RXANBPGetNumNotches and RXANBPGetNotch
+    // reach ndb.p, RXANBPGetMinNotchWidth reaches nbp0.p) and a plain WDSP
+    // setter only scribbles where a read segfaults.
+    //
+    // This is not hypothetical. minNotchWidthHz() was called unguarded from
+    // the tail of setSampleRate() and setFilterSizeSamples(), which
+    // tst_set_sample_rate_live drives on kTestChannel = 99, and the whole
+    // suite went from green to SIGSEGV. Same guard NbFamily already carries
+    // (NbFamily.h:269-275, after Linux CI #238).
+    void notch_readbacks_are_inert_outside_the_wdsp_channel_range()
+    {
+        RxChannel ch(kOutOfRangeChannel, 2048, 48000);  // never opened
+        QVERIFY(kOutOfRangeChannel >= 32);              // outside rxa[]
+
+        QCOMPARE(ch.notchCount(), 0);
+        QCOMPARE(ch.minNotchWidthHz(), 0.0);
+
+        Notch out;
+        QVERIFY(!ch.notchAt(0, out));
+    }
+
+    // setSampleRate carries one of those readbacks, so it must survive an
+    // out-of-range channel. This is the exact path that segfaulted:
+    // tst_set_sample_rate_live drives it on kTestChannel = 99.
+    //
+    // setFilterSizeSamples carries the same emit but is deliberately NOT
+    // exercised here. It also calls RXASetNC and SetDSPBuffsize, which write
+    // into rxa[99] and crash independently of anything TNF added, so it has
+    // never been safe on an unopened channel and no existing suite drives it
+    // that way. Guarding those two would be a separate change with its own
+    // justification, not something to smuggle in under a notch fix.
+    void rate_changes_survive_an_unopened_channel()
+    {
+        RxChannel ch(kOutOfRangeChannel, 2048, 48000);
+        ch.setSampleRate(96000);
+        QCOMPARE(ch.sampleRate(), 96000);
     }
 };
 

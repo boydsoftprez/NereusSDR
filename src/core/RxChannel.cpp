@@ -1634,6 +1634,9 @@ int RxChannel::notchCount() const
     // From Thetis console.cs:40265 [v2.10.3.15], AddNotch reads the count
     // back out of WDSP before it picks an insert index.
     // WDSP: third_party/wdsp/src/nbp.c:465
+    if (!wdspChannelInRange()) {
+        return 0;
+    }
     int n = 0;
     RXANBPGetNumNotches(m_channelId, &n);
     return n;
@@ -1677,6 +1680,9 @@ double RxChannel::minNotchWidthHz() const
     // width readback that feeds Thetis's _minimum_rx_notch_width map.
     // WDSP: third_party/wdsp/src/nbp.c:594 -> min_notch_width (nbp.c:82-95),
     // which scales with the filter's coefficient count and sample rate.
+    if (!wdspChannelInRange()) {
+        return 0.0;
+    }
     double minWidth = 0.0;
     RXANBPGetMinNotchWidth(m_channelId, &minWidth);
     return minWidth;
@@ -1688,6 +1694,9 @@ double RxChannel::minNotchWidthHz() const
 bool RxChannel::notchAt(int index, Notch& out) const
 {
 #ifdef HAVE_WDSP
+    if (!wdspChannelInRange()) {
+        return false;
+    }
     double centerHz = 0.0;
     double widthHz  = 0.0;
     int    active   = 0;
