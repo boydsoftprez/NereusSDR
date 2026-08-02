@@ -242,6 +242,34 @@ private slots:
                  qPrintable(QStringLiteral("unclamped span %1 px, expected ~59")
                                 .arg(unclampedSpan)));
     }
+
+    // ---- Cycle C: the waterfall plane ----
+
+    void visual_notch_dents_the_waterfall_plane_too()
+    {
+        SpectrumWidget base;
+        configure(base);
+        feed(base, 1);
+        const QVector<float> cleanWf = base.wfRenderedPixels();
+        QCOMPARE(cleanWf.size(), kDisplayWidth);
+
+        SpectrumWidget w;
+        configure(w);
+        w.setNotchMarkers(oneNotch(200.0));
+        w.setVisualNotchEnabled(true);
+        feed(w, 1);
+
+        // NereusSDR keeps the waterfall pixels in their own array, so denting
+        // the spectrum plane does not reach them: this is a second explicit
+        // call, matching the second modifyDataForNotches call upstream.
+        QCOMPARE(w.wfRenderedPixels().size(), cleanWf.size());
+        QVERIFY(cleanWf[kTonePixel]
+                    - w.wfRenderedPixels()[kTonePixel] > 150.0f);
+        const int span = dentedSpanPixels(cleanWf, w.wfRenderedPixels());
+        QVERIFY2(span >= 217 && span <= 221,
+                 qPrintable(QStringLiteral("waterfall dent span %1 px, "
+                                           "expected ~219").arg(span)));
+    }
 };
 
 QTEST_MAIN(TestNotchVisualDoesNotPerturbNoiseFloorOrMaxbin)

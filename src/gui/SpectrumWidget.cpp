@@ -2800,6 +2800,23 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
                              0.0,
                              m_wfRenderedPixels);
 
+    // Visual notch, waterfall plane.  Thetis re-runs modifyDataForNotches on
+    // the waterfall array after `data = current_waterfall_data` (:6567), under
+    // the same MOX gate - display.cs:6579-6586 [v2.10.3.15].  A second
+    // explicit call here because NereusSDR keeps the waterfall pixels in
+    // their own array, so denting the spectrum plane above does not reach
+    // them.
+    //
+    // No undented waterfall copy: upstream needs one for its per-frame
+    // waterfall minimum (dataCopy at display.cs:6741, :6833, :6915, :6954,
+    // :7163, :7369, each carrying //[2.10.3]MW0LGE use non notched data), and
+    // NereusSDR has no such tracker - m_wfLowThreshold is a persisted user
+    // setting, and pushWaterfallRow is the only consumer of
+    // m_wfRenderedPixels.
+    if (visualNotchWillDent()) {
+        applyVisualNotchDent(m_wfRenderedPixels);
+    }
+
     // Legacy per-pixel peak hold -- track running max in display-pixel
     // space.  Replaces the old per-bin m_peakHoldBins.
     if (m_peakHoldEnabled) {
