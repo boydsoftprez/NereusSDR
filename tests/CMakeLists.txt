@@ -5963,6 +5963,24 @@ nereus_add_test(tst_notch_persistence)
 #         section 6.3.
 nereus_add_test(tst_notch_channel_sync)
 
+# ── Tunable Notch Filter Task 5: TCI rx_nf_enable ─────────────────────────
+# TNF section 6.4: rx_nf_enable repoint + both-index broadcast.
+# Verifies the TCI master-notch surface against the real NotchModel:
+#   - set on rx 0 or rx 1 writes the single global enable
+#   - query on either index reports it
+#   - the set handler queues NO notification of its own
+#   - a UI-originated flip broadcasts BOTH indices, exactly once, and
+#     survives a stop()/start() cycle without duplicating
+# Source: Thetis TCIServer.cs:3384-3399 / 1315-1320 / 6771 / 7686-7696 and
+#         console.cs:40004 / 52317-52330 [v2.10.3.15].
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         section 6.4.
+# Gated on Qt6WebSockets_FOUND: TciServer.h is #ifdef HAVE_WEBSOCKETS.
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_notch_tci_rx_nf_enable)
+    target_link_libraries(tst_notch_tci_rx_nf_enable PRIVATE Qt6::WebSockets)
+endif()
+
 # ── PR #291 Codex review fixes ────────────────────────────────────────────
 # Capture-path helpers behind the native-rate mic resampling path.  The
 # defects only appear on a device whose native rate differs from the

@@ -12800,25 +12800,33 @@ bool RadioModel::rxApf(int rx) const
     return false;
 }
 
-// ── Stub DSP toggles (no model state yet) ───────────────────────────────────
+// ── Master notch enable (rx_nf_enable) ──────────────────────────────────────
 //
-// NF stays a stub, and deliberately so: upstream is asymmetric here.
-// handleRxNfEnable (TCIServer.cs:1895-1910 [v2.10.3.15]) answers a query with
-// the PER-RX notch state, consoleThreadSafe.GetMNF(rx + 1), but a set writes
-// the RADIO-GLOBAL consoleThreadSafe.TNFActive = enabled.  NereusSDR has no
-// MNF/TNF model to route either half to yet, and guessing which of the two
-// semantics to adopt would bake in a choice the upstream itself does not make
-// consistently.  Left storing and reading its own value so a round-trip still
-// returns what the operator last set.
+// TNF section 6.4: no longer a stub.  The apparent asymmetry that kept it one
+// (a query answered per-rx, a set written radio-global) is not an asymmetry at
+// all: GetMNF returns the one global TNFActive for either index, so both
+// halves address the same flag.
+//
+//   // mnf enabled globally  [original inline comment from console.cs:52319]
+//
+// From Thetis console.cs:52317-52330 [v2.10.3.15] (GetMNF, both cases return
+// TNFActive) and TCIServer.cs:3397 [v2.10.3.15] (the set branch writes that
+// same single property).
 void RadioModel::setRxNf(int rx, bool on)
 {
-    if (rx >= 0 && rx < kTciStubSliceMax) { m_tciStubRxNf[rx] = on; }
+    // From Thetis TCIServer.cs:3388 [v2.10.3.15]: "if (rx < 0 || rx > 1) return;"
+    if (rx < 0 || rx > 1) { return; }
+    if (m_notchModel) { m_notchModel->setGlobalEnabled(on); }
 }
 bool RadioModel::rxNf(int rx) const
 {
-    if (rx >= 0 && rx < kTciStubSliceMax) { return m_tciStubRxNf[rx]; }
-    return false;
+    // From Thetis console.cs:52320 [v2.10.3.15]: "if (rx < 1 || rx > 2) return false;"
+    // Thetis indexes receivers 1-based there; TCI hands us the 0-based index.
+    if (rx < 0 || rx > 1) { return false; }
+    return m_notchModel && m_notchModel->globalEnabled();
 }
+
+// ── Stub DSP toggles (no model state yet) ───────────────────────────────────
 void RadioModel::setRxEnable(int rx, bool on)
 {
     if (rx >= 0 && rx < kTciStubSliceMax) { m_tciStubRxEnable[rx] = on; }

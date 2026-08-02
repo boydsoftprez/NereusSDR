@@ -1998,13 +1998,16 @@ public slots:
     Q_INVOKABLE void setRxApf(int rx, bool on);
     Q_INVOKABLE bool rxApf(int rx) const;
 
+    // NOT a stub since TNF section 6.4: these read and write the NotchModel
+    // master enable.  Global despite the per-rx command shape, exactly as
+    // Thetis GetMNF is (console.cs:52317-52330 [v2.10.3.15]).
+    Q_INVOKABLE void setRxNf(int rx, bool on);
+    Q_INVOKABLE bool rxNf(int rx) const;
+
     // ── Stub categories: SliceModel doesn't expose these as Q_PROPERTYs yet ─
     // Each stub stores the requested value in a small per-slice array so
     // round-trip (set then get) returns the operator's last value.  Real
-    // wiring to WDSP comes when the underlying feature lands.  NF also has an
-    // upstream asymmetry to resolve first (see setRxNf in RadioModel.cpp).
-    Q_INVOKABLE void setRxNf(int rx, bool on);
-    Q_INVOKABLE bool rxNf(int rx) const;
+    // wiring to WDSP comes when the underlying feature lands.
     Q_INVOKABLE void setRxEnable(int rx, bool on);
     Q_INVOKABLE bool rxEnable(int rx) const;
 
@@ -3410,9 +3413,11 @@ private:
     // values so the production path passes the existing matrix tests.
     //
     // Per-slice stub state for DSP toggles SliceModel doesn't yet expose
-    // as Q_PROPERTYs: rxBin / rxApf / rxNf / rxEnable.  Sized to the max
-    // RX count NereusSDR supports today (4 for the four-DDC SKUs); the
-    // setter clamps the index so an out-of-range slice silently no-ops.
+    // as Q_PROPERTYs: rxCtun / rxEnable.  Sized to the max RX count
+    // NereusSDR supports today (4 for the four-DDC SKUs); the setter clamps
+    // the index so an out-of-range slice silently no-ops.
+    // rxNf left this set in TNF section 6.4: it is the global notch master
+    // enable and now reads and writes NotchModel::globalEnabled.
     static constexpr int kTciStubSliceMax = 4;
     bool        m_tciGlobalMute{false};
     // AF / MON volume fallback defaults match the live-source defaults
@@ -3446,9 +3451,8 @@ private:
     // BIN and APF used to live here too; Phase 3F chip task_c1e6fbad routed
     // them to SliceModel::binauralEnabled / apfEnabled, which are wired to
     // RxChannel, and deleted their arrays rather than leaving state nothing
-    // reads. NF stays because upstream is asymmetric about it -- see the
-    // setRxNf comment in RadioModel.cpp.
-    std::array<bool, kTciStubSliceMax> m_tciStubRxNf{};
+    // reads. NF followed them out in TNF section 6.4, onto
+    // NotchModel::globalEnabled -- see the setRxNf comment in RadioModel.cpp.
     std::array<bool, kTciStubSliceMax> m_tciStubRxCtun{};
     std::array<bool, kTciStubSliceMax> m_tciStubRxEnable{ {true, false, false, false} };
 
