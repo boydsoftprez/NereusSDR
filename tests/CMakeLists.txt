@@ -4172,6 +4172,11 @@ nereus_add_test(tst_status_badge)
 # 4 tests: ctor stores label+value, setLabel/setValue round-trip, idempotent.
 nereus_add_test(tst_metric_label)
 
+# ── Bottom-banner cleanup A3: SystemTile ──────────────────────────────────
+# 7 tests: CPU-only default, volts-only, temp-only, both-share-row-one,
+# CPU survives PA updates, clearing both hides row one, PA label override.
+nereus_add_test(tst_system_tile)
+
 # ── Shell-Chrome Redesign sub-PR-1: StationBlock widget ───────────────────
 # 5 tests: default/setRadioName/empty-name appearance switching, click +
 # right-click signal emission gated on appearance.
