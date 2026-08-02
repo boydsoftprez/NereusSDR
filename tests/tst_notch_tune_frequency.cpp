@@ -268,6 +268,88 @@ private slots:
         QCOMPARE(chB->notchTuneFrequencyHz() + chB->shiftOffsetHz(),
                  sliceB->effectiveRxFrequency());
     }
+
+    // -- 4.4: the stream offset and RIT/DIG compose -----------------------
+    //
+    // Both writer orders, because fixing only one leaves the mirror bug:
+    // bindSliceToStream pushed the placement offset with no RIT term and the
+    // wireSliceSignals lambda pushed RIT with no placement term, so whichever
+    // fired last won and threw the other away.
+    //
+    // wireSliceSignals early-returns on !m_connection
+    // (RadioModel.cpp:8883-8885), so the RIT lambda only exists once a
+    // connection is injected. It is never opened: isConnected() stays false,
+    // which also keeps the connect-time seed's singleShot a no-op.
+
+    void rit_adds_to_the_stream_shift_instead_of_replacing_it()
+    {
+        RadioModel model;
+        P1RadioConnection conn;
+        model.injectConnectionForTest(&conn);
+        DetachConnection detach{&model};
+
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(2, 2, kRateHz);
+        model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+
+        const int b = model.addSlice();
+        SliceModel* sliceB = model.sliceById(b);
+        sliceB->setFrequency(kSliceBFreqHz);
+
+        RxChannel* chB = engine->rxChannel(b);
+        QVERIFY(chB != nullptr);
+        QCOMPARE(chB->shiftOffsetHz(), 10000.0);
+
+        sliceB->setRitHz(500);
+        sliceB->setRitEnabled(true);
+
+        // 10 kHz of stream offset PLUS 500 Hz of RIT, not 500 Hz alone.
+        QCOMPARE(chB->shiftOffsetHz(), 10500.0);
+        QCOMPARE(chB->notchTuneFrequencyHz(), kSliceAFreqHz);
+        QCOMPARE(chB->notchTuneFrequencyHz() + chB->shiftOffsetHz(),
+                 sliceB->effectiveRxFrequency());
+    }
+
+    void a_retune_while_rit_is_on_keeps_the_rit_term()
+    {
+        RadioModel model;
+        P1RadioConnection conn;
+        model.injectConnectionForTest(&conn);
+        DetachConnection detach{&model};
+
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(2, 2, kRateHz);
+        model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+
+        const int b = model.addSlice();
+        SliceModel* sliceB = model.sliceById(b);
+        sliceB->setFrequency(kSliceBFreqHz);
+        sliceB->setRitHz(500);
+        sliceB->setRitEnabled(true);
+
+        RxChannel* chB = engine->rxChannel(b);
+        QVERIFY(chB != nullptr);
+        QCOMPARE(chB->shiftOffsetHz(), 10500.0);
+
+        // The mirror case: the retune writer must not drop the RIT term.
+        sliceB->setFrequency(14205000.0);
+
+        QCOMPARE(sliceB->shiftOffsetHz(), 5000.0);
+        QCOMPARE(chB->shiftOffsetHz(), 5500.0);
+        QCOMPARE(chB->notchTuneFrequencyHz(), kSliceAFreqHz);
+        QCOMPARE(chB->notchTuneFrequencyHz() + chB->shiftOffsetHz(),
+                 sliceB->effectiveRxFrequency());
+    }
 };
 
 QTEST_MAIN(TestNotchTuneFrequency)

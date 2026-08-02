@@ -2577,6 +2577,20 @@ private:
     // [v2.10.3.15]: udXIT lands on tx_freq, udRIT on rx_freq.
     void pushTxFrequencyFromTxSlice();
 
+    // The total WDSP shift for a slice: the allocator's offset from its
+    // hosting stream's centre, plus RIT, plus the per-mode DIG click-tune
+    // offset. Five sites push the shift (bindSliceToStream,
+    // activateSliceChannel, reshiftSlicesOnStream,
+    // commitStreamSampleRateChange and the RIT/DIG lambda in
+    // wireSliceSignals) and they used to disagree about which terms belonged
+    // in it, so each clobbered the others'. Toggling RIT on a shifted slice
+    // threw away the stream offset; retuning with RIT on threw away the RIT.
+    //
+    // Reads slice->shiftOffsetHz(), so every caller must commit the stream
+    // term to the model before calling.
+    // See docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.4.
+    double composedShiftHz(const SliceModel* slice) const;
+
     // The frequency a slice would actually transmit on: its dial plus XIT.
     //
     // One answer for three callers, because they had drifted apart. The

@@ -3202,10 +3202,13 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
     // m_afGain anyway, but seeding first means the default never reaches the
     // mixer. Same reasoning as the Slice A block in connectToRadio.
     ch->setAfGain(slice->afGain() / 100.0);
-    // The offset the allocator resolved for this slice. bindSliceToStream
-    // pushes it too, but a reconnect re-opens the channel underneath an
-    // already-bound slice, so it has to be re-seeded here as well.
-    ch->setShiftFrequency(slice->shiftOffsetHz());
+    // The offset the allocator resolved for this slice, plus RIT and DIG.
+    // bindSliceToStream pushes it too, but a reconnect re-opens the channel
+    // underneath an already-bound slice, so it has to be re-seeded here as
+    // well. Composed, not bare: this call runs at the TAIL of
+    // bindSliceToStream on a first bind, so a plain slice->shiftOffsetHz()
+    // here would silently discard the RIT term that call had just pushed.
+    ch->setShiftFrequency(composedShiftHz(slice));
 
     ch->setActive(true);
 }
@@ -3363,11 +3366,17 @@ void RadioModel::reshiftSlicesOnStream(int streamIndex, double newCentreHz)
         // actually demodulates. Leaving either behind reproduces the defect
         // in the half that was skipped.
         //
-        // From Thetis radio.cs:1417 [v2.10.3.15]: SetRXAShiftFreq receives
+        // From Thetis radio.cs:1419 [v2.10.3.15]: SetRXAShiftFreq receives
         // +(freq - center).
+        //
+        // Composed, not the bare stream term: this member may be sitting on
+        // RIT or a DIG click-tune offset, and pushing shiftHz alone would
+        // throw that away (design doc 4.4). setShiftOffsetHz above has
+        // already committed the stream term, which is what composedShiftHz
+        // reads.
         if (m_wdspEngine) {
             if (RxChannel* ch = m_wdspEngine->rxChannel(s->sliceIndex())) {
-                ch->setShiftFrequency(shiftHz);
+                ch->setShiftFrequency(composedShiftHz(s));
             }
         }
     }
@@ -3792,11 +3801,15 @@ void RadioModel::commitStreamSampleRateChange(
         slice->setShiftOffsetHz(planned.placement.shiftOffsetHz);
         slice->setSampleRateHz(planned.resolvedRateHz);
 
+        // Composed, not the bare placement offset: a slice re-placed by a
+        // rate change may be sitting on RIT or a DIG click-tune offset, and
+        // pushing the stream term alone would throw that away (design doc
+        // 4.4). setShiftOffsetHz above has already committed the stream
+        // term, which is what composedShiftHz reads.
         if (m_wdspEngine) {
             if (RxChannel* channel =
                     m_wdspEngine->rxChannel(planned.sliceId)) {
-                channel->setShiftFrequency(
-                    planned.placement.shiftOffsetHz);
+                channel->setShiftFrequency(composedShiftHz(slice));
             }
         }
     }
@@ -4123,7 +4136,7 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     // (nbp.c:479), so pushing on every bind costs nothing.
     if (m_wdspEngine) {
         if (RxChannel* ch = m_wdspEngine->rxChannel(slice->sliceIndex())) {
-            ch->setShiftFrequency(placement.shiftOffsetHz);
+            ch->setShiftFrequency(composedShiftHz(slice));
             ch->setNotchTuneFrequency(
                 m_streamAllocator.streamCentreHz(placement.streamIndex));
         }
@@ -8827,6 +8840,56 @@ quint64 RadioModel::txFrequencyForSlice(const SliceModel* slice) const
     return (txHz < 0) ? 0 : static_cast<quint64>(txHz);
 }
 
+// ---------------------------------------------------------------------------
+// composedShiftHz — the one WDSP shift every writer pushes.
+//
+// The RX mirror of txFrequencyForSlice above: one answer for five callers,
+// because they had drifted apart. bindSliceToStream, activateSliceChannel,
+// reshiftSlicesOnStream and commitStreamSampleRateChange each pushed the
+// stream term alone, while the RIT/DIG lambda in wireSliceSignals pushed
+// RIT + DIG alone, so whichever fired last threw the other's terms away:
+// toggling RIT on a shifted slice moved the demodulator off frequency, and
+// retuning with RIT on dropped the RIT.
+//
+// XIT is deliberately absent, and RIT deliberately present, the exact mirror
+// of txFrequencyForSlice. From Thetis console.cs:31782-31784 [v2.10.3.15]:
+// udXIT lands on tx_freq, udRIT on rx_freq.
+//
+// See docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.4.
+// ---------------------------------------------------------------------------
+double RadioModel::composedShiftHz(const SliceModel* slice) const
+{
+    if (!slice) {
+        return 0.0;
+    }
+
+    // The stream term: "slice freq minus stream centre"
+    // (SliceStreamAllocator.h:48), committed to the slice by whichever
+    // writer is calling before it gets here.
+    double offset = slice->shiftOffsetHz();
+
+    // RIT (Receive Incremental Tuning): client-side demodulation offset that
+    // does NOT retune the hardware VFO.
+    // From Thetis console.cs:31782-31784 [v2.10.3.15] — udRIT adjusts
+    // receive demodulation without moving the hardware DDC center.
+    if (slice->ritEnabled()) {
+        offset += static_cast<double>(slice->ritHz());
+    }
+
+    // DIG offset per mode — Thetis console.cs:14659 (DIGUClickTuneOffset,
+    // default 1500) and :14694 (DIGLClickTuneOffset, default 2210)
+    // [v2.10.3.15]. Both are int offsets in Hz; Thetis uses per-mode filter
+    // re-centering internally, but NereusSDR implements DIG offset as an
+    // additive shift on the same setShiftFrequency path as RIT.
+    if (slice->dspMode() == DSPMode::DIGL) {
+        offset += static_cast<double>(slice->diglOffsetHz());
+    } else if (slice->dspMode() == DSPMode::DIGU) {
+        offset += static_cast<double>(slice->diguOffsetHz());
+    }
+
+    return offset;
+}
+
 void RadioModel::pushTxFrequencyFromTxSlice()
 {
     if (!m_connection) {
@@ -9673,30 +9736,25 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     //
     // RIT (Receive Incremental Tuning): client-side demodulation offset that
     // does NOT retune the hardware VFO.
-    // From Thetis console.cs — RIT adjusts receive demodulation without moving
-    // the hardware DDC center.
+    // From Thetis console.cs:31782-31784 [v2.10.3.15] — udRIT adjusts receive
+    // demodulation without moving the hardware DDC center.
     //
     // DIG offset: per-mode click-tune demodulation offset for DIGL/DIGU.
-    // From Thetis console.cs:14637 (DIGUClickTuneOffset) and :14672
-    // (DIGLClickTuneOffset). Both are int offsets in Hz; Thetis uses per-mode
-    // filter re-centering internally, but NereusSDR implements DIG offset as
-    // an additive shift on the same setShiftFrequency path as RIT.
+    // From Thetis console.cs:14659 (DIGUClickTuneOffset) and :14694
+    // (DIGLClickTuneOffset) [v2.10.3.15]. Both are int offsets in Hz; Thetis
+    // uses per-mode filter re-centering internally, but NereusSDR implements
+    // DIG offset as an additive shift on the same setShiftFrequency path as
+    // RIT.
     //
-    // Combined: shift = ritOffset + digOffset (where digOffset is mode-gated).
-    // For 3G-10 (single RX, no CTUN), the shift = these two terms only.
+    // Post-3F these are NOT the only two terms. The slice also sits at an
+    // offset from its hosting stream's centre, and this lambda used to push
+    // RIT + DIG alone, so toggling RIT on a shifted slice clobbered the
+    // stream offset and moved the demodulator off frequency. composedShiftHz
+    // is the single sum every writer pushes (design doc 4.4).
     auto updateShiftFrequency = [this, slice]() {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
         if (!rxCh) { return; }
-        double offset = slice->ritEnabled()
-                        ? static_cast<double>(slice->ritHz())
-                        : 0.0;
-        // DIG offset per mode — Thetis console.cs:14637,14672
-        if (slice->dspMode() == DSPMode::DIGL) {
-            offset += static_cast<double>(slice->diglOffsetHz());
-        } else if (slice->dspMode() == DSPMode::DIGU) {
-            offset += static_cast<double>(slice->diguOffsetHz());
-        }
-        rxCh->setShiftFrequency(offset);
+        rxCh->setShiftFrequency(composedShiftHz(slice));
     };
     connect(slice, &SliceModel::ritEnabledChanged,  this, updateShiftFrequency);
     connect(slice, &SliceModel::ritHzChanged,        this, updateShiftFrequency);
