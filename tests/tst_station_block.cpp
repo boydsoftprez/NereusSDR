@@ -63,6 +63,39 @@ private slots:
         QTest::mouseClick(&s, Qt::RightButton);
         QCOMPARE(spy.count(), 1);
     }
+
+    void hardwareLineJoinsModelAndFirmware() {
+        StationBlock b;
+        b.setHardwareLine(QStringLiteral("ANAN-G2"), QStringLiteral("v27"));
+        QCOMPARE(b.hardwareLine(), QStringLiteral("ANAN-G2 · v27"));
+    }
+
+    void modelAloneOmitsTheSeparator() {
+        StationBlock b;
+        b.setHardwareLine(QStringLiteral("ANAN-G2"), QString());
+        QCOMPARE(b.hardwareLine(), QStringLiteral("ANAN-G2"));
+    }
+
+    void firmwareAloneOmitsTheSeparator() {
+        StationBlock b;
+        b.setHardwareLine(QString(), QStringLiteral("v27"));
+        QCOMPARE(b.hardwareLine(), QStringLiteral("v27"));
+    }
+
+    void bothEmptyGivesAnEmptyLine() {
+        StationBlock b;
+        b.setHardwareLine(QString(), QString());
+        QCOMPARE(b.hardwareLine(), QString());
+    }
+
+    void clearingTheNameAlsoClearsTheHardwareLine() {
+        StationBlock b;
+        b.setRadioName(QStringLiteral("Nereus G2"));
+        b.setHardwareLine(QStringLiteral("ANAN-G2"), QStringLiteral("v27"));
+        b.setRadioName(QString());
+        QCOMPARE(b.hardwareLine(), QString());
+        QVERIFY(!b.isConnectedAppearance());
+    }
 };
 
 QTEST_MAIN(TstStationBlock)

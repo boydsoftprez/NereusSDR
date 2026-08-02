@@ -26,6 +26,13 @@ public:
 
     bool isConnectedAppearance() const noexcept { return !m_radioName.isEmpty(); }
 
+    // Second row: "ANAN-G2 · v27". Either part may be empty; the middle dot
+    // appears only when both are present. Cleared automatically whenever the
+    // radio name is cleared, so the disconnected placeholder never shows a
+    // stale board name.
+    void setHardwareLine(const QString& model, const QString& firmware);
+    QString hardwareLine() const noexcept { return m_hardwareLine; }
+
 signals:
     void clicked();
     void contextMenuRequested(const QPoint& globalPos);
@@ -38,6 +45,8 @@ private:
 
     QString  m_radioName;
     QLabel*  m_label{nullptr};
+    QString  m_hardwareLine;
+    QLabel*  m_hardwareLabel{nullptr};
 };
 
 } // namespace NereusSDR
