@@ -101,7 +101,7 @@ endfunction()
 # guarantee that keeps ctest runs from overwriting the developer's real
 # NereusSDR.settings (see the header comment in TestSandboxInit.cpp).
 #
-# Deliberately does NOT reuse the NereusSDRObjs PCH.  This is one 50-line
+# Deliberately does NOT reuse the NereusCore PCH.  This is one 50-line
 # TU whose only include is <QStandardPaths>, so the PCH buys nothing, and
 # reusing it means compiling with a different -D set than the PCH was
 # built with (this target links only Qt6::Core, not the HAVE_WDSP /
@@ -165,15 +165,15 @@ function(nereus_add_test name)
     target_link_libraries(${name} PRIVATE NereusSDRObjs Qt6::Test)
     set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS ${name})
 
-    # Reuse the NereusSDRObjs precompiled header (CMakeLists.txt §PCH).
+    # Reuse the NereusCore precompiled header (CMakeLists.txt §PCH).
     # 451 test executables × per-target PCH compile would burn the wins;
-    # REUSE_FROM means the PCH is built once on NereusSDRObjs and shared
+    # REUSE_FROM means the PCH is built once on NereusCore and shared
     # across every test target. Save 5 to 10 minutes of test compile
     # time on Linux CI. Gated on NEREUS_USE_PCH so users who turn the
     # PCH off (e.g. for header-hygiene auditing) don't get a broken
     # link.
     if(NEREUS_USE_PCH)
-        target_precompile_headers(${name} REUSE_FROM NereusSDRObjs)
+        target_precompile_headers(${name} REUSE_FROM NereusCore)
     endif()
 
     add_test(NAME ${name} COMMAND ${name})

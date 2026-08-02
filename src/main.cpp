@@ -16,7 +16,7 @@
 // This is the only translation unit that includes it, and that is on
 // purpose: it is compiled into the application target alone, so a new commit
 // rebuilds this file and relinks this binary, and leaves the test suite (which
-// links the NereusSDRObjs object library) untouched. See CMakeLists.txt
+// links the NereusCore object library) untouched. See CMakeLists.txt
 // section "Build tag" and src/core/BuildIdentity.h.
 #include "NereusBuildTag.h"
 
