@@ -2756,6 +2756,21 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
         }
     }
 
+    // Visual notch, spectrum plane.  Thetis dents in place right after the
+    // analyzer hands the frame over and before its per-pixel render loop
+    // (display.cs:5234-5238 [v2.10.3.15]), keeping one pristine copy that
+    // only the noise-floor accumulator reads (display.cs:5259 [v2.10.3.15]).
+    // Peak hold, the blob / IMD detector and the max readout deliberately see
+    // the dent (display.cs:5269, :5280, :5337 [v2.10.3.15]) and so are still
+    // fed from m_renderedPixels below.  Do NOT "protect" them: that would be
+    // a divergence, not a fix.
+    if (visualNotchWillDent()) {
+        m_undentedPixels = m_renderedPixels;
+        applyVisualNotchDent(m_renderedPixels);
+    } else if (!m_undentedPixels.isEmpty()) {
+        m_undentedPixels.clear();
+    }
+
     // --- Waterfall plane: own detector + avenger -> m_wfRenderedPixels ---
     // Thetis runs separate analyzer planes for spectrum and waterfall (see
     // ANALYZER_INFO[] in analyzer.c).  DetType + AvMode are independent.
@@ -2959,6 +2974,108 @@ double SpectrumWidget::peakDbmInSlicePassband() const
         if (m_renderedPixels[i] > peak) { peak = m_renderedPixels[i]; }
     }
     return static_cast<double>(peak);
+}
+
+// ---------------------------------------------------------------------------
+// Visual notch (trace dent) - design section 8.3
+// ---------------------------------------------------------------------------
+//
+// Port of Thetis modifyDataForNotches (display.cs:4733-4817 [v2.10.3.15], the
+// dent maths itself at :4790-4816) and the non-drawing arm of its
+// handleNotches helper (display.cs:8677-8687 [v2.10.3.15]).  Thetis works in
+// Hz-from-the-VFO and divides every pixel index by its display decimation;
+// our pixel array is absolute-RF and undecimated (the m_nDecimation == 1 case,
+// see updateSpectrumLinear), so a pixel index here IS Thetis's xPos and hzToX
+// is the whole coordinate map.
+//
+// Two terms of the upstream maths are deliberately NOT ported, per section 8.3:
+//
+//   * handleNotches' localRit / CTUN offset (display.cs:8648-8652
+//     [v2.10.3.15]).  It compensates for Thetis's VFO-label-anchored pixel
+//     maths combined with its RIT-driven DDS retune.  Our x axis is absolute
+//     RF, RIT never retunes the hardware, and WDSP applies shift to the
+//     passband rather than to the notch, so adding it would displace every
+//     dent by rit_hz.  Recorded so nobody re-adds it.
+//   * cwSideToneShift (display.cs:8654 [v2.10.3.15]), dropped entirely rather
+//     than threaded as a constant zero: a notch added at F in CW stores at
+//     exactly F here (design section 1.2).
+
+void SpectrumWidget::setVisualNotchEnabled(bool on)
+{
+    if (m_visualNotchEnabled == on) { return; }
+    m_visualNotchEnabled = on;
+    markOverlayDirty();
+}
+
+// From Thetis display.cs:5235 [v2.10.3.15]:
+//   if (bDoVisualNotch && m_bShowVisualNotch && !local_mox)
+// plus the _tnf_active half of the per-notch _Use flag at display.cs:8686
+// [v2.10.3.15].  The per-notch Active half is applied inside the loop below,
+// exactly as upstream skips on !nc._Use.
+bool SpectrumWidget::visualNotchWillDent() const
+{
+    return m_visualNotchEnabled
+        && !m_moxOverlay
+        && m_notchGlobalEnabled
+        && !m_notchMarkers.isEmpty();
+}
+
+void SpectrumWidget::applyVisualNotchDent(QVector<float>& pixels) const
+{
+    const int n = pixels.size();
+    if (n <= 0 || m_bandwidthHz <= 0.0) { return; }
+
+    const float fAttenuation = kNotchDentAttenuationDb;
+
+    // A rect the width of the array, so hzToX maps onto the same columns the
+    // trace is drawn from regardless of the widget's live geometry.
+    const QRect r(0, 0, n, 1);
+
+    for (const NotchMarker& nc : m_notchMarkers) {
+        if (!nc.active) { continue; } // skip inactive
+
+        // From Thetis display.cs:8679-8680 [v2.10.3.15]:
+        //   double dNewWidth = n.FWidth < min_notch_wdith ? min_notch_wdith : n.FWidth; // use the min width of filter from WDSP
+        //   dNewWidth += 20; // fudge factor to align better with spectrum notch
+        const double dNewWidth =
+            ((nc.widthHz < m_notchMinWidthHz) ? m_notchMinWidthHz : nc.widthHz)
+            + kNotchDentFudgeHz;
+
+        const double centreHz = nc.freqMhz * 1e6;
+        const int cX     = hzToX(centreHz, r);
+        const int leftX  = hzToX(centreHz - dNewWidth / 2.0, r);
+        const int rightX = hzToX(centreHz + dNewWidth / 2.0, r);
+
+        // do left
+        int wL = cX - leftX;
+        wL = qMax(1, wL);
+        for (int i = cX; i > cX - wL; --i) {
+            if (i < 0 || i > n - 1) { continue; }
+            const int x = cX - i;
+            const float fTmp = 1.0f / static_cast<float>(std::pow(
+                static_cast<double>(wL) / static_cast<double>(wL - x),
+                1.5)); // pow2 quite sharp
+            pixels[i] -= (fAttenuation * fTmp);
+        }
+        // do right
+        int wR = rightX - cX;
+        wR = qMax(1, wR);
+        for (int i = cX; i < cX + wR; ++i) {
+            if (i < 0 || i > n - 1) { continue; }
+            const int x = i - cX;
+            const float fTmp = 1.0f / static_cast<float>(std::pow(
+                static_cast<double>(wR) / static_cast<double>(wR - x),
+                1.5)); // pow2 quite sharp
+            pixels[i] -= (fAttenuation * fTmp);
+        }
+    }
+}
+
+const QVector<float>& SpectrumWidget::measurementPixels() const
+{
+    return (m_undentedPixels.size() == m_renderedPixels.size())
+               ? m_undentedPixels
+               : m_renderedPixels;
 }
 
 void SpectrumWidget::resizeEvent(QResizeEvent* event)

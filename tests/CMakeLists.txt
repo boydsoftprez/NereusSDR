@@ -6078,6 +6078,18 @@ nereus_add_test(tst_popup_placement)
 # 9 and 10.2.
 nereus_add_test(tst_tnf_ui_wiring)
 
+# ── TNF build-order step 10 (visual notch): the section 8.3 gate ───────────
+# Asserts in both directions: processNoiseFloor() and
+# peakDbmInSlicePassband() read the pristine undented spectrum copy, while
+# ActivePeakHoldTrace and PeakBlobDetector do see the dent (Thetis-faithful).
+# Also covers the dent geometry (20 Hz fudge, WDSP minimum-width clamp),
+# the second explicit waterfall-plane call, and the MOX / master-TNF-off /
+# per-notch-inactive suppression gates.
+# Source: NereusSDR-original test infrastructure.
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         section 8.3 + section 11.
+nereus_add_test(tst_notch_visual_does_not_perturb_noise_floor_or_maxbin)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

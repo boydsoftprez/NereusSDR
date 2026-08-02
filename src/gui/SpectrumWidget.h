@@ -1210,6 +1210,14 @@ public:
     // UpdateMinimumNotchWidthRX).  Consumed by the visual-notch dent.
     void setNotchMinWidthHz(double hz);
 
+    // ---- Visual notch (trace dent), design section 8.3 ----
+    // Owner of the persisted state is NotchModel (key NotchVisualEnabled);
+    // MainWindow::refreshPanVisualNotch pushes the same value at every pan.
+    // From Thetis display.cs:1070 [v2.10.3.15]:
+    //   private static bool m_bShowVisualNotch = false;
+    void setVisualNotchEnabled(bool on);
+    bool visualNotchEnabled() const { return m_visualNotchEnabled; }
+
     // Test seams, following the spotMarkersForTest convention above.
     const QVector<NotchMarker>& notchMarkersForTest() const { return m_notchMarkers; }
     bool   notchGlobalEnabledForTest() const { return m_notchGlobalEnabled; }
@@ -1218,6 +1226,20 @@ public:
         drawNotchMarkers(p, specRect);
     }
     QRect notchSpecRectForTest() const { return notchSpecRect(); }
+
+    // Visual-notch test seams (design section 8.3). Read-only views into the
+    // state updateSpectrumLinear rebuilds each frame, so the section 11 test
+    // can pin the measurement-routing contract without a paint cycle.
+    float nfFftBinAverageForTest() const { return m_nfFftBinAverage; }
+    const QVector<float>& undentedPixelsForTest() const {
+        return measurementPixels();
+    }
+    const QVector<float>& activePeakHoldPeaksForTest() const {
+        return m_activePeakHold.peaks();
+    }
+    const QVector<PeakBlob>& peakBlobsForTest() const {
+        return m_peakBlobs.blobs();
+    }
     // Selection and hover are written by the interaction layer (design
     // section 7.4); these also give the render tests a writer for the
     // Chartreuse highlight branch.
@@ -1518,6 +1540,19 @@ private:
     NotchGrab notchGrabAt(int id, int x, bool shiftHeld,
                           const QRect& specRect) const;
     void      buildNotchContextMenu(int id, QMenu& menu);
+
+    // ---- Visual notch (design section 8.3) ----
+    /// True when this frame's pixels are to be dented: the toggle is on, we
+    /// are not transmitting, the master TNF enable is on, and at least one
+    /// marker exists. Mirrors the Thetis gate plus the _tnf_active half of
+    /// its per-notch _Use flag.
+    bool visualNotchWillDent() const;
+    /// Subtract the notch skirts from `pixels` in place. Safe on either
+    /// plane's array; the caller decides which.
+    void applyVisualNotchDent(QVector<float>& pixels) const;
+    /// The pristine (undented) spectrum pixels. Consumers that MEASURE
+    /// rather than draw read this, never m_renderedPixels.
+    const QVector<float>& measurementPixels() const;
 
     // ---- TX filter overlay (Plan 4 D9, Cluster E) ----
     // drawTxFilterOverlay: panadapter band fill + border lines + label.
@@ -1953,6 +1988,27 @@ private:
     // 1600.0 / (nc / 256) * (rate / 48000)).  Overwritten by
     // setNotchMinWidthHz once a channel is open.
     double m_notchMinWidthHz{100.0};
+
+    // ---- Visual notch state (design section 8.3) ----
+    // From Thetis display.cs:1070 [v2.10.3.15]: m_bShowVisualNotch = false.
+    bool m_visualNotchEnabled{false};
+
+    // Pristine mirror of m_renderedPixels, populated ONLY on the frames that
+    // actually dent so the default-off path costs nothing. Thetis keeps a
+    // permanent second array instead (current_display_data_copy, filled by
+    // the memcpy at display.cs:5046-5049 and handed to the render loop at
+    // :5055 [v2.10.3.15]) because its analyzer hands one over for free.
+    // measurementPixels() falls back to m_renderedPixels when this is empty
+    // or stale-sized.
+    QVector<float> m_undentedPixels;
+
+    // From Thetis display.cs:4778 [v2.10.3.15]: float fAttenuation = 100f;
+    static constexpr float kNotchDentAttenuationDb = 100.0f;
+
+    // From Thetis display.cs:8680 [v2.10.3.15]:
+    //   dNewWidth += 20; // fudge factor to align better with spectrum notch
+    static constexpr double kNotchDentFudgeHz = 20.0;
+
     // Written by the interaction layer (design section 7.4); drive the
     // Chartreuse highlight and the hover popup respectively.  Declared
     // here rather than in the interaction layer because notchColor() reads
