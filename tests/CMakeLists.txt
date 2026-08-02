@@ -5878,6 +5878,20 @@ nereus_add_test(tst_rx_channel_ext_div_wrappers)
 # Source: NereusSDR-original test infrastructure.
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-g-diversity-plan.md Task 2.
 nereus_add_test(tst_diversity_dialog_persistence)
+
+# ── Tunable Notch Filter Task 2: RxChannel manual-notch wrappers ──────────
+# The Notch value type plus add / edit / delete / sync / count, the
+# notches-run flag, auto-increase and the minimum-width readback.
+# Opens ONE real WDSP RX channel through the WdspEngine NEREUS_BUILD_TESTS
+# friend seam, because every RXANBP* entry point dereferences rxa[channel]
+# before it range-checks anything and the usual kTestChannel = 99 convention
+# would read out of bounds (third_party/wdsp/src/comm.h:110 sizes rxa at
+# MAX_CHANNELS = 32).
+# Source: NereusSDR-original test infrastructure.
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         sections 6.2 and 11.1.
+nereus_add_test(tst_rxchannel_notch_wrappers)
+
 # ── PR #291 Codex review fixes ────────────────────────────────────────────
 # Capture-path helpers behind the native-rate mic resampling path.  The
 # defects only appear on a device whose native rate differs from the
