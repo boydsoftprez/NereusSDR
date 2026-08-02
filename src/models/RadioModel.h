@@ -1746,6 +1746,21 @@ public slots:
     /// coalescing window stale. See scheduleNotchEditPush.
     void commitPendingNotchEdits();
 
+    /// The single creation route for every notch. Resolves the minimum
+    /// realisable width from THE GIVEN SLICE's channel and clamps to it, so a
+    /// notch is never stored or drawn at a width WDSP will silently widen.
+    ///
+    /// Codex review of PR #313 found three separate add routes with three
+    /// different behaviours: the panadapter gesture clamped against
+    /// activeSlice() rather than the pan that was clicked, and the +TNF button
+    /// and the settings-page Add button did not clamp at all. Every route goes
+    /// through here now, and `slice` is always the slice the operator acted
+    /// on, per the standing rule that a control drawn on a pan targets that
+    /// pan.
+    ///
+    /// Returns the new notch id, or -1 if the model refused it.
+    int addNotchForSlice(SliceModel* slice, double centerHz, double widthHz);
+
     // ── Phase 3M-1a Task F.1: MoxController::hardwareFlipped fan-out ───────────
     // Slot connected to MoxController::hardwareFlipped(bool isTx).
     // Fans out hardware-flip side-effects to AlexController + RadioConnection

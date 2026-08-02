@@ -340,7 +340,7 @@ private slots:
     /// TNF inbound handlers. Each mutates the single global NotchModel; the
     /// frequencies arrive already resolved in the emitting pan's own
     /// frequency mapping, so nothing here consults an active pan.
-    void onNotchCreateRequested(double freqHz, bool narrow);
+    void onNotchCreateRequested(const QString& panId, double freqHz, bool narrow);
     void onNotchMoveRequested(int id, double newFreqHz);
     void onNotchWidthRequested(int id, double widthHz);
     void onNotchActiveRequested(int id, bool active);

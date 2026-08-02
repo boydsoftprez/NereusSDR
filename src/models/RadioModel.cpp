@@ -9228,6 +9228,37 @@ void RadioModel::flushNotchEditPush()
     }
 }
 
+int RadioModel::addNotchForSlice(SliceModel* slice, double centerHz,
+                                 double widthHz)
+{
+    if (!m_notchModel) {
+        return -1;
+    }
+
+    // Clamp to what THIS slice's filter can actually realise. min_notch_width
+    // is 1600 / (nc / 256) * (rate / 48000) (third_party/wdsp/src/nbp.c:88),
+    // so at the smaller supported filter sizes it is 400 Hz (nc 1024) or
+    // 200 Hz (nc 2048), both above the Thetis 100/200 Hz defaults
+    // (console.cs:40268-40269 [v2.10.3.15]). WDSP's auto-increase is on by
+    // default (RXA.c:105) and widens a sub-minimum notch silently, so an
+    // unclamped add stores and draws a width the DSP is not applying.
+    //
+    // Resolved from the slice passed in, never from activeSlice(): clicking a
+    // pan activates it in PanadapterStack without necessarily changing the
+    // active slice, so two pans on different filter sizes would otherwise
+    // clamp against each other.
+    if (slice) {
+        if (RxChannel* ch = rxChannelForSlice(slice->sliceIndex())) {
+            const double minHz = ch->minNotchWidthHz();
+            if (minHz > 0.0 && widthHz < minHz) {
+                widthHz = minHz;
+            }
+        }
+    }
+
+    return m_notchModel->addNotch(centerHz, widthHz);
+}
+
 void RadioModel::commitPendingNotchEdits()
 {
     if (m_notchEditTimer) {

@@ -1721,8 +1721,16 @@ void MainWindow::wirePanNotchHandlers()
         connect(applet, &PanadapterApplet::activeSliceChanged,
                 this, &MainWindow::refreshPanNotchMinWidth,
                 Qt::UniqueConnection);
-        connect(sw, &SpectrumWidget::notchCreateRequested,
-                this, &MainWindow::onNotchCreateRequested,
+        // The pan identity is bound here rather than added to the signal:
+        // SpectrumWidget does not know its own pan id, and the wiring loop
+        // does. Without it the handler would fall back to activeSlice(), which
+        // is not necessarily the slice on the pan that was clicked. Codex
+        // review of PR #313.
+        const QString panId = applet->panId();
+        connect(sw, &SpectrumWidget::notchCreateRequested, this,
+                [this, panId](double freqHz, bool narrow) {
+                    onNotchCreateRequested(panId, freqHz, narrow);
+                },
                 Qt::UniqueConnection);
         connect(sw, &SpectrumWidget::notchMoveRequested,
                 this, &MainWindow::onNotchMoveRequested,
@@ -1745,36 +1753,22 @@ void MainWindow::wirePanNotchHandlers()
     }
 }
 
-void MainWindow::onNotchCreateRequested(double freqHz, bool narrow)
+void MainWindow::onNotchCreateRequested(const QString& panId, double freqHz,
+                                       bool narrow)
 {
-    if (!m_radioModel || !m_radioModel->notchModel()) { return; }
+    if (!m_radioModel) { return; }
     // Narrow is the Shift-held add. Both widths live on NotchModel because
     // they are Thetis constants (console.cs:40268-40269 [v2.10.3.15]).
-    double widthHz = narrow ? NotchModel::kNarrowNotchWidthHz
-                            : NotchModel::kDefaultNotchWidthHz;
-
-    // Clamp to what the filter can actually realise, exactly as the width
-    // presets do. min_notch_width is 1600 / (nc / 256) * (rate / 48000)
-    // (third_party/wdsp/src/nbp.c:88), so at the smaller supported filter
-    // sizes it is 400 Hz (nc 1024) or 200 Hz (nc 2048), both above these
-    // Thetis defaults. Without this, WDSP's auto-increase (on by default,
-    // RXA.c:105) silently widens the notch while the marker, the context
-    // menu and the settings table all keep showing the smaller number; with
-    // auto-increase off the requested attenuation is simply not realisable.
     //
-    // This is the same defect JJ found on the bench in the width presets on
-    // 2026-08-02. It was fixed there and not swept for siblings, and this
-    // creation path is the sibling. Codex review of PR #313.
-    if (SliceModel* slice = m_radioModel->activeSlice()) {
-        if (RxChannel* ch = m_radioModel->rxChannelForSlice(slice->sliceIndex())) {
-            const double minHz = ch->minNotchWidthHz();
-            if (minHz > 0.0 && widthHz < minHz) {
-                widthHz = minHz;
-            }
-        }
-    }
-
-    m_radioModel->notchModel()->addNotch(freqHz, widthHz);
+    // The slice comes from the pan that emitted the signal, not from
+    // activeSlice(): clicking a pan activates it in PanadapterStack without
+    // necessarily changing the active slice, so on two pans running different
+    // filter sizes the clamp would resolve against the wrong channel. Standing
+    // rule: a control drawn on a pan targets that pan. Codex review of PR #313.
+    m_radioModel->addNotchForSlice(
+        sliceForPan(panId), freqHz,
+        narrow ? NotchModel::kNarrowNotchWidthHz
+               : NotchModel::kDefaultNotchWidthHz);
 }
 
 void MainWindow::onNotchMoveRequested(int id, double newFreqHz)
@@ -1816,11 +1810,17 @@ void MainWindow::onNotchRemoveRequested(int id)
 void MainWindow::onAddTnfClicked(const QString& panId)
 {
     if (!m_radioModel) { return; }
-    NotchModel* notches = m_radioModel->notchModel();
-    SliceModel* slice   = sliceForPan(panId);
-    if (!notches || !slice) { return; }
-    notches->addNotch(NotchModel::tnfAddCenterHz(
-        slice->effectiveRxFrequency(), slice->filterLow(), slice->filterHigh()));
+    SliceModel* slice = sliceForPan(panId);
+    if (!m_radioModel->notchModel() || !slice) { return; }
+    // demodulatedRxFrequency(), not effectiveRxFrequency(): composedShiftHz
+    // feeds WDSP the notch origin including the DIG click-tune offset, so a
+    // centre computed without it lands displaced by exactly that offset in
+    // DIGU/DIGL. Codex review of PR #313.
+    m_radioModel->addNotchForSlice(
+        slice,
+        NotchModel::tnfAddCenterHz(slice->demodulatedRxFrequency(),
+                                   slice->filterLow(), slice->filterHigh()),
+        NotchModel::kDefaultNotchWidthHz);
 }
 
 // A rejected add is not a failure worth an error badge, but it must not be

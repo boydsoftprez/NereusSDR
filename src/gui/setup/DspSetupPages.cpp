@@ -2250,7 +2250,13 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
         // setup.designer.cs:44190 [v2.10.3.15]). One gesture here, because the
         // table edits in place.
         endAdminEdit();
-        rm->notchModel()->addNotch(slice->frequency());
+        // Through RadioModel so the width is clamped to what this slice's
+        // filter can realise, exactly as the panadapter and +TNF routes do.
+        // A bare addNotch here stored the 200 Hz default even where the live
+        // minimum is 400 Hz (nc 1024), and WDSP widened it silently while this
+        // very table kept showing 200. Codex review of PR #313.
+        rm->addNotchForSlice(slice, slice->frequency(),
+                             NotchModel::kDefaultNotchWidthHz);
     });
 
     // ── Minimum notch width ──────────────────────────────────────────────────

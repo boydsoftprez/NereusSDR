@@ -531,6 +531,60 @@ private slots:
         QVERIFY(ch->notchAt(0, back));
         QCOMPARE(back.widthHz, 219.0);
     }
+
+    // Codex review of PR #313, P2 x2. Every notch creation route must clamp to
+    // the minimum width THAT SLICE's filter can realise, and must resolve it
+    // from the slice acted on rather than from activeSlice().
+    //
+    // min_notch_width is 1600 / (nc / 256) * (rate / 48000) (nbp.c:88), so a
+    // channel at nc 1024 cannot realise anything below 400 Hz. WDSP's
+    // auto-increase is on by default (RXA.c:105) and widens silently, so an
+    // unclamped add stores and draws a width the DSP is not applying.
+    void add_clamps_to_the_target_slices_minimum_not_the_active_slices()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        NotchModel* nm = model.notchModel();
+        QVERIFY(nm != nullptr);
+        nm->setGlobalEnabled(true);
+
+        model.configureStreamPool(/*userDdcCount*/ 2, /*maxSlices*/ 2, kRateHz);
+        model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+
+        const int aId = model.addSlice();
+        SliceModel* a = model.sliceById(aId);
+        QVERIFY(a != nullptr);
+        a->setFrequency(kSliceAFreqHz);
+
+        const int bId = model.addSlice();
+        SliceModel* b = model.sliceById(bId);
+        QVERIFY(b != nullptr);
+        b->setFrequency(kSliceAFreqHz + 40000.0);
+
+        RxChannel* chA = engine->rxChannel(aId);
+        RxChannel* chB = engine->rxChannel(bId);
+        QVERIFY(chA != nullptr);
+        QVERIFY(chB != nullptr);
+
+        // Give the two slices different filter sizes, so clamping against the
+        // wrong one is observable. nc 1024 -> 400 Hz minimum at 48 kHz.
+        chB->setFilterSizeSamples(1024);
+        const double minB = chB->minNotchWidthHz();
+        QVERIFY2(minB > NotchModel::kDefaultNotchWidthHz,
+                 qPrintable(QStringLiteral("fixture needs slice B's minimum "
+                                           "above the default; got %1").arg(minB)));
+
+        // Add on B while A is whatever activeSlice() happens to be. The stored
+        // width must follow B, not A.
+        const int id = model.addNotchForSlice(b, b->frequency() + 1000.0,
+                                              NotchModel::kDefaultNotchWidthHz);
+        QVERIFY(id >= 0);
+        const Notch* n = nm->notchById(id);
+        QVERIFY(n != nullptr);
+        QCOMPARE(n->widthHz, minB);
+    }
 };
 
 QTEST_MAIN(TestNotchChannelSync)
