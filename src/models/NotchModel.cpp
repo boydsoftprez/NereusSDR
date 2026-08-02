@@ -261,6 +261,117 @@ int NotchModel::addNotch(double centerHz, double widthHz)
     return n.id;
 }
 
+// From Thetis console.cs:40050-40120 [v2.10.3.15],
+// ChangeNotchCentreFrequency(notch, newCentreFrequencyHz, sourceRX).
+// Upstream orders the guards constrain, then admin-busy, then round; the
+// order is preserved. The XVTR override (:40054-40074, //MW0LGE_21e XVTR)
+// is not ported (design section 5.4), and neither is the selection-recovery
+// call it guards: //MW0LGE [2.9.0.7] fix old bug, we need to find the notch
+// for the updated freq (console.cs:40109) exists only because Thetis
+// identifies a notch by its list position. Stable ids retire it.
+bool NotchModel::setCenter(int id, double centerHz)
+{
+    //constrain
+    // From Thetis console.cs:40076-40077 [v2.10.3.15]
+    if (centerHz < kMinNotchCentreHz || centerHz > kMaxNotchCentreHz) {
+        return false;
+    }
+
+    // From Thetis console.cs:40079 [v2.10.3.15]
+    if (m_adminBusy) { // cant change it if setup is adding/editing
+        return false;
+    }
+
+    // From Thetis console.cs:40081 [v2.10.3.15]
+    centerHz = std::nearbyint(centerHz);
+
+    const int index = indexOfId(id);
+    if (index < 0) {
+        return false;
+    }
+
+    // Upstream returns true whenever the index resolved and fires its change
+    // handler only when the value actually moved (console.cs:40112-40115).
+    if (m_notches.at(index).centerHz == centerHz) {
+        return true;
+    }
+    m_notches[index].centerHz = centerHz;
+    persist();
+    emit notchChanged(id);
+    return true;
+}
+
+// From Thetis console.cs:40007-40047 [v2.10.3.15], ChangeNotchBW(notch,
+// newWidth, notch_index), composed with the clamps its only interactive
+// caller applies first (notchMouseWheel, console.cs:33312-33318). Folding
+// them in here is what lets the panadapter wheel handler be a bare
+// setWidth(id, current + delta * step) call.
+bool NotchModel::setWidth(int id, double widthHz)
+{
+    // From Thetis console.cs:40009 [v2.10.3.15]
+    if (m_adminBusy) { // cant change it if setup is adding/editing
+        return false;
+    }
+
+    const int index = indexOfId(id);
+    if (index < 0) {
+        return false;
+    }
+
+    // From Thetis console.cs:33312-33313 [v2.10.3.15]
+    if (widthHz < 0.0) {
+        widthHz = 0.0;
+    }
+    if (widthHz > kMaxNotchWidthHz) {
+        widthHz = kMaxNotchWidthHz;
+    }
+
+    // check to see if outside frequency limits
+    // From Thetis console.cs:33315-33318 [v2.10.3.15]. A width whose edges
+    // would leave the range is rejected outright, not clamped down. The
+    // lower-edge arm is unreachable on this tree (kMinNotchCentreHz 100 kHz
+    // minus half of kMaxNotchWidthHz is still 95 kHz), unlike Thetis where
+    // min_freq can be 0.0; ported verbatim rather than dropped.
+    const double centreHz = m_notches.at(index).centerHz;
+    if (centreHz - (widthHz / 2) < 0) {
+        return false;
+    }
+    if (centreHz + (widthHz / 2) > kMaxNotchCentreHz) {
+        return false;
+    }
+
+    if (m_notches.at(index).widthHz == widthHz) {
+        return true;
+    }
+    m_notches[index].widthHz = widthHz;
+    persist();
+    emit notchChanged(id);
+    return true;
+}
+
+// From Thetis console.cs:40123-40156 [v2.10.3.15],
+// changeNotchActive(notch, bActive).
+bool NotchModel::setActive(int id, bool active)
+{
+    // From Thetis console.cs:40125 [v2.10.3.15]
+    if (m_adminBusy) { // cant change it if setup is adding/editing
+        return false;
+    }
+
+    const int index = indexOfId(id);
+    if (index < 0) {
+        return false;
+    }
+
+    if (m_notches.at(index).active == active) {
+        return true;
+    }
+    m_notches[index].active = active;
+    persist();
+    emit notchChanged(id);
+    return true;
+}
+
 void NotchModel::setAdminBusy(bool busy)
 {
     // Transient edit lock, not persisted: it exists only for the lifetime of

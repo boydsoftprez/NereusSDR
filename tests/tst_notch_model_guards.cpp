@@ -208,6 +208,170 @@ private slots:
         m.addNotch(14074000.0);
         QCOMPARE(m.notchById(9999), nullptr);
     }
+
+    // setCenter: constrain, admin-busy, whole-Hz rounding
+    // (Thetis console.cs:40077, :40079, :40081)
+    void setCenter_rounds_to_whole_hz()
+    {
+        NotchModel m;
+        const int id = m.addNotch(14074000.0);
+        QVERIFY(m.setCenter(id, 14074500.4));
+        QCOMPARE(m.notchById(id)->centerHz, 14074500.0);
+    }
+
+    void setCenter_rejects_below_minimum()
+    {
+        NotchModel m;
+        const int id = m.addNotch(14074000.0);
+        QVERIFY(!m.setCenter(id, NotchModel::kMinNotchCentreHz - 1.0));
+        QCOMPARE(m.notchById(id)->centerHz, 14074000.0);
+    }
+
+    void setCenter_rejects_above_maximum()
+    {
+        NotchModel m;
+        const int id = m.addNotch(14074000.0);
+        QVERIFY(!m.setCenter(id, NotchModel::kMaxNotchCentreHz + 1.0));
+        QCOMPARE(m.notchById(id)->centerHz, 14074000.0);
+    }
+
+    void setCenter_rejected_while_admin_busy()
+    {
+        NotchModel m;
+        const int id = m.addNotch(14074000.0);
+        m.setAdminBusy(true);
+        QSignalSpy spy(&m, &NotchModel::notchChanged);
+        QVERIFY(!m.setCenter(id, 14075000.0));
+        QCOMPARE(spy.count(), 0);
+        QCOMPARE(m.notchById(id)->centerHz, 14074000.0);
+    }
+
+    void setCenter_emits_notchChanged_once_on_change()
+    {
+        NotchModel m;
+        const int id = m.addNotch(14074000.0);
+        QSignalSpy spy(&m, &NotchModel::notchChanged);
+        QVERIFY(m.setCenter(id, 14075000.0));
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.first().first().toInt(), id);
+    }
+
+    void setCenter_is_silent_when_value_unchanged()
+    {
+        NotchModel m;
+        const int id = m.addNotch(14074000.0);
+        QSignalSpy spy(&m, &NotchModel::notchChanged);
+        // Upstream returns true whenever the index resolves, and only fires
+        // its change handler when the value actually moved
+        // (console.cs:40109-40113 [v2.10.3.15]).
+        QVERIFY(m.setCenter(id, 14074000.0));
+        QCOMPARE(spy.count(), 0);
+    }
+
+    void setCenter_rejects_unknown_id()
+    {
+        NotchModel m;
+        m.addNotch(14074000.0);
+        QVERIFY(!m.setCenter(9999, 14075000.0));
+    }
+
+    // setWidth: wheel-resize clamps (Thetis console.cs:33312-33318)
+    void wheel_steps_match_thetis_notch_mouse_wheel()
+    {
+        // console.cs:33305-33310: Shift held adds the raw detent count,
+        // no modifier multiplies it by 10.
+        QCOMPARE(NotchModel::kWheelWidthStepHz, 10.0);
+        QCOMPARE(NotchModel::kWheelWidthStepFineHz, 1.0);
+    }
+
+    void setWidth_clamps_to_max_filter_width()
+    {
+        NotchModel m;
+        const int id = m.addNotch(1000000.0);
+        QVERIFY(m.setWidth(id, 20000.0));
+        QCOMPARE(m.notchById(id)->widthHz, NotchModel::kMaxNotchWidthHz);
+        QCOMPARE(NotchModel::kMaxNotchWidthHz, 10000.0);
+    }
+
+    void setWidth_clamps_negative_to_zero()
+    {
+        NotchModel m;
+        const int id = m.addNotch(1000000.0);
+        QVERIFY(m.setWidth(id, -50.0));
+        QCOMPARE(m.notchById(id)->widthHz, 0.0);
+    }
+
+    void setWidth_rejects_when_upper_edge_leaves_the_range()
+    {
+        // Thetis rejects outright rather than clamping the width down:
+        // "check to see if outside frequency limits" (console.cs:33315-33318).
+        NotchModel m;
+        const int id = m.addNotch(NotchModel::kMaxNotchCentreHz - 1000.0);
+        QVERIFY(!m.setWidth(id, 5000.0));
+        QCOMPARE(m.notchById(id)->widthHz, NotchModel::kDefaultNotchWidthHz);
+    }
+
+    void setWidth_accepts_when_upper_edge_stays_inside_the_range()
+    {
+        NotchModel m;
+        const int id = m.addNotch(NotchModel::kMaxNotchCentreHz - 5000.0);
+        QVERIFY(m.setWidth(id, 8000.0));
+        QCOMPARE(m.notchById(id)->widthHz, 8000.0);
+    }
+
+    void setWidth_rejected_while_admin_busy()
+    {
+        NotchModel m;
+        const int id = m.addNotch(14074000.0);
+        m.setAdminBusy(true);
+        QVERIFY(!m.setWidth(id, 400.0));
+        QCOMPARE(m.notchById(id)->widthHz, NotchModel::kDefaultNotchWidthHz);
+    }
+
+    void setWidth_rejects_unknown_id()
+    {
+        NotchModel m;
+        m.addNotch(14074000.0);
+        QVERIFY(!m.setWidth(9999, 400.0));
+    }
+
+    void setWidth_emits_notchChanged_once_on_change()
+    {
+        NotchModel m;
+        const int id = m.addNotch(14074000.0);
+        QSignalSpy spy(&m, &NotchModel::notchChanged);
+        QVERIFY(m.setWidth(id, 400.0));
+        QCOMPARE(spy.count(), 1);
+    }
+
+    // setActive (Thetis console.cs:40123-40156)
+    void setActive_toggles_and_emits()
+    {
+        NotchModel m;
+        const int id = m.addNotch(14074000.0);
+        QSignalSpy spy(&m, &NotchModel::notchChanged);
+        QVERIFY(m.setActive(id, false));
+        QVERIFY(!m.notchById(id)->active);
+        QCOMPARE(spy.count(), 1);
+    }
+
+    void setActive_is_silent_when_value_unchanged()
+    {
+        NotchModel m;
+        const int id = m.addNotch(14074000.0);
+        QSignalSpy spy(&m, &NotchModel::notchChanged);
+        QVERIFY(m.setActive(id, true));
+        QCOMPARE(spy.count(), 0);
+    }
+
+    void setActive_rejected_while_admin_busy()
+    {
+        NotchModel m;
+        const int id = m.addNotch(14074000.0);
+        m.setAdminBusy(true);
+        QVERIFY(!m.setActive(id, false));
+        QVERIFY(m.notchById(id)->active);
+    }
 };
 
 QTEST_MAIN(TestNotchModelGuards)
