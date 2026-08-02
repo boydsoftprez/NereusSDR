@@ -78,6 +78,7 @@
 #include <QFileInfo>
 #include <QFrame>
 #include <QGroupBox>
+#include <QHeaderView>
 #include <QLabel>
 #include <QPushButton>
 #include <QRadioButton>
@@ -86,6 +87,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QTabWidget>
+#include <QTableWidget>
 #include <QVBoxLayout>
 
 namespace NereusSDR {
@@ -2134,6 +2136,15 @@ CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
     });
 }
 
+// ── MNF editor ranges ─────────────────────────────────────────────────────────
+// The centre bounds and the width ceiling belong to NotchModel, which does the
+// actual clamping; only the two the model has no equivalent for are declared
+// here.
+// From Thetis setup.designer.cs:44334-44338 [v2.10.3.15] — udMNFWidth.Minimum.
+static constexpr double kMnfWidthMinHz = 0.0;
+// From Thetis setup.designer.cs:44323-44327 [v2.10.3.15] — udMNFWidth.Increment.
+static constexpr double kMnfWidthStepHz = 1.0;
+
 // ══════════════════════════════════════════════════════════════════════════════
 // MnfSetupPage
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2165,6 +2176,73 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
     }
 
     NotchModel* nm = model->notchModel();
+
+    // ── Notch table ──────────────────────────────────────────────────────────
+    m_notchTable = new QTableWidget(0, 4, mnfGrp);
+    m_notchTable->setObjectName(QStringLiteral("tblMNFNotches"));
+    // Column captions follow Thetis lblMNFFreq / lblMNFWidth / chkMNFActive
+    // (setup.designer.cs:44308, :44298, :44260 [v2.10.3.15]); the frequency
+    // column is Hz here where upstream is MHz.
+    m_notchTable->setHorizontalHeaderLabels({
+        QStringLiteral("Center Frequency (Hz)"),
+        QStringLiteral("Width (Hz)"),
+        QStringLiteral("Active"),
+        QString()
+    });
+    m_notchTable->setStyleSheet(QStringLiteral(
+        "QTableWidget { background: #131326; color: #c8d8e8; "
+        "  gridline-color: #304050; border: 1px solid #304050; }"
+        "QTableWidget::item { padding: 2px 4px; }"
+        "QTableWidget::item:selected { background: #1a3050; }"
+        "QHeaderView::section { background: #1a2030; color: #8aa8c0; "
+        "  border: 1px solid #304050; padding: 4px; }"));
+    m_notchTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_notchTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_notchTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_notchTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
+    m_notchTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
+    m_notchTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
+    m_notchTable->setColumnWidth(1, 110);
+    m_notchTable->setColumnWidth(2, 60);
+    m_notchTable->setColumnWidth(3, 80);
+    m_notchTable->verticalHeader()->setVisible(false);
+    m_notchTable->setMinimumHeight(160);
+    mnfLay->addWidget(m_notchTable);
+
+    // ── Add ──────────────────────────────────────────────────────────────────
+    static const QString kMnfButtonStyle = QStringLiteral(
+        "QPushButton { background: #203040; color: #c8d8e8; border: 1px solid #304050; "
+        "  border-radius: 3px; padding: 4px 10px; }"
+        "QPushButton:hover { background: #2a4060; }"
+        "QPushButton:pressed { background: #1a2840; }");
+
+    m_addBtn = new QPushButton(QStringLiteral("Add"), mnfGrp);
+    m_addBtn->setObjectName(QStringLiteral("btnMNFAdd"));
+    // From Thetis setup.designer.cs:44286 [v2.10.3.15] — btnMNFAdd tooltip.
+    m_addBtn->setToolTip(QStringLiteral("Add a notch"));
+    m_addBtn->setStyleSheet(kMnfButtonStyle);
+
+    auto* addRow = new QHBoxLayout;
+    addRow->setContentsMargins(0, 0, 0, 0);
+    addRow->setSpacing(8);
+    addRow->addWidget(m_addBtn);
+    addRow->addStretch();
+    mnfLay->addLayout(addRow);
+
+    connect(m_addBtn, &QPushButton::clicked, this, [this] {
+        // SetupPage::model(), qualified: the ctor parameter of the same name
+        // is still in scope inside this lambda and would shadow the accessor.
+        RadioModel* rm = SetupPage::model();
+        if (!rm || !rm->notchModel()) { return; }
+        SliceModel* slice = rm->activeSlice();
+        if (!slice) { return; }
+        // Thetis splits this into two clicks: btnMNFAdd opens an empty row and
+        // btnVFOFreq fills it from VFOA ("Enter the Frequency from VFOA",
+        // setup.designer.cs:44190 [v2.10.3.15]). One gesture here, because the
+        // table edits in place.
+        endAdminEdit();
+        rm->notchModel()->addNotch(slice->frequency());
+    });
 
     // ── Auto-increase ────────────────────────────────────────────────────────
     // From Thetis setup.designer.cs:44204 [v2.10.3.15] — chkMNFAutoIncrease.Text.
@@ -2214,6 +2292,124 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
         QSignalBlocker b(m_visualNotchChk);
         m_visualNotchChk->setChecked(on);
     });
+
+    // ── Wiring: notch list ↔ table ───────────────────────────────────────────
+    // Structural changes go through a queued rebuild; a direct connection would
+    // let removeNotch() delete the row Delete button from inside that button's
+    // own clicked() emission.
+    connect(nm, &NotchModel::notchAdded, this,
+            [this](int) { rebuildTable(); }, Qt::QueuedConnection);
+    connect(nm, &NotchModel::notchRemoved, this,
+            [this](int, int) { rebuildTable(); }, Qt::QueuedConnection);
+    connect(nm, &NotchModel::notchesReset, this,
+            &MnfSetupPage::rebuildTable, Qt::QueuedConnection);
+
+    rebuildTable();
+}
+
+// ── MnfSetupPage::rebuildTable ────────────────────────────────────────────────
+
+void MnfSetupPage::rebuildTable()
+{
+    RadioModel* rm = model();
+    if (!m_notchTable || !rm || !rm->notchModel()) { return; }
+
+    static const QString kMnfEditorStyle = QStringLiteral(
+        "QDoubleSpinBox { background: #1a2030; color: #c8d8e8; "
+        "  border: 1px solid #304050; border-radius: 2px; padding: 1px; }"
+        "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button "
+        "  { background: #202838; width: 14px; }");
+    static const QString kMnfRowButtonStyle = QStringLiteral(
+        "QPushButton { background: #203040; color: #c8d8e8; border: 1px solid #304050; "
+        "  border-radius: 2px; padding: 1px 6px; font-size: 11px; }"
+        "QPushButton:hover { background: #2a4060; }");
+
+    // setRowCount() destroys the outgoing cell widgets; a focused spin box
+    // being destroyed emits editingFinished on its way out, so the guard has
+    // to be up before the row count moves.
+    m_rebuilding = true;
+
+    const QList<Notch>& notches = rm->notchModel()->notches();
+    const int count = static_cast<int>(notches.size());
+
+    m_rowIds.clear();
+    m_rowIds.reserve(count);
+    m_notchTable->setRowCount(count);
+
+    for (int row = 0; row < count; ++row) {
+        const Notch& n = notches.at(row);
+        const int id = n.id;
+        m_rowIds.append(id);
+
+        // Col 0: centre frequency. Thetis's udMNFFreq is MHz over 0..1000000
+        // (setup.designer.cs:44352-44369 [v2.10.3.15]); this column is Hz, so
+        // the editor takes the bounds NotchModel itself constrains to.
+        auto* freqSpin = new QDoubleSpinBox(m_notchTable);
+        freqSpin->setObjectName(QStringLiteral("udMNFFreq"));
+        freqSpin->setDecimals(0);
+        freqSpin->setRange(NotchModel::kMinNotchCentreHz,
+                           NotchModel::kMaxNotchCentreHz);
+        freqSpin->setSingleStep(1.0);
+        freqSpin->setValue(n.centerHz);
+        freqSpin->setStyleSheet(kMnfEditorStyle);
+        // From Thetis setup.designer.cs:44374 [v2.10.3.15] — udMNFFreq tooltip.
+        freqSpin->setToolTip(QStringLiteral("Center frequency of the notch"));
+        m_notchTable->setCellWidget(row, 0, freqSpin);
+
+        // Col 1: width.
+        auto* widthSpin = new QDoubleSpinBox(m_notchTable);
+        widthSpin->setObjectName(QStringLiteral("udMNFWidth"));
+        widthSpin->setDecimals(0);
+        widthSpin->setRange(kMnfWidthMinHz, NotchModel::kMaxNotchWidthHz);
+        widthSpin->setSingleStep(kMnfWidthStepHz);
+        widthSpin->setValue(n.widthHz);
+        widthSpin->setStyleSheet(kMnfEditorStyle);
+        // From Thetis setup.designer.cs:44343 [v2.10.3.15] — udMNFWidth tooltip
+        // (upstream spelling preserved verbatim).
+        widthSpin->setToolTip(QStringLiteral("Bandwdith of the notch"));
+        m_notchTable->setCellWidget(row, 1, widthSpin);
+
+        // Col 2: active.
+        auto* activeChk = new QCheckBox(m_notchTable);
+        activeChk->setObjectName(QStringLiteral("chkMNFActive"));
+        activeChk->setChecked(n.active);
+        // From Thetis setup.designer.cs:44261 [v2.10.3.15] — chkMNFActive tooltip.
+        activeChk->setToolTip(QStringLiteral("Checked if the notch is active"));
+        m_notchTable->setCellWidget(row, 2, activeChk);
+
+        // Col 3: delete.
+        auto* delBtn = new QPushButton(QStringLiteral("Delete"), m_notchTable);
+        delBtn->setObjectName(QStringLiteral("btnMNFDelete"));
+        // From Thetis setup.designer.cs:44219 [v2.10.3.15] — btnMNFDelete tooltip.
+        delBtn->setToolTip(QStringLiteral("Delete the current notch index"));
+        delBtn->setStyleSheet(kMnfRowButtonStyle);
+        connect(delBtn, &QPushButton::clicked, this, [this, id] {
+            RadioModel* r = model();
+            if (!r || !r->notchModel()) { return; }
+            endAdminEdit();
+            r->notchModel()->removeNotch(id);
+        });
+        m_notchTable->setCellWidget(row, 3, delBtn);
+
+        m_notchTable->setRowHeight(row, 26);
+    }
+
+    m_rebuilding = false;
+}
+
+// ── MnfSetupPage::endAdminEdit ────────────────────────────────────────────────
+
+void MnfSetupPage::endAdminEdit()
+{
+    RadioModel* rm = model();
+    if (!rm || !rm->notchModel()) { return; }
+    // Thetis clears the flag before it writes: btnMNFEnter_Click
+    // (setup.cs:17738 [v2.10.3.15]) sets `AddActive = false` at :17744 and
+    // only then calls WDSP.RXANBPAddNotch at :17749-17751, and likewise sets
+    // `EditActive = false` at :17759 before WDSP.RXANBPEditNotch at
+    // :17766-17768. NotchAdminBusy is AddActive | EditActive
+    // (:17728-17735), so clearing both is what unlocks the write.
+    rm->notchModel()->setAdminBusy(false);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

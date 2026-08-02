@@ -186,6 +186,115 @@ private slots:
         page.show();
         QVERIFY(!page.findChild<QCheckBox*>(QStringLiteral("chkMNFAutoIncrease")));
     }
+
+    // -- B. Table and Add -------------------------------------------------
+
+    void table_hasOneRowPerNotch()
+    {
+        RadioModel model;
+        model.notchModel()->addNotch(14200000.0);
+        model.notchModel()->addNotch(7100000.0);
+
+        MnfSetupPage page(&model);
+        page.show();
+
+        auto* table = page.findChild<QTableWidget*>(QStringLiteral("tblMNFNotches"));
+        QVERIFY(table);
+        QCOMPARE(table->rowCount(), 2);
+        QCOMPARE(table->columnCount(), 4);
+    }
+
+    void table_rowEditorsCarryThetisNamesAndValues()
+    {
+        RadioModel model;
+        model.notchModel()->addNotch(14200000.0, 200.0);
+
+        MnfSetupPage page(&model);
+        page.show();
+
+        auto* table = page.findChild<QTableWidget*>(QStringLiteral("tblMNFNotches"));
+        QVERIFY(table);
+        QCOMPARE(table->rowCount(), 1);
+
+        auto* freq   = qobject_cast<QDoubleSpinBox*>(table->cellWidget(0, 0));
+        auto* width  = qobject_cast<QDoubleSpinBox*>(table->cellWidget(0, 1));
+        auto* active = qobject_cast<QCheckBox*>(table->cellWidget(0, 2));
+        auto* del    = qobject_cast<QPushButton*>(table->cellWidget(0, 3));
+
+        QVERIFY(freq);
+        QVERIFY(width);
+        QVERIFY(active);
+        QVERIFY(del);
+        QCOMPARE(freq->objectName(),   QStringLiteral("udMNFFreq"));
+        QCOMPARE(width->objectName(),  QStringLiteral("udMNFWidth"));
+        QCOMPARE(active->objectName(), QStringLiteral("chkMNFActive"));
+        QCOMPARE(del->objectName(),    QStringLiteral("btnMNFDelete"));
+
+        QCOMPARE(freq->value(), 14200000.0);
+        QCOMPARE(width->value(), 200.0);
+        QCOMPARE(active->isChecked(), true);
+
+        // From Thetis setup.designer.cs:44329-44338 [v2.10.3.15] --
+        // udMNFWidth.Maximum = 10000, udMNFWidth.Minimum = 0.
+        QCOMPARE(width->minimum(), 0.0);
+        QCOMPARE(width->maximum(), NotchModel::kMaxNotchWidthHz);
+
+        // Correction 6: the centre bounds are NotchModel's, not local copies.
+        QCOMPARE(freq->minimum(), NotchModel::kMinNotchCentreHz);
+        QCOMPARE(freq->maximum(), NotchModel::kMaxNotchCentreHz);
+    }
+
+    void addButton_createsNotchAtVfoFrequency()
+    {
+        RadioModel model;
+        seedSlice(model, 14074000.0);
+
+        MnfSetupPage page(&model);
+        page.show();
+
+        auto* table = page.findChild<QTableWidget*>(QStringLiteral("tblMNFNotches"));
+        auto* add   = page.findChild<QPushButton*>(QStringLiteral("btnMNFAdd"));
+        QVERIFY(table);
+        QVERIFY(add);
+        QCOMPARE(table->rowCount(), 0);
+
+        add->click();
+
+        QCOMPARE(static_cast<int>(model.notchModel()->notches().size()), 1);
+        QCOMPARE(model.notchModel()->notches().first().centerHz, 14074000.0);
+        // Structural change reaches the table on the queued rebuild.
+        QTRY_COMPARE(table->rowCount(), 1);
+    }
+
+    void addButton_isNoOpWithoutAnActiveSlice()
+    {
+        RadioModel model;
+        MnfSetupPage page(&model);
+        page.show();
+
+        auto* add = page.findChild<QPushButton*>(QStringLiteral("btnMNFAdd"));
+        QVERIFY(add);
+        add->click();
+
+        QCOMPARE(static_cast<int>(model.notchModel()->notches().size()), 0);
+    }
+
+    void table_followsNotchRemovedFromElsewhere()
+    {
+        RadioModel model;
+        model.notchModel()->addNotch(14200000.0);
+        const int id = model.notchModel()->notches().first().id;
+
+        MnfSetupPage page(&model);
+        page.show();
+
+        auto* table = page.findChild<QTableWidget*>(QStringLiteral("tblMNFNotches"));
+        QVERIFY(table);
+        QCOMPARE(table->rowCount(), 1);
+
+        model.notchModel()->removeNotch(id);
+        QTRY_COMPARE(table->rowCount(), 0);
+    }
 };
 
 QTEST_MAIN(TestMnfSetupPage)

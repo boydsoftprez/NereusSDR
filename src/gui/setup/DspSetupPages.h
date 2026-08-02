@@ -91,6 +91,9 @@
 #include "gui/SetupPage.h"
 
 #include <QCheckBox>
+#include <QList>
+
+class QTableWidget;
 
 namespace NereusSDR {
 
@@ -255,9 +258,25 @@ public:
     explicit MnfSetupPage(RadioModel* model, QWidget* parent = nullptr);
 
 private:
+    // Full table rebuild. Wired to NotchModel's structural signals with
+    // Qt::QueuedConnection so a rebuild never destroys the cell widget whose
+    // signal is being emitted right now (the row Delete button above all).
+    void rebuildTable();
+    // Clear the Settings-side edit lock. NotchModel's mutators are shared with
+    // the panadapter path and reject writes while adminBusy is set, so every
+    // page-side write clears it first, exactly as Thetis's ENTER button does.
+    void endAdminEdit();
+
     // ── Multi Notch Filter group ─────────────────────────────────────────
-    QCheckBox* m_autoIncreaseChk{nullptr};
-    QCheckBox* m_visualNotchChk{nullptr};
+    QTableWidget*      m_notchTable{nullptr};
+    class QPushButton* m_addBtn{nullptr};
+    QCheckBox*         m_autoIncreaseChk{nullptr};
+    QCheckBox*         m_visualNotchChk{nullptr};
+
+    // Table row → NotchModel notch id. The row lambdas capture the id, never
+    // the row, so a reorder cannot mis-target a notch.
+    QList<int> m_rowIds;
+    bool m_rebuilding{false};
 };
 
 } // namespace NereusSDR
