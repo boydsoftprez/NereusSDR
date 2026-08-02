@@ -1494,8 +1494,13 @@ In `src/gui/MainWindow.cpp`, replace the slice-0-only bind at lines 2823-2838:
         SliceModel* s = m_radioModel->activeSlice();
         if (!s) { return; }
         m_rxDashboard->bindSlice(s);
-        m_rxDashboard->setSliceLetter(
-            QChar(QLatin1Char('A' + s->sliceId())));
+        // Use SliceModel::sliceLetter(), do NOT derive the letter here.
+        // It is already derived from sliceIndex() upstream. It previously
+        // returned a stored member defaulting to 'A', so every slice
+        // reported 'A' and three call sites mislabelled their slices; see
+        // the comment at SliceModel.h:503. Deriving locally would
+        // reintroduce a second source of truth for the same fact.
+        m_rxDashboard->setSliceLetter(s->sliceLetter());
     };
     connect(m_radioModel, &RadioModel::sliceAdded, this,
             [rebindDashboard](int) { rebindDashboard(); });
