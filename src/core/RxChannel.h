@@ -684,7 +684,8 @@ public:
 
     /// Narrowest notch the current filter can realise, in Hz. Varies with the
     /// filter's coefficient count and the channel's DSP rate, so it must be
-    /// re-read after either changes.
+    /// re-read after either changes. Observers follow minNotchWidthChanged
+    /// rather than polling.
     double minNotchWidthHz() const;
 
     /// Read one notch straight back out of WDSP's per-channel database.
@@ -858,6 +859,19 @@ signals:
     void agcModeChanged(NereusSDR::AGCMode mode);
     void activeChanged(bool active);
     void filterChanged(double low, double high);
+
+    /// TNF design section 9: the narrowest realisable notch moved.
+    ///
+    /// WDSP recomputes it as 1600.0 / (nc / 256) * (rate / 48000) on every
+    /// read (third_party/wdsp/src/nbp.c:82-96), so it changes silently
+    /// whenever the coefficient count or the channel rate does. Thetis has
+    /// the same problem and solves it the same way: it re-reads through
+    /// UpdateMinimumNotchWidthRX and fires MinimumRXNotchWidthChangedHandlers
+    /// (console.cs:48787-48818 [v2.10.3.15]), called from the DSP-options
+    /// apply path at console.cs:39052-39053.
+    ///
+    /// Carries the freshly read value so observers need no second call.
+    void minNotchWidthChanged(double minWidthHz);
 
     // Phase 3J-1 (Task 16.2): TCI audio tap. Emitted from the audio thread
     // after fexchange2 and any post-DSP NR (DFNR, MNR) produce the final

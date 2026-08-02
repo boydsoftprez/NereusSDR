@@ -137,6 +137,9 @@ class TestRxChannelNotchWrappers;
 // unopened id (design section 11.1 -- rxa[] is sized MAX_CHANNELS and every
 // entry point dereferences before range-checking).
 class TestNotchChannelSync;
+// TNF Task 9: the MNF Settings page test primes the engine so it can open one
+// real RX channel and check the minimum-notch-width readout against it.
+class TestMnfSetupPage;
 #endif
 
 namespace NereusSDR {
@@ -784,6 +787,10 @@ private:
     // drives openRxChannelPool and reads the notch state back off every
     // channel the pool opened.
     friend class ::TestNotchChannelSync;
+    // TNF Task 9: same friendship for the MnfSetupPage readout test, which
+    // opens one real RX channel so RXANBPGetMinNotchWidth has an rxa[].nbp0
+    // to read.
+    friend class ::TestMnfSetupPage;
 #endif
 };
 

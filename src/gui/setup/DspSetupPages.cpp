@@ -65,6 +65,8 @@
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
 #include "core/RadioConnection.h"
+#include "core/RxChannel.h"
+#include "core/WdspEngine.h"
 #include "core/wdsp_api.h"
 #include "models/NotchModel.h"
 #include "models/RadioModel.h"
@@ -83,6 +85,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QScrollArea>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSpinBox>
@@ -2244,6 +2247,23 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
         rm->notchModel()->addNotch(slice->frequency());
     });
 
+    // ── Minimum notch width ──────────────────────────────────────────────────
+    // Narrowest notch the current bandpass can realise: WDSP min_notch_width
+    // (third_party/wdsp/src/nbp.c:82-96), read through RXANBPGetMinNotchWidth
+    // (nbp.c:594). NereusSDR-original control; Thetis pushes the same value
+    // out of UpdateMinimumNotchWidthRX (console.cs:48787-48818 [v2.10.3.15])
+    // to its notch popup rather than to the Setup tab.
+    m_minWidthLbl = new QLabel(QStringLiteral("--"), mnfGrp);
+    m_minWidthLbl->setObjectName(QStringLiteral("lblMNFMinWidth"));
+    m_minWidthLbl->setToolTip(QStringLiteral(
+        "Narrowest notch the current bandpass filter can realise"));
+    addLabeledLabel(mnfLay, QStringLiteral("Minimum Notch Width"), m_minWidthLbl);
+
+    // The readout follows the active slice's channel, so it has to re-resolve
+    // when the operator changes which slice that is.
+    connect(model, &RadioModel::activeSliceChanged, this,
+            [this](int) { refreshMinNotchWidth(); });
+
     // ── Auto-increase ────────────────────────────────────────────────────────
     // From Thetis setup.designer.cs:44204 [v2.10.3.15] — chkMNFAutoIncrease.Text.
     m_autoIncreaseChk = new QCheckBox(
@@ -2310,6 +2330,7 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
     connect(nm, &NotchModel::notchChanged, this, &MnfSetupPage::refreshRow);
 
     rebuildTable();
+    refreshMinNotchWidth();
 }
 
 // ── MnfSetupPage::rebuildTable ────────────────────────────────────────────────
@@ -2507,6 +2528,56 @@ void MnfSetupPage::endAdminEdit()
     // :17766-17768. NotchAdminBusy is AddActive | EditActive
     // (:17728-17735), so clearing both is what unlocks the write.
     rm->notchModel()->setAdminBusy(false);
+}
+
+// ── MnfSetupPage::refreshMinNotchWidth ────────────────────────────────────────
+
+void MnfSetupPage::refreshMinNotchWidth()
+{
+    if (!m_minWidthLbl) { return; }
+
+    // Whichever channel was being followed is no longer necessarily the right
+    // one; re-arm below against the channel actually resolved this pass.
+    disconnect(m_minWidthConn);
+
+    RadioModel* rm = model();
+    if (!rm) {
+        m_minWidthLbl->setText(QStringLiteral("--"));
+        return;
+    }
+
+    // Thetis surfaces this per-RX (console.cs:48787-48818,
+    // UpdateMinimumNotchWidthRX [v2.10.3.15]). NereusSDR's notch list is
+    // global, so the readout follows the active slice's channel and falls
+    // back to the first pooled channel before any slice exists.
+    const int sliceIndex = rm->activeSlice() ? rm->activeSlice()->sliceIndex()
+                                             : WdspEngine::kFirstSliceChannelId;
+    RxChannel* ch = rm->rxChannelForSlice(sliceIndex);
+    if (!ch) {
+        m_minWidthLbl->setText(QStringLiteral("--"));
+        return;
+    }
+
+    m_minWidthConn = connect(ch, &RxChannel::minNotchWidthChanged, this,
+                             [this](double minWidthHz) {
+        if (!m_minWidthLbl) { return; }
+        m_minWidthLbl->setText(QStringLiteral("%1 Hz").arg(minWidthHz, 0, 'f', 1));
+    });
+
+    m_minWidthLbl->setText(
+        QStringLiteral("%1 Hz").arg(ch->minNotchWidthHz(), 0, 'f', 1));
+}
+
+// ── MnfSetupPage::showEvent ───────────────────────────────────────────────────
+
+void MnfSetupPage::showEvent(QShowEvent* event)
+{
+    SetupPage::showEvent(event);
+    // The channel this readout follows may not have existed when the page was
+    // built (WDSP initialises asynchronously, and the slice pool opens on
+    // connect), so re-resolve on every visit as well as on the signal.
+    refreshMinNotchWidth();
+    rebuildTable();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

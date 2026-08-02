@@ -257,6 +257,9 @@ class MnfSetupPage : public SetupPage {
 public:
     explicit MnfSetupPage(RadioModel* model, QWidget* parent = nullptr);
 
+protected:
+    void showEvent(QShowEvent* event) override;
+
 private:
     // Full table rebuild. Wired to NotchModel's structural signals with
     // Qt::QueuedConnection so a rebuild never destroys the cell widget whose
@@ -274,12 +277,21 @@ private:
     // the panadapter path and reject writes while adminBusy is set, so every
     // page-side write clears it first, exactly as Thetis's ENTER button does.
     void endAdminEdit();
+    // Re-read RXANBPGetMinNotchWidth off the active slice's channel and
+    // re-arm the follow connection onto whichever channel that now is.
+    void refreshMinNotchWidth();
 
     // ── Multi Notch Filter group ─────────────────────────────────────────
     QTableWidget*      m_notchTable{nullptr};
     class QPushButton* m_addBtn{nullptr};
     QCheckBox*         m_autoIncreaseChk{nullptr};
     QCheckBox*         m_visualNotchChk{nullptr};
+    QLabel*            m_minWidthLbl{nullptr};
+
+    // Follow connection onto the current RxChannel's minNotchWidthChanged.
+    // Held so it can be dropped when the active slice moves to a different
+    // channel; a stale one would keep reporting the old channel's value.
+    QMetaObject::Connection m_minWidthConn;
 
     // Table row → NotchModel notch id. The row lambdas capture the id, never
     // the row, so a reorder cannot mis-target a notch.

@@ -361,6 +361,13 @@ void RxChannel::setSampleRate(int newRateHz)
     if (m_nb) {
         m_nb->setSampleRate(m_sampleRate, m_bufferSize);
     }
+
+    // min_notch_width scales with the channel rate as well as with nc
+    // (third_party/wdsp/src/nbp.c:82-96). Thetis re-reads the value on the
+    // same sample-rate path (console.cs:39052-39053 ->
+    // UpdateMinimumNotchWidthRX [v2.10.3.15]), so the readout follows a rate
+    // change here rather than going stale until the next filter-size change.
+    emit minNotchWidthChanged(minNotchWidthHz());
 }
 
 // ---------------------------------------------------------------------------
@@ -2209,6 +2216,12 @@ void RxChannel::setFilterSizeSamples(int nc)
     // From Thetis radio.cs:540 [v2.10.3.13] DSPRX.FilterSize setter.
     RXASetNC(m_channelId, nc);
 #endif
+    // RXASetNC reaches nbp0 through RXANBPSetNC (third_party/wdsp/src/RXA.c:1043),
+    // and min_notch_width divides by nc (nbp.c:82-96), so the narrowest
+    // realisable notch just moved. Thetis re-reads it at exactly this point
+    // in its own DSP-options apply path (console.cs:39052-39053 ->
+    // UpdateMinimumNotchWidthRX, :48787-48818 [v2.10.3.15]).
+    emit minNotchWidthChanged(minNotchWidthHz());
 }
 
 void RxChannel::setFilterTypeLinearPhase(bool linearPhase)

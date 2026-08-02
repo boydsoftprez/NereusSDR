@@ -478,6 +478,95 @@ private slots:
         QTRY_COMPARE(table->rowCount(), 2);
         QVERIFY(!model.notchModel()->adminBusy());
     }
+
+    // -- E. Minimum notch width -------------------------------------------
+
+    void minWidthLabel_showsPlaceholderWithoutAChannel()
+    {
+        RadioModel model;
+        MnfSetupPage page(&model);
+        page.show();
+
+        auto* lbl = page.findChild<QLabel*>(QStringLiteral("lblMNFMinWidth"));
+        QVERIFY(lbl);
+        QCOMPARE(lbl->text(), QStringLiteral("--"));
+    }
+
+    void minWidthLabel_readsTheLiveChannel()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        QVERIFY(engine);
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        RxChannel* ch = engine->createRxChannel(WdspEngine::kFirstSliceChannelId,
+                                                /*inputBufferSize*/ 238,
+                                                /*dspBufferSize*/ 4096,
+                                                /*inputSampleRate*/ 48000,
+                                                /*dspSampleRate*/ 48000,
+                                                /*outputSampleRate*/ 48000);
+        QVERIFY(ch);
+
+        MnfSetupPage page(&model);
+        page.show();
+
+        auto* lbl = page.findChild<QLabel*>(QStringLiteral("lblMNFMinWidth"));
+        QVERIFY(lbl);
+        QCOMPARE(lbl->text(),
+                 QStringLiteral("%1 Hz").arg(ch->minNotchWidthHz(), 0, 'f', 1));
+        QVERIFY(lbl->text() != QStringLiteral("--"));
+    }
+
+    void minWidthLabel_refreshesOnShow()
+    {
+        RadioModel model;
+        MnfSetupPage page(&model);
+        page.show();
+
+        auto* lbl = page.findChild<QLabel*>(QStringLiteral("lblMNFMinWidth"));
+        QVERIFY(lbl);
+
+        // SetupDialog navigates back to a page that was built long before;
+        // the readout re-reads on every visit rather than trusting the
+        // value it cached at construction.
+        lbl->setText(QStringLiteral("stale"));
+        page.hide();
+        page.show();
+        QCOMPARE(lbl->text(), QStringLiteral("--"));
+    }
+
+    // Bench row 7: "Min-width readout changes when nc changes". WDSP's
+    // min_notch_width is 1600.0 / (nc / 256) * (rate / 48000) for wintype 0
+    // (third_party/wdsp/src/nbp.c:82-96), so halving the coefficient count
+    // doubles it. Nothing in the tree signalled that before this task, which
+    // is why RxChannel gained minNotchWidthChanged.
+    void minWidthLabel_followsMinNotchWidthChanged()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        QVERIFY(engine);
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        RxChannel* ch = engine->createRxChannel(WdspEngine::kFirstSliceChannelId,
+                                                238, 4096, 48000, 48000, 48000);
+        QVERIFY(ch);
+
+        MnfSetupPage page(&model);
+        page.show();
+
+        auto* lbl = page.findChild<QLabel*>(QStringLiteral("lblMNFMinWidth"));
+        QVERIFY(lbl);
+        const QString before = lbl->text();
+
+        QSignalSpy spy(ch, &RxChannel::minNotchWidthChanged);
+        ch->setFilterSizeSamples(2048);
+        QVERIFY(spy.count() >= 1);
+
+        const double after = ch->minNotchWidthHz();
+        QVERIFY(after != 0.0);
+        QCOMPARE(lbl->text(), QStringLiteral("%1 Hz").arg(after, 0, 'f', 1));
+        QVERIFY(lbl->text() != before);
+    }
 };
 
 QTEST_MAIN(TestMnfSetupPage)
