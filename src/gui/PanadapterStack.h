@@ -34,6 +34,14 @@
 //                                    Phase 3F design. AI-assisted
 //                                    transformation via Anthropic
 //                                    Claude Code.
+//   2026-08-02  J.J. Boyd / KG4VCF  R1 Task 7 fix round 1 (coordinator
+//                                    spec review finding 2): added
+//                                    panRetired(panId), emitted from
+//                                    removePanadapter(), so layout-driven
+//                                    pan retirement can be told apart from
+//                                    a pan that is merely re-parented.
+//                                    AI-assisted transformation via
+//                                    Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -149,6 +157,16 @@ public:
 signals:
     void activePanChanged(const QString& panId);
     void countChanged(int count);
+
+    /// R1 Task 7 fix round 1 (coordinator spec review, finding 2): emitted
+    /// from removePanadapter() so a caller can drop any core-side state
+    /// keyed on panId (e.g. MainWindow's FftTopology) the moment the pan
+    /// itself goes away. applyLayout()'s orphan-retirement loop is the
+    /// call site that matters today: it is what actually destroys a pan on
+    /// a layout shrink, and it does so without going through
+    /// MainWindow::disconnectPanadapter -- that method currently has no
+    /// caller at all (see its own header comment).
+    void panRetired(const QString& panId);
 
 private:
     void rebuildSplitters(const QString& layoutId, const QStringList& panIds);

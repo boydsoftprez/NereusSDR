@@ -2198,9 +2198,17 @@ void MainWindow::rebuildFftRouting()
     // would yank a CTUN pan back after an operator pan-drag (that path
     // retunes the DDC through forceHardwareFrequency without going through
     // the allocator).
-    QHash<QString, int> before;
+    // Fix round 1 (coordinator spec review, finding 1): a QHash<QString,
+    // int> here misfired the isNewSubscription gate below the moment a pan
+    // could legitimately carry more than one stream at once -- whichever
+    // stream was not the single remembered one looked "new" on every pass,
+    // re-triggering applyStreamWindowToPan every time instead of once.
+    // Restored to the list-membership form this had before FftTopology
+    // existed, just sourced from m_topology.subscriptions() instead of
+    // router->receiversForPan(panId).
+    QHash<QString, QList<int>> before;
     for (const SpectrumSubscription& sub : m_topology.subscriptions()) {
-        before.insert(sub.consumerId, sub.streamIndex);
+        before[sub.consumerId].append(sub.streamIndex);
     }
 
     // Wholesale rebuild, not an incremental edit. A pan can host several
@@ -2251,10 +2259,12 @@ void MainWindow::rebuildFftRouting()
         if (panId.isEmpty()) { panId = m_panStack->activePanId(); }
         if (panId.isEmpty()) { continue; }
 
-        const bool isNewSubscription = before.value(panId, -1) != stream;
-        // subscribe() replaces any previous stream for this pan (one active
-        // stream per consumer), so two slices sharing a stream and a pan
-        // collapse to the one subscription applyTo() below actually applies.
+        const bool isNewSubscription = !before.value(panId).contains(stream);
+        // subscribe() adds idempotently -- a pan can legitimately carry more
+        // than one stream at once (fix round 1, finding 1), and repeating an
+        // already-held (panId, stream) pair is a no-op -- so two slices
+        // sharing a stream and a pan collapse to the one subscription
+        // applyTo() below actually applies.
         m_topology.subscribe(panId, stream);
         if (isNewSubscription) {
             applyStreamWindowToPan(panId, stream);
@@ -2480,6 +2490,19 @@ void MainWindow::buildUI()
         ensureOverlayPanels();
         refreshPanStatusOverlays();
     });
+
+    // R1 Task 7 fix round 1 (coordinator spec review, finding 2):
+    // applyLayout()'s orphan-retirement loop destroys a pan on a layout
+    // shrink without going through MainWindow::disconnectPanadapter (which
+    // has no caller today), so nothing told m_topology that panId was
+    // gone. Left alone, the next rebuildFftRouting() -> applyTo() call
+    // would resurrect that pan's stale mapping into the router. Pre-dates
+    // FftTopology and is mostly benign today (the pan-dispatch loop
+    // null-checks m_panStack->spectrum(panId) before touching it), but a
+    // router entry for a pan that no longer exists is still wrong state,
+    // so close it now that m_topology exists to keep in sync.
+    connect(m_panStack, &PanadapterStack::panRetired, this,
+            [this](const QString& panId) { m_topology.unsubscribe(panId); });
 
     // The S-meter poller's slice list keys off SLICE lifetime, not pan count.
     // Adding a slice to an existing pan moves no pan count, so hanging this on

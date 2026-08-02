@@ -68,6 +68,13 @@ void PanadapterStack::removePanadapter(const QString& panId)
     if (!applet) { return; }
     applet->deleteLater();
 
+    // R1 Task 7 fix round 1 (coordinator spec review, finding 2): announce
+    // the removal before the bookkeeping below so a listener can drop
+    // panId from its own state (e.g. FftTopology) using the exact id this
+    // pan was known by, regardless of whether it also happened to be the
+    // active pan.
+    emit panRetired(panId);
+
     // Re-seat the active id if it named the pan just destroyed. activePanId()
     // feeds "Add slice on active pan" (Ctrl+R), "Float active pan..." and
     // rebuildFftRouting's last-resort pan resolution, so a stale id points all
