@@ -671,6 +671,22 @@ public:
     /// calls above because this one designs 2N filter pairs.
     void syncNotches(const QList<Notch>& notches);
 
+    /// Master notch enable for THIS channel. WDSP builds every notch database
+    /// inert (third_party/wdsp/src/RXA.c:87), so a channel that never gets
+    /// this call is notch-inert rather than merely notch-empty.
+    void setNotchesRun(bool run);
+    bool notchesRun() const { return m_notchesRun; }
+
+    /// Let WDSP widen a notch that is narrower than the filter can realise,
+    /// instead of dropping it.
+    void setNotchAutoIncrease(bool on);
+    bool notchAutoIncrease() const { return m_notchAutoIncrease; }
+
+    /// Narrowest notch the current filter can realise, in Hz. Varies with the
+    /// filter's coefficient count and the channel's DSP rate, so it must be
+    /// re-read after either changes.
+    double minNotchWidthHz() const;
+
     // --- Filter convenience setters (single-axis) ---
     // Thin wrappers that remember the pending low/high and call setFilterFreqs.
     // Carry-only for state preservation in captureState/applyState; WDSP wiring
@@ -1003,6 +1019,16 @@ private:
     // m_notchTuneFrequencyHz. Do NOT move this write away from the WDSP
     // call it mirrors in setShiftFrequency; that co-location is the point.
     double m_notchShiftHz{0.0};
+
+    // Manual notch carries. Main-thread only, no atomics: WDSP owns the
+    // authoritative per-channel notch state and there is no WDSP getter for
+    // either flag, so these mirror the last value pushed purely so callers
+    // and tests can read back what a channel was told.
+    // Defaults mirror WDSP's construction values so the carry is not a lie
+    // about a freshly opened channel: create_notchdb master_run = 0
+    // (third_party/wdsp/src/RXA.c:87), create_nbp autoincr = 1 (RXA.c:105).
+    bool m_notchesRun{false};
+    bool m_notchAutoIncrease{true};
 
     // NB enabled carry (NbFamily is the primary API; this is a convenience bool
     // that reflects whether NbMode != Off)

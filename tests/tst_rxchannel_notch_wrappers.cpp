@@ -331,6 +331,89 @@ private slots:
         QCOMPARE(readRawNotch(kNotchTestChannel, 0).rval, -1);
 #endif
     }
+
+    // -- 6.3: run flag and auto-increase carries --------------------------
+
+    void notches_run_defaults_off_and_round_trips()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("Requires a live WDSP build: the notch database is rxa[].ndb.");
+#else
+        WdspEngine engine;
+        RxChannel* ch = openNotchChannel(engine);
+        ChannelCloser closer{&engine};
+        QVERIFY(ch != nullptr);
+
+        // create_notchdb is called with master_run = 0
+        // (third_party/wdsp/src/RXA.c:87), so a freshly opened channel is
+        // notch-inert until told otherwise.
+        QVERIFY(!ch->notchesRun());
+
+        ch->setNotchesRun(true);
+        QVERIFY(ch->notchesRun());
+
+        ch->setNotchesRun(false);
+        QVERIFY(!ch->notchesRun());
+#endif
+    }
+
+    void auto_increase_defaults_to_the_wdsp_construction_value()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("Requires a live WDSP build: the notch database is rxa[].ndb.");
+#else
+        WdspEngine engine;
+        RxChannel* ch = openNotchChannel(engine);
+        ChannelCloser closer{&engine};
+        QVERIFY(ch != nullptr);
+
+        // create_nbp is called with autoincr = 1
+        // (third_party/wdsp/src/RXA.c:105), and Thetis ships
+        // chkMNFAutoIncrease.Checked = true, so a false carry would lie
+        // about a freshly opened channel and would silently disable the
+        // feature on every channel the fan-out reconciles.
+        QVERIFY(ch->notchAutoIncrease());
+#endif
+    }
+
+    void auto_increase_round_trips()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("Requires a live WDSP build: the notch database is rxa[].ndb.");
+#else
+        WdspEngine engine;
+        RxChannel* ch = openNotchChannel(engine);
+        ChannelCloser closer{&engine};
+        QVERIFY(ch != nullptr);
+
+        ch->setNotchAutoIncrease(false);
+        QVERIFY(!ch->notchAutoIncrease());
+
+        ch->setNotchAutoIncrease(true);
+        QVERIFY(ch->notchAutoIncrease());
+#endif
+    }
+
+    // -- 9: minimum realisable notch width --------------------------------
+
+    void min_notch_width_matches_the_wdsp_formula()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("Requires a live WDSP build: the notch database is rxa[].ndb.");
+#else
+        WdspEngine engine;
+        RxChannel* ch = openNotchChannel(engine);
+        ChannelCloser closer{&engine};
+        QVERIFY(ch != nullptr);
+
+        // min_notch_width (third_party/wdsp/src/nbp.c:82-95) for wintype 0 is
+        //   1600.0 / (nc / 256) * (rate / 48000)
+        // create_nbp gives this channel wintype 0 (RXA.c:103),
+        // nc = max(2048, dsp_size) = 4096 (RXA.c:96) and rate = dsp_rate
+        // = 48000 (RXA.c:102), so 1600.0 / 16 * 1 = 100.0 Hz.
+        QCOMPARE(ch->minNotchWidthHz(), 100.0);
+#endif
+    }
 };
 
 QTEST_MAIN(TestRxChannelNotchWrappers)

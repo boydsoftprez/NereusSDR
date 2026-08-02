@@ -1635,6 +1635,49 @@ int RxChannel::notchCount() const
 #endif
 }
 
+void RxChannel::setNotchesRun(bool run)
+{
+    // Carry set outside the WDSP guard, mirroring setNotchTuneFrequency, so
+    // a stub build and the unit tests still see what the channel was told.
+    m_notchesRun = run;
+
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:40000-40002 [v2.10.3.15], the TNFActive setter
+    // fans the same flag to all three fixed channel ids.
+    // WDSP: third_party/wdsp/src/nbp.c:499, the only writer of
+    // notchdb.master_run; it also drives nbp0.fnfrun and re-runs
+    // RXAbpsnbaCheck / RXAbpsnbaSet, so it is not a cheap toggle.
+    RXANBPSetNotchesRun(m_channelId, run ? 1 : 0);
+#endif
+}
+
+void RxChannel::setNotchAutoIncrease(bool on)
+{
+    m_notchAutoIncrease = on;
+
+#ifdef HAVE_WDSP
+    // From Thetis setup.cs:17928-17930 [v2.10.3.15],
+    // chkMNFAutoIncrease_CheckedChanged.
+    // WDSP: third_party/wdsp/src/nbp.c:604, touches both nbp0 and bpsnba.
+    RXANBPSetAutoIncrease(m_channelId, on ? 1 : 0);
+#endif
+}
+
+double RxChannel::minNotchWidthHz() const
+{
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:48804 [v2.10.3.15], the per-RX minimum notch
+    // width readback that feeds Thetis's _minimum_rx_notch_width map.
+    // WDSP: third_party/wdsp/src/nbp.c:594 -> min_notch_width (nbp.c:82-95),
+    // which scales with the filter's coefficient count and sample rate.
+    double minWidth = 0.0;
+    RXANBPGetMinNotchWidth(m_channelId, &minWidth);
+    return minWidth;
+#else
+    return 0.0;
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // Channel state
 // ---------------------------------------------------------------------------
