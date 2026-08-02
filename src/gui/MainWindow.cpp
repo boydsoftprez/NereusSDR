@@ -308,6 +308,7 @@ warren@wpratt.com
 // Phase 3F Sub-Epic G T4: bench-minimum Diversity dialog (Tools menu).
 #include "DiversityDialog.h"
 #include "models/SpotModel.h"
+#include "models/NotchModel.h"
 #include "models/FreeDVStationModel.h"
 #include "core/DxccColorProvider.h"
 #include "core/FreeDVReporterClient.h"
@@ -1615,6 +1616,106 @@ void MainWindow::wirePanStatusOverlayTriggers()
     }
 }
 
+// TNF: notch-marker fan-out. Fourth sibling of refreshPanWideBadges,
+// refreshPanStatusOverlays and wirePanBadgeHandlers, on the same hook and
+// the same shape: ask the model once, push the answer at every pan.
+//
+// Every pan is refreshed on every pass because the notch list is GLOBAL
+// (design D1): a notch added from one pan is a notch on all of them. This is
+// deliberately not the spot overlay's activeSpectrumWidget() push, which
+// binds one widget forever and would leave every secondary pan blank.
+//
+// This is the ONLY Hz-to-MHz conversion site in the TNF stack. NotchModel
+// stores absolute RF Hz; NotchMarker::freqMhz is MHz; the five interaction
+// signals coming back the other way are Hz again.
+void MainWindow::refreshPanNotchMarkers()
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    NotchModel* notches = m_radioModel->notchModel();
+    if (!notches) { return; }
+
+    QVector<SpectrumWidget::NotchMarker> markers;
+    markers.reserve(notches->notches().size());
+    // `auto` here: the element type is obvious from notches(), and this
+    // stays correct whichever scope the Notch value type is declared in.
+    for (const auto& n : notches->notches()) {
+        SpectrumWidget::NotchMarker m;
+        m.id      = n.id;
+        m.freqMhz = n.centerHz / 1.0e6;
+        m.widthHz = n.widthHz;
+        m.active  = n.active;
+        markers.append(m);
+    }
+
+    const bool globalOn = notches->globalEnabled();
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        SpectrumWidget* sw = applet->spectrumWidget();
+        if (!sw) { continue; }
+        sw->setNotchMarkers(markers);
+        sw->setNotchGlobalEnabled(globalOn);
+    }
+}
+
+void MainWindow::wirePanNotchHandlers()
+{
+    if (!m_panStack) { return; }
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        SpectrumWidget* sw = applet->spectrumWidget();
+        if (!sw) { continue; }
+        connect(sw, &SpectrumWidget::notchCreateRequested,
+                this, &MainWindow::onNotchCreateRequested,
+                Qt::UniqueConnection);
+        connect(sw, &SpectrumWidget::notchMoveRequested,
+                this, &MainWindow::onNotchMoveRequested,
+                Qt::UniqueConnection);
+        connect(sw, &SpectrumWidget::notchWidthRequested,
+                this, &MainWindow::onNotchWidthRequested,
+                Qt::UniqueConnection);
+        connect(sw, &SpectrumWidget::notchActiveRequested,
+                this, &MainWindow::onNotchActiveRequested,
+                Qt::UniqueConnection);
+        connect(sw, &SpectrumWidget::notchRemoveRequested,
+                this, &MainWindow::onNotchRemoveRequested,
+                Qt::UniqueConnection);
+    }
+}
+
+void MainWindow::onNotchCreateRequested(double freqHz, bool narrow)
+{
+    if (!m_radioModel || !m_radioModel->notchModel()) { return; }
+    // Narrow is the Shift-held add. Both widths live on NotchModel because
+    // they are Thetis constants (console.cs:40268-40269 [v2.10.3.15]).
+    m_radioModel->notchModel()->addNotch(
+        freqHz, narrow ? NotchModel::kNarrowNotchWidthHz
+                       : NotchModel::kDefaultNotchWidthHz);
+}
+
+void MainWindow::onNotchMoveRequested(int id, double newFreqHz)
+{
+    if (!m_radioModel || !m_radioModel->notchModel()) { return; }
+    m_radioModel->notchModel()->setCenter(id, newFreqHz);
+}
+
+void MainWindow::onNotchWidthRequested(int id, double widthHz)
+{
+    if (!m_radioModel || !m_radioModel->notchModel()) { return; }
+    m_radioModel->notchModel()->setWidth(id, widthHz);
+}
+
+void MainWindow::onNotchActiveRequested(int id, bool active)
+{
+    if (!m_radioModel || !m_radioModel->notchModel()) { return; }
+    m_radioModel->notchModel()->setActive(id, active);
+}
+
+void MainWindow::onNotchRemoveRequested(int id)
+{
+    if (!m_radioModel || !m_radioModel->notchModel()) { return; }
+    m_radioModel->notchModel()->removeNotch(id);
+}
+
 // Phase 3F: badge-click fan-out. Third sibling of refreshPanWideBadges and
 // wirePanStatusOverlayTriggers above, on the same hook and for the same
 // reason: a pan that comes into existence after startup has to be wired
@@ -2389,9 +2490,28 @@ void MainWindow::buildUI()
     connect(m_panStack, &PanadapterStack::countChanged, this, [this](int) {
         wirePanStatusOverlayTriggers();
         wirePanBadgeHandlers();
+        wirePanNotchHandlers();
         ensureOverlayPanels();
         refreshPanStatusOverlays();
+        refreshPanNotchMarkers();
     });
+
+    // TNF: the notch list is global, so one connect per NotchModel signal
+    // repaints every pan. refreshPanNotchMarkers takes no arguments; Qt
+    // drops the extra ones from notchAdded / notchChanged / notchRemoved /
+    // globalEnabledChanged.
+    if (NotchModel* notches = m_radioModel->notchModel()) {
+        connect(notches, &NotchModel::notchAdded,
+                this, &MainWindow::refreshPanNotchMarkers);
+        connect(notches, &NotchModel::notchChanged,
+                this, &MainWindow::refreshPanNotchMarkers);
+        connect(notches, &NotchModel::notchRemoved,
+                this, &MainWindow::refreshPanNotchMarkers);
+        connect(notches, &NotchModel::notchesReset,
+                this, &MainWindow::refreshPanNotchMarkers);
+        connect(notches, &NotchModel::globalEnabledChanged,
+                this, &MainWindow::refreshPanNotchMarkers);
+    }
 
     // The S-meter poller's slice list keys off SLICE lifetime, not pan count.
     // Adding a slice to an existing pan moves no pan count, so hanging this on
@@ -2402,6 +2522,11 @@ void MainWindow::buildUI()
             [this](int) { refreshMeterPollerSlices(); });
     wirePanStatusOverlayTriggers();
     wirePanBadgeHandlers();
+    wirePanNotchHandlers();
+    // Seed pan-0 with whatever NotchModel::restoreFromSettings() already
+    // loaded in the RadioModel constructor. The layout restore below fires
+    // countChanged and re-runs both of these for the pans it creates.
+    refreshPanNotchMarkers();
 
     // ── Bench 2026-07-28: click-to-tune always tuned flag A ────────────────
     //

@@ -256,6 +256,39 @@ private slots:
     /// change: a slice added to an existing pan moves no pan count.
     void refreshMeterPollerSlices();
 
+    /// TNF: push the global notch list at EVERY pan (design section 8.1).
+    ///
+    /// Under D1 the notch list is global, so each pan gets the same vector
+    /// and converts it into its own pixel space. Deliberately not the spot
+    /// overlay's activeSpectrumWidget()-only shape, which would leave every
+    /// secondary pan blank.
+    ///
+    /// The only Hz-to-MHz conversion site in the TNF stack: NotchModel
+    /// stores absolute RF Hz, NotchMarker::freqMhz is MHz, and everything
+    /// else (the five interaction signals, setNotchMinWidthHz, the dent
+    /// maths) stays in Hz.
+    void refreshPanNotchMarkers();
+
+    /// TNF: connect the five per-pan notch interaction signals on EVERY pan.
+    ///
+    /// Armed from PanadapterStack::countChanged, the same hook
+    /// wirePanBadgeHandlers uses, and for the same reason: a pan created by
+    /// a layout switch would otherwise never be wired. Not folded into
+    /// wireSpectrumForPan, which skips pan-0 by design.
+    ///
+    /// The handlers below are SLOTS, not lambdas, so Qt::UniqueConnection is
+    /// actually honoured on the re-arm.
+    void wirePanNotchHandlers();
+
+    /// TNF inbound handlers. Each mutates the single global NotchModel; the
+    /// frequencies arrive already resolved in the emitting pan's own
+    /// frequency mapping, so nothing here consults an active pan.
+    void onNotchCreateRequested(double freqHz, bool narrow);
+    void onNotchMoveRequested(int id, double newFreqHz);
+    void onNotchWidthRequested(int id, double widthHz);
+    void onNotchActiveRequested(int id, bool active);
+    void onNotchRemoveRequested(int id);
+
     /// Wire one panadapter's spot, connection and MaxBin hooks. Every one of
     /// these used to be connected once to pan-0's widget, leaving other pans
     /// inert. The four controls that TARGET A SLICE live in

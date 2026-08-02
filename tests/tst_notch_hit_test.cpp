@@ -21,6 +21,7 @@
 
 #include <algorithm>
 
+#include "gui/MainWindow.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/PanadapterStack.h"
 #include "models/NotchModel.h"
@@ -598,6 +599,126 @@ private slots:
         const QImage img = renderNotches(sw);
         for (int x = 0; x < kPanW; x += 13) {
             QCOMPARE(img.pixelColor(x, kSpecH / 2), QColor(Qt::black));
+        }
+    }
+
+    // -- section 8.1 fan-out ---------------------------------------------
+    // MainWindow is deliberately never constructed in this suite (see the
+    // banner of tests/tst_mainwindow_tools_spot_hub.cpp), so this pins the
+    // half of MainWindow::refreshPanNotchMarkers that can drift silently:
+    // the NotchModel -> NotchMarker conversion, and the fact that the same
+    // vector reaches every pan.  The m_panStack loop itself is
+    // bench-covered (design section 11.2).
+    //
+    // `auto` in the loop is deliberate: it compiles whether Notch is
+    // nested in NotchModel or lives at NereusSDR namespace scope.
+    void notch_model_entries_convert_and_reach_every_pan()
+    {
+        NotchModel model;
+        const int idA = model.addNotch(14'250'000.0, 200.0);
+        const int idB = model.addNotch(14'251'000.0, 100.0);
+        QVERIFY(idA >= 0);
+        QVERIFY(idB >= 0);
+        QVERIFY(model.setActive(idB, false));
+
+        QVector<SpectrumWidget::NotchMarker> markers;
+        markers.reserve(model.notches().size());
+        for (const auto& n : model.notches()) {
+            SpectrumWidget::NotchMarker m;
+            m.id      = n.id;
+            m.freqMhz = n.centerHz / 1.0e6;
+            m.widthHz = n.widthHz;
+            m.active  = n.active;
+            markers.append(m);
+        }
+        QCOMPARE(markers.size(), 2);
+
+        PanadapterStack stack;
+        stack.applyLayout(QStringLiteral("2h"),
+                          {QStringLiteral("pan-0"), QStringLiteral("pan-1")});
+
+        model.setGlobalEnabled(false);
+        for (const QString& panId : {QStringLiteral("pan-0"),
+                                     QStringLiteral("pan-1")}) {
+            SpectrumWidget* sw = stack.spectrum(panId);
+            QVERIFY(sw != nullptr);
+            sw->setNotchMarkers(markers);
+            sw->setNotchGlobalEnabled(model.globalEnabled());
+        }
+
+        for (const QString& panId : {QStringLiteral("pan-0"),
+                                     QStringLiteral("pan-1")}) {
+            SpectrumWidget* sw = stack.spectrum(panId);
+            QCOMPARE(sw->notchMarkersForTest().size(), 2);
+            QCOMPARE(sw->notchMarkersForTest().at(0).id, idA);
+            QCOMPARE(sw->notchMarkersForTest().at(0).freqMhz, 14.25);
+            QCOMPARE(sw->notchMarkersForTest().at(0).widthHz, 200.0);
+            QCOMPARE(sw->notchMarkersForTest().at(0).active, true);
+            QCOMPARE(sw->notchMarkersForTest().at(1).id, idB);
+            QCOMPARE(sw->notchMarkersForTest().at(1).widthHz, 100.0);
+            QCOMPARE(sw->notchMarkersForTest().at(1).active, false);
+            QCOMPARE(sw->notchGlobalEnabledForTest(), false);
+        }
+    }
+
+    // The other half of the unit boundary: NotchModel stores Hz, the
+    // marker carries MHz, and refreshPanNotchMarkers is the ONLY divide by
+    // 1e6.  A notch stored at 14.251 MHz must arrive as 14.251, not
+    // 14251000.
+    void model_to_marker_conversion_is_the_only_hz_to_mhz_site()
+    {
+        NotchModel model;
+        const int id = model.addNotch(14'251'000.0, 100.0);
+        QVERIFY(id >= 0);
+        QCOMPARE(model.notches().first().centerHz, 14'251'000.0);
+
+        SpectrumWidget::NotchMarker m;
+        m.id      = model.notches().first().id;
+        m.freqMhz = model.notches().first().centerHz / 1.0e6;
+        m.widthHz = model.notches().first().widthHz;
+
+        QCOMPARE(m.freqMhz, 14.251);
+        // Width does NOT convert: it stays Hz on both sides.
+        QCOMPARE(m.widthHz, model.notches().first().widthHz);
+        QCOMPARE(m.widthHz, 100.0);
+    }
+
+    // Widths pushed onto a create come from NotchModel's Thetis constants,
+    // under the names Task 3 shipped.  Guards against a second spelling
+    // being minted in the wiring layer.
+    void notch_width_constants_come_from_notch_model()
+    {
+        QCOMPARE(NotchModel::kDefaultNotchWidthHz, 200.0);
+        QCOMPARE(NotchModel::kNarrowNotchWidthHz, 100.0);
+    }
+
+    // MainWindow cannot be stood up in a unit test (it boots WDSP, the
+    // audio engine and the discovery thread), so the fan-out entry points
+    // are resolved by name, the same seam tst_pan_badge_click_wiring uses
+    // for the badge handlers.  A rename that stranded every notch marker
+    // would otherwise reach a release silently.
+    //
+    // These must be SLOTS, not plain methods: wirePanNotchHandlers re-arms
+    // on every PanadapterStack::countChanged, and Qt6 silently ignores
+    // Qt::UniqueConnection when the target is a lambda, so a lambda here
+    // would stack one extra connection per layout switch.
+    void mainwindow_exposes_the_notch_fanout_slots()
+    {
+        const QMetaObject& mo = MainWindow::staticMetaObject;
+        for (const char* sig : {"refreshPanNotchMarkers()",
+                                "wirePanNotchHandlers()",
+                                "onNotchCreateRequested(double,bool)",
+                                "onNotchMoveRequested(int,double)",
+                                "onNotchWidthRequested(int,double)",
+                                "onNotchActiveRequested(int,bool)",
+                                "onNotchRemoveRequested(int)"}) {
+            QVERIFY2(mo.indexOfSlot(sig) >= 0,
+                     qPrintable(QStringLiteral("MainWindow::%1 is not an "
+                                               "invokable slot; the per-pan "
+                                               "notch connects would be "
+                                               "unmade or would silently "
+                                               "duplicate")
+                                    .arg(QLatin1String(sig))));
         }
     }
 };
