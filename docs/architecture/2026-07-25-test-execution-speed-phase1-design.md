@@ -24,6 +24,13 @@ is both more expensive and less effective than going shared.
 
 ## 2.0 Corrected evidence, measured at implementation (2026-07-31)
 
+> **The OBJECT column below is wrong. Corrected 2026-08-02 at rebase; see
+> §2.0.1.** The row reporting a 30 s OBJECT incremental re-measures at
+> **5 min 10 s** on a fully warm tree. Every other row in this table
+> reproduced. This is the third measurement error in this document's
+> history, which is itself the finding: see §2.0.1 for what actually
+> drives the incremental case, which no version of this design identified.
+
 Same machine, same settings, both sides measured back to back on
 `build/shared-app-library`: Apple Silicon, macOS 26.5.2, Qt 6.11.0,
 `RelWithDebInfo`, ninja, ccache warm, `cmake --build -j8`, `ctest -j4`.
@@ -124,6 +131,58 @@ suite.
 `all_tests`, labels, timeouts) but not the LTO option. The generic
 `-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON` release path was verified
 instead.
+
+> Stale as of 2026-08-02. `NEREUSSDR_ENABLE_LTO` and the parallel
+> `NereusSDRObjs_LTO` object library are now on `main`, and
+> `-DNEREUSSDR_ENABLE_LTO=ON` was verified to configure against the
+> rebased branch. See §2.0.1 for the interaction this leaves open.
+
+### 2.0.1 Re-measured at rebase (2026-08-02)
+
+The branch was rebased onto `main` after 405 intervening commits and the
+suite had grown from 514 to 598 tests. Both sides re-measured on the same
+machine on the same day, `RelWithDebInfo`, ninja, ccache warm, `ctest -j10`:
+
+| Metric | OBJECT | SHARED | Change |
+| --- | --- | --- | --- |
+| Touch one `src/core` file, rebuild `all_tests` | **5 min 10 s** | **24.3 s** | **12.8x** |
+| ninja steps for that rebuild | 2,914 | 602 | 4.8x fewer |
+| `build/tests` on disk | 24 GB | 2.0 GB | 12x |
+| `tst_smoke` | 41,778,776 B | 88,760 B | 470x |
+| `tst_adif_parser` | 41,799,232 B | 144,464 B | 289x |
+| Full suite | not re-measured | 598/598 in 109.2 s | matches §2.0 |
+
+Load average entering each run was 14.75 (OBJECT) against 3.75 (SHARED),
+so 12.8x is not exact. It is far outside what that gap accounts for.
+
+**The mechanism is not the one this document argues.** §2.0 attributes the
+win to binary size and the macOS first-run scan. Those are real, and they
+dominate the *cold suite run*. They do not explain the *incremental
+rebuild*, which is the case that actually governs the edit-verify loop.
+
+As an OBJECT library, `NereusSDRLib`'s objects are direct sources of every
+test target. Touching one `src/core` file therefore invalidates all 598
+targets' AUTOMOC before a single link is reached:
+
+```
+597  timestamp               AUTOMOC, per test target
+598  mocs_compilation.cpp.o  moc recompile, per test target
+609  .cpp.o                  test TU recompile
+598  links
+```
+
+As a shared library it is a link-time dependency only. AUTOMOC does not
+fire, no test TU recompiles, and the rebuild is one dylib plus 598 stub
+relinks. That severed dependency, not link size, is what produces the 12.8x.
+
+**Open item: LTO now interacts with this.** With `NereusSDRLib` SHARED and
+`NEREUSSDR_LTO_AVAILABLE` set, the app links `NereusSDRObjs_LTO` statically
+and does not link the dylib, yet the dylib is still built (tests need it)
+and still staged into `Contents/Frameworks`. An LTO release therefore ships
+a ~24 MB dylib nothing loads. Not a defect at the current default (LTO is
+off), and the parent design predicted the collision ("Phase 1 subsumes it").
+Resolving it means either gating the staging on the LTO branch or dropping
+the dual-object-library scheme in favour of IPO on the shared target.
 
 ---
 

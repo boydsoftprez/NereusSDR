@@ -1,24 +1,45 @@
 # Fast Test Loop
 
-The suite has **513 registered tests** (517 `tst_*.cpp` files; four are
-Linux/PipeWire-only and register only on Linux).
+The suite has **598 registered tests** (four are Linux/PipeWire-only and
+register only on Linux).
 
 The application is built as a single shared library (`NereusSDRLib`) that
 every test links dynamically, so a test executable is about **90 KB**, not a
-private 22 MB copy of the whole app. Measured on an Apple Silicon dev
-machine, `RelWithDebInfo`, ninja, ccache warm, `-j8` / `ctest -j4`:
+private 40 MB copy of the whole app. Re-measured 2026-08-02 on an Apple
+Silicon dev machine (6 performance + 12 efficiency cores), `RelWithDebInfo`,
+ninja, ccache warm, `ctest -j10`:
 
 | | Value | Before the shared library |
 | --- | --- | --- |
-| Touch one `src/core` file, rebuild `all_tests` | **22 s** | 30 s |
-| Build `all_tests` from scratch | **271 s** | 479 s |
-| `build/tests` on disk | **1.2 GB** | 13 GB |
-| Full suite, cold | **109 s** | 362 s |
-| Full suite, warm | **43 s** | 43 s |
+| Touch one `src/core` file, rebuild `all_tests` | **24 s** | 5 min 10 s |
+| ninja steps for that rebuild | **602** | 2,914 |
+| `build/tests` on disk | **2.0 GB** | 24 GB |
+| `tst_smoke` | **88,760 B** | 41,778,776 B |
+| Full suite, cold | **109 s** | not re-measured |
+
+Load average was 3.75 entering the shared run and 14.75 entering the OBJECT
+run, so the 13x is not exact. It is far outside what that gap explains.
 
 "Cold" means the binaries were just relinked, which is the normal case after
 any edit. It is slower than warm because macOS malware-scans every freshly
 linked Mach-O the first time it runs.
+
+### Why the incremental case improved so much
+
+Not link time, and not the malware scan. As an OBJECT library, the
+application's object files were **direct sources of every test target**, so
+touching one `src/core` file invalidated all 598 targets' AUTOMOC and forced
+a moc re-run plus a test-TU recompile before any linking started:
+
+```
+597  timestamp               AUTOMOC, per test target
+598  mocs_compilation.cpp.o  moc recompile, per test target
+609  .cpp.o                  test TU recompile
+598  links
+```
+
+As a shared library it is a link-time dependency only. AUTOMOC never fires,
+no test TU recompiles, and the rebuild is one dylib plus 598 stub relinks.
 
 Almost nothing you do day to day needs the full suite anyway.
 
