@@ -133,6 +133,17 @@
 //                 Signatures match Thetis Console/dsp.cs:846-850 [@501e3f5]
 //                 P/Invoke decls and wdsp/analyzer.c:775+830 [@501e3f5].
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-08-01  RXANBPSetTuneFrequency declaration added by J.J. Boyd
+//                 (KG4VCF) during the Tunable Notch Filter epic, Task 1
+//                 (docs/architecture/2026-07-28-tunable-notch-filter-
+//                 design.md section 4). Nothing in this tree had ever
+//                 called it, so every RXA channel's notchdb.tunefreq sat at
+//                 its construction default and calc_nbp_lightweight mapped
+//                 notch centres from the wrong RF origin
+//                 (offset = b->tunefreq + b->shift, wdsp/nbp.c:192).
+//                 Signature matches Thetis Console/dsp.cs:718-719
+//                 [v2.10.3.15] P/Invoke decl and wdsp/nbp.c:475.
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 /*  wdsp.cs
@@ -351,10 +362,25 @@ void SetRXAShiftRun(int channel, int run);
 void SetRXAShiftFreq(int channel, double fshift);
 
 // ---------------------------------------------------------------------------
-// Notch bandpass shift (nbp.h) — From Thetis radio.cs:1418
+// Notch bandpass shift (nbp.h) — From Thetis radio.cs:1420 [v2.10.3.15]
 // ---------------------------------------------------------------------------
 
 void RXANBPSetShiftFrequency(int channel, double shift);
+
+// ---------------------------------------------------------------------------
+// Notch bandpass tune frequency (nbp.h): the RF origin the per-channel notch
+// database maps its absolute-Hz notch centres from.
+// calc_nbp_lightweight computes offset = tunefreq + shift
+// (third_party/wdsp/src/nbp.c:192), so this is the hosting DDC stream's
+// CENTRE, NOT the slice frequency: RXANBPSetShiftFrequency above already
+// carries the slice's displacement from that centre.
+// From Thetis console.cs:31940-31941 [v2.10.3.15] (RX1 pushes the same
+// tunefreq to both subrx ids, RX1DDSFreq being CentreFrequency at
+// console.cs:31932) and console.cs:32926 [v2.10.3.15] (RX2).
+// Internally idempotent: nbp.c:479 guards on if (tunefreq != a->tunefreq).
+// ---------------------------------------------------------------------------
+
+void RXANBPSetTuneFrequency(int channel, double tunefreq);
 
 // ---------------------------------------------------------------------------
 // Patch panel (patchpanel.h) — final mix stage in RXA pipeline

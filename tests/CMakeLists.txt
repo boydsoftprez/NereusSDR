@@ -1698,6 +1698,22 @@ nereus_add_test(tst_slice_stream_allocator)
 # hardware-exhaustion rejection path.
 nereus_add_test(tst_stream_pool_binding)
 
+# ── Tunable Notch Filter Task 1: the notch DB's tune frequency ─────────────
+# WDSP maps absolute-Hz notch centres into a channel's passband with
+# offset = tunefreq + shift (third_party/wdsp/src/nbp.c:192). tunefreq had
+# never been pushed by anything in this tree, so every channel's
+# notchdb.tunefreq sat at its construction default and the whole notch
+# feature was unimplementable on top of it. Pins all four halves of design
+# doc section 4: the pushed value is the hosting STREAM's centre and not the
+# slice frequency (4.1/4.2, asserted for both the sole-owner and
+# JoinedExisting outcomes); the shift reaches the notch database on the way
+# back to zero and keeps its sign (4.3); the stream offset and RIT/DIG
+# compose instead of clobbering each other in either writer order (4.4); and
+# the connect-time DDC seed commands the stream centre (4.5).
+# Source: Thetis console.cs:31940-31941 + radio.cs:1419-1420 [v2.10.3.15].
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.
+nereus_add_test(tst_notch_tune_frequency)
+
 # ── Phase 3F: WDSP channel-id allocation table ────────────────────────────
 # WDSP keys every channel off one global array (channel.c:29) and OpenChannel
 # overwrites a slot without closing it, so an id collision silently runs two

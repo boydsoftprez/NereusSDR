@@ -1469,6 +1469,27 @@ void RxChannel::setShiftFrequency(double offsetHz)
 }
 
 // ---------------------------------------------------------------------------
+// Notch bandpass tune frequency (TNF section 4)
+// ---------------------------------------------------------------------------
+
+void RxChannel::setNotchTuneFrequency(double absoluteHz)
+{
+    // Carry set outside the WDSP guard, mirroring setShiftFrequency, so a
+    // stub build and the unit tests still see the quantity the caller
+    // resolved.
+    m_notchTuneFrequencyHz = absoluteHz;
+
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:31940-31941 [v2.10.3.15]: pushed on every
+    // retune, unconditionally, and the SAME value goes to every subrx
+    // sharing the stream. RXANBPSetTuneFrequency is internally idempotent
+    // (nbp.c:479, if (tunefreq != a->tunefreq)), so an unconditional push
+    // costs nothing.
+    RXANBPSetTuneFrequency(m_channelId, absoluteHz);
+#endif
+}
+
+// ---------------------------------------------------------------------------
 // Channel state
 // ---------------------------------------------------------------------------
 

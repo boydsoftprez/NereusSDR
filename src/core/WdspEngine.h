@@ -124,6 +124,11 @@ class TestStreamPoolBinding;
 // which ids openRxChannelPool actually opens.
 class TestWdspChannelIdMap;
 class TestRadioModelMoxHardwareFlip;
+// TNF Task 1: the notch tune-frequency test primes the engine so
+// createRxChannel opens real RX channels. RXANBPSetTuneFrequency
+// dereferences rxa[channel].ndb.p before it compares (nbp.c:477-479), so
+// the kTestChannel = 99 never-opened-channel hatch is unavailable here.
+class TestNotchTuneFrequency;
 #endif
 
 namespace NereusSDR {
@@ -760,6 +765,9 @@ private:
     // Authoritative-TX regression: seed nonzero RX channels without the
     // asynchronous wisdom lifecycle so MOX can prove which exact ID moves.
     friend class ::TestRadioModelMoxHardwareFlip;
+    // TNF Task 1: same friendship for the notch tune-frequency test, which
+    // needs really opened RX channels rather than an unopened slot.
+    friend class ::TestNotchTuneFrequency;
 #endif
 };
 

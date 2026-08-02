@@ -607,6 +607,25 @@ public:
 
     void setShiftFrequency(double offsetHz);
 
+    // The offset last handed to setShiftFrequency, in Hz. Carried because
+    // WDSP exposes no getter for shift.freq, and the design-doc 4.1
+    // invariant (notch tune frequency + shift == the slice's demodulated
+    // RF) has to be assertable from the caller side.
+    double shiftOffsetHz() const { return m_shiftOffsetHz; }
+
+    // --- Notch bandpass tune frequency (TNF section 4) ---
+
+    // The RF origin the per-channel notch database maps its absolute-Hz
+    // notch centres from: the hosting DDC stream's CENTRE, not the slice
+    // frequency. WDSP sums it with the shift above
+    // (offset = tunefreq + shift, third_party/wdsp/src/nbp.c:192) and
+    // setShiftFrequency already carries the slice's displacement from that
+    // centre, so driving this from the slice frequency would compute
+    // 2*sliceFreq - streamCentre.
+    // From Thetis console.cs:31940-31941 [v2.10.3.15].
+    void setNotchTuneFrequency(double absoluteHz);
+    double notchTuneFrequencyHz() const { return m_notchTuneFrequencyHz; }
+
     // --- Filter convenience setters (single-axis) ---
     // Thin wrappers that remember the pending low/high and call setFilterFreqs.
     // Carry-only for state preservation in captureState/applyState; WDSP wiring
@@ -927,6 +946,12 @@ private:
 
     // Shift offset carry (mirrors what was last passed to setShiftFrequency)
     double m_shiftOffsetHz{0.0};
+
+    // Notch tune-frequency carry (mirrors what was last passed to
+    // RXANBPSetTuneFrequency). Plain member, not atomic: WDSP owns the
+    // authoritative notch database and the audio thread never reads this,
+    // so it is main-thread-only state.
+    double m_notchTuneFrequencyHz{0.0};
 
     // NB enabled carry (NbFamily is the primary API; this is a convenience bool
     // that reflects whether NbMode != Off)
