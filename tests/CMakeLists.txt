@@ -5988,6 +5988,20 @@ nereus_add_test(tst_core_init)
 # radio being connected.
 nereus_add_test(tst_daemon_config)
 
+# R1 Task 10: DaemonApp connects the daemon to a radio (or runs discovery)
+# and creates min(cfg.sliceCount, connected-board-maxSlices) slices via
+# RadioModel's own addSlice() -- the same entry point connectToRadio()
+# uses for Slice A, not the GUI-only addSliceOnPan(). Pins that a headless
+# start() creates the full configured slice count (not just Slice A), that
+# the count clamps to the connected board's real BoardCapabilities::
+# maxSlices (HermesLite's 5, primed via DaemonApp::primeBoardForTest() --
+# see the test file header for why this bypasses RadioModel::
+# connectToRadio() entirely: it blocks on cold-cache WDSP wisdom
+# generation for minutes, which no test in this suite can afford), that
+# stop() is safe with no prior start() and leaves sliceCount() == 0, and
+# that a restart does not accumulate slices from the previous run.
+nereus_add_test(tst_daemon_app)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

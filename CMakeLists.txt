@@ -655,6 +655,17 @@ set(CORE_SOURCES
     # QTextStream only) so it links into nereusd alongside NereusCore with
     # no NereusGui dependency.
     src/core/daemon/DaemonConfig.cpp
+    # R1 Task 10: connects the daemon to a radio (or runs discovery) and
+    # tops the slice list up to min(cfg.sliceCount, connected-board-
+    # maxSlices) using RadioModel's own addSlice() -- the same entry
+    # point RadioModel::connectToRadio() uses for Slice A, not the
+    # GUI-only addSliceOnPan(). Includes models/RadioModel.h (declared in
+    # MODEL_SOURCES below); CMake source-list variables are plain lists
+    # evaluated at generate time, so this forward reference to a set
+    # declared later in the file is fine -- both lists end up as sources
+    # on the same NereusCore target either way (see the add_library
+    # call further down).
+    src/core/daemon/DaemonApp.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the

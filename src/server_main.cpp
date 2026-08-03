@@ -83,6 +83,7 @@
 #include "core/CoreInit.h"
 #include "core/LogCategories.h"
 #include "core/RadioConnection.h"
+#include "core/daemon/DaemonApp.h"
 #include "core/daemon/DaemonConfig.h"
 
 #include <QCommandLineOption>
@@ -178,10 +179,38 @@ int main(int argc, char* argv[])
         return 2;
     }
 
-    qCInfo(NereusSDR::lcApp) << "nereusd starting, slices" << cfg.sliceCount
-                             << "rate" << cfg.sampleRateHz;
+    qCInfo(NereusSDR::lcApp) << "nereusd starting, requested slices"
+                             << cfg.sliceCount << "rate" << cfg.sampleRateHz;
+
+    // R1 Task 10: connects to a radio (or runs discovery when
+    // cfg.radioMac is empty) and creates min(cfg.sliceCount,
+    // connected-board-maxSlices) slices. See DaemonApp.h for why this
+    // returns true even when no radio was found at startup -- the same
+    // reason the equally-unconditional CoreInit::initialize() check
+    // above exists: a documented bool return value gets checked at this
+    // entry point regardless of whether today's implementation can
+    // currently return false.
+    //
+    // `daemon` is declared after `app` (QCoreApplication), so C++ runs
+    // its destructor before app's when main() returns -- teardown still
+    // has a live QCoreApplication to run on. The explicit stop() call on
+    // the quit path below runs that same teardown earlier, and visibly,
+    // rather than relying solely on the implicit destructor call.
+    NereusSDR::DaemonApp daemon;
+    if (!daemon.start(cfg)) {
+        qCCritical(NereusSDR::lcApp) << "daemon failed to start";
+        NereusSDR::CoreInit::shutdown();
+        return 4;
+    }
+    qCInfo(NereusSDR::lcApp) << "nereusd started, slices" << daemon.sliceCount();
 
     const int rc = app.exec();
+
+    // Quit path: disconnect the radio and drop every slice before
+    // CoreInit::shutdown() below. Safe even if start() somehow left
+    // nothing to tear down (DaemonApp::stop() is safe with no prior
+    // start()).
+    daemon.stop();
 
     // Mirrors main.cpp's teardown: uninstalls CoreInit::initialize()'s
     // message handler and closes its log file before static destructors
