@@ -422,22 +422,28 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     // ── Right stretch ──────────────────────────────────────────────────────
     m_hbox->addStretch(1);
 
-    // ── MasterOutputWidget — Task 10b composite ────────────────────────────
-    m_master = new MasterOutputWidget(audio, this);
-    m_hbox->addWidget(m_master);
-
     // ── UTC clock — Task A7 ─────────────────────────────────────────────────
     // Single-row UTC, moved here from the bottom banner. Every desktop OS
     // already puts a clock top-right; the one fact worth duplicating here
     // is UTC, since it's the one the OS clock doesn't give an operator for
     // logging. Dropping it from the banner frees that corner for alarms
     // alone.
+    //
+    // Placed BEFORE MasterOutputWidget, with a deliberate gap after it.
+    // Sitting immediately after the slider it read as part of that control
+    // and invited a mis-drag on a widget where an accidental grab changes
+    // audio level (bench feedback, 2026-08-03).
     m_utcLabel = new QLabel(this);
     m_utcLabel->setToolTip(tr("UTC time"));
     m_utcLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: #8aa8c0; font-size: 11px;"
         " font-family: 'SF Mono', Menlo, monospace; }"));
     m_hbox->addWidget(m_utcLabel);
+    m_hbox->addSpacing(24);
+
+    // ── MasterOutputWidget — Task 10b composite ────────────────────────────
+    m_master = new MasterOutputWidget(audio, this);
+    m_hbox->addWidget(m_master);
     m_hbox->addSpacing(10);
 
     auto tickUtc = [this]() {

@@ -28,6 +28,7 @@
 #include <QComboBox>
 #include <QCheckBox>
 #include <QLabel>
+#include <QPushButton>
 
 namespace NereusSDR {
 
@@ -51,6 +52,12 @@ public:
                    bool heatMap, float refLevel, float dynRange,
                    bool ctunEnabled = true);
 
+    // Absolute RF Hz under the cursor at popup time.  The caller sets it
+    // just before show(); the Notch section's button carries it back out
+    // through notchAddRequested.  Kept separate from setValues because it
+    // changes on every right-click while the display knobs above do not.
+    void setNotchAddFrequency(double freqHz);
+
 signals:
     void wfColorGainChanged(int gain);
     void wfBlackLevelChanged(int level);
@@ -61,8 +68,15 @@ signals:
     void dynRangeChanged(float dB);
     void ctunChanged(bool enabled);
 
+    // Tunable notch filter: "Add notch here" pressed.  freqHz is absolute
+    // RF in Hz, the value last handed to setNotchAddFrequency.  Every
+    // frequency crossing the TNF signal boundary is Hz; the only MHz
+    // quantity in the stack is SpectrumWidget::NotchMarker::freqMhz.
+    void notchAddRequested(double freqHz);
+
 private:
     void buildUI();
+    void updateNotchAddLabel();
 
     QSlider*   m_wfGainSlider{nullptr};
     QSlider*   m_wfBlackSlider{nullptr};
@@ -77,6 +91,11 @@ private:
     QLabel*    m_refLevelLabel{nullptr};
     QLabel*    m_dynRangeLabel{nullptr};
     QCheckBox* m_ctunCheck{nullptr};
+
+    // ---- Notch section ----
+    QPushButton* m_notchAddButton{nullptr};
+    QLabel*      m_notchFreqLabel{nullptr};
+    double       m_notchAddFreqHz{0.0};
 };
 
 } // namespace NereusSDR

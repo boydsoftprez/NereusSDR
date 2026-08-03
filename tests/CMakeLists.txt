@@ -1705,6 +1705,22 @@ nereus_add_test(tst_slice_stream_allocator)
 # hardware-exhaustion rejection path.
 nereus_add_test(tst_stream_pool_binding)
 
+# ── Tunable Notch Filter Task 1: the notch DB's tune frequency ─────────────
+# WDSP maps absolute-Hz notch centres into a channel's passband with
+# offset = tunefreq + shift (third_party/wdsp/src/nbp.c:192). tunefreq had
+# never been pushed by anything in this tree, so every channel's
+# notchdb.tunefreq sat at its construction default and the whole notch
+# feature was unimplementable on top of it. Pins all four halves of design
+# doc section 4: the pushed value is the hosting STREAM's centre and not the
+# slice frequency (4.1/4.2, asserted for both the sole-owner and
+# JoinedExisting outcomes); the shift reaches the notch database on the way
+# back to zero and keeps its sign (4.3); the stream offset and RIT/DIG
+# compose instead of clobbering each other in either writer order (4.4); and
+# the connect-time DDC seed commands the stream centre (4.5).
+# Source: Thetis console.cs:31940-31941 + radio.cs:1419-1420 [v2.10.3.15].
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.
+nereus_add_test(tst_notch_tune_frequency)
+
 # ── Phase 3F: WDSP channel-id allocation table ────────────────────────────
 # WDSP keys every channel off one global array (channel.c:29) and OpenChannel
 # overwrites a slot without closing it, so an id collision silently runs two
@@ -2450,6 +2466,23 @@ nereus_add_test(tst_speech_processor_page)
 # mirrors Thetis tpDSPCFC tab 1:1 (setup.Designer.cs:46162-46280 [v2.10.3.13]
 # for grpPhRot).
 nereus_add_test(tst_cfc_setup_page)
+
+# ── TNF design section 9 / build-order step 9: MnfSetupPage ──────────────────
+# Verifies Setup → DSP → MNF stops being a placeholder: the auto-increase
+# checkbox (default TRUE, per WDSP RXA.c:105 and Thetis
+# setup.designer.cs:44197 [v2.10.3.15]), the chkVisualNotch toggle (default
+# FALSE; the control has no Checked assignment at :44167-44179), the notch
+# table (one row per NotchModel entry, Thetis object names udMNFFreq /
+# udMNFWidth / chkMNFActive / btnMNFDelete), the Add button seeding from the
+# active slice's VFO, the adminBusy edit lock (Thetis SetupForm.NotchAdminBusy,
+# setup.cs:17728-17735 [v2.10.3.15]) cleared before the commit writes, exactly
+# as btnMNFEnter_Click does (setup.cs:17744, :17759 [v2.10.3.15]), and the
+# minimum-notch-width readout (RXANBPGetMinNotchWidth,
+# third_party/wdsp/src/nbp.c:594) following RxChannel::minNotchWidthChanged.
+# Layout follows Thetis grpDSPMNF (setup.designer.cs:44145-44412 [v2.10.3.15]).
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         sections 9, 5.3, 8.3.
+nereus_add_test(tst_mnf_setup_page)
 
 # ── Phase 3M-3a-iii Task 14: DexpVoxPage full implementation ─────────────────
 # Verifies the three group boxes (VOX / DEXP, Audio LookAhead, Side-Channel
@@ -5901,6 +5934,126 @@ nereus_add_test(tst_rx_channel_ext_div_wrappers)
 # Source: NereusSDR-original test infrastructure.
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-g-diversity-plan.md Task 2.
 nereus_add_test(tst_diversity_dialog_persistence)
+
+# ── Tunable Notch Filter Task 2: RxChannel manual-notch wrappers ──────────
+# The Notch value type plus add / edit / delete / sync / count, the
+# notches-run flag, auto-increase and the minimum-width readback.
+# Opens ONE real WDSP RX channel through the WdspEngine NEREUS_BUILD_TESTS
+# friend seam, because every RXANBP* entry point dereferences rxa[channel]
+# before it range-checks anything and the usual kTestChannel = 99 convention
+# would read out of bounds (third_party/wdsp/src/comm.h:110 sizes rxa at
+# MAX_CHANNELS = 32).
+# Source: NereusSDR-original test infrastructure.
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         sections 6.2 and 11.1.
+nereus_add_test(tst_rxchannel_notch_wrappers)
+
+# ── Tunable Notch Filter Task 3: NotchModel ───────────────────────────────
+# TNF section 5.4: NotchModel ported guards. 10 Hz dedupe (exact boundary,
+# strict `<` per radio.cs:4267), 200/100 Hz width defaults, whole-Hz
+# midpoint-to-even rounding, min/max centre constrain, NotchAdminBusy
+# rejection, wheel-resize edge clamp, and the section 1.2 CW case (a notch
+# added at F stores at exactly F because the Thetis CW-pitch correction is
+# deliberately not ported).
+# Source: Thetis console.cs:13221; 33299-33321; 40007-40047; 40050-40120;
+#         40222-40280 [v2.10.3.15]; radio.cs:4261-4272 [v2.10.3.15].
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         section 5.4.
+nereus_add_test(tst_notch_model_guards)
+
+# TNF section 5.2: the index invariant. List position tracks the WDSP notch
+# index across add / edit / delete including deleting from the middle, and
+# stable ids survive an index shift (the AetherSDR TnfEntry::id addition
+# that retires Thetis's GetFirstNotchThatMatches selection recovery).
+# Source: Thetis console.cs:40198-40219; 40262-40266 [v2.10.3.15].
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         section 5.2.
+nereus_add_test(tst_notch_model_index_invariant)
+
+# TNF section 5.3: MNotchDB spatial helpers ported from Thetis radio.cs.
+# notchNearFreq strict `<` (radio.cs:4267), notchesInBandwidth inclusive
+# edge overlap (radio.cs:4286), notchSurrounding with and without
+# padWidthHz covering the pad-applies-only-when-FWidth<padWidth*2 branch
+# (radio.cs:4310), first-found-in-list-order.
+# Source: Thetis radio.cs:4261-4272; 4276-4293; 4297-4325 [v2.10.3.15].
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         section 5.3.
+nereus_add_test(tst_notch_spatial_helpers)
+
+# TNF: NotchModel::notchSidebandShift, the pure helper behind the +TNF
+# button. Table-driven. USB 200/2800 -> +1500; LSB -2800/-200 -> -1500;
+# AM -3000/+3000 hits the middle==0 fallback -> 1500. A dropped sign is
+# silent on LSB and correct on USB, so it needs its own test.
+# Source: Thetis console.cs:40281-40307 [v2.10.3.15].
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         section 5.3.
+nereus_add_test(tst_notch_sideband_shift)
+
+# TNF section 5.5: NotchModel AppSettings round-trip at global scope, plus
+# the section 5.3 clear() contract. Covers NotchGlobalEnabled /
+# NotchVisualEnabled / NotchAutoIncrease / NotchCount /
+# Notch<i>Center|Width|Active, save-on-mutate (Task 4 never calls
+# saveToSettings itself), key pruning on a shrink, whole-list-replacement
+# semantics, and that clear() emits notchesReset() even when already empty
+# (the fan-out's reconcile trigger).
+# Source: NereusSDR-original persistence (Thetis packs these into a single
+# mnotchdb string at console.cs:3034-3035, 4763-4764 [v2.10.3.15]; flat keys
+# avoid its locale-sensitive double.Parse).
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         sections 5.3 and 5.5.
+nereus_add_test(tst_notch_persistence)
+
+# ── Tunable Notch Filter Task 4: RadioModel notch fan-out ─────────────────
+# Covers the design's section 6.3 gap: connectToRadio activates Slice A's
+# channel BEFORE it opens the pool, and activateSliceChannel early-returns
+# on an already-active channel, so the primary receiver never passes through
+# that hook.  Asserts Slice A gets the notch list, the master run flag, the
+# auto-increase flag and the NBP tune frequency on connect and across a
+# reconnect; that a slice added after a live notch add inherits the set; and
+# that add / edit / remove / reset / master-enable / auto-increase all fan
+# out to every live channel.
+# Source: NereusSDR-original test infrastructure.  Behaviour ported from
+# Thetis console.cs:40271-40273 [v2.10.3.15] (fixed three-id fan-out) and
+# WDSP RXA.c:85-93 + nbp.c:190, 223, 499 (inert-by-default notch database).
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         section 6.3.
+nereus_add_test(tst_notch_channel_sync)
+
+# ── Tunable Notch Filter Task 5: TCI rx_nf_enable ─────────────────────────
+# TNF section 6.4: rx_nf_enable repoint + both-index broadcast.
+# Verifies the TCI master-notch surface against the real NotchModel:
+#   - set on rx 0 or rx 1 writes the single global enable
+#   - query on either index reports it
+#   - the set handler queues NO notification of its own
+#   - a UI-originated flip broadcasts BOTH indices, exactly once, and
+#     survives a stop()/start() cycle without duplicating
+# Source: Thetis TCIServer.cs:3384-3399 / 1315-1320 / 6771 / 7686-7696 and
+#         console.cs:40004 / 52317-52330 [v2.10.3.15].
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         section 6.4.
+# Gated on Qt6WebSockets_FOUND: TciServer.h is #ifdef HAVE_WEBSOCKETS.
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_notch_tci_rx_nf_enable)
+    target_link_libraries(tst_notch_tci_rx_nf_enable PRIVATE Qt6::WebSockets)
+endif()
+
+# ── Tunable Notch Filter Tasks 6 + 7: SpectrumWidget notch overlay ────────
+# Step 6 pins the section 8.1 push API (setNotchMarkers /
+# setNotchGlobalEnabled / setNotchMinWidthHz plus the ForTest read seams),
+# notchSpecRect() as the single geometry source both paint sites and the
+# step-7 hit test share, the section 8.2 render geometry (fill, hatch,
+# 1 px edge lines, +/-5 px triangle grab handle), the four Thetis marker
+# colours, and the every-pan push each SpectrumWidget converts into its own
+# pixel space.  Step 7 appends the pixel hit test to this SAME executable
+# via notchAtPixelForTest and registers nothing: two add_executable() calls
+# under one target name is a CMake configure error.
+# Source: AetherSDR src/gui/SpectrumWidget.cpp:13436-13554 [@c6481cbf]
+# (setTnfMarkers / setTnfGlobalEnabled / drawTnfMarkers) for geometry;
+# Thetis display.cs:386-390, 8691-8722 [v2.10.3.15] for colours.
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         sections 8.1 and 8.2.
+nereus_add_test(tst_notch_hit_test)
+
 # ── PR #291 Codex review fixes ────────────────────────────────────────────
 # Capture-path helpers behind the native-rate mic resampling path.  The
 # defects only appear on a device whose native rate differs from the
@@ -5972,6 +6125,32 @@ nereus_add_test(tst_pan_layout_dialog_gating)
 # harness (see file header); the tests mirror buildStatusBar()'s panBtn
 # block and updateAddPanButtonState() against a standalone QLabel.
 nereus_add_test(tst_pan_menu_routing)
+
+# ── TNF build-order step 8: +TNF button, status-bar light, menu action ─────
+# The operator-facing TNF controls that live outside the panadapter:
+#   - SpectrumOverlayPanel's +TNF button is enabled and carries its pan id;
+#     the disabled "MNF" twin is gone (design section 9).
+#   - NotchModel::tnfAddCenterHz composes VFO + RIT + sideband shift
+#     (section 7.5).
+#   - MainWindow's TNF indicator stylesheet / tooltip / accelerator statics,
+#     the menu-action two-way sync, and the reject notice (section 10.2: the
+#     chord is fixed because no shortcut-assignment subsystem exists).
+# Source: NereusSDR-original test; surfaces fixed by
+# docs/architecture/2026-07-28-tunable-notch-filter-design.md sections 7.5,
+# 9 and 10.2.
+nereus_add_test(tst_tnf_ui_wiring)
+
+# ── TNF build-order step 10 (visual notch): the section 8.3 gate ───────────
+# Asserts in both directions: processNoiseFloor() and
+# peakDbmInSlicePassband() read the pristine undented spectrum copy, while
+# ActivePeakHoldTrace and PeakBlobDetector do see the dent (Thetis-faithful).
+# Also covers the dent geometry (20 Hz fudge, WDSP minimum-width clamp),
+# the second explicit waterfall-plane call, and the MOX / master-TNF-off /
+# per-notch-inactive suppression gates.
+# Source: NereusSDR-original test infrastructure.
+# Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
+#         section 8.3 + section 11.
+nereus_add_test(tst_notch_visual_does_not_perturb_noise_floor_or_maxbin)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)

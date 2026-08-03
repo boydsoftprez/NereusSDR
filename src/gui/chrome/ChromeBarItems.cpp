@@ -91,14 +91,25 @@ void registerChromeBarItems(ChromeBarController& c, const ChromeBarWidgets& w)
             QCoreApplication::translate("ChromeBar", kPillNames[rung - 5]));
     }
 
-    // Rung 10, last resort: placeholders fold only after every live
-    // reading has already gone. Label lists all five members in the same
-    // left-to-right order MainWindow::buildStatusBar adds them to
-    // m_placeholderGroup's QHBoxLayout; Band Stack was missing from this
-    // label even though it is the first widget in that layout
-    // (final-fix-wave finding 12).
+    // Rung 10, last resort: the stubs fold only after every live reading
+    // has already gone.
+    //
+    // The band-stack dots fold at this rung too but are registered
+    // separately, because they sit at the very head of the bar ahead of
+    // +PAN rather than inside the group. Rung governs visibility, the
+    // layout governs position, and the two are independent.
+    add(c, w.bandStackLabel, nullptr, 10, QString());
     add(c, w.placeholderGroup, w.placeholderSep, 10,
-        QCoreApplication::translate("ChromeBar", "Band Stack / TNF / CWX / DVK / FDX"));
+        QCoreApplication::translate("ChromeBar", "Band Stack / CWX / DVK / FDX"));
+
+    // Rung 11, folds after even the stubs. TNF was an inert NYI label when
+    // this ladder was designed, and folded with the other placeholders.
+    // The tunable-notch-filter work on main (#313) made it a live toggle
+    // that turns amber when notches exist and are being bypassed. That
+    // warning outranks a row of stubs, so TNF is the last foldable item
+    // on the bar.
+    add(c, w.tnfLabel, nullptr, 11,
+        QCoreApplication::translate("ChromeBar", "TNF"));
 }
 
 } // namespace NereusSDR

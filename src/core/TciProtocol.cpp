@@ -2219,8 +2219,16 @@ QString TciProtocol::handleRxNfEnableCommand(const QStringList& args)
         const bool en = args.at(1).trimmed().toLower() == QStringLiteral("true");
         QMetaObject::invokeMethod(m_radio, "setRxNf", Qt::DirectConnection,
                                   Q_ARG(int, rx), Q_ARG(bool, en));
-        m_pendingNotifications << QStringLiteral("rx_nf_enable:%1,%2;")
-            .arg(rx).arg(en ? QStringLiteral("true") : QStringLiteral("false"));
+        // No notification queued here.  From Thetis TCIServer.cs:3394-3398
+        // [v2.10.3.15] the set branch sends nothing at all; the wire frames
+        // come from TNFChangedHandlers -> OnTnfChanged (TCIServer.cs:6771,
+        // :7686-7696) -> NfChanged, which sends BOTH indices
+        // (TCIServer.cs:1315-1320 [v2.10.3.15]) because the flag is global.
+        // TciServer::hookSliceBroadcasts carries that path here, so a
+        // single-index push from this handler would be a wrong-arity
+        // duplicate.  Thetis also gates the fire on change
+        // (console.cs:40004 [v2.10.3.15]); NotchModel::globalEnabledChanged
+        // gives us the same gate for free.
         return {};
     }
 

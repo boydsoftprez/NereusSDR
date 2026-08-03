@@ -48,6 +48,7 @@
 
 #include "gui/widgets/StatusBadge.h"
 #include "gui/widgets/AdcOverloadBadge.h"
+#include "gui/chrome/ChromeBarItems.h"
 
 using namespace Qt::StringLiterals;
 using namespace NereusSDR;
@@ -183,7 +184,7 @@ private:
     {
         auto* slot = new QWidget(group);
         slot->setObjectName(QStringLiteral("safetySlot"));
-        slot->setFixedWidth(50);
+        slot->setFixedWidth(kSafetySlotWidthPx);
         auto* sl = new QHBoxLayout(slot);
         sl->setContentsMargins(0, 0, 0, 0);
         sl->addWidget(badge);
@@ -282,9 +283,56 @@ private slots:
             // 100 here and fail for a reason that has nothing to do with
             // the fix. setFixedWidth pins both bounds, so this is the
             // property the reserved-slot design actually depends on.
-            QCOMPARE(s->minimumWidth(), 50);
-            QCOMPARE(s->maximumWidth(), 50);
+            QCOMPARE(s->minimumWidth(), kSafetySlotWidthPx);
+            QCOMPARE(s->maximumWidth(), kSafetySlotWidthPx);
         }
+    }
+
+    // Smoke test on a real ANAN-G2E, 2026-08-03, caught what every test in
+    // this file missed: AdcOverloadBadge rendered the literal word
+    // "OVERLOAD", which needs about 78 px including its own 8 px side
+    // margins, inside a 50 px reserved slot. On screen it read "/ERLO/".
+    //
+    // Nothing here asserted that a badge FITS the slot it was given. The
+    // slot-width test above pins the slot; this one pins the contents, so
+    // any future badge whose text outgrows its reservation fails here
+    // rather than on someone's bench.
+    void everySafetyBadgeFitsItsReservedSlot() {
+        constexpr int kSlotWidth = kSafetySlotWidthPx;
+
+        AdcOverloadBadge ovl;
+        // Widest realistic case: all three ADCs overloading at once.
+        ovl.setAdcs(QStringLiteral("0/1/2"));
+        ovl.ensurePolished();
+        QVERIFY2(ovl.sizeHint().width() <= kSlotWidth,
+                 qPrintable(QStringLiteral("AdcOverloadBadge needs %1 px, slot is %2")
+                                .arg(ovl.sizeHint().width()).arg(kSlotWidth)));
+
+        StatusBadge pa;
+        pa.setLabel(QStringLiteral("PA"));
+        pa.ensurePolished();
+        QVERIFY2(pa.sizeHint().width() <= kSlotWidth,
+                 qPrintable(QStringLiteral("PA badge needs %1 px, slot is %2")
+                                .arg(pa.sizeHint().width()).arg(kSlotWidth)));
+
+        StatusBadge tx;
+        tx.setLabel(QStringLiteral("TX"));
+        tx.ensurePolished();
+        QVERIFY2(tx.sizeHint().width() <= kSlotWidth,
+                 qPrintable(QStringLiteral("TX badge needs %1 px, slot is %2")
+                                .arg(tx.sizeHint().width()).arg(kSlotWidth)));
+
+        // The TX-inhibit pill is a plain QLabel in buildStatusBar, styled
+        // the same way and carrying the same shortened text.
+        QLabel inh(QStringLiteral("INH"));
+        inh.setStyleSheet(QStringLiteral(
+            "QLabel { color: #ff6060; font-weight: bold; font-size: 11px;"
+            "         padding: 2px 6px; border: 1px solid #ff6060;"
+            "         border-radius: 3px; }"));
+        inh.ensurePolished();
+        QVERIFY2(inh.sizeHint().width() <= kSlotWidth,
+                 qPrintable(QStringLiteral("INH pill needs %1 px, slot is %2")
+                                .arg(inh.sizeHint().width()).arg(kSlotWidth)));
     }
 };
 

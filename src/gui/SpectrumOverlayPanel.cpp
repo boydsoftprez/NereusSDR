@@ -1,6 +1,6 @@
 // src/gui/SpectrumOverlayPanel.cpp
 // Left overlay button strip ported from AetherSDR SpectrumOverlayMenu.
-// 10 buttons, 5 flyout sub-panels, auto-close on outside click.
+// 8 buttons, 4 flyout sub-panels, auto-close on outside click.
 //
 // Ported from AetherSDR src/gui/SpectrumOverlayMenu.cpp
 // Adapted for NereusSDR OpenHPSDR/Thetis feature set.
@@ -221,12 +221,20 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
         m_menuBtns.append(btn);
     }
 
-    // Button 3: +TNF (NYI)
+    // Button 3: +TNF
     {
-        auto* btn = makeDisabledBtn("+TNF", this);
-        btn->setToolTip("Add tracking notch filter (NYI)");
-        connect(btn, &QPushButton::clicked, this, &SpectrumOverlayPanel::addTnfClicked);
-        m_menuBtns.append(btn);
+        // From AetherSDR src/gui/SpectrumOverlayMenu.cpp:293 [@c6481cbf] --
+        // the "+TNF" entry in the strip's button table. Upstream's signal is
+        // arg-less; ours carries the pan id, matching the +RX shape at
+        // SpectrumOverlayMenu.cpp:315 [@c6481cbf] so a strip drawn on pan-2
+        // never adds a notch on pan-0.
+        auto* btn = makeMenuBtn("+TNF", this);
+        btn->setObjectName(QStringLiteral("tnfAddButton"));
+        btn->setToolTip("Add a notch filter at this panadapter's VFO");
+        connect(btn, &QPushButton::clicked, this, [this]() {
+            emit addTnfClicked(m_panId);
+        });
+        m_menuBtns.append(btn);  // index 1
     }
 
     // Button 4: BAND — flyout
@@ -271,12 +279,9 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
         m_menuBtns.append(btn);  // index 6
     }
 
-    // Button 9: MNF (NYI)
-    {
-        auto* btn = makeDisabledBtn("MNF", this);
-        btn->setToolTip("Manual notch filter (NYI)");
-        m_menuBtns.append(btn);  // index 7
-    }
+    // The strip used to end in a disabled "MNF" twin of the +TNF button
+    // above. It is gone rather than shipped beside a live control that does
+    // the same job.
 
     buildBandFlyout();
     buildAntFlyout();

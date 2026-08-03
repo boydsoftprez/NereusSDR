@@ -199,6 +199,7 @@ warren@wpratt.com
 #include "NbFamily.h"
 #include "WdspTypes.h"
 #include "dsp/ChannelConfig.h"
+#include "dsp/Notch.h"
 #include "dsp/RxChannelState.h"
 
 #ifdef HAVE_DFNR
@@ -209,6 +210,7 @@ warren@wpratt.com
 #include "MacNRFilter.h"
 #endif
 
+#include <QList>
 #include <QObject>
 
 #include <atomic>
@@ -607,6 +609,112 @@ public:
 
     void setShiftFrequency(double offsetHz);
 
+    // The offset last handed to setShiftFrequency, in Hz. Carried because
+    // WDSP exposes no getter for shift.freq, and the design-doc 4.1
+    // invariant (notch tune frequency + shift == the slice's demodulated
+    // RF) has to be assertable from the caller side.
+    double shiftOffsetHz() const { return m_shiftOffsetHz; }
+
+    // --- Notch bandpass tune frequency (TNF section 4) ---
+
+    // The RF origin the per-channel notch database maps its absolute-Hz
+    // notch centres from: the hosting DDC stream's CENTRE, not the slice
+    // frequency. WDSP sums it with the shift above
+    // (offset = tunefreq + shift, third_party/wdsp/src/nbp.c:192) and
+    // setShiftFrequency already carries the slice's displacement from that
+    // centre, so driving this from the slice frequency would compute
+    // 2*sliceFreq - streamCentre.
+    // From Thetis console.cs:31940-31941 [v2.10.3.15].
+    void setNotchTuneFrequency(double absoluteHz);
+    double notchTuneFrequencyHz() const { return m_notchTuneFrequencyHz; }
+
+    // The shift value last handed to RXANBPSetShiftFrequency. Deliberately
+    // distinct from shiftOffsetHz(): it is written next to that call, so it
+    // is what tells a caller (and the test suite) whether the push actually
+    // happened. NOTCHDB->shift is write-only from the host side
+    // (third_party/wdsp/src/nbp.c:487-496 is its sole writer) and
+    // calc_nbp_lightweight reads it with no reference to any run flag
+    // (nbp.c:192), so a shift that stops being pushed fails silently.
+    double notchShiftHz() const { return m_notchShiftHz; }
+
+    // --- Manual notch filter (TNF) ---
+    //
+    // WDSP owns the authoritative per-channel notch database; RxChannel is a
+    // thin forwarder. List position IS the WDSP notch index, so every caller
+    // must keep its own ordering in lockstep (design doc section 5.2).
+    //
+    // WDSP builds each RXA channel's database with room for 1024 notches
+    // (third_party/wdsp/src/RXA.c:88). RXANBPAddNotch returns -1 and mutates
+    // nothing once nn reaches that (nbp.c:368).
+    static constexpr int kMaxNotches = 1024;
+
+    // WDSP sizes rxa[] at MAX_CHANNELS (third_party/wdsp/src/comm.h:110), and
+    // every notch READBACK dereferences a nested pointer inside that slot:
+    // RXANBPGetNumNotches and RXANBPGetNotch reach rxa[ch].ndb.p, and
+    // RXANBPGetMinNotchWidth reaches rxa[ch].nbp0.p (nbp.c:465, :393, :594).
+    // On an out-of-range or never-opened channel that pointer is garbage or
+    // null and the read segfaults, where a plain WDSP setter merely scribbles.
+    //
+    // Test fixtures across this tree construct RxChannel with kTestChannel = 99
+    // for software-only isolation (see design section 11.1), so the readbacks
+    // below must be inert there. Same guard NbFamily already carries for the
+    // same reason (NbFamily.h:269-275, added after Linux CI #238); production
+    // channel ids are 0..maxSlices so this never fires outside tests.
+    static constexpr int kWdspMaxChannels = 32;
+    bool wdspChannelInRange() const
+    {
+        return m_channelId >= 0 && m_channelId < kWdspMaxChannels;
+    }
+
+    /// Number of notches currently installed on this channel.
+    /// Returns 0 when the channel id is outside WDSP's range.
+    int notchCount() const;
+
+    /// Insert `n` at WDSP notch index `index`. Returns false when WDSP
+    /// refuses (index past the end, or kMaxNotches reached), in which case
+    /// nothing was mutated and the caller should resync.
+    bool addNotch(int index, const Notch& n);
+
+    /// Overwrite the notch at WDSP index `index`. Returns false when the
+    /// index is past the end, in which case nothing was mutated.
+    bool editNotch(int index, const Notch& n);
+
+    /// Erase the notch at WDSP index `index`. WDSP shifts the remaining
+    /// entries down one slot, so callers must do the same to keep list
+    /// position == WDSP index. Returns false when the index is past the end.
+    bool deleteNotch(int index);
+
+    /// Replace this channel's entire notch set with `notches`, in list order,
+    /// so list position == WDSP notch index. Used on channel activation and
+    /// after NotchModel::restoreFromSettings; live edits use the incremental
+    /// calls above because this one designs 2N filter pairs.
+    void syncNotches(const QList<Notch>& notches);
+
+    /// Master notch enable for THIS channel. WDSP builds every notch database
+    /// inert (third_party/wdsp/src/RXA.c:87), so a channel that never gets
+    /// this call is notch-inert rather than merely notch-empty.
+    void setNotchesRun(bool run);
+    bool notchesRun() const { return m_notchesRun; }
+
+    /// Let WDSP widen a notch that is narrower than the filter can realise,
+    /// instead of dropping it.
+    void setNotchAutoIncrease(bool on);
+    bool notchAutoIncrease() const { return m_notchAutoIncrease; }
+
+    /// Narrowest notch the current filter can realise, in Hz. Varies with the
+    /// filter's coefficient count and the channel's DSP rate, so it must be
+    /// re-read after either changes. Observers follow minNotchWidthChanged
+    /// rather than polling.
+    double minNotchWidthHz() const;
+
+    /// Read one notch straight back out of WDSP's per-channel database.
+    /// RXANBPGetNotch (third_party/wdsp/src/nbp.c:393) returns 0 on success
+    /// and -1 with sentinel outputs (fcenter -1.0, fwidth 0.0, active -1)
+    /// when `index` is past the end, so a caller that ignored the return
+    /// would read a notch that does not exist. `out.id` is left untouched:
+    /// WDSP's database is positional and carries no id.
+    bool notchAt(int index, Notch& out) const;
+
     // --- Filter convenience setters (single-axis) ---
     // Thin wrappers that remember the pending low/high and call setFilterFreqs.
     // Carry-only for state preservation in captureState/applyState; WDSP wiring
@@ -771,6 +879,19 @@ signals:
     void activeChanged(bool active);
     void filterChanged(double low, double high);
 
+    /// TNF design section 9: the narrowest realisable notch moved.
+    ///
+    /// WDSP recomputes it as 1600.0 / (nc / 256) * (rate / 48000) on every
+    /// read (third_party/wdsp/src/nbp.c:82-96), so it changes silently
+    /// whenever the coefficient count or the channel rate does. Thetis has
+    /// the same problem and solves it the same way: it re-reads through
+    /// UpdateMinimumNotchWidthRX and fires MinimumRXNotchWidthChangedHandlers
+    /// (console.cs:48787-48818 [v2.10.3.15]), called from the DSP-options
+    /// apply path at console.cs:39052-39053.
+    ///
+    /// Carries the freshly read value so observers need no second call.
+    void minNotchWidthChanged(double minWidthHz);
+
     // Phase 3J-1 (Task 16.2): TCI audio tap. Emitted from the audio thread
     // after fexchange2 and any post-DSP NR (DFNR, MNR) produce the final
     // enhanced audio block for this receiver. Receivers MUST use
@@ -927,6 +1048,28 @@ private:
 
     // Shift offset carry (mirrors what was last passed to setShiftFrequency)
     double m_shiftOffsetHz{0.0};
+
+    // Notch tune-frequency carry (mirrors what was last passed to
+    // RXANBPSetTuneFrequency). Plain member, not atomic: WDSP owns the
+    // authoritative notch database and the audio thread never reads this,
+    // so it is main-thread-only state.
+    double m_notchTuneFrequencyHz{0.0};
+
+    // Notch shift carry (mirrors what was last passed to
+    // RXANBPSetShiftFrequency). Main-thread-only, same reasoning as
+    // m_notchTuneFrequencyHz. Do NOT move this write away from the WDSP
+    // call it mirrors in setShiftFrequency; that co-location is the point.
+    double m_notchShiftHz{0.0};
+
+    // Manual notch carries. Main-thread only, no atomics: WDSP owns the
+    // authoritative per-channel notch state and there is no WDSP getter for
+    // either flag, so these mirror the last value pushed purely so callers
+    // and tests can read back what a channel was told.
+    // Defaults mirror WDSP's construction values so the carry is not a lie
+    // about a freshly opened channel: create_notchdb master_run = 0
+    // (third_party/wdsp/src/RXA.c:87), create_nbp autoincr = 1 (RXA.c:105).
+    bool m_notchesRun{false};
+    bool m_notchAutoIncrease{true};
 
     // NB enabled carry (NbFamily is the primary API; this is a convenience bool
     // that reflects whether NbMode != Off)

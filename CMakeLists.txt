@@ -666,6 +666,7 @@ set(MODEL_SOURCES
     src/models/MeterModel.cpp
     src/models/TransmitModel.cpp
     src/models/FilterPresetStore.cpp
+    src/models/NotchModel.cpp
     src/models/SpotModel.cpp
     src/models/SpotTableModel.cpp
     src/models/BandFilterProxy.cpp

@@ -73,6 +73,7 @@
 #include <QLabel>
 #include <QAction>
 #include <QActionGroup>
+#include <QKeySequence>
 #include <QPointer>
 #include <QTimer>
 #include <QHash>
@@ -195,6 +196,34 @@ public:
     static void fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
                                        const QVector<float>& bins);
 
+    // ── TNF operator controls (design sections 7, 7.5 and 10.2) ───────────
+    // Public statics rather than file-local helpers: MainWindow needs a full
+    // RadioModel (WDSP, audio, network) to construct, which no unit-test
+    // executable can afford, so this is the only shape in which the
+    // indicator's and the notice's pure behaviours can be tested. All three
+    // are called from production code below.
+
+    /// Status-bar TNF light. Struck through in every off state, and
+    /// escalated to the amber warning colour once notches exist and are
+    /// being bypassed: under maintainer decision D-a the master enable ships
+    /// OFF, so the operator's first notch does nothing until they turn it
+    /// on, and that state has to be unmistakable rather than a subtle tint.
+    static QString tnfIndicatorStyleSheet(bool globalEnabled, int notchCount);
+
+    /// Status-bar TNF light tooltip: how many notches exist, whether they
+    /// are doing anything, and that the click toggles them.
+    static QString tnfIndicatorTooltip(int notchCount, bool globalEnabled);
+
+    /// The DSP > TNF accelerator. Public and static so the collision test can
+    /// read it without an instance; design section 10.2 fixes it in code
+    /// because NereusSDR has no shortcut-assignment subsystem to register
+    /// with.
+    static QKeySequence tnfToggleShortcut();
+
+    /// Operator notice for a rejected notch add. Pure so the wording can be
+    /// pinned without standing MainWindow up.
+    static QString tnfAddRejectedNotice(const QString& reason);
+
 public slots:
     // ── Phase 3M-0 Task 14 helper slots ──────────────────────────────────
     // Update PA status badge state. Wired by Task 17 to
@@ -265,6 +294,87 @@ private slots:
     /// is fed. Must be called on slice add/remove, not just on pan-count
     /// change: a slice added to an existing pan moves no pan count.
     void refreshMeterPollerSlices();
+
+    /// TNF: push the global notch list at EVERY pan (design section 8.1).
+    ///
+    /// Under D1 the notch list is global, so each pan gets the same vector
+    /// and converts it into its own pixel space. Deliberately not the spot
+    /// overlay's activeSpectrumWidget()-only shape, which would leave every
+    /// secondary pan blank.
+    ///
+    /// The only Hz-to-MHz conversion site in the TNF stack: NotchModel
+    /// stores absolute RF Hz, NotchMarker::freqMhz is MHz, and everything
+    /// else (the five interaction signals, setNotchMinWidthHz, the dent
+    /// maths) stays in Hz.
+    void refreshPanNotchMarkers();
+
+    /// TNF: push the visual-notch (trace dent) toggle at EVERY pan
+    /// (design section 8.3).
+    ///
+    /// Same shape as refreshPanNotchMarkers above, and for the same reason:
+    /// the toggle is one global NotchModel flag but each pan owns its own
+    /// SpectrumWidget, so it has to reach pans created after startup too.
+    /// Armed from PanadapterStack::countChanged and from
+    /// NotchModel::visualEnabledChanged.
+    void refreshPanVisualNotch();
+
+    /// TNF: push WDSP's minimum notch width at EVERY pan
+    /// (design sections 7.2 and 8.3).
+    ///
+    /// SpectrumWidget cannot pull this: it varies with the filter's
+    /// coefficient count and the channel's DSP rate, and neither is visible
+    /// from the GUI layer. Without the push every pan keeps the 100 Hz
+    /// construction default forever, which silently mis-sizes both the
+    /// edge-drag clamp and the dent span the moment the operator changes nc
+    /// on the DSP Options page or the radio's sample rate.
+    ///
+    /// Resolved per pan through that pan's OWN activeSliceIndex, matching
+    /// refreshPanStatusOverlays, because a multi-pan layout can host slices
+    /// on channels with different rates. Re-arms the per-channel
+    /// RxChannel::minNotchWidthChanged follow on every pass
+    /// (Qt::UniqueConnection), since the channel a pan resolves to changes
+    /// with the slice set.
+    void refreshPanNotchMinWidth();
+
+    /// TNF: connect the five per-pan notch interaction signals on EVERY pan.
+    ///
+    /// Armed from PanadapterStack::countChanged, the same hook
+    /// wirePanBadgeHandlers uses, and for the same reason: a pan created by
+    /// a layout switch would otherwise never be wired. Not folded into
+    /// wireSpectrumForPan, which skips pan-0 by design.
+    ///
+    /// The handlers below are SLOTS, not lambdas, so Qt::UniqueConnection is
+    /// actually honoured on the re-arm.
+    void wirePanNotchHandlers();
+
+    /// TNF inbound handlers. Each mutates the single global NotchModel; the
+    /// frequencies arrive already resolved in the emitting pan's own
+    /// frequency mapping, so nothing here consults an active pan.
+    void onNotchCreateRequested(const QString& panId, double freqHz, bool narrow);
+    void onNotchMoveRequested(int id, double newFreqHz);
+    void onNotchWidthRequested(int id, double widthHz);
+    void onNotchActiveRequested(int id, bool active);
+    void onNotchRemoveRequested(int id);
+
+    /// TNF: the +TNF overlay button on pan `panId`. A distinct slot from
+    /// onNotchCreateRequested above, which takes an already-resolved
+    /// frequency from a panadapter click; this one has to compose the centre
+    /// itself from the pan's own slice (design section 7.5).
+    ///
+    /// A slot, not a lambda, for the same reason the five handlers above are:
+    /// ensureOverlayPanels re-runs on every PanadapterStack::countChanged and
+    /// Qt6 silently ignores Qt::UniqueConnection on a lambda target, so a
+    /// lambda would add one extra notch per layout switch the operator had
+    /// ever made.
+    void onAddTnfClicked(const QString& panId);
+
+    /// TNF: surface a rejected add. Without this a +TNF press inside the
+    /// 10 Hz dedupe window is silently ignored and the button reads as dead.
+    void onNotchAddRejected(const QString& reason);
+
+    /// TNF: repaint the status-bar light from NotchModel. Driven by every
+    /// signal that can change either half of what it shows.
+    void refreshTnfIndicator();
 
     /// Wire one panadapter's spot, connection and MaxBin hooks. Every one of
     /// these used to be connected once to pan-0's widget, leaving other pans
@@ -696,6 +806,9 @@ private:
     // widget so the ladder folds them together instead of dribbling them
     // out one label at a time (design §6, "last resort").
     QWidget*    m_placeholderGroup{nullptr};
+    // Band-stack dots. Head of the bar positionally, ahead of +PAN, but
+    // registered at rung 10 so they fold with the other stubs.
+    QWidget*    m_bandStackLabel{nullptr};
     QLabel*     m_placeholderSep{nullptr};
 
     // Right-side strip items — captured so they can be registered with
@@ -776,6 +889,9 @@ private:
     QAction*      m_snbAction = nullptr;
     QAction*      m_apfAction = nullptr;
     QAction*      m_binAction = nullptr;
+    /// DSP > TNF. Checkable; two-way bound to NotchModel::globalEnabled, so
+    /// the status-bar light and this item never disagree.
+    QAction*      m_tnfAction = nullptr;
 
     // Mode menu actions (14 modes: 12 Thetis + NereusSDR-native
     // RADE-U / RADE-L from Phase 3R L3; mutual exclusion via
