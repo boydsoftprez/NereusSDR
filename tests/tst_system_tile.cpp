@@ -28,7 +28,15 @@ private slots:
         t.setPaTempCelsius(42.5);
         t.setCpuPercent(19.0);
         QVERIFY(t.hasPaRow());
-        QVERIFY(t.paRowText().contains(QStringLiteral("42.5")));
+        // Exact match via PaTempUnitNotifier::format(), like
+        // bothReadingsShareRowOne below: a literal "42.5" .contains()
+        // check assumes Celsius is the ambient persisted unit and
+        // silently stops meaning what it says if that unit is ever
+        // Fahrenheit (42.5C formats as "108.5F"), instead of proving
+        // refreshPaRow()'s temp-only branch (SystemTile.cpp) produces the
+        // unprefixed PaTempUnitNotifier::format(m_celsius) it is supposed
+        // to (final-fix-wave finding 9).
+        QCOMPARE(t.paRowText(), PaTempUnitNotifier::format(42.5));
     }
 
     void bothReadingsShareRowOne() {

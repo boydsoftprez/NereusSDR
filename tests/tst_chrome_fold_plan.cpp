@@ -88,10 +88,27 @@ private slots:
         }
     }
 
-    void planFoldIsDeterministic() {
-        const QVector<ChromeFoldEntry> t = sampleTable();
-        for (int w = 100; w <= 2000; ++w) {
-            QCOMPARE(ChromeFoldPlan::planFold(t, w), ChromeFoldPlan::planFold(t, w));
+    void planFoldIsOrderIndependent() {
+        // A meaningful determinism property for a pure, static function:
+        // planFold sums by rung, so the SAME set of entries must fold the
+        // same way regardless of the order they appear in the vector.
+        // The previous version of this test compared planFold(t, w) to
+        // planFold(t, w) with the identical vector in the identical
+        // call -- for a static function with no internal state that can
+        // never fail, and it proved nothing (final-fix-wave finding 9).
+        // Reuses outOfRungOrderTable()'s documented content (System(1),
+        // TGXL(2), CAT(3), Placeholders(10), fed in as 10,1,3,2) against
+        // the same four entries in ascending order.
+        const QVector<ChromeFoldEntry> ascending = {
+            {1,  60, QStringLiteral("System")},
+            {2,  62, QStringLiteral("TGXL")},
+            {3,  60, QStringLiteral("CAT")},
+            {10, 122, QStringLiteral("Placeholders")},
+        };
+        const QVector<ChromeFoldEntry> scrambled = outOfRungOrderTable();
+        for (int w = 40; w <= 400; ++w) {
+            QCOMPARE(ChromeFoldPlan::planFold(scrambled, w),
+                     ChromeFoldPlan::planFold(ascending, w));
         }
     }
 

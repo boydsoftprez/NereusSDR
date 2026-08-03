@@ -84,6 +84,13 @@ private slots:
 
     void bothEmptyGivesAnEmptyLine() {
         StationBlock b;
+        // Seed a non-default state first. m_hardwareLine starts empty by
+        // default construction, so asserting empty afterward with no seed
+        // would still pass even if setHardwareLine()'s entire body were
+        // deleted (final-fix-wave finding 9) -- it would just be
+        // re-confirming the untouched default.
+        b.setHardwareLine(QStringLiteral("ANAN-G2"), QStringLiteral("v27"));
+        QVERIFY(!b.hardwareLine().isEmpty());
         b.setHardwareLine(QString(), QString());
         QCOMPARE(b.hardwareLine(), QString());
     }
