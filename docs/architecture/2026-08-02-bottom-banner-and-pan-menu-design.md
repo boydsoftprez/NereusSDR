@@ -384,7 +384,12 @@ layout". No dialog, no toast.
 AetherSDR ships twelve layouts up to eight pans. Three of those are
 unreachable for us.
 
-`BoardCapabilities` caps `maxSlices` at **five on every supported board**:
+Opening a layout with N pans requires N independent DDCs. A new pan always
+claims its own stream (`SliceStreamAllocator::placeSlice`,
+`preferOwnStream=true`; see the ruling comment at
+`SliceStreamAllocator.cpp:81-86`), so the real per-board ceiling is
+`qMin(maxSlices, userDdcCount)`, not `maxSlices` alone. That ceiling is
+**five at most on every supported board**:
 
 | Board | maxReceivers | maxSlices | userDdcCount |
 | --- | ---: | ---: | ---: |
@@ -435,7 +440,7 @@ relaying a capacity number from a radio API it does not own.
 NereusSDR **hides** unavailable tiles and prints a single footer line naming
 what was hidden and why:
 
-> `Hermes II allots 2 slices. 6 layouts need a radio with more.`
+> `Hermes II allots 2 pans. 6 layouts need a radio with more.`
 
 Rationale. A tile that can never be clicked is noise, and greying nine tiles
 down to three on a Hermes II makes the dialog look broken. But silently
@@ -488,8 +493,8 @@ whole ladder is testable as a pure function.
 4. **Alarm invariance.** Assert the four safety slots occupy identical
    geometry with alarms off and on, at every width.
 5. **Board matrix.** For each `BoardCapabilities` row, assert the layout grid
-   shows exactly the layouts with `panCount <= maxSlices` and the footer
-   count matches the hidden count.
+   shows exactly the layouts with `panCount <= qMin(maxSlices, userDdcCount)`
+   and the footer count matches the hidden count.
 
 ### 9.2 Bench
 

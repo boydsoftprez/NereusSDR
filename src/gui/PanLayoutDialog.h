@@ -49,6 +49,20 @@
 //                                    capacity number from an API it does
 //                                    not own). AI-assisted transformation
 //                                    via Anthropic Claude Code.
+//   2026-08-02  J.J. Boyd / KG4VCF  Final fix-wave: gating corrected from
+//                                    raw maxSlices to qMin(maxSlices,
+//                                    userDdcCount). Opening a NEW pan
+//                                    always claims its own DDC
+//                                    (SliceStreamAllocator::placeSlice,
+//                                    preferOwnStream=true), so userDdcCount
+//                                    -- not total slice count -- is the
+//                                    real ceiling on independent pans; the
+//                                    old gate showed tiles an HL2-class
+//                                    board (5 slices, 2 DDCs) could paint
+//                                    but never fill. Ctor parameter renamed
+//                                    maxSlices -> maxPanCount to match.
+//                                    AI-assisted transformation via
+//                                    Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -60,16 +74,22 @@ namespace NereusSDR {
 
 /// Three-column painted thumbnail grid, ported structurally from
 /// AetherSDR PanLayoutDialog. Shows every layout in `kPanLayouts` whose
-/// `panCount` fits the connected board's `maxSlices`; layouts that do not
-/// fit are hidden rather than greyed, with a footer line naming the board
-/// and how many were hidden (design doc §8.4).
+/// `panCount` fits the connected board's independent-pan ceiling
+/// (`qMin(BoardCapabilities::maxSlices, BoardCapabilities::userDdcCount)`);
+/// layouts that do not fit are hidden rather than greyed, with a footer
+/// line naming the board and how many were hidden (design doc §8.4).
 class PanLayoutDialog : public QDialog {
     Q_OBJECT
 
 public:
-    /// maxSlices comes from BoardCapabilities for the connected radio.
+    /// maxPanCount is qMin(BoardCapabilities::maxSlices,
+    /// BoardCapabilities::userDdcCount) for the connected radio. Opening a
+    /// NEW pan always claims its own DDC
+    /// (SliceStreamAllocator::placeSlice, preferOwnStream=true), so the
+    /// board's user-facing DDC count -- not its total slice count -- is
+    /// what actually ceilings how many independent pans it can host.
     /// boardName appears in the footer when layouts are hidden.
-    PanLayoutDialog(int maxSlices, const QString& currentLayoutId,
+    PanLayoutDialog(int maxPanCount, const QString& currentLayoutId,
                     const QString& boardName, QWidget* parent = nullptr);
     ~PanLayoutDialog() override;
 
@@ -82,7 +102,7 @@ public:
     QString footerText() const { return m_footerText; }
 
 private:
-    void buildUi(int maxSlices, const QString& currentLayoutId,
+    void buildUi(int maxPanCount, const QString& currentLayoutId,
                  const QString& boardName);
 
     QString     m_selected;

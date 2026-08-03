@@ -345,8 +345,12 @@ private slots:
     void openSpotHub();
     void openFreeDVReporter();
     /// Task B4 (bottom-banner + pan-menu epic): +PAN icon click handler.
-    /// Gated on m_radioModel->isConnected(); opens PanLayoutDialog sized to
-    /// maxSlices() and, on accept, applies the selected layout via
+    /// Also the View > Pan Layout… (Ctrl+L) menu action's target. Gated on
+    /// m_radioModel->isConnected(); opens PanLayoutDialog sized to
+    /// qMin(BoardCapabilities::maxSlices, BoardCapabilities::userDdcCount)
+    /// -- opening a new pan always claims its own DDC, so that ceiling
+    /// (not the raw slice count) is what bounds how many pans a board can
+    /// actually fill -- and, on accept, applies the selected layout via
     /// applyPanLayout(). Replaces the Phase 3F Sub-Epic D Task 10
     /// showPanMenu() context menu -- its add-slice-on-active-pan and
     /// float-active-pan actions move to each pan's own right-click menu in

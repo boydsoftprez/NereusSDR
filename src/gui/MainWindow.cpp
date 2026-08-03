@@ -2705,6 +2705,22 @@ void MainWindow::buildUI()
                 lbl->setStyleSheet(
                     QStringLiteral("color: %1; font-size: 9px; font-weight: bold;")
                         .arg(color));
+
+                // reasonText ranges from "idle" to
+                // "BYPASS (multi-band: 160m + 80m + 40m + 20m + 10m)", so the
+                // owning chain widget's sizeHint (registered with m_chromeBar
+                // at rung 4) just went stale. Report it so folding stays a
+                // pure function of width rather than overflowing on the next
+                // band change (final-fix-wave finding 1).
+                if (m_chromeBar && m_chromeBarWidget) {
+                    QWidget* chainWidget = (adc == 0) ? m_chain0IndicatorWidget
+                                                       : m_chain1IndicatorWidget;
+                    if (chainWidget) {
+                        m_chromeBar->setNaturalWidth(
+                            chainWidget, chainWidget->sizeHint().width());
+                        m_chromeBar->relayout(m_chromeBarWidget->width());
+                    }
+                }
             });
 
     // Phase 3F: and drive the per-pan WIDE pill from the same signal.
@@ -6412,24 +6428,40 @@ void MainWindow::buildStatusBar()
         const bool connected =
             (m_radioModel->connectionState() == ConnectionState::Connected);
         m_stationBlock->setRadioName(connected ? info.name : QString());
+        // setRadioName(QString()) also clears the hardware row
+        // (StationBlock.cpp:57-59), so sizeHint may have changed either
+        // way. Report it (final-fix-wave finding 3) so the fold budget
+        // does not keep charging the connected width after this label
+        // shrinks back to "Click to connect".
+        if (m_chromeBar && m_chromeBarWidget) {
+            m_chromeBar->setNaturalWidth(
+                m_stationBlock, m_stationBlock->sizeHint().width());
+            m_chromeBar->relayout(m_chromeBarWidget->width());
+        }
     });
     connect(m_radioModel, &RadioModel::connectionStateChanged, this,
             [this](ConnectionState s) {
         if (s != ConnectionState::Connected) {
             m_stationBlock->setRadioName(QString());
+            if (m_chromeBar && m_chromeBarWidget) {
+                m_chromeBar->setNaturalWidth(
+                    m_stationBlock, m_stationBlock->sizeHint().width());
+                m_chromeBar->relayout(m_chromeBarWidget->width());
+            }
         }
     });
 
-    // ── ADC Overload alarm: lives in the right-side strip ──────────────────
+    // ── ADC Overload alarm: lives in the reserved safety group ─────────────
     // Earlier revisions of the Phase 3Q chrome work parked the alarm
     // between the dashboard and STATION block. That violated layout-
     // stability rule §278.4 ("STATION sits between two flex:1 spacers.
     // Activity in the middle or right sections never moves it.")
     // because the label's text width grew when overload fired and
-    // pushed STATION sideways. The alarm is now an AdcOverloadBadge
-    // built further down with the other right-side status badges,
-    // between PA OK and TX, where its size changes consume the right-
-    // side strip's stretch space rather than the STATION anchor.
+    // pushed STATION sideways. The alarm is now an AdcOverloadBadge built
+    // further down as one of the four permanently-allocated 50 px safety
+    // slots (design doc §4.5: INH / PA / OVL / TX) -- an inactive slot
+    // dims rather than collapsing, so its appearance changes opacity, not
+    // width, and nothing else on the bar moves when it lights up.
 
     hbox->addWidget(m_stationBlock);
 
@@ -8777,9 +8809,17 @@ void MainWindow::showPanLayoutDialog()
     if (!m_radioModel || !m_radioModel->isConnected()) {
         return;
     }
-    const int maxSlices = m_radioModel->maxSlices();
+    // Gate on the DDC-derived ceiling, not raw maxSlices: opening a NEW
+    // pan always claims its own DDC (SliceStreamAllocator::placeSlice,
+    // preferOwnStream=true; see the ruling comment at
+    // SliceStreamAllocator.cpp:81-86), so a board like HL2 (maxSlices=5,
+    // userDdcCount=2) can never fill more than 2 independent pans even
+    // though it can host 5 slices total. Gating on maxSlices alone showed
+    // tiles the board could paint but never fill (final-fix-wave finding 2).
+    const auto& caps = m_radioModel->boardCapabilities();
+    const int maxPanCount = qMin(caps.maxSlices, caps.userDdcCount);
     const QString boardName = m_radioModel->name();
-    PanLayoutDialog dlg(maxSlices,
+    PanLayoutDialog dlg(maxPanCount,
                         m_panStack ? m_panStack->currentLayoutId()
                                    : QStringLiteral("1"),
                         boardName, this);

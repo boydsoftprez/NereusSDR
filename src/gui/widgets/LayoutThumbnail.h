@@ -46,8 +46,10 @@ struct PanLayoutGeometry {
 /// Every layout NereusSDR ships, Single first.
 ///
 /// AetherSDR ships twelve, up to eight pans. The three largest are omitted
-/// because BoardCapabilities caps maxSlices at five on every supported
-/// board, so those tiles could never light up. That is a client-side
+/// because no supported board's independent-pan ceiling
+/// (qMin(BoardCapabilities::maxSlices, BoardCapabilities::userDdcCount) --
+/// opening a NEW pan always claims its own DDC) exceeds five, so those
+/// tiles could never light up on any of them. That is a client-side
 /// allocation limit and not a hardware one: the gateware does eight
 /// receivers (n1gp-Anvelina_PROIII Orion.v:958 [@8e86a61], NR = 8).
 extern const QVector<PanLayoutGeometry> kPanLayouts;

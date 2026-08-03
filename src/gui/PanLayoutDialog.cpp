@@ -34,6 +34,14 @@
 //                                    board and the count (design doc
 //                                    §8.4). AI-assisted transformation
 //                                    via Anthropic Claude Code.
+//   2026-08-02  J.J. Boyd / KG4VCF  Final fix-wave: gating corrected from
+//                                    raw maxSlices to qMin(maxSlices,
+//                                    userDdcCount); footer wording changed
+//                                    from "N slices" to "N pans" to match
+//                                    (was misleading twice over on a board
+//                                    like HL2 where the two numbers
+//                                    differ). AI-assisted transformation
+//                                    via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/PanLayoutDialog.h"
@@ -54,19 +62,19 @@ namespace {
 constexpr int kMaxCols = 3;
 } // namespace
 
-PanLayoutDialog::PanLayoutDialog(int maxSlices, const QString& currentLayoutId,
+PanLayoutDialog::PanLayoutDialog(int maxPanCount, const QString& currentLayoutId,
                                  const QString& boardName, QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("Panadapter Layout"));
     setStyleSheet(QStringLiteral("background: %1; color: %2;")
                       .arg(Style::kAppBg, Style::kTextPrimary));
-    buildUi(maxSlices, currentLayoutId, boardName);
+    buildUi(maxPanCount, currentLayoutId, boardName);
 }
 
 PanLayoutDialog::~PanLayoutDialog() = default;
 
-void PanLayoutDialog::buildUi(int maxSlices, const QString& currentLayoutId,
+void PanLayoutDialog::buildUi(int maxPanCount, const QString& currentLayoutId,
                               const QString& boardName)
 {
     auto* vbox = new QVBoxLayout(this);
@@ -90,9 +98,9 @@ void PanLayoutDialog::buildUi(int maxSlices, const QString& currentLayoutId,
 
     for (const PanLayoutGeometry& g : kPanLayouts) {
         // Hide rather than grey. A tile that can never be clicked is noise,
-        // and greying nine down to three on a 2-slice board makes the dialog
+        // and greying nine down to three on a 2-pan board makes the dialog
         // look broken. AetherSDR greys; see design §8.4 for the divergence.
-        if (g.panCount > maxSlices) {
+        if (g.panCount > maxPanCount) {
             ++hidden;
             continue;
         }
@@ -145,9 +153,9 @@ void PanLayoutDialog::buildUi(int maxSlices, const QString& currentLayoutId,
         const QString layoutWord = (hidden == 1)
             ? tr("1 layout needs")
             : tr("%1 layouts need").arg(hidden);
-        m_footerText = tr("%1 allots %2 slices. %3 a radio with more.")
+        m_footerText = tr("%1 allots %2 pans. %3 a radio with more.")
                            .arg(boardName)
-                           .arg(maxSlices)
+                           .arg(maxPanCount)
                            .arg(layoutWord);
         auto* footer = new QLabel(m_footerText, this);
         footer->setAlignment(Qt::AlignCenter);
