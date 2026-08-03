@@ -7280,10 +7280,10 @@ void MainWindow::buildStatusBar()
     safetyRow->setContentsMargins(8, 0, 0, 0);
     safetyRow->setSpacing(6);
 
-    auto addSlot = [&](QWidget* badge) {
+    auto addSlot = [&](QWidget* badge, int widthPx = kSafetySlotWidthPx) {
         auto* slot = new QWidget(m_safetyGroup);
         slot->setObjectName(QStringLiteral("safetySlot"));
-        slot->setFixedWidth(kSafetySlotWidthPx);
+        slot->setFixedWidth(widthPx);
         auto* sl = new QHBoxLayout(slot);
         sl->setContentsMargins(0, 0, 0, 0);
         sl->addWidget(badge);
@@ -7292,7 +7292,9 @@ void MainWindow::buildStatusBar()
     };
 
     addSlot(m_paStatusBadge);
-    addSlot(m_adcOvlBadge);
+    // The alarm gets a slot sized to its own content, not to its
+    // neighbours. PA and TX stay narrow and learnable by position.
+    addSlot(m_adcOvlBadge, kOverloadSlotWidthPx);
     addSlot(m_txStatusBadge);
     hbox->addWidget(m_safetyGroup);
 

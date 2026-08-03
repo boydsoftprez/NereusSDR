@@ -13,16 +13,22 @@ namespace NereusSDR {
 
 class ChromeBarController;
 
-/// Width of each reserved safety slot (design §4.5).
+/// Width of a reserved safety slot (design §4.5).
 ///
-/// Sized to the WIDEST safety badge, not the narrowest. It was 50 px,
-/// chosen against INH / PA / TX, and AdcOverloadBadge did not fit: its top
-/// row reads "ADC0/1/2" on a three-ADC alarm and needs 60 px including the
-/// badge's own 8 px side margins. On a real ANAN-G2E it rendered clipped.
+/// Two sizes, not one. PA and TX carry two or three glyphs and want a
+/// narrow, stable footprint the operator learns by position. The ADC
+/// overload badge carries real content -- "ADC0/1/2" over "OVERLOAD" --
+/// and forcing it into the same box is what produced the clipped
+/// "/ERLO/" seen on a bench. Retiring the TX-inhibit pill freed a whole
+/// slot, so the alarm now gets a slot sized to it and the group is still
+/// narrower than the four uniform slots it replaces.
+///
 /// Both MainWindow::buildStatusBar and
-/// tests/tst_mainwindow_status_bar_safety.cpp read this constant so the
-/// slot and the fit assertion can never drift apart again.
+/// tests/tst_mainwindow_status_bar_safety.cpp read these, so a slot and
+/// its fit assertion cannot drift apart.
 inline constexpr int kSafetySlotWidthPx = 60;
+/// Sized to the overload badge's widest real state: a three-ADC alarm.
+inline constexpr int kOverloadSlotWidthPx = 88;
 
 /// Every widget the banner registers. Any member may be null; registration
 /// skips nulls. In production every SKU currently constructs chain1

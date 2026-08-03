@@ -184,11 +184,12 @@ private:
     // (design §4.5): a fixed-50px "safetySlot" QWidget wrapping one badge,
     // added to a "safetyGroup" host's QHBoxLayout. See file header for why
     // this is built standalone instead of via a real MainWindow.
-    static void addSlot(QHBoxLayout* safetyRow, QWidget* group, QWidget* badge)
+    static void addSlot(QHBoxLayout* safetyRow, QWidget* group, QWidget* badge,
+                        int widthPx = kSafetySlotWidthPx)
     {
         auto* slot = new QWidget(group);
         slot->setObjectName(QStringLiteral("safetySlot"));
-        slot->setFixedWidth(kSafetySlotWidthPx);
+        slot->setFixedWidth(widthPx);
         auto* sl = new QHBoxLayout(slot);
         sl->setContentsMargins(0, 0, 0, 0);
         sl->addWidget(badge);
@@ -238,7 +239,7 @@ private slots:
         tx->setObjectName(QStringLiteral("txStatusBadge"));
 
         addSlot(safetyRow, group, pa);
-        addSlot(safetyRow, group, ovl);
+        addSlot(safetyRow, group, ovl, kOverloadSlotWidthPx);
         addSlot(safetyRow, group, tx);
         hbox->addWidget(group);
         dimBadge(ovl, false);
@@ -269,7 +270,8 @@ private slots:
         auto* safetyRow = new QHBoxLayout(group);
 
         addSlot(safetyRow, group, new StatusBadge(&host));
-        addSlot(safetyRow, group, new AdcOverloadBadge(&host));
+        addSlot(safetyRow, group, new AdcOverloadBadge(&host),
+                kOverloadSlotWidthPx);
         addSlot(safetyRow, group, new StatusBadge(&host));
         hbox->addWidget(group);
 
@@ -277,14 +279,19 @@ private slots:
             group->findChildren<QWidget*>(QStringLiteral("safetySlot"),
                                           Qt::FindDirectChildrenOnly);
         QCOMPARE(slotWidgets.size(), 3);
+        // Slots are pinned, but no longer all the same width: the alarm
+        // carries real content and gets a slot sized to it. Both bounds
+        // must still be pinned, which is what the reserved-slot design
+        // actually depends on.
         for (QWidget* s : slotWidgets) {
             // Assert the CONSTRAINT, not the laid-out geometry. Qt does not
             // lay out an unshown window, so width() would read the default
             // 100 here and fail for a reason that has nothing to do with
             // the fix. setFixedWidth pins both bounds, so this is the
             // property the reserved-slot design actually depends on.
-            QCOMPARE(s->minimumWidth(), kSafetySlotWidthPx);
-            QCOMPARE(s->maximumWidth(), kSafetySlotWidthPx);
+            QCOMPARE(s->minimumWidth(), s->maximumWidth());
+            QVERIFY(s->minimumWidth() == kSafetySlotWidthPx
+                    || s->minimumWidth() == kOverloadSlotWidthPx);
         }
     }
 
@@ -301,12 +308,15 @@ private slots:
         constexpr int kSlotWidth = kSafetySlotWidthPx;
 
         AdcOverloadBadge ovl;
-        // Widest realistic case: all three ADCs overloading at once.
+        // Widest realistic case: all three ADCs overloading at once, with
+        // the full word beneath it. This is the assertion that "OVL" was
+        // invented to dodge; the badge gets a bigger slot instead now.
         ovl.setAdcs(QStringLiteral("0/1/2"));
         ovl.ensurePolished();
-        QVERIFY2(ovl.sizeHint().width() <= kSlotWidth,
+        QVERIFY2(ovl.sizeHint().width() <= kOverloadSlotWidthPx,
                  qPrintable(QStringLiteral("AdcOverloadBadge needs %1 px, slot is %2")
-                                .arg(ovl.sizeHint().width()).arg(kSlotWidth)));
+                                .arg(ovl.sizeHint().width())
+                                .arg(kOverloadSlotWidthPx)));
 
         StatusBadge pa;
         pa.setLabel(QStringLiteral("PA"));

@@ -18,14 +18,13 @@ AdcOverloadBadge::AdcOverloadBadge(QWidget* parent) : QWidget(parent)
     m_topLabel->setAlignment(Qt::AlignHCenter);
     vbox->addWidget(m_topLabel);
 
-    // "OVL", not "OVERLOAD". Smoke test on an ANAN-G2E, 2026-08-03: the
-    // full word needs about 78 px including this layout's 8 px side
-    // margins, but design §4.5 gives every safety badge a 50 px reserved
-    // slot, so it rendered clipped to a meaningless "/ERLO/". The design
-    // mockup drew "OVL" all along; only the plan's prose said OVERLOAD.
-    // Shortening keeps the uniform slot width, which is what makes an
-    // alarm light up in a pixel the operator has already learned.
-    m_bottomLabel = new QLabel(QStringLiteral("OVL"), this);
+    // Full word, not an abbreviation. It was shortened to "OVL" to survive
+    // a 50 px slot, which was designing the label around the box; retiring
+    // the TX-inhibit pill freed a whole slot, so the badge now gets a slot
+    // sized to it instead. Behaviour above the text is unchanged and stays
+    // Thetis-sourced: yellow at any overload, red past level 3
+    // (ucInfoBar.cs:928 [@501e3f5]).
+    m_bottomLabel = new QLabel(QStringLiteral("OVERLOAD"), this);
     m_bottomLabel->setObjectName(QStringLiteral("AdcOverloadBadge_Bottom"));
     m_bottomLabel->setAlignment(Qt::AlignHCenter);
     vbox->addWidget(m_bottomLabel);
@@ -33,7 +32,7 @@ AdcOverloadBadge::AdcOverloadBadge(QWidget* parent) : QWidget(parent)
     setAttribute(Qt::WA_StyledBackground, true);
     // Vertical: Fixed at the strip height (46 px); horizontal: Minimum so
     // the badge claims its sizeHint() width and the host's QHBoxLayout
-    // can't squeeze the OVL text below its natural width.
+    // can't squeeze the OVERLOAD text below its natural width.
     setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
 
     applyStyle();
