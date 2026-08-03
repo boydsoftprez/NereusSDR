@@ -5950,6 +5950,12 @@ nereus_add_test(tst_pan_flag_positions)
 # edge on the lower pan of a 2v layout. Bench-reported 2026-07-28.
 nereus_add_test(tst_popup_placement)
 
+# Phase 3F Task B2: painted pan-layout preview tile (ported from AetherSDR
+# PanLayoutDialog.cpp LayoutThumbnail [@c6481cb]). Geometry tests guard
+# cellRects() against a would-be empty-vector stub by asserting the exact
+# rect count before checking overlap/containment.
+nereus_add_test(tst_layout_thumbnail)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
