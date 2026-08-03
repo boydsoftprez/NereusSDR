@@ -166,6 +166,21 @@ public:
     void handleSupplyRaw(quint16 raw);
     void handleUserAdc0Raw(quint16 raw);
 
+    // Last value handleSupplyRaw / handleUserAdc0Raw computed, or the
+    // -1.0f sentinel if no High-Priority status frame has been parsed yet.
+    //
+    // Exists to close a startup race: status-frame parsing begins as soon
+    // as the socket is live, which can run before RadioModel reaches
+    // Connected and before a UI listener binds supplyVoltsChanged /
+    // userAdc0Changed. handleSupplyRaw/handleUserAdc0Raw suppress
+    // re-emitting an unchanged value (identical-raw suppression above), so
+    // a listener that missed the first sample would otherwise wait forever
+    // for a steady reading that never changes again. A fresh listener
+    // should read these once right after connecting, then rely on the
+    // signal for subsequent changes.
+    float lastSupplyVolts() const { return m_lastSupplyVolts; }
+    float lastUserAdc0Volts() const { return m_lastUserAdc0Volts; }
+
 public slots:
     // Must be called on the worker thread after moveToThread().
     // Creates sockets, timers, and other thread-local resources.

@@ -7048,8 +7048,7 @@ void MainWindow::buildStatusBar()
             // model at each signal emission, when it is guaranteed to be
             // set (status frames only arrive after the Connected handler
             // has populated the profile).
-            connect(conn, &RadioConnection::userAdc0Changed, this,
-                    [this, refreshChromeBarForSystemTile](float v) {
+            auto onUserAdc0 = [this, refreshChromeBarForSystemTile](float v) {
                 const auto model = m_radioModel->hardwareProfile().model;
                 if (model == HPSDRModel::ANAN_G2E) {
                     return;  // G2E uses supply_volts; ignore user_adc0.
@@ -7069,9 +7068,10 @@ void MainWindow::buildStatusBar()
                 m_systemTile->setPaVolts(static_cast<double>(v));
                 refreshChromeBarForSystemTile();
                 qInfo() << "PA tile updated via userAdc0:" << v << "V";
-            });
-            connect(conn, &RadioConnection::supplyVoltsChanged, this,
-                    [this, refreshChromeBarForSystemTile](float v) {
+            };
+            connect(conn, &RadioConnection::userAdc0Changed, this, onUserAdc0);
+
+            auto onSupplyVolts = [this, refreshChromeBarForSystemTile](float v) {
                 const auto model = m_radioModel->hardwareProfile().model;
                 if (model != HPSDRModel::ANAN_G2E) {
                     return;  // Non-G2E uses user_adc0 path.
@@ -7080,7 +7080,30 @@ void MainWindow::buildStatusBar()
                 m_systemTile->setPaVolts(static_cast<double>(v));
                 refreshChromeBarForSystemTile();
                 qInfo() << "PSU tile updated via supplyVolts:" << v << "V";
-            });
+            };
+            connect(conn, &RadioConnection::supplyVoltsChanged, this, onSupplyVolts);
+
+            // 2026-08-03 KG4VCF G2E bench finding: neither qInfo above ever
+            // printed against a live G2E, although it stayed Connected for
+            // minutes. Root cause: P2RadioConnection starts parsing
+            // High-Priority status frames (and calling handleSupplyRaw /
+            // handleUserAdc0Raw) as soon as its UDP socket is live -- the
+            // bench log's first "P2: UDP packet: port 1025 ... size 60"
+            // trace lands about 19 ms BEFORE RadioModel reaches Connected.
+            // The connect() calls just above cannot exist before this exact
+            // lambda runs, so that first sample's userAdc0Changed /
+            // supplyVoltsChanged emission fires with nobody listening.
+            // handleSupplyRaw/handleUserAdc0Raw then suppress every later
+            // re-emit of an unchanged value (identical-raw suppression), so
+            // a steady supply never gives the tile a second chance. Pull
+            // whatever the connection already computed instead of waiting
+            // on a change that will never come.
+            if (conn->lastUserAdc0Volts() >= 0.0f) {
+                onUserAdc0(conn->lastUserAdc0Volts());
+            }
+            if (conn->lastSupplyVolts() >= 0.0f) {
+                onSupplyVolts(conn->lastSupplyVolts());
+            }
         }
     });
 
