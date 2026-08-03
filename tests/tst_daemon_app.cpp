@@ -95,11 +95,27 @@ private slots:
         QCOMPARE(mapped.size(), 1);
         QCOMPARE(mapped.first(), 0);
 
+        // Fix round 2, Finding 1 (reopened): exercise stop()'s ACTUAL
+        // FFT-topology teardown step (clearFftTopologyForTest() runs the
+        // exact same clearFftTopology() stop() calls) WHILE the
+        // RadioModel and its FFTRouter are still alive, so this
+        // assertion can actually fail if the removal regresses. Querying
+        // only AFTER a full stop() cannot tell "the router was cleared"
+        // apart from "the router no longer exists" -- stop() destroys
+        // the RadioModel, and the FFTRouter Qt-parented to it, in the
+        // very next step -- which is exactly how the round 1 fix's
+        // broken stop() (m_topology = FftTopology{}; before
+        // publishFftTopology(), which silently discarded
+        // FftTopology's own record of what it had last pushed and so
+        // removed nothing) passed this same test unnoticed.
+        app.clearFftTopologyForTest();
+        QVERIFY(app.fftRouterMappingsForTest(QStringLiteral("daemon-ep-0")).isEmpty());
+
         app.stop();
 
-        // The RadioModel (and the FFTRouter it owned) is gone after
-        // stop(); the observable contract is that DaemonApp reports no
-        // mapping for anything, rather than a test reaching into a
+        // The RadioModel (and the FFTRouter it owned) is gone after the
+        // full stop(); the observable contract is that DaemonApp reports
+        // no mapping for anything, rather than a test reaching into a
         // dangling router pointer.
         QVERIFY(app.fftRouterMappingsForTest(QStringLiteral("daemon-ep-0")).isEmpty());
     }

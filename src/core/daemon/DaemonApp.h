@@ -61,9 +61,17 @@
 // the same way MainWindow::rebuildFftRouting() ends with
 // m_topology.applyTo(*router) (MainWindow.cpp:2274). Without that call
 // m_topology was 100% inert: subscribed but never pushed anywhere.
-// publishFftTopology() below is that call, run from both start() (after
-// minting) and stop() (after clearing, before the RadioModel that owns
-// the router is destroyed).
+// publishFftTopology() below is that call, run from start() (after
+// minting) and from clearFftTopology() (see FIX ROUND 2 note below).
+//
+// FIX ROUND 2, FINDING 1 (reopened): the round 1 fix's stop() half
+// replaced m_topology wholesale before calling publishFftTopology(),
+// which silently wiped FftTopology's own bookkeeping of what it had
+// last pushed -- the removal call ran, but had nothing left to tell it
+// what to remove, so it removed nothing. See clearFftTopology()'s own
+// doc comment for the full explanation and the fix (per-consumer
+// unsubscribe(), matching MainWindow::rebuildFftRouting()'s pattern
+// exactly instead of only citing it).
 //
 // IMPORTANT, found while verifying this task (see task-10-report.md):
 // RadioModel::connectToRadio() is not safely exercisable end-to-end from
@@ -160,10 +168,12 @@ public:
     bool start(const DaemonConfig& cfg);
 
     // Tears down in reverse: drops every FFT-topology subscription this
-    // run created, then destroys the RadioModel (whose destructor
-    // disconnects the radio and deletes every slice). Safe to call with
-    // no prior start() (a fresh DaemonApp has no RadioModel to tear
-    // down) and safe to call twice in a row.
+    // run created (via clearFftTopology(), which pushes the removal to
+    // RadioModel's live FFTRouter BEFORE destroying anything -- see that
+    // method's own doc comment for why the order matters), then destroys
+    // the RadioModel (whose destructor disconnects the radio and deletes
+    // every slice). Safe to call with no prior start() (a fresh DaemonApp
+    // has no RadioModel to tear down) and safe to call twice in a row.
     void stop();
 
     // 0 before the first start(), after stop(), and whenever no radio
@@ -197,6 +207,18 @@ public:
     // router, not a probe into a dangling one. Not part of the public
     // API.
     QList<int> fftRouterMappingsForTest(const QString& consumerId) const;
+
+    // Test-only: runs clearFftTopology() (stop()'s FFT-topology teardown
+    // step) WITHOUT destroying the RadioModel, so a test can query
+    // fftRouterMappingsForTest() immediately afterward and observe the
+    // router's mappings actually gone while the router itself is still
+    // alive to be queried. Fix round 2, Finding 1 (reopened): a query
+    // made only AFTER a full stop() cannot tell "the router was cleared"
+    // apart from "the router no longer exists" -- stop() destroys the
+    // RadioModel (and the FFTRouter Qt-parented to it) in the very next
+    // step -- so that alone was not a real assertion on this behaviour.
+    // Not part of the public API.
+    void clearFftTopologyForTest() { clearFftTopology(); }
 #endif
 
 signals:
@@ -240,19 +262,46 @@ private:
     // rebuild, not an incremental patch, so this is safe to call
     // whenever m_topology changes, not just once). No-op if there is no
     // active RadioModel. Called from start() (after mintFftEndpoints())
-    // and from stop() (after m_topology is cleared, so the router drops
-    // every mapping before the RadioModel that owns it is destroyed).
+    // and from clearFftTopology() below.
     void publishFftTopology();
+
+    // Drops every subscription this run created and pushes the removal
+    // to the router, called from stop() before the RadioModel (and the
+    // FFTRouter Qt-parented to it) is destroyed.
+    //
+    // Fix round 2, Finding 1 (reopened): an earlier version replaced
+    // m_topology wholesale (`m_topology = FftTopology{};`) before calling
+    // publishFftTopology(). That silently wiped
+    // FftTopology::m_lastAppliedConsumers along with the subscriptions --
+    // applyTo()'s removal loop iterates exactly that member to know what
+    // to remove, so with it empty the call removed nothing at all. The
+    // router's mappings were only ever cleared as a side effect of the
+    // very next m_radioModel.reset() destroying the FFTRouter, not
+    // because that call did anything; the comment claiming otherwise was
+    // false, and fftRouterMappingsForTest() could not catch it because it
+    // already reports empty once m_radioModel is null, whether or not
+    // stop() cleared anything first.
+    //
+    // Unsubscribing each currently-held consumer instead -- mirroring
+    // MainWindow::rebuildFftRouting()'s own per-consumer
+    // m_topology.unsubscribe(panId) at MainWindow.cpp:2225 -- empties
+    // m_streamsByConsumer while leaving m_lastAppliedConsumers untouched,
+    // so the subsequent applyTo() genuinely has the previous push to
+    // remove. Iterates a copy (subscriptions() builds a fresh QList, not
+    // a live view), so mutating m_topology mid-loop is safe; a consumer
+    // holding several streams appears once per stream in that list, and
+    // unsubscribe(consumerId) on an id with nothing left is a no-op, so
+    // no special-casing is needed for that.
+    void clearFftTopology();
 
     std::unique_ptr<RadioModel> m_radioModel;
     FftTopology m_topology;
 
     // Monotonic; deliberately NOT reset on stop(), so ids never repeat
-    // across a restart within one process even though m_topology itself
-    // is replaced wholesale in stop(). No correctness requirement forces
-    // this (a future subscriber cannot yet exist to be confused by
-    // reuse), but a monotonic id is cheap and one less thing to reason
-    // about later.
+    // across a restart within one process. No correctness requirement
+    // forces this (a future subscriber cannot yet exist to be confused
+    // by reuse), but a monotonic id is cheap and one less thing to
+    // reason about later.
     int m_nextEndpointId {0};
 
 #ifdef NEREUS_BUILD_TESTS

@@ -111,14 +111,14 @@ void DaemonApp::stop()
     }
 
     // Reverse of start(): drop this run's FFT-topology subscriptions and
-    // push the now-empty set to the router BEFORE the RadioModel that
-    // owns it is destroyed, so the router explicitly drops every mapping
-    // rather than simply ceasing to exist mid-mapping. Both statements
-    // matter: clearing m_topology alone (as fix round 1, Finding 1 found)
-    // never reaches the router at all without the applyTo() call
-    // publishFftTopology() makes.
-    m_topology = FftTopology{};
-    publishFftTopology();
+    // push the removal to the router BEFORE the RadioModel that owns it
+    // is destroyed, so the router explicitly loses every mapping rather
+    // than the mapping only going away because the whole object does.
+    // See clearFftTopology()'s own doc comment for why this is a
+    // per-consumer unsubscribe() loop, not `m_topology = FftTopology{};`
+    // (fix round 2, Finding 1 reopened -- the wholesale-replacement
+    // version silently made the removal a no-op).
+    clearFftTopology();
 
     // ~RadioModel() calls teardownConnection() and deletes every slice
     // (RadioModel.cpp), so resetting the pointer alone satisfies
@@ -238,6 +238,21 @@ void DaemonApp::publishFftTopology()
         return;
     }
     m_topology.applyTo(*m_radioModel->fftRouter());
+}
+
+void DaemonApp::clearFftTopology()
+{
+    // Per-consumer unsubscribe(), NOT `m_topology = FftTopology{};`. See
+    // this method's own doc comment in DaemonApp.h for the full
+    // explanation: wholesale replacement also wipes FftTopology's
+    // private m_lastAppliedConsumers, which applyTo()'s removal loop
+    // needs in order to have anything to remove at all. subscriptions()
+    // returns a fresh QList (not a live view into m_streamsByConsumer),
+    // so mutating m_topology while iterating it here is safe.
+    for (const SpectrumSubscription& sub : m_topology.subscriptions()) {
+        m_topology.unsubscribe(sub.consumerId);
+    }
+    publishFftTopology();
 }
 
 #ifdef NEREUS_BUILD_TESTS
