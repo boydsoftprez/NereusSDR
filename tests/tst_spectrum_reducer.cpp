@@ -67,12 +67,14 @@ private slots:
     void outputSizeAlwaysMatchesRequestedPixels()
     {
         SpectrumReducer r;
+        QVector<float> out;
         for (int px : {128, 512, 1024, 1184}) {
             ReducerConfig c = baseConfig();
             c.pixels = px;
             r.setConfig(c);
             const QVector<float> bins = flatBins(4096, 1.0e-9f);
-            const qsizetype got = r.reduce(bins, 1.0, 0.0).size();
+            r.reduce(bins, 1.0, 0.0, out);
+            const qsizetype got = out.size();
             QVERIFY2(got == px,
                      qPrintable(QStringLiteral("pixels=%1 produced %2")
                                     .arg(px)
@@ -159,7 +161,8 @@ private slots:
         r.setConfig(c);
         QVector<float> bins = flatBins(4096, 1.0e-12f);
         bins[2048] = 1.0f;
-        const QVector<float>& out = r.reduce(bins, 1.0, 0.0);
+        QVector<float> out;
+        r.reduce(bins, 1.0, 0.0, out);
         int argmax = 0;
         for (int i = 1; i < out.size(); ++i) {
             if (out[i] > out[argmax]) { argmax = i; }
@@ -250,12 +253,13 @@ private slots:
         c.pixels = 64;
         r.setConfig(c);
 
-        const QVector<float> good = r.reduce(flatBins(4096, 1.0e-6f), 1.0, 0.0);
-        QCOMPARE(good.size(), 64);
-        const QVector<float> snapshot = good;
+        QVector<float> out;
+        r.reduce(flatBins(4096, 1.0e-6f), 1.0, 0.0, out);
+        QCOMPARE(out.size(), 64);
+        const QVector<float> snapshot = out;
 
-        const QVector<float>& after = r.reduce(QVector<float>{}, 1.0, 0.0);
-        QCOMPARE(after, snapshot);
+        r.reduce(QVector<float>{}, 1.0, 0.0, out);
+        QCOMPARE(out, snapshot);
     }
 
     void emptyCropLeavesPreviousOutputUntouched()
@@ -264,11 +268,14 @@ private slots:
         ReducerConfig c = baseConfig();
         c.pixels = 64;
         r.setConfig(c);
-        const QVector<float> snapshot = r.reduce(flatBins(4096, 1.0e-6f), 1.0, 0.0);
+        QVector<float> out;
+        r.reduce(flatBins(4096, 1.0e-6f), 1.0, 0.0, out);
+        const QVector<float> snapshot = out;
 
         c.sampleRateHz = 0.0;          // empty range -> sliceCount <= 0
         r.setConfig(c);
-        QCOMPARE(r.reduce(flatBins(4096, 1.0e-3f), 1.0, 0.0), snapshot);
+        r.reduce(flatBins(4096, 1.0e-3f), 1.0, 0.0, out);
+        QCOMPARE(out, snapshot);
     }
 
     // pixels is caller-supplied now, so a non-positive value is reachable
@@ -280,11 +287,14 @@ private slots:
         ReducerConfig c = baseConfig();
         c.pixels = 0;
         r.setConfig(c);
-        QVERIFY(r.reduce(flatBins(4096, 1.0e-6f), 1.0, 0.0).isEmpty());
+        QVector<float> out;
+        r.reduce(flatBins(4096, 1.0e-6f), 1.0, 0.0, out);
+        QVERIFY(out.isEmpty());
 
         c.pixels = -7;
         r.setConfig(c);
-        QVERIFY(r.reduce(flatBins(4096, 1.0e-6f), 1.0, 0.0).isEmpty());
+        r.reduce(flatBins(4096, 1.0e-6f), 1.0, 0.0, out);
+        QVERIFY(out.isEmpty());
     }
 
     // windowEnb arrives from FFTEngine every frame; the widget clamps it
@@ -297,7 +307,8 @@ private slots:
         c.pixels   = 128;
         c.detector = SpectrumDetectorMode::Average;
         r.setConfig(c);
-        const QVector<float>& out = r.reduce(flatBins(4096, 1.0e-9f), 0.0, 0.0);
+        QVector<float> out;
+        r.reduce(flatBins(4096, 1.0e-9f), 0.0, 0.0, out);
         QCOMPARE(out.size(), 128);
         for (int i = 0; i < out.size(); ++i) {
             QVERIFY2(std::isfinite(out[i]),
@@ -336,15 +347,19 @@ private slots:
         ReducerConfig c = baseConfig();
         c.pixels = 256;
 
+        QVector<float> peakOut;
         SpectrumReducer peak;
         c.detector = SpectrumDetectorMode::Peak;
         peak.setConfig(c);
-        const float peakDb = peak.reduce(bins, 1.0, 0.0)[128];
+        peak.reduce(bins, 1.0, 0.0, peakOut);
+        const float peakDb = peakOut[128];
 
+        QVector<float> avgOut;
         SpectrumReducer avg;
         c.detector = SpectrumDetectorMode::Average;
         avg.setConfig(c);
-        const float avgDb = avg.reduce(bins, 1.0, 0.0)[128];
+        avg.reduce(bins, 1.0, 0.0, avgOut);
+        const float avgDb = avgOut[128];
 
         QVERIFY2(peakDb > avgDb + 10.0f,
                  qPrintable(QStringLiteral("peak %1 dB vs average %2 dB")
@@ -364,9 +379,11 @@ private slots:
         r.setConfig(c);
 
         const QVector<float> bins = flatBins(4096, 1.0e-9f);
-        const QVector<float> zero  = r.reduce(bins, 1.0,   0.0);
+        QVector<float> zero;
+        QVector<float> minus;
+        r.reduce(bins, 1.0,   0.0, zero);
         r.clearAveraging();
-        const QVector<float> minus = r.reduce(bins, 1.0, -12.5);
+        r.reduce(bins, 1.0, -12.5, minus);
 
         QCOMPARE(zero.size(), minus.size());
         for (int i = 0; i < zero.size(); ++i) {
@@ -396,16 +413,20 @@ private slots:
         const QVector<float> quiet = flatBins(4096, 1.0e-12f);
         const QVector<float> loud  = flatBins(4096, 1.0e-6f);
 
-        for (int i = 0; i < 20; ++i) { r.reduce(quiet, 1.0, 0.0); }
-        const float settled = r.reduce(quiet, 1.0, 0.0)[16];
+        QVector<float> out;
+        for (int i = 0; i < 20; ++i) { r.reduce(quiet, 1.0, 0.0, out); }
+        r.reduce(quiet, 1.0, 0.0, out);
+        const float settled = out[16];
 
-        const float firstLoud = r.reduce(loud, 1.0, 0.0)[16];
+        r.reduce(loud, 1.0, 0.0, out);
+        const float firstLoud = out[16];
         QVERIFY2(firstLoud < settled + 55.0f,
                  "smoothing should hold the first loud frame well below its "
                  "un-averaged value");
 
         r.clearAveraging();
-        const float afterClear = r.reduce(loud, 1.0, 0.0)[16];
+        r.reduce(loud, 1.0, 0.0, out);
+        const float afterClear = out[16];
         QVERIFY2(afterClear > firstLoud,
                  "clearAveraging must drop the accumulated history");
     }
@@ -423,20 +444,23 @@ private slots:
         r.setConfig(c);
 
         const QVector<float> bins = flatBins(4096, 1.0e-9f);
-        for (int i = 0; i < 5; ++i) { r.reduce(bins, 1.0, 0.0); }
-        QCOMPARE(r.reduce(bins, 1.0, 0.0).size(), 64);
+        QVector<float> out;
+        for (int i = 0; i < 5; ++i) { r.reduce(bins, 1.0, 0.0, out); }
+        r.reduce(bins, 1.0, 0.0, out);
+        QCOMPARE(out.size(), 64);
 
         c.pixels = 1024;
         r.setConfig(c);
-        const QVector<float>& grown = r.reduce(bins, 1.0, 0.0);
-        QCOMPARE(grown.size(), 1024);
-        for (int i = 0; i < grown.size(); ++i) {
-            QVERIFY(std::isfinite(grown[i]));
+        r.reduce(bins, 1.0, 0.0, out);
+        QCOMPARE(out.size(), 1024);
+        for (int i = 0; i < out.size(); ++i) {
+            QVERIFY(std::isfinite(out[i]));
         }
 
         c.pixels = 16;
         r.setConfig(c);
-        QCOMPARE(r.reduce(bins, 1.0, 0.0).size(), 16);
+        r.reduce(bins, 1.0, 0.0, out);
+        QCOMPARE(out.size(), 16);
     }
 
     // Cropping must read from inside the bin array for every window the
@@ -445,6 +469,7 @@ private slots:
     void croppedReduceStaysInsideTheBinArray()
     {
         SpectrumReducer r;
+        QVector<float> out;
         for (double centre : {13'000'000.0, 14'150'000.0, 14'200'000.0,
                               14'260'000.0, 15'000'000.0}) {
             for (double span : {0.0, 1'000.0, 96'000.0, 192'000.0, 768'000.0}) {
@@ -454,11 +479,49 @@ private slots:
                     c.spanHz   = span;
                     c.pixels   = pixels;
                     r.setConfig(c);
-                    const QVector<float>& out =
-                        r.reduce(flatBins(4096, 1.0e-9f), 2.0, -10.0);
+                    r.reduce(flatBins(4096, 1.0e-9f), 2.0, -10.0, out);
                     QCOMPARE(out.size(), pixels);
                 }
             }
+        }
+    }
+
+    // ---- allocation behaviour on the render hot path ------------------
+
+    // The regression this out-parameter shape exists to prevent.  reduce()
+    // used to return a const reference to an internal QVector, and the
+    // widget assigned it: implicit sharing then put both handles on one
+    // data block, and the avenger's non-const pixelsOut[i] writes detached
+    // it on the very next frame.  That is one malloc plus one full-buffer
+    // memcpy per plane per frame -- on a display path that runs at 30 fps
+    // and, per the R1 design, on a Pi 4B that is memory-bandwidth bound.
+    //
+    // Once the buffer has settled at its final size, the data pointer must
+    // not move again no matter how many frames go through.
+    void steadyStateReduceDoesNotReallocate()
+    {
+        SpectrumReducer r;
+        ReducerConfig c = baseConfig();
+        c.pixels      = 1024;
+        c.averageMode = 3;
+        r.setConfig(c);
+
+        const QVector<float> bins = flatBins(4096, 1.0e-9f);
+        QVector<float> out;
+
+        // Two warm-up frames: the first sizes the buffer, the second proves
+        // the size has settled before the pointer is latched.
+        r.reduce(bins, 1.0, 0.0, out);
+        r.reduce(bins, 1.0, 0.0, out);
+        QCOMPARE(out.size(), 1024);
+
+        const float* const settled = out.constData();
+        for (int f = 0; f < 60; ++f) {
+            r.reduce(bins, 1.0, 0.0, out);
+            QVERIFY2(out.constData() == settled,
+                     qPrintable(QStringLiteral(
+                         "frame %1 reallocated the output buffer; reduce() is "
+                         "detaching a shared QVector every frame").arg(f)));
         }
     }
 };

@@ -2721,7 +2721,11 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     cfg.averageMode = avengerMode(m_spectrumAveraging);
     cfg.averageTau  = static_cast<double>(m_spectrumAverageAlpha);
     m_spectrumReducer.setConfig(cfg);
-    m_renderedPixels = m_spectrumReducer.reduce(binsLinear, windowEnb, dbmOffset);
+    // Out-parameter, not an assignment from a returned reference: the
+    // avenger writes through pixelsOut[i], so anything that leaves this
+    // buffer implicitly shared with a reducer member reallocates and
+    // memcpys it on every single frame.  See SpectrumReducer::reduce().
+    m_spectrumReducer.reduce(binsLinear, windowEnb, dbmOffset, m_renderedPixels);
 
     // FFT-replan crossfade (Option A from the 2026-05-08 design).  For the
     // first kReplanFadeFrames after a resolution change, blend the
@@ -2754,7 +2758,7 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     cfg.averageMode = avengerMode(m_waterfallAveraging);
     cfg.averageTau  = static_cast<double>(m_waterfallAverageAlpha);
     m_waterfallReducer.setConfig(cfg);
-    m_wfRenderedPixels = m_waterfallReducer.reduce(binsLinear, windowEnb, dbmOffset);
+    m_waterfallReducer.reduce(binsLinear, windowEnb, dbmOffset, m_wfRenderedPixels);
 
     // Legacy per-pixel peak hold -- track running max in display-pixel
     // space.  Replaces the old per-bin m_peakHoldBins.

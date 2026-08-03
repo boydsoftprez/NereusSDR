@@ -119,11 +119,16 @@ private:
         const double windowEnb = 2.0;
         const double dbmOffset = -12.5;
 
+        // reduce() writes through a caller-owned buffer, exactly as the
+        // widget does with m_renderedPixels / m_wfRenderedPixels.
+        QVector<float> specOut;
+        QVector<float> wfOut;
+
         for (int f = 0; f < frames; ++f) {
             const QVector<float> bins = makeBins(binCount, f);
             w.updateSpectrumLinear(0, bins, windowEnb, dbmOffset);
-            spec.reduce(bins, windowEnb, dbmOffset);
-            wf.reduce(bins, windowEnb, dbmOffset);
+            spec.reduce(bins, windowEnb, dbmOffset, specOut);
+            wf.reduce(bins, windowEnb, dbmOffset, wfOut);
         }
 
         const QString tag = QStringLiteral("w=%1 strip=%2 span=%3 det=%4 avg=%5")
@@ -138,9 +143,9 @@ private:
                                                  "config asked for %2")
                                       .arg(w.renderedPixels().size())
                                       .arg(cfg.pixels)));
-        QVERIFY2(w.renderedPixels() == spec.output(),
+        QVERIFY2(w.renderedPixels() == specOut,
                  qPrintable(tag + QStringLiteral(": spectrum plane diverged")));
-        QVERIFY2(w.wfRenderedPixels() == wf.output(),
+        QVERIFY2(w.wfRenderedPixels() == wfOut,
                  qPrintable(tag + QStringLiteral(": waterfall plane diverged")));
     }
 

@@ -94,25 +94,33 @@ public:
     const ReducerConfig& config() const { return m_cfg; }
 
     /// binsLinear is |X[k]|^2 as FFTEngine::fftReadyLinear emits.
-    /// Returns exactly config().pixels dBm values. Never resizes to a widget.
+    /// Writes exactly config().pixels dBm values into pixelsOut, resizing it
+    /// if needed. Never resizes to a widget.
     ///
     /// windowEnb is the FFT window's equivalent noise bandwidth in bins,
     /// clamped to 1e-9 before inversion exactly as the widget did.
     /// dbmOffset is folded into the avenger's power-domain scale, so that
     /// 10*log10(linear * scale) == 10*log10(linear) + dbmOffset.
     ///
+    /// pixelsOut is a caller-owned out-parameter rather than a reference to
+    /// an internal buffer, and that is load-bearing on the render hot path.
+    /// QVector is implicitly shared: handing back a reference to a member
+    /// would put the caller's buffer and ours on one data block at refcount
+    /// 2, and the avenger's non-const pixelsOut[i] writes on the NEXT frame
+    /// would detach -- a fresh allocation plus a full-buffer memcpy that is
+    /// then immediately overwritten, every frame, on both planes. Writing
+    /// through the caller's buffer keeps it at refcount 1 and allocates
+    /// nothing in steady state.
+    ///
     /// Degenerate input (empty bins, a crop window that selects no bins --
     /// which happens whenever sampleRateHz is still 0 -- or a non-positive
-    /// pixel count) is a no-op returning the previous output untouched.
-    /// That mirrors updateSpectrumLinear's early returns, which leave the
-    /// last good frame on screen; the buffer is empty until the first
-    /// successful reduce.
-    const QVector<float>& reduce(const QVector<float>& binsLinear,
-                                 double windowEnb,
-                                 double dbmOffset);
-
-    /// Most recent reduce() output, without recomputing.
-    const QVector<float>& output() const { return m_outputDbm; }
+    /// pixel count) is a no-op leaving pixelsOut untouched. That mirrors
+    /// updateSpectrumLinear's early returns, which leave the last good frame
+    /// on screen.
+    void reduce(const QVector<float>& binsLinear,
+                double windowEnb,
+                double dbmOffset,
+                QVector<float>& pixelsOut);
 
     /// Drop accumulated averaging history. Callers use this on anything
     /// that invalidates the running average: FFT size change, averaging
@@ -132,7 +140,6 @@ public:
 private:
     ReducerConfig  m_cfg;
     QVector<float> m_linearPixels;  // detector output, linear power
-    QVector<float> m_outputDbm;     // avenger output, dB
     SpectrumAvenger m_avenger;
 };
 

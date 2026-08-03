@@ -66,13 +66,14 @@ std::pair<int, int> SpectrumReducer::visibleBinRange(int binCount,
 
 // Transcribed from the reduction section of
 // SpectrumWidget::updateSpectrumLinear (SpectrumWidget.cpp:2679-2734).
-const QVector<float>& SpectrumReducer::reduce(const QVector<float>& binsLinear,
-                                             double windowEnb,
-                                             double dbmOffset)
+void SpectrumReducer::reduce(const QVector<float>& binsLinear,
+                             double windowEnb,
+                             double dbmOffset,
+                             QVector<float>& pixelsOut)
 {
     // updateSpectrumLinear's first line: no bins, no update. The previously
     // rendered frame stays on screen.
-    if (binsLinear.isEmpty()) { return m_outputDbm; }
+    if (binsLinear.isEmpty()) { return; }
 
     // Display pixel count. In the widget this was
     //   const int displayWidth = qMax(width() - effectiveStripW(), 800);
@@ -85,7 +86,7 @@ const QVector<float>& SpectrumReducer::reduce(const QVector<float>& binsLinear,
     // New input domain: pixels is caller-supplied now, so it can be
     // non-positive in a way widget geometry never allowed (that expression
     // floored at 800). Bail before any resize() sees a negative length.
-    if (displayWidth <= 0) { return m_outputDbm; }
+    if (displayWidth <= 0) { return; }
 
     const double fftWindowEnb = qMax(windowEnb, 1e-9);
 
@@ -94,7 +95,7 @@ const QVector<float>& SpectrumReducer::reduce(const QVector<float>& binsLinear,
     // rate.  When zoomed out, slice == full FFT.
     auto [firstBin, lastBin] = visibleBinRange(binsLinear.size(), m_cfg);
     const int sliceCount = lastBin - firstBin + 1;
-    if (sliceCount <= 0) { return m_outputDbm; }
+    if (sliceCount <= 0) { return; }
 
     const double pixPerBin = static_cast<double>(displayWidth) / sliceCount;
     const double binPerPix = (pixPerBin > 0.0) ? 1.0 / pixPerBin : 1.0;
@@ -131,9 +132,7 @@ const QVector<float>& SpectrumReducer::reduce(const QVector<float>& binsLinear,
                     noCorrection,
                     false,
                     0.0,
-                    m_outputDbm);
-
-    return m_outputDbm;
+                    pixelsOut);
 }
 
 }  // namespace NereusSDR
