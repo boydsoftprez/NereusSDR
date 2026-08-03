@@ -1755,12 +1755,16 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # an earlier version of this comment claimed otherwise; that claim
     # was wrong (task-12-report.md, fix round 1, Finding 1). Resolving
     # the real vendor directory via pkg-config is simply the conventional
-    # choice for eventual distro packaging, and it places the unit at
-    # systemd's higher-priority vendor path rather than the lower-priority
-    # /usr/local one, which matters if a future .deb/.rpm ever also ships
-    # a copy at the vendor path: the higher-priority copy wins
-    # predictably instead of the load order depending on which one
-    # happened to be installed first.
+    # choice: systemdsystemunitdir is what systemd itself publishes as
+    # the correct install location for this distro, so following it means
+    # the unit lands wherever the target distro actually puts vendor
+    # units, rather than wherever this project's CMAKE_INSTALL_PREFIX
+    # happens to point. (A later version of this paragraph additionally
+    # claimed a priority/precedence relationship between the two paths;
+    # that claim was also wrong, in the opposite direction, and has been
+    # removed rather than re-attempted -- see task-12-report.md, fix
+    # round 2, Finding 1. The rationale above needs no ordering claim and
+    # stands without one.)
     set(NEREUSD_SYSTEMD_UNIT_DIR "/usr/lib/systemd/system")
     if(PkgConfig_FOUND)
         pkg_check_modules(SYSTEMD QUIET systemd)
