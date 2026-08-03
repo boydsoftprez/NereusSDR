@@ -43,6 +43,7 @@
 #include <QSet>
 
 class QContextMenuEvent;
+class QMenu;
 
 namespace NereusSDR {
 
@@ -134,6 +135,21 @@ public:
     bool extendedViewEnabled() const { return m_extendedViewEnabled; }
     void setExtendedViewEnabled(bool on);
 
+    /// Task B5 (bottom-banner + pan-menu epic): test seams so addSliceRequested /
+    /// floatRequested can be asserted without synthesising a context-menu
+    /// event. The production emitters are the two entries buildContextMenu()
+    /// adds; tst_pan_menu_routing.cpp exercises both these seams and the real
+    /// menu action (see buildContextMenuForTesting()).
+    void emitAddSliceForTest() { emit addSliceRequested(panId()); }
+    void emitFloatForTest()    { emit floatRequested(panId()); }
+
+    /// Test-only: build and return the right-click context menu without
+    /// exec()-ing it, so a test can find + trigger() its actions without a
+    /// live nested event loop. Mirrors
+    /// SMeterWidget::buildContextMenuForTesting() (tst_smeter_widget_context_menu.cpp).
+    /// NereusSDR-native test seam.
+    QMenu* buildContextMenuForTesting() { return buildContextMenu(this); }
+
 signals:
     void activated(const QString& panId);  // emitted on any click within applet
     void closeRequested(const QString& panId);
@@ -151,6 +167,17 @@ signals:
     /// that can disagree with the one on screen.
     void chainTagClicked(const QString& panId, int chainIdx);
 
+    /// Task B5 (bottom-banner + pan-menu epic, design doc s8.5): both carry
+    /// THIS applet's own panId(), never routed through PanadapterStack::
+    /// activePanId(). "Add slice on this pan" / "Float this pan" used to
+    /// live on the +PAN button's dropdown (Phase 3F Sub-Epic D Task 10,
+    /// retired in Task B4), which sat nowhere near any pan, so "active pan"
+    /// meant whichever pan happened to be active when the operator reached
+    /// the far side of the window. A control drawn on a pan targets THAT
+    /// pan.
+    void addSliceRequested(const QString& panId);
+    void floatRequested(const QString& panId);
+
 protected:
     /// Right-align the status strip clear of the dBm scale strip. Re-run
     /// whenever a pill lights or goes dark: the strip's minimum width grows to
@@ -158,6 +185,9 @@ protected:
     /// rightward, which walks the strip back under the dBm range arrows.
     void repositionStatusOverlay();
     void resizeEvent(QResizeEvent* event) override;
+    /// Delegates to buildContextMenu(). Task B5 added the add-slice / float
+    /// entries at the top of the menu; the pre-existing Extended-view
+    /// toggle stays below a separator.
     void contextMenuEvent(QContextMenuEvent* event) override;
     /// Emits activated(panId) on any press in this pan, so clicking a pan makes
     /// it the active one. Watches the spectrum host and overlay too -- they take
@@ -166,6 +196,14 @@ protected:
     bool eventFilter(QObject* obj, QEvent* ev) override;
 
 private:
+    /// Build the right-click context menu: add-slice / float (Task B5, both
+    /// carrying this applet's own panId()) then a separator then the
+    /// pre-existing Extended-view toggle. Returns a heap-allocated QMenu*
+    /// parented to `parent`; contextMenuEvent() exec()s it and
+    /// deleteLater()s it, buildContextMenuForTesting() hands it to a test
+    /// untouched. Mirrors SMeterWidget::buildContextMenu().
+    QMenu* buildContextMenu(QObject* parent);
+
     QString                 m_panId;
     SpectrumWidget*         m_spectrum {nullptr};
     SpectrumStatusOverlay*  m_statusOverlay {nullptr};

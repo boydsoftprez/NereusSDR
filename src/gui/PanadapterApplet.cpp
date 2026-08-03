@@ -280,16 +280,47 @@ void PanadapterApplet::setExtendedViewEnabled(bool on)
     }
 }
 
-// Phase 3F Sub-Epic F Task 13: right-click context menu with a single
+// Phase 3F Sub-Epic F Task 13: right-click context menu, originally a single
 // checkable Extended view entry. Pops at the global cursor position.
 void PanadapterApplet::contextMenuEvent(QContextMenuEvent* event)
 {
-    QMenu menu(this);
-    QAction* extAct = menu.addAction(tr("Extended view (wideband wings)"));
+    QMenu* menu = buildContextMenu(this);
+    menu->exec(event->globalPos());
+    menu->deleteLater();
+}
+
+// Task B5 (bottom-banner + pan-menu epic, design doc s8.5): "Add slice on
+// this pan" / "Float this pan" used to live on the +PAN button's dropdown
+// (Phase 3F Sub-Epic D Task 10, retired in Task B4) and resolved through
+// m_panStack->activePanId() -- "active pan" meaning whichever pan happened
+// to be active when the operator reached a button sitting nowhere near any
+// pan. A control drawn ON a pan targets THAT pan, so both move here and
+// carry this applet's own panId(). Neither action exists on AetherSDR's pan
+// menu (design doc s8.5), so this is NereusSDR-original, not a further port.
+//
+// Split out of contextMenuEvent so a test can build the menu, find +
+// trigger() these two actions by their operator-facing text, and assert the
+// resulting signal without exec()-ing a real nested event loop -- mirrors
+// SMeterWidget::buildContextMenu() / buildContextMenuForTesting()
+// (tst_smeter_widget_context_menu.cpp).
+QMenu* PanadapterApplet::buildContextMenu(QObject* parent)
+{
+    auto* menu = new QMenu(qobject_cast<QWidget*>(parent));
+
+    menu->addAction(tr("Add slice on this pan"), this, [this]() {
+        emit addSliceRequested(panId());
+    });
+    menu->addAction(tr("Float this pan"), this, [this]() {
+        emit floatRequested(panId());
+    });
+    menu->addSeparator();
+
+    QAction* extAct = menu->addAction(tr("Extended view (wideband wings)"));
     extAct->setCheckable(true);
     extAct->setChecked(m_extendedViewEnabled);
     connect(extAct, &QAction::toggled, this, &PanadapterApplet::setExtendedViewEnabled);
-    menu.exec(event->globalPos());
+
+    return menu;
 }
 
 } // namespace NereusSDR

@@ -316,6 +316,19 @@ private slots:
     void onPanChainTagClicked(const QString& panId, int chainIdx);
     void onPanTxBadgeClicked(const QString& panId);
 
+    /// Task B5: PanadapterApplet::addSliceRequested / floatRequested both
+    /// carry the emitting applet's own panId(), so these forward straight to
+    /// RadioModel::addSliceOnPan / PanadapterStack::floatPanadapter with no
+    /// activePanId() lookup -- the same "acts on the pan that was clicked"
+    /// shape as the three handlers above. Named slots rather than lambdas:
+    /// wirePanBadgeHandlers() re-runs on every countChanged, and
+    /// Qt::UniqueConnection is silently dropped for lambda targets (see the
+    /// comment on the `activated` connect in wirePanBadgeHandlers()), so a
+    /// lambda here would re-add itself on every layout change and fire the
+    /// add-slice/float once per accumulated connection.
+    void onPanAddSliceRequested(const QString& panId);
+    void onPanFloatRequested(const QString& panId);
+
     void onConnectionStateChanged();
     void showConnectionPanel();
     void showSupportDialog();

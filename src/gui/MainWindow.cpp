@@ -1988,6 +1988,15 @@ void MainWindow::wirePanBadgeHandlers()
         connect(applet, &PanadapterApplet::txBadgeClicked,
                 this, &MainWindow::onPanTxBadgeClicked,
                 Qt::UniqueConnection);
+        // Task B5: add-slice / float, both carrying the applet's own panId().
+        // Member-pointer targets, same reasoning as the three connects above:
+        // this function re-runs on every countChanged.
+        connect(applet, &PanadapterApplet::addSliceRequested,
+                this, &MainWindow::onPanAddSliceRequested,
+                Qt::UniqueConnection);
+        connect(applet, &PanadapterApplet::floatRequested,
+                this, &MainWindow::onPanFloatRequested,
+                Qt::UniqueConnection);
         // Phase 3F: clicking a pan makes it the active pan. Straight to the
         // stack's setter, exactly as AetherSDR MainWindow.cpp:12964 [@6a142807]
         // does it:
@@ -2060,6 +2069,20 @@ void MainWindow::onPanTxBadgeClicked(const QString& panId)
     auto* applet = m_panStack->panadapter(panId);
     if (!applet) { return; }
     m_radioModel->requestTxHandoffToSlice(applet->activeSliceIndex());
+}
+
+// Task B5: straight forwarders. panId is the emitting applet's own id (see
+// PanadapterApplet::buildContextMenu), never resolved through
+// m_panStack->activePanId() -- see MainWindow.h for why that distinction
+// matters here.
+void MainWindow::onPanAddSliceRequested(const QString& panId)
+{
+    if (m_radioModel) { m_radioModel->addSliceOnPan(panId); }
+}
+
+void MainWindow::onPanFloatRequested(const QString& panId)
+{
+    if (m_panStack) { m_panStack->floatPanadapter(panId); }
 }
 
 void MainWindow::wireSliceStatusOverlayTriggers(SliceModel* slice)
