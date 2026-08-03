@@ -331,11 +331,15 @@ private slots:
     // both dialogs are single-instance for the lifetime of MainWindow.
     void openSpotHub();
     void openFreeDVReporter();
-    /// Phase 3F Sub-Epic D Task 10: +PAN dropdown handler.
-    /// Builds a context menu with three sections (add slice / pick layout
-    /// template / float active pan), driven by RadioModel::slices() /
-    /// maxSlices() and (when wired by Task 12) m_panStack.
-    void showPanMenu();
+    /// Task B4 (bottom-banner + pan-menu epic): +PAN icon click handler.
+    /// Gated on m_radioModel->isConnected(); opens PanLayoutDialog sized to
+    /// maxSlices() and, on accept, applies the selected layout via
+    /// applyPanLayout(). Replaces the Phase 3F Sub-Epic D Task 10
+    /// showPanMenu() context menu -- its add-slice-on-active-pan and
+    /// float-active-pan actions move to each pan's own right-click menu in
+    /// Task B5, since both routed through activePanId() and a control
+    /// drawn on a pan should target that pan.
+    void showPanLayoutDialog();
 
     /// Apply a pan layout template and reconcile the slices against it.
     ///
@@ -594,6 +598,14 @@ private:
     // The accessor returns nullptr during early init before m_panStack
     // is constructed, so callers must null-guard.
     PanadapterStack*    m_panStack{nullptr};
+
+    // Task B4: +PAN status-bar icon (AetherSDR MainWindow.cpp:4368-4396
+    // [@c6481cb]). Dimmed + retooltipped by updateAddPanButtonState(),
+    // called from buildStatusBar() at construction and again on every
+    // connectionStateChanged so the affordance reads unavailable before
+    // the click rather than no-opping after it (design §8.2).
+    QLabel*  m_addPanButton{nullptr};
+    void     updateAddPanButtonState();
 
     // Phase 3F Sub-Epic I Task 8: one FFTEngine per DDC stream, keyed by
     // stream index. Before this there was a single FFTEngine(0) wired at

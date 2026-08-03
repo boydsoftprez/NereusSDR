@@ -6098,6 +6098,29 @@ void MainWindow::dimSafetyBadge(QWidget* w, bool active)
     fx->setOpacity(active ? 1.0 : 0.14);
 }
 
+// Task B4 (design §8.2): AetherSDR's connection gate on the +PAN affordance
+// is a silent early return, which reads as a dead click. Ours dims the icon
+// and names the reason in the tooltip BEFORE the click, so unavailability
+// is visible ahead of time rather than discovered by clicking and getting
+// nothing. Called at construction (buildStatusBar) and on every
+// connectionStateChanged transition.
+void MainWindow::updateAddPanButtonState()
+{
+    if (!m_addPanButton) { return; }
+    const bool connected = m_radioModel && m_radioModel->isConnected();
+    m_addPanButton->setEnabled(connected);
+    auto* fx = qobject_cast<QGraphicsOpacityEffect*>(
+        m_addPanButton->graphicsEffect());
+    if (!fx) {
+        fx = new QGraphicsOpacityEffect(m_addPanButton);
+        m_addPanButton->setGraphicsEffect(fx);
+    }
+    fx->setOpacity(connected ? 1.0 : 0.35);
+    m_addPanButton->setToolTip(connected
+        ? tr("Change panadapter layout")
+        : tr("Connect a radio to change pan layout"));
+}
+
 void MainWindow::buildStatusBar()
 {
     // AetherSDR double-height status bar (46px fixed height, 3-section layout)
@@ -6148,29 +6171,42 @@ void MainWindow::buildStatusBar()
     bandStackLabel->setToolTip(QStringLiteral("Band Stack (NYI)"));
     bandStackLabel->setCursor(Qt::PointingHandCursor);
 
-    // Phase 3F Sub-Epic D Task 10: activated +PAN button. Replaces the
-    // long-dormant grey "NYI" label with a real dropdown that drives the
-    // PanadapterStack (add slice on active pan, pick layout template, or
-    // float the active pan into its own top-level window). The actual
-    // PanadapterStack instance is wired by Task 12; until then,
-    // showPanMenu's m_panStack-dependent actions no-op safely.
-    auto* panBtn = new QPushButton(QStringLiteral("+PAN"), barWidget);
-    // Task B4 gives this its drawn spectrum+plus icon and this objectName;
-    // set here so the Phase B integration test can find it even before
-    // that task lands.
+    // +PAN icon. From AetherSDR MainWindow.cpp:4368-4396 [@c6481cb]: a jagged
+    // spectrum polyline with a plus in the upper right. An icon reads as a
+    // control where a text pill reads as a label, and the trace says what
+    // kind of thing it adds.
+    auto* panBtn = new QLabel(barWidget);
     panBtn->setObjectName(QStringLiteral("addPanButton"));
-    panBtn->setFlat(true);
+    panBtn->setAccessibleName(tr("Add panadapter"));
+    QPixmap pm(36, 28);
+    {
+        pm.fill(Qt::transparent);
+        QPainter pp(&pm);
+        pp.setRenderHint(QPainter::Antialiasing);
+        const QColor stroke(255, 255, 255, 210);
+        pp.setPen(QPen(stroke, 1.6));
+        const QPointF pts[] = {
+            { 0, 22}, { 1, 21}, { 2, 22}, { 3, 19}, { 4, 22},
+            { 5, 21}, { 6, 18}, { 7, 12}, { 8, 17}, { 9, 22},
+            {10, 21}, {11, 22}, {12, 16}, {13, 22},
+            {14, 21}, {15, 19}, {16, 22},
+            {17, 20}, {18, 12}, {19,  4}, {20, 11}, {21, 21},
+            {22, 22}, {23, 21}, {24, 17}, {25, 22},
+            {26, 21}, {27, 22}, {28, 18}, {29, 22}, {30, 22}
+        };
+        pp.drawPolyline(pts, sizeof(pts) / sizeof(pts[0]));
+        pp.setPen(QPen(stroke, 2.2));
+        pp.drawLine(30, 4, 30, 14);
+        pp.drawLine(25, 9, 35, 9);
+        pp.end();
+    }
+    panBtn->setPixmap(pm);
     panBtn->setCursor(Qt::PointingHandCursor);
-    panBtn->setStyleSheet(QStringLiteral(
-        "QPushButton { color: %1; font-weight: bold; font-size: 11px;"
-        " border: 1px solid %2; border-radius: 3px; padding: 2px 7px;"
-        " background: %3; }"
-        "QPushButton:hover { background: %4; }")
-        .arg(Style::kAccent, Style::kBorder, Style::kButtonBg,
-             Style::kButtonAltHover));
-    panBtn->setToolTip(QStringLiteral("Add slice / change layout / float pan"));
-    connect(panBtn, &QPushButton::clicked, this, &MainWindow::showPanMenu);
+    panBtn->installEventFilter(this);
+    panBtn->setProperty("isAddPanButton", true);
     hbox->addWidget(panBtn);
+    m_addPanButton = panBtn;
+    updateAddPanButtonState();
 
     // Phase 3F Sub-Epic D Task 11: per-chain (ADC) BPF state indicators
     // in the bottom status bar. Two stacked labels per chain ("CH N"
@@ -8118,6 +8154,17 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             return true;  // event consumed
         }
     }
+
+    // Task B4: +PAN icon click; label has property "isAddPanButton".
+    // updateAddPanButtonState() disables the label while disconnected, so
+    // this fires only when a layout change is actually possible; the
+    // showPanLayoutDialog() body re-checks the same guard defensively.
+    if (watched->property("isAddPanButton").toBool()
+        && event->type() == QEvent::MouseButtonPress) {
+        showPanLayoutDialog();
+        return true;
+    }
+
     return QMainWindow::eventFilter(watched, event);
 }
 
@@ -8696,65 +8743,26 @@ void MainWindow::populateEmptyPans()
     }
 }
 
-void MainWindow::showPanMenu()
+// Task B4: replaces the showPanMenu() context menu. Its layout section
+// listed ids as bare strings and is superseded by PanLayoutDialog's
+// thumbnail grid (Task B3); its two per-pan actions (add slice on active
+// pan, float active pan) move to each pan's own right-click menu in
+// Task B5, since both routed through activePanId() and a control drawn on
+// a pan should target that pan, not "whichever one is active."
+void MainWindow::showPanLayoutDialog()
 {
-    QMenu menu(this);
-
-    // -- Add slice section --------------------------------------------
-    menu.addSection(QStringLiteral("Add slice on active pan"));
-    if (m_radioModel) {
-        const int currentSlices = m_radioModel->slices().size();
-        const int maxS          = m_radioModel->maxSlices();
-        for (int i = 0; i < maxS; ++i) {
-            const QChar letter = QChar(QLatin1Char('A' + i));
-            QAction* act = menu.addAction(QStringLiteral("Slice %1").arg(letter));
-            // Already-active letters: grey. Next-available letter:
-            // wired. Beyond next-available: also grey (one click ->
-            // one slice).
-            act->setEnabled(i == currentSlices);
-            if (i == currentSlices) {
-                connect(act, &QAction::triggered, this, [this]() {
-                    if (!m_radioModel) { return; }
-                    const QString activePan = m_panStack
-                                                 ? m_panStack->activePanId()
-                                                 : QStringLiteral("pan-0");
-                    m_radioModel->addSliceOnPan(activePan);
-                });
-            }
-        }
+    if (!m_radioModel || !m_radioModel->isConnected()) {
+        return;
     }
-
-    // -- Layout section -----------------------------------------------
-    menu.addSeparator();
-    menu.addSection(QStringLiteral("Layout"));
-    const QStringList layouts = {
-        QStringLiteral("1"),
-        QStringLiteral("2v"),
-        QStringLiteral("2h"),
-        QStringLiteral("12h"),
-        QStringLiteral("2x2"),
-    };
-    for (const QString& layoutId : layouts) {
-        QAction* act = menu.addAction(layoutId);
-        if (m_panStack && m_panStack->currentLayoutId() == layoutId) {
-            act->setCheckable(true);
-            act->setChecked(true);
-        }
-        connect(act, &QAction::triggered, this, [this, layoutId]() {
-            applyPanLayout(layoutId);
-        });
+    const int maxSlices = m_radioModel->maxSlices();
+    const QString boardName = m_radioModel->name();
+    PanLayoutDialog dlg(maxSlices,
+                        m_panStack ? m_panStack->currentLayoutId()
+                                   : QStringLiteral("1"),
+                        boardName, this);
+    if (dlg.exec() == QDialog::Accepted && !dlg.selectedLayout().isEmpty()) {
+        applyPanLayout(dlg.selectedLayout());
     }
-
-    // -- Float active pan section -------------------------------------
-    menu.addSeparator();
-    QAction* floatAct = menu.addAction(QStringLiteral("Float active pan..."));
-    floatAct->setEnabled(m_panStack != nullptr);
-    connect(floatAct, &QAction::triggered, this, [this]() {
-        if (!m_panStack) { return; }
-        m_panStack->floatPanadapter(m_panStack->activePanId());
-    });
-
-    menu.exec(QCursor::pos());
 }
 
 // Phase 3M-4 bench-fix: PSA bottom-banner indicator visibility
@@ -8810,6 +8818,10 @@ void MainWindow::onConnectionStateChanged()
     // and why tuning appeared to work only with the pointer over the flag,
     // which is a separate widget with its own handlers.
     pushConnectionStateToPans();
+
+    // Task B4: +PAN dims (and its tooltip explains why) on every
+    // connection-state transition, connected or not.
+    updateAddPanButtonState();
 
     if (m_radioModel->isConnected()) {
         // Board code ("Saturn") not marketing name ("ANAN-G2 (Saturn)") —

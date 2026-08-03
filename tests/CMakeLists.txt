@@ -5964,6 +5964,15 @@ nereus_add_test(tst_layout_thumbnail)
 # still fails. See task-B3-brief.md "Test rigour".
 nereus_add_test(tst_pan_layout_dialog_gating)
 
+# Phase 3F Task B4: the +PAN status-bar affordance becomes a drawn icon
+# (AetherSDR MainWindow.cpp:4368-4396 [@c6481cb]) instead of a "+PAN" text
+# pill, dims with an explanatory tooltip while disconnected instead of
+# AetherSDR's silent no-op click, and carries no source cite in that
+# user-visible tooltip text. MainWindow is not constructible in this
+# harness (see file header); the tests mirror buildStatusBar()'s panBtn
+# block and updateAddPanButtonState() against a standalone QLabel.
+nereus_add_test(tst_pan_menu_routing)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
