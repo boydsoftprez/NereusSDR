@@ -1,0 +1,172 @@
+# NereusSDR headless daemon (nereusd) systemd unit.
+#
+# Design: docs/architecture/2026-07-28-remote-daemon-architecture-design.md
+#         docs/architecture/2026-08-02-remote-daemon-r1-plan.md (R1 Task 12)
+#
+# Installed by CMake to systemd's vendor unit directory (see the install()
+# rule in CMakeLists.txt for why that is NOT CMAKE_INSTALL_PREFIX-relative).
+# Bring-up on a fresh install:
+#   sudo cp /usr/local/share/nereusd/nereusd.conf.sample /etc/nereusd.conf
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now nereusd
+#
+# R1 scope: this is a single-purpose radio-to-local-DSP daemon. It does not
+# yet stream audio or spectrum to a remote client over the wire (see the
+# design doc section 9 for the wire protocol this unit does not need to
+# accommodate today) -- but it DOES run the same local WDSP demodulation
+# pipeline the GUI uses (see the LimitRTPRIO comment below), which is why
+# this unit is not as bare as "R1 has no audio" might suggest.
+
+[Unit]
+Description=NereusSDR headless SDR daemon
+Documentation=https://github.com/boydsoftprez/NereusSDR
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/nereusd --config /etc/nereusd.conf
+Restart=on-failure
+RestartSec=5
+
+# --- Identity --------------------------------------------------------
+# DynamicUser allocates (and destroys, on stop) a transient, unprivileged
+# UID/GID with no provisioning step required. This repo's packaging/ has
+# no postinst script and no sysusers.d fragment anywhere, so a static
+# User=/Group= naming an account nothing creates would leave this unit
+# unable to start on a stock system -- DynamicUser is the self-contained
+# choice given that gap, not just a hardening preference. User= alongside
+# DynamicUser= pins the allocated account's name (so `ps` / journalctl
+# show "nereusd" instead of an opaque uid); Group= is redundant with the
+# name DynamicUser would derive from User= on its own but spelled out for
+# a reader who does not already know that default.
+DynamicUser=yes
+User=nereusd
+Group=nereusd
+
+# --- Where nereusd actually writes ------------------------------------
+# StateDirectory=nereusd creates /var/lib/nereusd, owned by the DynamicUser
+# account, before every start -- unlike a bare ReadWritePaths= entry,
+# which only grants access to a path and does nothing if that path does
+# not already exist with the right owner. Under ProtectSystem=strict this
+# also implies read-write access to the created directory, so a separate
+# ReadWritePaths= line is not needed.
+#
+# nereusd needs a writable HOME for two things (neither is the --config
+# file above: that one is read-only, lives under /etc, and ProtectSystem=
+# strict leaves /etc readable):
+#   1. AppSettings' XML store + rotated log files, both resolved through
+#      QStandardPaths::GenericConfigLocation + "/NereusSDR" (see
+#      AppSettings::resolveConfigDir / CoreInit::initialize) -- lands at
+#      $HOME/.config/NereusSDR under a normal Linux HOME.
+#   2. The WDSP FFTW wisdom cache, resolved through
+#      QStandardPaths::AppConfigLocation (RadioModel.cpp) -- nereusd sets
+#      QCoreApplication::applicationName("nereusd") and no
+#      organizationName, so this lands at $HOME/.config/nereusd, a
+#      SIBLING of (1), not inside it.
+# Both are HOME-relative, and nothing guarantees a DynamicUser account's
+# nss-systemd HOME field matches the StateDirectory path by default, so
+# HOME is pinned explicitly rather than left implicit.
+StateDirectory=nereusd
+StateDirectoryMode=0700
+Environment=HOME=/var/lib/nereusd
+
+# --- Sandboxing --------------------------------------------------------
+# Radio I/O is UDP only; no elevated capability is required.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+UMask=0077
+# Deliberately NOT set: RestrictRealtime= would block the SCHED_FIFO
+# elevation this unit grants below. MemoryDenyWriteExecute= and
+# SystemCallFilter= were considered and deferred rather than omitted by
+# oversight -- see task-12-report.md for why: this could not be verified
+# against Qt/PCRE2 JIT and the full dependency stack's syscall surface on
+# this platform, and a filter that is too tight fails the daemon in a way
+# that is hard to diagnose remotely on a Pi. Candidates for Task 13's Pi
+# bench, with `systemd-analyze security nereusd` plus a full functional
+# smoke test, not for a static-only review.
+
+# --- Real-time audio scheduling -----------------------------------------
+# NOT premature: RadioModel::connectToRadio() (which DaemonApp::start()
+# already calls in production, R1 Task 10) unconditionally starts a
+# dedicated DSP thread per connection (RxDspWorker, the fexchange2
+# demodulation loop every slice runs through), and that thread
+# unconditionally attempts SCHED_FIFO elevation on Linux
+# (RealtimeAudioPriority.cpp: "elevate the DSP thread to real-time audio
+# scheduling so heavy system load ... does not preempt the audio feeder
+# and cause ring underruns / audible jitter"). That is the same local
+# demodulation pipeline the GUI relies on today, not a future
+# remote-audio-streaming feature -- the wire-protocol audio stream really
+# does not exist yet (design doc section 9). Elevation is soft-fail-safe
+# (logs and continues at the default scheduling policy if refused), so
+# this is an optimization, not a correctness requirement -- but the Pi 4
+# floor's CPU budget is measured tight (design doc section 4.5a), so it is
+# the same jitter mitigation the desktop build already ships, not
+# cargo-cult hardening copied in without a reason.
+#
+# 99, not the commonly-copied "@audio" convention of 95: the code requests
+# sched_get_priority_max(SCHED_FIFO) - 1, which is 98 on Linux (a fixed
+# kernel constant, MAX_RT_PRIO=100, not configurable). A LimitRTPRIO below
+# 98 would silently cap the elevation under what the code asks for,
+# defeating the grant without ever failing loudly -- the soft-fail path
+# swallows a refusal into an info-level log line, not a warning. 99
+# matches the kernel's own SCHED_FIFO ceiling instead of tracking the
+# "-1" in RealtimeAudioPriority.cpp exactly.
+#
+# LimitMEMLOCK deliberately NOT granted: the only core/ code path an R1
+# nereusd can reach that calls MemoryLock::lockMemory() is
+# PortAudioBus::PortAudioBus() (a ~37.5 KB ring buffer; PortAudioBus is
+# constructed by AudioEngine::ensureSpeakersOpen() / ensureTxInputOpen(),
+# which DOES run today via the same connectToRadio() path -- gated on
+# PortAudio's own global init succeeding, not on whether a physical
+# device exists, and failing open() gracefully with a logged warning when
+# it does not). FftEnginePool -- the other lockMemory() caller, over much
+# larger FFT scratch buffers -- is not constructed anywhere in R1 (see
+# DaemonApp.h). ~37.5 KB per bus, worst case two buses open at once, is
+# well inside systemd's own compiled-in default RLIMIT_MEMLOCK, and
+# lockMemory()'s own contract is best-effort (logs and continues unlocked
+# on failure -- see MemoryLock.h). An explicit grant here would change
+# nothing observable in R1; add a right-sized one, not "infinity", if a
+# later task wires FFT scratch buffers into the daemon.
+#
+# Local audio monitoring on a "shack machine" (design doc section 4.3) is
+# a secondary, explicitly-supported use case, but is NOT the primary R1
+# target (a headless Pi with no sound card, per the nereusd.conf.sample
+# "empty = no local audio" default). A DynamicUser account has no
+# supplementary group memberships by default, so on real ALSA hardware
+# (/dev/snd/* is typically root:audio mode 660) this unit as shipped will
+# NOT be able to open a physical device even when one is present --
+# ensureSpeakersOpen() degrades to its existing "IAudioBus open failed"
+# warning path rather than crashing, so the daemon still starts and
+# still demodulates, just without local monitoring. A shack-machine
+# deployment that wants local audio needs `SupplementaryGroups=audio` (or
+# the equivalent group for the target distro) added via a drop-in; not
+# granting it by default keeps the primary headless target's privilege
+# footprint smaller.
+LimitRTPRIO=99
+
+# --- Shutdown ------------------------------------------------------------
+# A normal timeout, not a large one: the SIGTERM-during-cold-wisdom hang
+# this daemon used to have is fixed in code (R1 Task 10 fix round 1 -- see
+# server_main.cpp's own comment on the queued daemon.start() invocation),
+# verified live to unwind in under a second even mid-FFTW-planning. A
+# short TimeoutStopSec is deliberate: it bounds the blast radius if that
+# fix ever regresses (fails fast and loud via SIGKILL instead of quietly
+# waiting), rather than papering over a hang the way a multi-minute value
+# would. 15s comfortably covers normal teardown (WDSP channel destruction,
+# settings/log flush) with no relationship to wisdom-generation timescales.
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

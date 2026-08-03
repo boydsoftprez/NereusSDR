@@ -1730,6 +1730,41 @@ install(TARGETS NereusSDR
     BUNDLE  DESTINATION .
 )
 
+# nereusd -- headless daemon (R1 Task 12; see
+# docs/architecture/2026-08-02-remote-daemon-r1-plan.md Task 12).
+install(TARGETS nereusd
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # systemd's unit search paths are fixed OS locations, not
+    # CMAKE_INSTALL_PREFIX-relative: `systemctl enable nereusd` never scans
+    # ${CMAKE_INSTALL_PREFIX}/lib/systemd/system unless that happens to
+    # already equal systemd's own vendor unit directory. Ask pkg-config for
+    # systemd's real systemdsystemunitdir when systemd.pc is available (the
+    # project's own dependency lists in CLAUDE.md do not require
+    # libsystemd-dev, so this is not guaranteed); fall back to the
+    # FHS-standard /usr/lib/systemd/system otherwise, which is what every
+    # mainstream distro in a merged-/usr layout (Debian, Ubuntu, Fedora,
+    # Arch, RHEL) actually scans.
+    set(NEREUSD_SYSTEMD_UNIT_DIR "/usr/lib/systemd/system")
+    if(PkgConfig_FOUND)
+        pkg_check_modules(SYSTEMD QUIET systemd)
+        if(SYSTEMD_FOUND)
+            pkg_get_variable(_nereusd_systemd_unit_dir systemd systemdsystemunitdir)
+            if(_nereusd_systemd_unit_dir)
+                set(NEREUSD_SYSTEMD_UNIT_DIR "${_nereusd_systemd_unit_dir}")
+            endif()
+        endif()
+    endif()
+    message(STATUS "nereusd: systemd unit -> ${NEREUSD_SYSTEMD_UNIT_DIR}")
+
+    install(FILES packaging/nereusd.service
+            DESTINATION "${NEREUSD_SYSTEMD_UNIT_DIR}")
+    install(FILES packaging/nereusd.conf.sample
+            DESTINATION share/nereusd)
+endif()
+
 # Bundle third-party license notices + NereusSDR's LICENSE into release artifacts.
 # LICENSE-DUAL-LICENSING is shipped alongside LICENSE because Thetis maintains
 # both at project root and GPL §1 "keep intact all notices that refer to this
