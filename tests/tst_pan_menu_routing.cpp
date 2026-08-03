@@ -38,18 +38,22 @@
 //   3. panButtonTooltipCarriesNoSourceCite -- neither state's tooltip leaks
 //                                             the AetherSDR cite/stamp into
 //                                             user-visible text
-//   4. perPanMenuCarriesItsOwnPanId       -- test seam: the signal a pan
-//                                            emits carries the id it was
-//                                            constructed with
-//   5. twoPansEmitDifferentIds            -- test seam: two applets' signals
-//                                            don't cross-talk
-//   6. theRealMenuActionsCarryEachPansOwnId -- stronger proof than 4/5: the
-//                                              REAL QAction objects
-//                                              buildContextMenu() adds,
-//                                              found by operator-facing text
-//                                              and trigger()'d the way QMenu
-//                                              itself would, resolve to each
-//                                              applet's own id
+//   4. theRealMenuActionsCarryEachPansOwnId -- drives the REAL QAction
+//                                              objects buildContextMenu()
+//                                              adds, found by operator-
+//                                              facing text and trigger()'d
+//                                              the way QMenu itself would,
+//                                              proving both that each
+//                                              applet's own panId() is
+//                                              carried and that two
+//                                              applets' menus/signals don't
+//                                              cross-talk. Final-fix-wave
+//                                              finding 7 removed the two
+//                                              weaker seam-only cases this
+//                                              superseded (and the
+//                                              emitAddSliceForTest() /
+//                                              emitFloatForTest() shims
+//                                              they alone used).
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -157,44 +161,23 @@ private slots:
 
     // ── Task B5: per-pan add-slice / float ─────────────────────────────
 
-    void perPanMenuCarriesItsOwnPanId() {
-        PanadapterApplet a(QStringLiteral("pan-2"));
-        QSignalSpy addSpy(&a, &PanadapterApplet::addSliceRequested);
-        QSignalSpy floatSpy(&a, &PanadapterApplet::floatRequested);
-
-        a.emitAddSliceForTest();
-        a.emitFloatForTest();
-
-        QCOMPARE(addSpy.count(), 1);
-        QCOMPARE(addSpy.at(0).at(0).toString(), QStringLiteral("pan-2"));
-        QCOMPARE(floatSpy.count(), 1);
-        QCOMPARE(floatSpy.at(0).at(0).toString(), QStringLiteral("pan-2"));
-    }
-
-    void twoPansEmitDifferentIds() {
-        PanadapterApplet a(QStringLiteral("pan-0"));
-        PanadapterApplet b(QStringLiteral("pan-1"));
-        QSignalSpy spyA(&a, &PanadapterApplet::addSliceRequested);
-        QSignalSpy spyB(&b, &PanadapterApplet::addSliceRequested);
-
-        b.emitAddSliceForTest();
-
-        QCOMPARE(spyA.count(), 0);
-        QCOMPARE(spyB.count(), 1);
-        QCOMPARE(spyB.at(0).at(0).toString(), QStringLiteral("pan-1"));
-    }
-
-    // Stronger than the two seam-based cases above, which only prove "the
-    // signal I emit carries the id I passed" -- they would pass even if
-    // buildContextMenu() never wired the actions at all, or wired them to
-    // the wrong lambda. This drives the ACTUAL QAction objects
-    // buildContextMenu() adds, found by the same operator-facing text a
-    // real right-click would show, and trigger()'d the way QMenu itself
-    // triggers a clicked action. Uses buildContextMenuForTesting() rather
-    // than exec()-ing a real popup (which would need a QTimer::singleShot
-    // to escape a nested event loop and risks flaking in CI) -- the same
-    // approach SMeterWidget::buildContextMenuForTesting() already uses
-    // (tst_smeter_widget_context_menu.cpp).
+    // Drives the ACTUAL QAction objects buildContextMenu() adds, found by
+    // the same operator-facing text a real right-click would show, and
+    // trigger()'d the way QMenu itself triggers a clicked action -- proof
+    // that "the signal carries the id" AND that buildContextMenu() wired
+    // it to the right lambda, which a seam that just calls
+    // emit addSliceRequested(panId()) directly cannot tell apart from a
+    // wiring bug. Uses buildContextMenuForTesting() rather than exec()-ing
+    // a real popup (which would need a QTimer::singleShot to escape a
+    // nested event loop and risks flaking in CI) -- the same approach
+    // SMeterWidget::buildContextMenuForTesting() already uses
+    // (tst_smeter_widget_context_menu.cpp). Final-fix-wave finding 7: this
+    // used to be the "stronger than" case sitting below two weaker,
+    // shim-based seam tests (emitAddSliceForTest() / emitFloatForTest());
+    // since this test alone already proves both "own id carried" and "no
+    // cross-talk between two applets" (below), the shims and the two
+    // tests that existed only to exercise them were removed rather than
+    // kept as redundant coverage.
     void theRealMenuActionsCarryEachPansOwnId() {
         PanadapterApplet panA(QStringLiteral("pan-7"));
         PanadapterApplet panB(QStringLiteral("pan-8"));

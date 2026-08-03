@@ -93,7 +93,12 @@ public:
     /// Labels of everything currently folded, in rung order.
     QStringList foldedLabels() const { return m_foldedLabels; }
 
-    /// Rung currently folded through. 0 means nothing is folded.
+    /// Rung currently folded through. 0 means the bar fits with nothing
+    /// folded; -1 (the constructed default) means relayout() has never
+    /// run, or that a subsequent addItem/setNaturalWidth/setItemAvailable
+    /// call has invalidated the last decision and it has not been
+    /// recomputed yet. -1 is a distinct sentinel, not a third "nothing
+    /// folded" spelling: buildTable()'s callers must not treat it as 0.
     int foldedThroughRung() const noexcept { return m_foldedThrough; }
 
 signals:

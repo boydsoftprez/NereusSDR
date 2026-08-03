@@ -135,14 +135,6 @@ public:
     bool extendedViewEnabled() const { return m_extendedViewEnabled; }
     void setExtendedViewEnabled(bool on);
 
-    /// Task B5 (bottom-banner + pan-menu epic): test seams so addSliceRequested /
-    /// floatRequested can be asserted without synthesising a context-menu
-    /// event. The production emitters are the two entries buildContextMenu()
-    /// adds; tst_pan_menu_routing.cpp exercises both these seams and the real
-    /// menu action (see buildContextMenuForTesting()).
-    void emitAddSliceForTest() { emit addSliceRequested(panId()); }
-    void emitFloatForTest()    { emit floatRequested(panId()); }
-
     /// Test-only: build and return the right-click context menu without
     /// exec()-ing it, so a test can find + trigger() its actions without a
     /// live nested event loop. Mirrors

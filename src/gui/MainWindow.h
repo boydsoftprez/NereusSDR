@@ -100,9 +100,10 @@ class SliceModel;
 class VfoWidget;
 // Phase 3F Sub-Epic D: forward declarations for the multi-pan layout
 // manager. Member m_panStack is introduced (nullptr) in Task 10/11 so the
-// +PAN dropdown menu and per-chain status indicators can guard against
-// not-yet-wired state; Task 12 instantiates m_panStack and migrates
-// m_spectrumWidget references.
+// +PAN affordance (a dropdown at the time; a drawn icon opening
+// PanLayoutDialog since Task B4) and per-chain status indicators can
+// guard against not-yet-wired state; Task 12 instantiates m_panStack and
+// migrates m_spectrumWidget references.
 class PanadapterStack;
 class ClarityController;
 class ContainerManager;
@@ -119,7 +120,6 @@ class RxDashboard;
 class StationBlock;
 class ChromeBarController;
 class SystemTile;
-class MetricLabel;
 class StatusBadge;
 class AdcOverloadBadge;
 class OverflowChip;
@@ -361,10 +361,11 @@ private slots:
     /// Apply a pan layout template and reconcile the slices against it.
     ///
     /// Codex review round 3, PR #293. There were three places that applied a
-    /// layout: session restore, the View menu, and the +PAN dropdown. Each
-    /// had its own copy of the pan-count table, the id list and an add-only
-    /// slice loop. Round 2's fix for slices orphaned by a shrinking layout
-    /// went into the View-menu copy only, so the defect stayed live through
+    /// layout: session restore, the View menu, and the +PAN affordance
+    /// (a dropdown at the time; a drawn icon since Task B4). Each had its
+    /// own copy of the pan-count table, the id list and an add-only slice
+    /// loop. Round 2's fix for slices orphaned by a shrinking layout went
+    /// into the View-menu copy only, so the defect stayed live through
     /// +PAN, which is the one operators actually use.
     ///
     /// One function now owns the whole sequence, so a later fix cannot land

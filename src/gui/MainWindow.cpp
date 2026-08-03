@@ -349,7 +349,6 @@ warren@wpratt.com
 #endif
 #include "widgets/MasterOutputWidget.h"
 #include "widgets/StationBlock.h"
-#include "widgets/MetricLabel.h"
 #include "widgets/StatusBadge.h"
 #include "widgets/AdcOverloadBadge.h"
 #include "widgets/OverflowChip.h"
@@ -6670,7 +6669,7 @@ void MainWindow::buildStatusBar()
 
     // Live re-format on °C / °F toggle without waiting for the next
     // telemetry sample. There is no toggle(); flip explicitly, matching
-    // the existing isPaTempToggle handler in eventFilter.
+    // the SystemTile::paTempClicked handler just below.
     connect(&PaTempUnitNotifier::instance(),
             &PaTempUnitNotifier::unitChanged, this,
             [this, refreshChromeBarForSystemTile](PaTempUnit) {
@@ -6933,7 +6932,10 @@ void MainWindow::buildStatusBar()
     bar.tciIndicator     = m_tciIndicator;
     bar.tciSep           = m_tciSep;
     bar.chain0           = m_chain0IndicatorWidget;
-    bar.chain1           = m_chain1IndicatorWidget;  // null on 1-ADC SKUs
+    // chain1 is always constructed (below), never null; single-ADC SKUs
+    // are gated via setItemAvailable on rxFilterChainCount, not by
+    // omitting this widget.
+    bar.chain1           = m_chain1IndicatorWidget;
     bar.rxDashRow        = m_rxDashboard;
     bar.placeholderGroup = m_placeholderGroup;
     bar.placeholderSep   = m_placeholderSep;
@@ -7039,8 +7041,9 @@ void MainWindow::buildStatusBar()
 // QStatusBar::showMessage hides every non-permanent widget while a
 // message is up, and buildStatusBar adds the entire bar as one such
 // widget. So any notice cost the operator the CH pill, the PureSignal
-// indicator, the radio name, CAT and TCI state, the PA and TX badges
-// and the clock, all at once, mid-transmit.
+// indicator, the radio name, CAT and TCI state, the PA and TX badges,
+// and the clock (which lived on this bar at the time; it has since
+// moved to TitleBar, Task A7), all at once, mid-transmit.
 //
 // The notices themselves are worth keeping. They move here instead.
 StatusToast* MainWindow::showToast(const QString& message,
@@ -8001,9 +8004,11 @@ void MainWindow::onCpuMenuRequested(const QPoint& localPos)
     m_cpuProcPrevSysUs = 0;
     m_cpuSysPrevTotal = 0;
     m_cpuSysPrevIdle = 0;
-    // SystemTile has no "—" placeholder for CPU (design §4.3: the tile
-    // always shows a CPU value); 0% is the closest equivalent to the old
-    // reset-to-placeholder behaviour until the next timer tick.
+    // SystemTile's CPU row does start with a "—" placeholder
+    // (SystemTile.cpp constructor), but setCpuPercent() only takes a
+    // numeric value and there's no way to ask for that placeholder again
+    // once the timer is running; 0% is the closest equivalent to a
+    // reset-to-placeholder display until the next timer tick.
     m_systemTile->setCpuPercent(0.0);
 }
 
@@ -8197,21 +8202,6 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
                            m_radioModel->buildConnectionTooltip(),
                            m_titleBar->connectionSegment());
         return true;
-    }
-
-    // PA-T row click → toggle persisted °C / °F preference. The widget
-    // we watch is a MetricLabel (not a QLabel), so use the property
-    // marker rather than a qobject_cast to a single concrete class.
-    if (event->type() == QEvent::MouseButtonPress) {
-        auto* w = qobject_cast<QWidget*>(watched);
-        if (w && w->property("isPaTempToggle").toBool()) {
-            const PaTempUnit cur = PaTempUnitNotifier::currentUnit();
-            const PaTempUnit next = (cur == PaTempUnit::Celsius)
-                                      ? PaTempUnit::Fahrenheit
-                                      : PaTempUnit::Celsius;
-            PaTempUnitNotifier::setUnit(next);
-            return true;  // event consumed
-        }
     }
 
     // Phase 23: m_tciIndicator click → open Setup → TCI Server.
@@ -8705,25 +8695,20 @@ void MainWindow::openFreeDVReporter()
     m_freeDVReporterDialog->activateWindow();
 }
 
-// Phase 3F Sub-Epic D Task 10: build and exec the +PAN dropdown menu.
-// Three sections, top to bottom:
+// panIdsForLayout(): synthesize a "pan-0" .. "pan-(N-1)" id list sized to
+// a layout template's pan count. Two callers: applyPanLayout() below,
+// reached from PanLayoutDialog's thumbnail-grid accept path (Task B3/B4),
+// and the launch-time restoredLayout call near the top of this file.
 //
-//   1. "Add slice on active pan" -- one row per Slice letter (A..N) up
-//      to maxSlices(); the next-available row triggers addSliceOnPan
-//      on m_panStack's currently active pan id. Already-active letters
-//      are greyed out so the operator can read at a glance which slice
-//      is "next".
-//   2. "Layout" -- one row per supported template (1 / 2v / 2h /
-//      12h / 2x2). Current layout is checkmarked. Selecting one calls
-//      PanadapterStack::applyLayout with a synthesized pan-id list
-//      sized to that template's pan count.
-//   3. "Float active pan..." -- detaches the active pan into its own
-//      top-level window via PanadapterStack::floatPanadapter.
-//
-// All m_panStack-dependent actions guard on null so the menu opens
-// cleanly even before Task 12 wires the stack. Add-slice's first
-// triggerable row uses "pan-0" as a fallback active pan id pre-Task-12,
-// matching the convention PanadapterStack uses for its bootstrap pan.
+// This used to also carry a 20-line doc block for showPanMenu(), the old
+// +PAN dropdown that built the same table inline across three sections
+// (add-slice on the active pan / layout / float the active pan).
+// showPanMenu() was replaced by PanLayoutDialog's thumbnail grid
+// (Task B3), and its two per-pan actions moved to each pan's own
+// right-click menu so they carry that pan's own id instead of routing
+// through activePanId() (Task B5, design doc §8.5); neither reads this
+// function's five-template comment any more, and the table itself has
+// grown to the current nine layouts (design doc §8.3).
 // Codex review round 3, PR #293. The template-to-pan-count table had three
 // copies; this is the only one now.
 QStringList MainWindow::panIdsForLayout(const QString& layoutId)

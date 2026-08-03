@@ -77,7 +77,9 @@ void registerChromeBarItems(ChromeBarController& c, const ChromeBarWidgets& w)
     add(c, w.tciIndicator, w.tciSep, 3,
         QCoreApplication::translate("ChromeBar", "TCI"));
 
-    // Both chain tags share rung 4. Chain 1 is null on single-ADC SKUs.
+    // Both chain tags share rung 4. Chain 1 is constructed on every SKU;
+    // single-ADC boards gate its visibility via setItemAvailable on
+    // rxFilterChainCount, not by leaving this widget null.
     add(c, w.chain0, nullptr, 4,
         QCoreApplication::translate("ChromeBar", "CH"));
     add(c, w.chain1, nullptr, 4, QString());
