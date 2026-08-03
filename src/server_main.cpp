@@ -57,7 +57,7 @@
 // synchronous nested QEventLoop that can block for many minutes -- see
 // DaemonApp.h). Calling start() inline meant that wait was the ONLY
 // event loop alive during a cold-cache first connect: app.exec() was
-// never reached, so onTerm()'s QMetaObject::invokeMethod(g_app, "quit",
+// never reached, so onTerm()'s QMetaObject::invokeMethod(s_app, "quit",
 // Qt::QueuedConnection) had no outer loop to land on, and a SIGTERM
 // arriving in that window could not be serviced -- confirmed live
 // (task-10-report.md): SIGTERM sent mid-wisdom-generation did not
@@ -125,7 +125,7 @@
 
 namespace {
 
-QCoreApplication* g_app = nullptr;
+QCoreApplication* s_app = nullptr;
 
 // Async-signal-safe: only QCoreApplication::quit() is approximately safe
 // to call from signal context (it just sets an atomic flag the event loop
@@ -133,11 +133,11 @@ QCoreApplication* g_app = nullptr;
 // Qt::QueuedConnection so the actual call happens on the event-loop thread
 // rather than whatever thread the signal was delivered to. Same pattern as
 // src/main.cpp's SIGTERM/SIGINT handlers; see the file header above for why
-// this file does not just call g_app->quit() directly.
+// this file does not just call s_app->quit() directly.
 void onTerm(int)
 {
-    if (g_app) {
-        QMetaObject::invokeMethod(g_app, "quit", Qt::QueuedConnection);
+    if (s_app) {
+        QMetaObject::invokeMethod(s_app, "quit", Qt::QueuedConnection);
     }
 }
 
@@ -147,7 +147,7 @@ int main(int argc, char* argv[])
 {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("nereusd"));
-    g_app = &app;
+    s_app = &app;
 
     std::signal(SIGTERM, onTerm);
     std::signal(SIGINT,  onTerm);
@@ -247,7 +247,7 @@ int main(int argc, char* argv[])
     // alive for the rest of main(), well past the point this queued call
     // runs (the queued event is serviced from the very first turn of
     // app.exec()'s loop, still inside this stack frame).
-    QMetaObject::invokeMethod(g_app, [&daemon, &cfg]() {
+    QMetaObject::invokeMethod(s_app, [&daemon, &cfg]() {
         if (!daemon.start(cfg)) {
             qCCritical(NereusSDR::lcApp) << "daemon failed to start";
             QCoreApplication::exit(4);

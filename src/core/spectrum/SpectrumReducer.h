@@ -77,9 +77,12 @@ struct ReducerConfig {
     /// SpectrumAvenger::apply()'s avBackmult argument (modes 1 and 3).
     /// SpectrumWidget supplies m_spectrumAverageAlpha here, which it
     /// derives from a time constant via the Thetis formula
-    /// alpha = exp(-1 / (fps * tau)) (specHPSDR.cs:351-380 [v2.10.3.13]) --
-    /// hence the name; the value on the wire is the alpha, not the tau.
-    double averageTau    {0.12};
+    /// alpha = exp(-1 / (fps * tau)) (specHPSDR.cs:351-380 [v2.10.3.13]).
+    /// This field held the alpha, not the tau, so it was named averageTau
+    /// for one release and is now named for what it carries, matching the
+    /// sibling abstraction this same epic added (ISpectrumSink::
+    /// setAverageAlpha).
+    double averageAlpha  {0.12};
 };
 
 /// Crop a linear-power FFT bin array to a frequency window and reduce it to

@@ -191,6 +191,13 @@ public:
     // was ever connected. Otherwise the RadioModel's live slice count.
     int sliceCount() const;
 
+#ifdef NEREUS_BUILD_TESTS
+    // Test-only observer, only compiled when NEREUS_BUILD_TESTS is
+    // defined, like every other test hook on this class. Production code
+    // never asks: start() injects the thread into RadioModel itself and
+    // stop()/~DaemonApp() own its lifetime, so the only caller is
+    // tests/tst_wideband_thread.cpp.
+    //
     // R1 Task 11. The dedicated thread start() injects into RadioModel
     // (RadioModel::setWidebandDispatchThread) as the target for the
     // wideband FFT dispatch hop -- see that method's own doc comment in
@@ -207,7 +214,6 @@ public:
     // unique_ptr) or a later start() destroys/replaces it.
     QThread* widebandThread() const { return m_widebandThread.get(); }
 
-#ifdef NEREUS_BUILD_TESTS
     // Test-only seam, only compiled when NEREUS_BUILD_TESTS is defined.
     // Forces the NEXT start() (and every start() after a stop(), since
     // this persists across a restart on the same instance --

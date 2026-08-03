@@ -106,14 +106,14 @@ private:
         cfg.sampleRateHz   = sampleRateHz;
         cfg.detector       = det;
         cfg.averageMode    = avengerMode(avg);
-        cfg.averageTau     = static_cast<double>(w.spectrumAverageAlpha());
+        cfg.averageAlpha   = static_cast<double>(w.spectrumAverageAlpha());
 
         SpectrumReducer spec;
         SpectrumReducer wf;
         spec.setConfig(cfg);
 
         ReducerConfig wfCfg = cfg;
-        wfCfg.averageTau = static_cast<double>(w.waterfallAverageAlpha());
+        wfCfg.averageAlpha = static_cast<double>(w.waterfallAverageAlpha());
         wf.setConfig(wfCfg);
 
         const double windowEnb = 2.0;

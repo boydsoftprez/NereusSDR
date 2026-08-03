@@ -124,7 +124,6 @@
 #include "dbm_strip_math.h"
 #include "popup_placement.h"
 #include "models/BandPlanManager.h"
-#include "core/spectrum/SpectrumDetector.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -2718,7 +2717,7 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // --- Spectrum plane: detector -> avenger -> m_renderedPixels (dBm) ---
     cfg.detector    = m_spectrumDetector;
     cfg.averageMode = avengerMode(m_spectrumAveraging);
-    cfg.averageTau  = static_cast<double>(m_spectrumAverageAlpha);
+    cfg.averageAlpha  = static_cast<double>(m_spectrumAverageAlpha);
     m_spectrumReducer.setConfig(cfg);
     // Out-parameter, not an assignment from a returned reference: the
     // avenger writes through pixelsOut[i], so anything that leaves this
@@ -2755,7 +2754,7 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // first: each carries its own avenger accumulators.
     cfg.detector    = m_waterfallDetector;
     cfg.averageMode = avengerMode(m_waterfallAveraging);
-    cfg.averageTau  = static_cast<double>(m_waterfallAverageAlpha);
+    cfg.averageAlpha  = static_cast<double>(m_waterfallAverageAlpha);
     m_waterfallReducer.setConfig(cfg);
     m_waterfallReducer.reduce(binsLinear, windowEnb, dbmOffset, m_wfRenderedPixels);
 

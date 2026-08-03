@@ -42,15 +42,18 @@ namespace NereusSDR {
 struct FftPoolConfig {
     int    fps            {30};
     int    fftSize        {4096};
-    // Trap for a Task 9/10 daemon-config author (coordinator spec review,
-    // fix round 1, finding 2): this struct literal defaults to 4 (Hamming),
-    // but every production caller configures 1 (WindowFunction::
-    // BlackmanHarris4) to match FFTEngine's own constructor default -- see
-    // MainWindow::refreshFftPoolConfig()'s DisplayFftWindow fallback. A
-    // caller that builds an FftPoolConfig and never calls setConfig() (as
-    // two of this class's own brief-specified unit tests do) gets Hamming,
-    // not the window the app actually ships with.
-    int    windowType     {4};
+    // 1 == WindowFunction::BlackmanHarris4, which is FFTEngine's own
+    // constructor default and what MainWindow::refreshFftPoolConfig()
+    // falls back to when DisplayFftWindow is unset. In other words, the
+    // window the app actually ships with.
+    //
+    // This defaulted to 4 (Hamming) for one release, and the header
+    // comment at the time described that as a trap for whoever wrote the
+    // daemon config. It then caught one: the Task 13 Pi bench diagnostic
+    // built an FftPoolConfig, never called a setter, and produced its
+    // frames on a window the app never ships. Matching the production
+    // value removes the trap rather than documenting it.
+    int    windowType     {1};
     double hzPerBinTarget {0.0};
     // 1 = today's shared thread. Design section 4.5a measured only a
     // 1.35x aggregate-throughput gain at 4 threads on the Pi 4B floor

@@ -325,12 +325,12 @@ private slots:
         c.pixels      = 333;
         c.detector    = SpectrumDetectorMode::RMS;
         c.averageMode = 3;
-        c.averageTau  = 0.42;
+        c.averageAlpha  = 0.42;
         r.setConfig(c);
         QCOMPARE(r.config().pixels, 333);
         QCOMPARE(r.config().detector, SpectrumDetectorMode::RMS);
         QCOMPARE(r.config().averageMode, 3);
-        QCOMPARE(r.config().averageTau, 0.42);
+        QCOMPARE(r.config().averageAlpha, 0.42);
         QCOMPARE(r.config().centreHz, 14'200'000.0);
     }
 
@@ -407,7 +407,7 @@ private slots:
         ReducerConfig c = baseConfig();
         c.pixels      = 32;
         c.averageMode = 3;      // log recursive
-        c.averageTau  = 0.9;    // heavy smoothing so convergence is slow
+        c.averageAlpha  = 0.9;    // heavy smoothing so convergence is slow
         r.setConfig(c);
 
         const QVector<float> quiet = flatBins(4096, 1.0e-12f);
@@ -440,7 +440,7 @@ private slots:
         ReducerConfig c = baseConfig();
         c.pixels      = 64;
         c.averageMode = 1;
-        c.averageTau  = 0.5;
+        c.averageAlpha  = 0.5;
         r.setConfig(c);
 
         const QVector<float> bins = flatBins(4096, 1.0e-9f);

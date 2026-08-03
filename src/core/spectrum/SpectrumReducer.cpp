@@ -42,7 +42,7 @@ std::pair<int, int> SpectrumReducer::visibleBinRange(int binCount,
                                                      const ReducerConfig& cfg)
 {
     if (binCount <= 0 || cfg.sampleRateHz <= 0.0) {
-        return {0, -1};  // empty range — callers compute count = 0
+        return {0, -1};  // empty range, callers compute count = 0
     }
 
     double binWidth = cfg.sampleRateHz / binCount;
@@ -127,7 +127,7 @@ void SpectrumReducer::reduce(const QVector<float>& binsLinear,
                           0.0);
     m_avenger.apply(m_linearPixels,
                     m_cfg.averageMode,
-                    m_cfg.averageTau,
+                    m_cfg.averageAlpha,
                     dbmScale,
                     noCorrection,
                     false,
