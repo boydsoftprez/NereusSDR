@@ -267,7 +267,7 @@ per-file NereusSDR-side diff).
 | `src/gui/TunerApplet.{h,cpp}` (inner `RelayBar` class) | `src/gui/RelayBar.{h,cpp}` | RelayBar widget extracted from AetherSDR inner class; supports mousewheel relay position adjustment. |
 | `src/gui/AmpApplet.{h,cpp}` | `src/gui/applets/AmpApplet.{h,cpp}` | PGXL amp telemetry applet (Phase 3P-II Task 15). |
 | `src/gui/AntennaGeniusApplet.{h,cpp}` | (FlexRadio accessory-specific, not in NereusSDR) | |
-| `src/gui/PanadapterApplet.{h,cpp}` / `PanadapterStack.{h,cpp}` / `PanLayoutDialog.{h,cpp}` | (pending Phase 3F) | Multi-pan management UI. |
+| `src/gui/PanadapterApplet.{h,cpp}` / `PanadapterStack.{h,cpp}` / `PanLayoutDialog.{h,cpp}` / `src/gui/widgets/LayoutThumbnail.{h,cpp}` | `v0.5.3` @c6481cb | Multi-pan management UI. `PanLayoutDialog` re-ported and `LayoutThumbnail` added by the 2026-08-02 bottom-banner + pan-menu epic (Tasks B2/B3); `PanadapterApplet` / `PanadapterStack` remain at their prior verification stamp `@0cd4559`. |
 | `src/gui/RadioSetupDialog.{h,cpp}` | `src/gui/setup/*` pages + `HardwarePage.{h,cpp}` + `setup/hardware/*` tabs + `SetupPage.cpp` + `TransmitSetupPages.{h,cpp}` + `DspSetupPages.cpp` + `DisplaySetupPages.{h,cpp}` + `GeneralOptionsPage.{h,cpp}` | Pattern only; content is Thetis-feature-driven. AetherSDR's `RadioSetupDialog.cpp` §License Info block (lines 263-312) is SmartSDR-license-specific, has no NereusSDR counterpart. |
 | `src/gui/ProfileManagerDialog.{h,cpp}` | (none yet) | |
 | `src/gui/DxClusterDialog.{h,cpp}` | (pending 3J) | |
