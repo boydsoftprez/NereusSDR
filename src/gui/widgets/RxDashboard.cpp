@@ -38,15 +38,21 @@ namespace NereusSDR {
 RxDashboard::RxDashboard(QWidget* parent) : QWidget(parent)
 {
     buildUi();
-    // Horizontal policy is Preferred (not Minimum) so the parent
-    // QHBoxLayout can shrink the dashboard below its horizontal
-    // sizeHint when the strip is tight. ChromeBarController folds
-    // individual badges via badgeForRung() before that ever binds.
-    //
-    // Floor is 60 px so the dashboard remains visible enough to read
-    // even when most badges have been folded away by the controller.
-    setMinimumWidth(60);
-    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    // Horizontal policy is Fixed, not Preferred (final-fix-wave finding
+    // 5). Preferred plus the old setMinimumWidth(60) floor let the
+    // outer status-bar QHBoxLayout compress this row down to 60 px under
+    // width pressure, directly contradicting design doc §5.1 invariant 1
+    // ("Nothing shrinks. Every banner item is present at its natural
+    // width or absent."). Individual pills still fold the ordinary Qt
+    // way -- ChromeBarController calls setVisible() on them directly via
+    // badgeForRung(), which shrinks THIS row's own sizeHint() -- Fixed
+    // only stops the OUTER layout from squeezing the row any further
+    // below whatever that live, pill-count-dependent sizeHint currently
+    // is. The row's own non-pill residual (tag + mode + filter +
+    // margins) is registered with ChromeBarController at rung 0 via
+    // residualWidth(), so the fold budget now accounts for it honestly
+    // instead of silently absorbing pressure the ladder never saw.
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
 }
 
 namespace {
@@ -144,6 +150,7 @@ void RxDashboard::setSliceLetter(QChar letter)
     if (m_sliceTag) {
         m_sliceTag->setText(QString(letter));
     }
+    emit residualWidthChanged();
 }
 
 QString RxDashboard::modeText() const
@@ -161,6 +168,22 @@ StatusBadge* RxDashboard::badgeForRung(int rung) const
     case 9:  return m_agcBadge;
     default: return nullptr;
     }
+}
+
+int RxDashboard::residualWidth() const
+{
+    // Mirrors buildUi(): setContentsMargins(10, 0, 10, 0) and
+    // setSpacing(4) with exactly two internal gaps among the three
+    // never-folding widgets (tag-mode, mode-filter). AGC is deliberately
+    // excluded even though it is also always visible: it is one of the
+    // five pills and is already counted at its own rung-9 registration.
+    constexpr int kMargins = 20;
+    constexpr int kGaps    = 2 * 4;
+    int w = kMargins + kGaps;
+    if (m_sliceTag)    { w += m_sliceTag->sizeHint().width(); }
+    if (m_modeBadge)   { w += m_modeBadge->sizeHint().width(); }
+    if (m_filterBadge) { w += m_filterBadge->sizeHint().width(); }
+    return w;
 }
 
 void RxDashboard::bindSlice(SliceModel* slice)
@@ -208,6 +231,7 @@ void RxDashboard::onModeChanged(int mode)
     m_modeBadge->setToolTip(name.isEmpty()
         ? tr("Operating mode")
         : tr("Mode: %1").arg(name));
+    emit residualWidthChanged();
 }
 
 void RxDashboard::onFilterChanged(int low, int high)
@@ -231,6 +255,7 @@ void RxDashboard::onFilterChanged(int low, int high)
     m_filterBadge->setToolTip(tipDetail.isEmpty()
         ? tr("Filter passband width")
         : tr("Filter passband: %1").arg(tipDetail));
+    emit residualWidthChanged();
 }
 
 void RxDashboard::onAgcChanged(int agcMode)

@@ -70,6 +70,20 @@ public:
     /// 5 SQL, 6 APF, 7 NB, 8 NR, 9 AGC. Mode and filter never fold.
     StatusBadge* badgeForRung(int rung) const;
 
+    /// Width NOT covered by the five individually-registered pills
+    /// (badgeForRung rungs 5-9): the slice tag plus the mode and filter
+    /// badges, plus this row's own contents margins and internal gaps.
+    /// MainWindow registers the whole row with ChromeBarController at
+    /// rung 0 (it never folds) but overrides the auto-measured width with
+    /// this number via setNaturalWidth, refreshed on every
+    /// residualWidthChanged(). Registering the row's raw sizeHint()
+    /// instead would double-count AGC -- always visible, and already
+    /// counted separately at rung 9 -- and would have to be re-measured
+    /// on every pill toggle, which is exactly the live-sizeHint feedback
+    /// path this architecture exists to remove (final-fix-wave finding 5;
+    /// design doc §5.1 invariant 2).
+    int residualWidth() const;
+
 signals:
     /// A pill's DSP-active state (and/or its content, hence its width)
     /// just changed. rung matches badgeForRung's mapping (5 SQL .. 9 AGC).
@@ -80,6 +94,13 @@ signals:
     /// badgeForRung(rung) and forward both facts to
     /// ChromeBarController::setItemAvailable / setNaturalWidth.
     void badgeAvailabilityChanged(int rung, bool available);
+
+    /// The slice tag, mode badge or filter badge just changed content, so
+    /// residualWidth()'s return value is stale. Mode and filter never
+    /// fold (badgeForRung only covers rungs 5-9), so this is the only
+    /// width-change notice they need; the receiver is expected to call
+    /// setNaturalWidth(rxDashRowWidget, residualWidth()) and relayout().
+    void residualWidthChanged();
 
 private slots:
     void onModeChanged(int mode);

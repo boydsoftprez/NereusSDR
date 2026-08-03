@@ -43,12 +43,27 @@ void registerChromeBarItems(ChromeBarController& c, const ChromeBarWidgets& w)
     // never appears in foldedLabels(), so a label here would never render.
     add(c, w.psaIndicator, nullptr, 0, QString());
 
-    // w.rxDashRow is also deliberately not registered: mode and filter
-    // never fold (RxDashboard.h), so the row's own baseline width is not
-    // part of the ladder, and RxDashboard is built with a Preferred size
-    // policy plus an explicit floor specifically so it can absorb any
-    // residual pressure once its own pills (registered individually below)
-    // have already folded (RxDashboard.cpp constructor comment).
+    // overflowChip is also rung 0: it is the ladder's OWN output surface,
+    // not a foldable item, but its ~26 px must still count in the width
+    // budget once it is showing, or every fold step under-frees by that
+    // much right when folding starts (final-fix-wave finding 4). Its
+    // ARMED state (dropped-items list non-empty) is reported through
+    // setItemAvailable from the foldStateChanged handler that also feeds
+    // it its content, exactly like psaIndicator above.
+    add(c, w.overflowChip, nullptr, 0, QString());
+
+    // w.rxDashRow: mode and filter never fold (RxDashboard.h), so this
+    // registers the row's own non-pill residual (slice tag + mode +
+    // filter + margins), NOT the row's live sizeHint(). MainWindow
+    // overrides the auto-measured width immediately after
+    // registerChromeBarItems() returns, via
+    // RxDashboard::residualWidth() -- registering the raw sizeHint()
+    // would double-count AGC (already counted at its own rung-9
+    // registration below) and drift stale every time a pill toggles.
+    // Previously not registered at all, which under-counted the width
+    // budget by the row's own ~130-160 px (final-fix-wave finding 5;
+    // design doc §5.1 invariant 2).
+    add(c, w.rxDashRow, nullptr, 0, QString());
 
     add(c, w.systemTile, w.systemTileSep, 1,
         QCoreApplication::translate("ChromeBar", "PA / CPU"));

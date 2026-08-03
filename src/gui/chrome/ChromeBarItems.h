@@ -14,13 +14,19 @@ namespace NereusSDR {
 class ChromeBarController;
 
 /// Every widget the banner registers. Any member may be null; registration
-/// skips nulls, which is how single-ADC SKUs omit chain 1.
+/// skips nulls. In production every SKU currently constructs chain1
+/// unconditionally (MainWindow::buildStatusBar) and gates its visibility
+/// through ChromeBarController::setItemAvailable on
+/// BoardCapabilities::rxFilterChainCount, not through leaving this field
+/// null -- a null chain1 here is a defensive case this struct still
+/// supports (see nullWidgetsAreSkippedNotCrashed), not a real-world one.
 struct ChromeBarWidgets {
     QWidget* panButton{nullptr};
     QWidget* panelToggle{nullptr};
     QWidget* stationBlock{nullptr};
     QWidget* safetyGroup{nullptr};
     QWidget* psaIndicator{nullptr};
+    QWidget* overflowChip{nullptr};
 
     QWidget* systemTile{nullptr};
     QWidget* systemTileSep{nullptr};

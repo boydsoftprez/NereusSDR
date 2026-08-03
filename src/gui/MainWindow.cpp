@@ -6859,10 +6859,11 @@ void MainWindow::buildStatusBar()
         });
     }
 
-    // ── OverflowChip — surfaces drop-list contents when the strip is tight
-    // Sits just before the clock so the "…" appears at the right end of
-    // the strip whenever ≥ 1 right-strip item has been dropped to fit.
-    // Hidden when the drop list is empty.
+    // ── OverflowChip: surfaces folded-item contents when the strip is tight
+    // Sits at the right end of the strip; the "…" appears whenever
+    // m_chromeBar has folded >= 1 item to fit the bar width. Hidden
+    // (unavailable) when nothing is folded. The clock lives on TitleBar
+    // now (Task A7), not here.
     m_overflowChip = new OverflowChip(barWidget);
     hbox->addWidget(m_overflowChip);
 
@@ -6923,6 +6924,7 @@ void MainWindow::buildStatusBar()
     bar.stationBlock     = m_stationBlock;
     bar.safetyGroup      = m_safetyGroup;
     bar.psaIndicator     = m_psaIndicator;
+    bar.overflowChip     = m_overflowChip;
     bar.systemTile       = m_systemTile;
     bar.systemTileSep    = m_systemTileSep;
     bar.tgxlChip         = m_tgxlChip;
@@ -6941,6 +6943,18 @@ void MainWindow::buildStatusBar()
 
     registerChromeBarItems(*m_chromeBar, bar);
 
+    // registerChromeBarItems just measured w.rxDashRow's raw sizeHint(),
+    // which at this point in construction happens to equal tag + mode +
+    // filter + AGC (the four badges visible before any slice binds) --
+    // wrong on two counts: it double-counts AGC (registered separately at
+    // rung 9 above) and it would go stale the moment any pill's
+    // visibility changes. Override with the pill-independent residual
+    // immediately (final-fix-wave finding 5).
+    if (m_rxDashboard) {
+        m_chromeBar->setNaturalWidth(m_rxDashboard,
+                                     m_rxDashboard->residualWidth());
+    }
+
     // Items that start unavailable until their owning signal says
     // otherwise (Task A8 fix round 1, findings 1-3). No radio has
     // connected and no slice has bound yet at this point in construction,
@@ -6953,6 +6967,7 @@ void MainWindow::buildStatusBar()
     m_chromeBar->setItemAvailable(m_psaIndicator, false);
     m_chromeBar->setItemAvailable(m_tgxlChip, false);
     m_chromeBar->setItemAvailable(m_chain1IndicatorWidget, false);
+    m_chromeBar->setItemAvailable(m_overflowChip, false);
     for (int rung = 5; rung <= 8; ++rung) {  // SQL, APF, NB, NR
         m_chromeBar->setItemAvailable(m_rxDashboard->badgeForRung(rung), false);
     }
@@ -6972,8 +6987,37 @@ void MainWindow::buildStatusBar()
         m_chromeBar->relayout(m_chromeBarWidget->width());
     });
 
-    connect(m_chromeBar, &ChromeBarController::foldStateChanged,
-            m_overflowChip, &OverflowChip::setDroppedItems);
+    // The slice tag, mode or filter content changed, so the residual
+    // registered above is stale (final-fix-wave finding 5). Mirrors the
+    // badgeAvailabilityChanged handler just above, minus the availability
+    // half -- the row itself never folds.
+    connect(m_rxDashboard, &RxDashboard::residualWidthChanged, this, [this]() {
+        if (!m_chromeBar || !m_chromeBarWidget || !m_rxDashboard) { return; }
+        m_chromeBar->setNaturalWidth(m_rxDashboard,
+                                     m_rxDashboard->residualWidth());
+        m_chromeBar->relayout(m_chromeBarWidget->width());
+    });
+
+    // m_overflowChip is registered with m_chromeBar at rung 0 (final-fix-
+    // wave finding 4), so the controller is the sole writer of its
+    // visibility; setDroppedItems() no longer calls setVisible() itself.
+    // This handler feeds it content AND reports the resulting
+    // available/unavailable fact back through setItemAvailable, same
+    // shape as updatePsaIndicatorVisibility(). The nested relayout() call
+    // is safe: the chip's width can only ever push the required rung UP
+    // (never down), so once its availability flips true the folded set
+    // stays a superset and the chain settles in one extra pass; the
+    // reverse direction (labels empty -> chip goes unavailable) is
+    // self-consistent at rung 0, which never has anything folded, so no
+    // pass beyond that one is triggered either.
+    connect(m_chromeBar, &ChromeBarController::foldStateChanged, this,
+            [this](const QStringList& labels) {
+        m_overflowChip->setDroppedItems(labels);
+        if (m_chromeBar && m_chromeBarWidget) {
+            m_chromeBar->setItemAvailable(m_overflowChip, !labels.isEmpty());
+            m_chromeBar->relayout(m_chromeBarWidget->width());
+        }
+    });
 
     // Add the full-width bar widget to the status bar.
     //
