@@ -25,6 +25,9 @@ Wants=network-online.target
 
 [Service]
 Type=exec
+# Hardcoded to this project's unmodified default /usr/local prefix (not
+# templated via configure_file()); a future .deb/.rpm build targeting a
+# different prefix will need this path generated instead.
 ExecStart=/usr/local/bin/nereusd --config /etc/nereusd.conf
 Restart=on-failure
 RestartSec=5
@@ -110,10 +113,15 @@ UMask=0077
 # remote-audio-streaming feature -- the wire-protocol audio stream really
 # does not exist yet (design doc section 9). Elevation is soft-fail-safe
 # (logs and continues at the default scheduling policy if refused), so
-# this is an optimization, not a correctness requirement -- but the Pi 4
-# floor's CPU budget is measured tight (design doc section 4.5a), so it is
-# the same jitter mitigation the desktop build already ships, not
-# cargo-cult hardening copied in without a reason.
+# this is an optimization, not a correctness requirement -- and the case
+# for granting it does not depend on Pi-specific load measurements: a
+# LimitRTPRIO below what the code requests defeats the elevation on any
+# hardware, loaded or not (design doc section 4.5a measured FFT and Opus
+# cost on the Pi 4 floor, not this DSP thread -- WDSP RX per slice is
+# that section's own stated open gap, so it is not cited here as
+# evidence this thread is a bottleneck). This is the same jitter
+# mitigation the desktop build already ships, not cargo-cult hardening
+# copied in without a reason.
 #
 # 99, not the commonly-copied "@audio" convention of 95: the code requests
 # sched_get_priority_max(SCHED_FIFO) - 1, which is 98 on Linux (a fixed

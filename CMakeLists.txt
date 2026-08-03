@@ -1737,16 +1737,30 @@ install(TARGETS nereusd
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # systemd's unit search paths are fixed OS locations, not
-    # CMAKE_INSTALL_PREFIX-relative: `systemctl enable nereusd` never scans
-    # ${CMAKE_INSTALL_PREFIX}/lib/systemd/system unless that happens to
-    # already equal systemd's own vendor unit directory. Ask pkg-config for
-    # systemd's real systemdsystemunitdir when systemd.pc is available (the
-    # project's own dependency lists in CLAUDE.md do not require
-    # libsystemd-dev, so this is not guaranteed); fall back to the
-    # FHS-standard /usr/lib/systemd/system otherwise, which is what every
-    # mainstream distro in a merged-/usr layout (Debian, Ubuntu, Fedora,
-    # Arch, RHEL) actually scans.
+    # Ask pkg-config for systemd's own vendor unit directory when
+    # systemd.pc is available (the project's own dependency lists in
+    # CLAUDE.md do not require libsystemd-dev, so this is not guaranteed);
+    # fall back to the FHS-standard /usr/lib/systemd/system otherwise,
+    # which is what every mainstream distro in a merged-/usr layout
+    # (Debian, Ubuntu, Fedora, Arch, RHEL) ships as the vendor unit
+    # directory.
+    #
+    # This is a packaging-convention choice, not a correctness fix.
+    # systemd's documented system-unit load path also includes the
+    # CMAKE_INSTALL_PREFIX-relative /usr/local/lib/systemd/system
+    # (confirmed against Debian 13 trixie's own systemd.unit(5), this
+    # project's named target distro per design doc section 4.5a), so
+    # installing there under this project's default /usr/local prefix
+    # would still be found by `systemctl enable` and would still work --
+    # an earlier version of this comment claimed otherwise; that claim
+    # was wrong (task-12-report.md, fix round 1, Finding 1). Resolving
+    # the real vendor directory via pkg-config is simply the conventional
+    # choice for eventual distro packaging, and it places the unit at
+    # systemd's higher-priority vendor path rather than the lower-priority
+    # /usr/local one, which matters if a future .deb/.rpm ever also ships
+    # a copy at the vendor path: the higher-priority copy wins
+    # predictably instead of the load order depending on which one
+    # happened to be installed first.
     set(NEREUSD_SYSTEMD_UNIT_DIR "/usr/lib/systemd/system")
     if(PkgConfig_FOUND)
         pkg_check_modules(SYSTEMD QUIET systemd)
