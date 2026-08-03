@@ -170,6 +170,14 @@ public:
     /// (MainWindow.cpp:14856 [@6a142807]).
     SpectrumWidget* spectrumForSlice(SliceModel* s) const;
 
+    /// The pan-id list a layout template implies. Sole owner of the
+    /// template-to-pan-count table, which previously had three copies.
+    /// Public (moved from private slots: in Task B1) so the pan-count
+    /// table has a direct unit test instead of only being exercised
+    /// indirectly through applyPanLayout, which needs a constructed
+    /// MainWindow the test harness cannot build.
+    static QStringList panIdsForLayout(const QString& layoutId);
+
     // Narrow composition seams used by deletion-gap regressions. Runtime
     // call sites use these same helpers so stable-ID lookup cannot diverge
     // between the test and the UI signal path.
@@ -351,9 +359,6 @@ private slots:
     /// persisted multi-pan layout came back with a permanently dead pane.
     void populateEmptyPans();
 
-    /// The pan-id list a layout template implies. Sole owner of the
-    /// template-to-pan-count table, which previously had three copies.
-    static QStringList panIdsForLayout(const QString& layoutId);
     // Phase 3M-4 bench-fix: gate m_psaIndicator visibility on
     // caps.hasPureSignal && PureSignal::isAutoCalEnabled.  Called from
     // PureSignal::autoCalEnabledChanged + RadioModel::pureSignalCoordinator-

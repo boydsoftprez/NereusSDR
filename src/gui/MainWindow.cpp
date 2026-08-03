@@ -8578,12 +8578,23 @@ void MainWindow::openFreeDVReporter()
 // copies; this is the only one now.
 QStringList MainWindow::panIdsForLayout(const QString& layoutId)
 {
-    // Pan-count per template: 1=1, 2v/2h=2, 12h=3, 2x2=4.
-    const int needed = (layoutId == QStringLiteral("1"))   ? 1
-                     : (layoutId == QStringLiteral("12h")) ? 3
-                     : (layoutId == QStringLiteral("2x2")) ? 4
-                                                           : 2;
+    // One table, so a new layout is a one-line addition here and a branch in
+    // PanadapterStack::applyLayout, rather than a chain of ternaries that
+    // silently defaults new ids to 2. Counts match design §8.3.
+    static const QHash<QString, int> kPanCount = {
+        {QStringLiteral("1"),   1},
+        {QStringLiteral("2v"),  2},
+        {QStringLiteral("2h"),  2},
+        {QStringLiteral("2h1"), 3},
+        {QStringLiteral("12h"), 3},
+        {QStringLiteral("3v"),  3},
+        {QStringLiteral("2x2"), 4},
+        {QStringLiteral("4v"),  4},
+        {QStringLiteral("3h2"), 5},
+    };
+    const int needed = kPanCount.value(layoutId, 1);
     QStringList ids;
+    ids.reserve(needed);
     for (int i = 0; i < needed; ++i) {
         ids << QStringLiteral("pan-%1").arg(i);
     }

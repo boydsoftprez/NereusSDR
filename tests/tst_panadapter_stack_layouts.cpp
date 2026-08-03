@@ -10,6 +10,7 @@
 #include "gui/PanadapterStack.h"
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterApplet.h"
+#include "gui/MainWindow.h"
 #include "core/AppSettings.h"
 
 using namespace NereusSDR;
@@ -216,6 +217,76 @@ private slots:
         QCOMPARE(stack.panadapter(QStringLiteral("pan-1")), retained.data());
         QVERIFY(!retained->isWindow());
         QCOMPARE(stack.count(), 2);
+    }
+
+    void layout2h1BuildsThreePans() {
+        PanadapterStack s;
+        s.applyLayout(QStringLiteral("2h1"),
+                      {QStringLiteral("p0"), QStringLiteral("p1"),
+                       QStringLiteral("p2")});
+        QCOMPARE(s.count(), 3);
+        QCOMPARE(s.currentLayoutId(), QStringLiteral("2h1"));
+    }
+
+    void layout3vBuildsThreePans() {
+        PanadapterStack s;
+        s.applyLayout(QStringLiteral("3v"),
+                      {QStringLiteral("p0"), QStringLiteral("p1"),
+                       QStringLiteral("p2")});
+        QCOMPARE(s.count(), 3);
+        QCOMPARE(s.currentLayoutId(), QStringLiteral("3v"));
+    }
+
+    void layout4vBuildsFourPans() {
+        PanadapterStack s;
+        s.applyLayout(QStringLiteral("4v"),
+                      {QStringLiteral("p0"), QStringLiteral("p1"),
+                       QStringLiteral("p2"), QStringLiteral("p3")});
+        QCOMPARE(s.count(), 4);
+    }
+
+    void layout3h2BuildsFivePans() {
+        PanadapterStack s;
+        s.applyLayout(QStringLiteral("3h2"),
+                      {QStringLiteral("p0"), QStringLiteral("p1"),
+                       QStringLiteral("p2"), QStringLiteral("p3"),
+                       QStringLiteral("p4")});
+        QCOMPARE(s.count(), 5);
+    }
+
+    void newLayoutsIgnoreShortIdLists() {
+        PanadapterStack s;
+        s.applyLayout(QStringLiteral("3h2"),
+                      {QStringLiteral("p0"), QStringLiteral("p1")});
+        // Guard clause declines to BUILD the 5-pan layout: no branch in
+        // applyLayout matches when panIds.size() < 5, so count() must never
+        // reach 5. QCOMPARE(0) rather than QVERIFY(!=5) because the looser
+        // form would also pass if applyLayout crashed, or landed on some
+        // other wrong count -- neither of those is "declined cleanly".
+        // Pinning the exact value catches both.
+        //
+        // Note count() lands on 0, not the pre-call bootstrap count of 1:
+        // applyLayout's orphan-retirement pass (removes pans not in the new
+        // id set) runs before the branch table's size guard, so it still
+        // tears down "pan-0" even though nothing gets built to replace it.
+        // That is pre-existing PanadapterStack::applyLayout behavior shared
+        // by every under-supplied layout (12h, 2x2 included), not something
+        // the four branches this test covers introduced -- flagged
+        // separately rather than fixed here, out of this task's scope.
+        QCOMPARE(s.count(), 0);
+    }
+
+    void panIdsForLayoutCountsMatchGeometry() {
+        QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("2h1")).size(), 3);
+        QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("3v")).size(), 3);
+        QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("4v")).size(), 4);
+        QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("3h2")).size(), 5);
+        // Regression guard on the existing five.
+        QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("1")).size(), 1);
+        QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("2v")).size(), 2);
+        QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("2h")).size(), 2);
+        QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("12h")).size(), 3);
+        QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("2x2")).size(), 4);
     }
 };
 
