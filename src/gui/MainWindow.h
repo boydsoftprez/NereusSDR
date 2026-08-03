@@ -658,9 +658,17 @@ private:
     // AppSettings keys, and the shared FFT thread (formerly m_fftEngines /
     // m_fftThread, plus createFftEngineForStream) now live in
     // FftEnginePool (src/core/spectrum/FftEnginePool.h) -- core work that
-    // used to sit in this QWidget. buildUI() reads the four AppSettings
-    // keys once, fills an FftPoolConfig, and calls setConfig(); every
-    // other call site reaches an engine via primaryFftEngine() or
+    // used to sit in this QWidget. refreshFftPoolConfig() reads the four
+    // AppSettings keys, fills an FftPoolConfig, and calls
+    // setConfigForNewStreams(); ensureStreamWired() is what invokes it,
+    // immediately before building a stream that does not exist yet.
+    // (An earlier version of this comment said buildUI() did the reading
+    // and that the pool's setConfig() was the setter. Neither is true:
+    // buildUI() reads none of those keys, and setConfig() -- which also
+    // reconfigures ALREADY-EXISTING engines -- would retroactively stomp
+    // a live auto-zoom override every time a new stream appeared, which
+    // is exactly why the two setters were split.) Every other call site
+    // reaches an engine via primaryFftEngine() or
     // m_fftEnginePool->engineForStream(streamIndex). threadCount defaults
     // to 1 (today's single shared thread); if a 5-stream 1536 kHz bench
     // shows it saturating, raising it is a follow-up needing maintainer
@@ -668,13 +676,22 @@ private:
     FftEnginePool* m_fftEnginePool{nullptr};
 
     /// R1 Task 7: consumer-to-stream subscription set of record.
-    /// rebuildFftRouting() resolves its pan/slice walk into this, and
-    /// disconnectPanadapter() also updates it when a pan is torn down (see
-    /// that method's comment for why); applyTo() is the only thing that
-    /// then writes m_radioModel->fftRouter() itself, rebuilding it wholesale
-    /// from whatever this member currently holds. Plain value member: it is
-    /// a QMap wrapper with no signals and no heap ownership question, not a
-    /// QObject that needs a pointer + parent.
+    /// rebuildFftRouting() resolves its pan/slice walk into this, and the
+    /// PanadapterStack::panRetired handler wired in buildUI() drops a
+    /// retired pan's subscriptions so a later applyTo() cannot resurrect a
+    /// mapping for a pan that no longer exists. applyTo() is the only thing
+    /// that then writes m_radioModel->fftRouter() itself, rebuilding it
+    /// wholesale from whatever this member currently holds. Plain value
+    /// member: it is a QMap wrapper with no signals and no heap ownership
+    /// question, not a QObject that needs a pointer + parent.
+    ///
+    /// disconnectPanadapter() also unsubscribes here, but it is NOT the
+    /// live teardown path and must not be read as one: it has had no
+    /// caller since before this branch (PanadapterStack.h says as much),
+    /// and panRetired is what actually fires when a pan goes away. Task 7
+    /// added the unsubscribe call into it anyway, so that the function
+    /// stays correct if it is ever revived; it is dead code that predates
+    /// this work, left alone deliberately rather than deleted here.
     FftTopology m_topology;
 
     /// One NoiseFloorTracker per stream, fed by that stream's FFT engine.

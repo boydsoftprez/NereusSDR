@@ -64,11 +64,19 @@ struct FftPoolConfig {
 /// threadCount), configured from a single FftPoolConfig that reaches
 /// every engine that exists right now AND every engine created later.
 ///
-/// Extracted from MainWindow::createFftEngineForStream: MainWindow now
-/// reads the four display AppSettings keys once, fills an FftPoolConfig,
-/// and calls setConfig(); per-stream engine creation, reuse, removal, and
-/// thread parking all live here instead of in a QWidget, so the headless
-/// daemon can produce spectrum with no widget toolkit in the process.
+/// Extracted from MainWindow::createFftEngineForStream: per-stream engine
+/// creation, reuse, removal, and thread parking all live here instead of
+/// in a QWidget, so the headless daemon can produce spectrum with no
+/// widget toolkit in the process.
+///
+/// MainWindow fills an FftPoolConfig from the four display AppSettings
+/// keys in refreshFftPoolConfig(), which ensureStreamWired() calls
+/// immediately before building a stream that does not exist yet, and
+/// which ends in setConfigForNewStreams() -- NOT setConfig(). See both
+/// methods below for why the distinction is load-bearing rather than
+/// incidental. (An earlier version of this paragraph said MainWindow
+/// "calls setConfig()"; that was true only before the fix round 2 split,
+/// and setConfig has had no production caller since.)
 ///
 /// Not thread-safe for concurrent callers: every public method is meant
 /// to be driven from one thread (the thread that owns the pool), exactly

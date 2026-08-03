@@ -1428,11 +1428,13 @@ private:
     QVector<float> m_renderedPixels;       // spectrum avenger output (dBm)
     QVector<float> m_wfRenderedPixels;     // waterfall avenger output (dBm)
 
-    // Equivalent Noise Bandwidth of the current FFT window, in bins.
-    // Refreshed every frame via the windowEnb arg on fftReadyLinear so
-    // the detector's invEnb scaling stays in lock-step with the bins it
-    // just received.  No setter coordination needed.
-    double m_fftWindowEnb{1.0};
+    // (The Equivalent Noise Bandwidth of the current FFT window used to be
+    // cached here as m_fftWindowEnb, because the widget did its own invEnb
+    // scaling.  R1 Task 5 moved that scaling into SpectrumReducer, which
+    // takes windowEnb as a per-call argument and applies its own
+    // qMax(windowEnb, 1e-9) clamp, leaving the member with one write and
+    // zero reads.  Removed rather than left write-only; there is no
+    // accessor and nothing outside updateSpectrumLinear ever touched it.)
 
     // R1 Task 5: the crop-and-reduce stage (visible-slice -> detector ->
     // avenger) moved to core as NereusSDR::SpectrumReducer, which owns what

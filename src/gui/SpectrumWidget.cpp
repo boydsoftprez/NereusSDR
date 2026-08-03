@@ -2669,7 +2669,6 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     }
 
     m_fullLinearBins = binsLinear;
-    m_fftWindowEnb   = qMax(windowEnb, 1e-9);
 
     // Display pixel count -- spectrum panel width minus dBm strip column.
     // Per Thetis Display.cs:4970 DrawPanadapterDX2D(int W, ...) signature

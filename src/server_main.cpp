@@ -7,11 +7,23 @@
 //
 // no-port-check: NereusSDR-original. This is the daemon's own entry point;
 // there is no Thetis equivalent (Thetis is GUI-only). It links NereusCore
-// alone -- no NereusGui, no Qt Widgets, no QRhi -- so it can run headless
-// on a Pi with no display and no sound card. tests/tst_core_has_no_gui_includes
-// enforces the invariant this depends on (src/core and src/models never
-// #include src/gui); the nereusd CMake target additionally proves it at
-// link time, since NereusGui is never named on nereusd's link line.
+// alone -- no NereusGui, and therefore no GUI object code at all -- so it
+// can run headless on a Pi with no display and no sound card.
+//
+// It does NOT follow that no Qt GUI module is on the link line. NereusCore
+// links Qt6::Widgets PUBLIC, so nereusd links Qt6::Widgets and Qt6::Gui
+// transitively; see nereus_apply_core_deps() in CMakeLists.txt for why
+// that link is retained (the precompiled header NereusCore and NereusGui
+// share includes <QWidget> / <QPainter>). An earlier version of this
+// comment claimed "no Qt Widgets, no QRhi", which was never true of the
+// link line. What is true, and what actually matters, is that no widget
+// is constructed and no GUI symbol is referenced.
+//
+// tests/tst_core_has_no_gui_includes enforces the invariant this depends
+// on: src/core and src/models never #include src/gui, nor any QtWidgets /
+// QtQuick / QtGui-rendering / QRhi header. The nereusd CMake target
+// additionally proves the NereusGui half at link time, since NereusGui is
+// never named on nereusd's link line.
 //
 // R1 Task 8 left two decisions for this task (see src/main.cpp's own
 // "R1 Task 9 candidate" comments and task-9-report.md for the full

@@ -1752,11 +1752,16 @@ nereus_add_test(tst_fft_engine_pool)
 
 # ── R1 Task 7: FftTopology -- consumer-to-stream subscription algebra ──────
 # Extracted from the router-mutation half of MainWindow::rebuildFftRouting:
-# holds a QMap<QString,int> of consumer to stream (one active stream per
-# consumer -- resubscribing moves it, it does not add a second mapping) and
-# rebuilds an FFTRouter from that set on applyTo(). Covers subscription
-# algebra FftTopology owns itself (dedup by construction, unsubscribe,
-# rebuild-not-patch idempotency, resubscribe-moves) that
+# holds a consumer-to-stream SET (a consumer may hold more than one stream
+# at once -- subscribing to a second stream ADDS, it does not move the
+# consumer off the first) and rebuilds an FFTRouter from that set on
+# applyTo(). The one-active-stream-per-consumer reading this comment used
+# to give was the pre-fix-round-1 design; tst_fft_topology.cpp's
+# subscribingToASecondStreamAdds explicitly supersedes the
+# resubscribe-moves case it replaced. Covers subscription algebra
+# FftTopology owns itself (dedup by construction, whole-consumer and
+# single-stream unsubscribe, rebuild-not-patch idempotency, multi-stream
+# subscription) that
 # tst_fft_router_fanout.cpp and tst_fft_router_topology.cpp do not touch --
 # both of those pin FFTRouter's own pan/receiver mapping contract directly
 # and never construct an FftTopology.
