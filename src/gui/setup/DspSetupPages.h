@@ -91,6 +91,9 @@
 #include "gui/SetupPage.h"
 
 #include <QCheckBox>
+#include <QList>
+
+class QTableWidget;
 
 namespace NereusSDR {
 
@@ -243,11 +246,57 @@ private:
 };
 
 // ── MNF ──────────────────────────────────────────────────────────────────────
+//
+// Setup → DSP → MNF. Thetis's own tab name (setup.designer.cs:44141
+// [v2.10.3.15], this.tpDSPMNF.Text = "MNF"); everything operator-facing
+// outside Settings says TNF, mirroring upstream's own tpDSPMNF vs chkTNF
+// split. TNF design section 9.
 
 class MnfSetupPage : public SetupPage {
     Q_OBJECT
 public:
     explicit MnfSetupPage(RadioModel* model, QWidget* parent = nullptr);
+
+protected:
+    void showEvent(QShowEvent* event) override;
+
+private:
+    // Full table rebuild. Wired to NotchModel's structural signals with
+    // Qt::QueuedConnection so a rebuild never destroys the cell widget whose
+    // signal is being emitted right now (the row Delete button above all).
+    void rebuildTable();
+    // Value-only refresh of one row. Destroys nothing, so it is safe to run
+    // synchronously from inside a cell widget's own signal.
+    void refreshRow(int notchId);
+    void commitRow(int notchId);
+    // Open the Settings-side edit window. Thetis's SetupForm.NotchAdminBusy is
+    // AddActive | EditActive (setup.cs:17728-17735 [v2.10.3.15]); an in-place
+    // table edit is the same window, opening on the first value change.
+    void beginAdminEdit();
+    // Clear the Settings-side edit lock. NotchModel's mutators are shared with
+    // the panadapter path and reject writes while adminBusy is set, so every
+    // page-side write clears it first, exactly as Thetis's ENTER button does.
+    void endAdminEdit();
+    // Re-read RXANBPGetMinNotchWidth off the active slice's channel and
+    // re-arm the follow connection onto whichever channel that now is.
+    void refreshMinNotchWidth();
+
+    // ── Multi Notch Filter group ─────────────────────────────────────────
+    QTableWidget*      m_notchTable{nullptr};
+    class QPushButton* m_addBtn{nullptr};
+    QCheckBox*         m_autoIncreaseChk{nullptr};
+    QCheckBox*         m_visualNotchChk{nullptr};
+    QLabel*            m_minWidthLbl{nullptr};
+
+    // Follow connection onto the current RxChannel's minNotchWidthChanged.
+    // Held so it can be dropped when the active slice moves to a different
+    // channel; a stale one would keep reporting the old channel's value.
+    QMetaObject::Connection m_minWidthConn;
+
+    // Table row → NotchModel notch id. The row lambdas capture the id, never
+    // the row, so a reorder cannot mis-target a notch.
+    QList<int> m_rowIds;
+    bool m_rebuilding{false};
 };
 
 } // namespace NereusSDR

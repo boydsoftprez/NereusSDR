@@ -176,6 +176,7 @@ mw0lge@grange-lane.co.uk
 
 QT_BEGIN_NAMESPACE
 class QLabel;
+class QMenu;
 QT_END_NAMESPACE
 
 // GPU spectrum: QRhiWidget base class for Metal/Vulkan/D3D12 rendering.
@@ -366,11 +367,11 @@ public:
 
     // 2026-05-22 bench fix for MaxBin meter accuracy.
     // Returns the strongest dBm pixel inside the active slice's IF
-    // passband, computed from m_renderedPixels (post detector + avenger
-    // pipeline -- the same data the operator sees on the spectrum).
-    // Falls back to -400 sentinel when m_renderedPixels is empty (cold
-    // start) or when the slice passband falls entirely outside the
-    // visible spectrum window.
+    // passband, computed from the undented spectrum pixels
+    // (measurementPixels(), post detector + avenger pipeline -- see the
+    // visual-notch note in the definition). Falls back to -400 sentinel
+    // when those pixels are empty (cold start) or when the slice passband
+    // falls entirely outside the visible spectrum window.
     //
     // The raw per-bin FFT power that MaxBin previously scanned (via
     // WdspEngine::onSpectrumBinsForMaxBin reading FFTEngine::fftReady)
@@ -378,7 +379,7 @@ public:
     // because the spectrum's detector + invEnb window-normalization +
     // avenger time-smoothing reconstructs the integrated signal power
     // that a single FFT bin can't show on its own. Sourcing MaxBin
-    // from m_renderedPixels makes the meter read what the operator
+    // from the display pipeline makes the meter read what the operator
     // visually sees on the trace.
     double peakDbmInSlicePassband() const;
 
@@ -1142,6 +1143,119 @@ public:
     QColor spotColorForTest()           const { return m_spotColor; }
     QColor spotBgColorForTest()         const { return m_spotBgColor; }
 
+    // ---- TNF / notch overlay (design section 8.1) ----
+    // Ported from AetherSDR's TnfMarker (src/gui/SpectrumWidget.h:575-581
+    // [@c6481cbf]) with depthDb + permanent replaced by `active`: WDSP's
+    // notch DB carries neither depth nor permanence, its add entry point
+    // taking fcenter / fwidth / active only
+    // (third_party/wdsp/src/nbp.c:362, RXANBPAddNotch).
+    //
+    // UNIT BOUNDARY: freqMhz is the ONLY MHz quantity in the TNF stack.
+    // NotchModel::centerHz, all five notch*Requested signals,
+    // setNotchMinWidthHz and the visual-notch dent maths are Hz.
+    // MainWindow::refreshPanNotchMarkers is the only conversion site.
+    struct NotchMarker {
+        int    id{-1};
+        double freqMhz{0.0};
+        double widthHz{200.0};
+        bool   active{true};
+    };
+
+    // From AetherSDR src/gui/SpectrumWidget.cpp:13436-13440 [@c6481cbf].
+    // markOverlayDirty(), not the bare update() the spot push uses: notch
+    // chrome is cached in the GPU static-overlay texture, so a dragged
+    // marker would otherwise not move on the shipping path.
+    void setNotchMarkers(const QVector<NotchMarker>& markers);
+
+    // From AetherSDR src/gui/SpectrumWidget.cpp:13497-13501 [@c6481cbf].
+    // Master TNF flag.  Repaints every marker in the TNF-off colour rather
+    // than hiding it (Thetis display.cs:8704-8707 [v2.10.3.15]).
+    void setNotchGlobalEnabled(bool on);
+
+    // WDSP's minimum notch width for the channel feeding this pan
+    // (third_party/wdsp/src/nbp.c:594, RXANBPGetMinNotchWidth).  Pushed
+    // rather than pulled because it varies with nc and sample rate; Thetis
+    // caches it the same way (display.cs:1082 [v2.10.3.15]) and refreshes
+    // it on filter-size change (console.cs:39052-39054 [v2.10.3.15],
+    // UpdateMinimumNotchWidthRX).  Consumed by the visual-notch dent.
+    void setNotchMinWidthHz(double hz);
+
+    // ---- Visual notch (trace dent), design section 8.3 ----
+    // Owner of the persisted state is NotchModel (key NotchVisualEnabled);
+    // MainWindow::refreshPanVisualNotch pushes the same value at every pan.
+    // From Thetis display.cs:1070 [v2.10.3.15]:
+    //   private static bool m_bShowVisualNotch = false;
+    void setVisualNotchEnabled(bool on);
+    bool visualNotchEnabled() const { return m_visualNotchEnabled; }
+
+    // Test seams, following the spotMarkersForTest convention above.
+    const QVector<NotchMarker>& notchMarkersForTest() const { return m_notchMarkers; }
+    bool   notchGlobalEnabledForTest() const { return m_notchGlobalEnabled; }
+    double notchMinWidthHzForTest()    const { return m_notchMinWidthHz; }
+    void drawNotchMarkersForTest(QPainter& p, const QRect& specRect) {
+        drawNotchMarkers(p, specRect);
+    }
+    QRect notchSpecRectForTest() const { return notchSpecRect(); }
+
+    // Visual-notch test seams (design section 8.3). Read-only views into the
+    // state updateSpectrumLinear rebuilds each frame, so the section 11 test
+    // can pin the measurement-routing contract without a paint cycle.
+    float nfFftBinAverageForTest() const { return m_nfFftBinAverage; }
+    const QVector<float>& undentedPixelsForTest() const {
+        return measurementPixels();
+    }
+    const QVector<float>& activePeakHoldPeaksForTest() const {
+        return m_activePeakHold.peaks();
+    }
+    const QVector<PeakBlob>& peakBlobsForTest() const {
+        return m_peakBlobs.blobs();
+    }
+    // Selection and hover are written by the interaction layer (design
+    // section 7.4); these also give the render tests a writer for the
+    // Chartreuse highlight branch.
+    void setSelectedNotchIdForTest(int id) { m_selectedNotchId = id; }
+    void setHoveredNotchIdForTest(int id)  { m_hoveredNotchId = id; }
+
+    // ---- TNF / notch interaction (design section 7) ----
+    // Which part of a notch a press at a given pixel would grab.
+    // From Thetis console.cs:49032-49067 [v2.10.3.15]: a side-of-centre
+    // default, an 8 px minimum on-screen width before edge zones exist at
+    // all, a +/- 4 px edge zone, and Shift as an explicit alternative to
+    // being near an edge.  Centre is upstream's m_bDraggingNotch; LowEdge
+    // and HighEdge are m_bDraggingNotchBW plus the side flag
+    // m_BDragginNotchBWRightSide, folded into one value because they are
+    // never independently meaningful.
+    enum class NotchGrab { None, Centre, LowEdge, HighEdge };
+
+    // Test seams, following the spotMarkersForTest convention above.
+    // Public read-only views onto the private pixel-space logic so
+    // tst_notch_hit_test can pin the Thetis rules without a real mouse.
+    int       notchAtPixelForTest(int x) const;
+    NotchGrab notchGrabAtForTest(int id, int x, bool shiftHeld) const;
+    int       selectedNotchIdForTest() const { return m_selectedNotchId; }
+    int       hoveredNotchIdForTest()  const { return m_hoveredNotchId; }
+    // Populate a caller-owned QMenu with the notch actions.  Exists as a
+    // seam because QMenu::exec() blocks, so the menu contents cannot be
+    // asserted through a synthetic right-click.
+    void buildNotchContextMenuForTest(int id, QMenu& menu) {
+        buildNotchContextMenu(id, menu);
+    }
+
+    // Overlay-cache seam.  Returns false on a CPU-only build, where there
+    // is no cached texture to invalidate.
+    bool overlayStaticDirtyForTest() const {
+#ifdef NEREUS_GPU_SPECTRUM
+        return m_overlayStaticDirty;
+#else
+        return false;
+#endif
+    }
+    void clearOverlayStaticDirtyForTest() {
+#ifdef NEREUS_GPU_SPECTRUM
+        m_overlayStaticDirty = false;
+#endif
+    }
+
 signals:
     // 2026-05-22 bench fix: emitted after each updateSpectrumLinear
     // completes (m_renderedPixels populated). MainWindow consumes this
@@ -1176,6 +1290,26 @@ signals:
     // cursor" (use to clear the Spot List highlight).  Drives the
     // panadapter <-> Spot List hover sync.
     void spotHoverIndexChanged(int spotIndex);
+
+    // ---- TNF / notch overlay (design section 8.1) ----
+    // Wired per pan by MainWindow::wirePanNotchHandlers, so a marker drawn
+    // on a pan acts through that pan's own frequency mapping while the
+    // NotchModel the handlers mutate stays global (design D1).  `narrow` is
+    // the Shift-held 100 Hz add (Thetis console.cs:40269 [v2.10.3.15]).
+    //
+    // UNIT BOUNDARY: every frequency here is absolute RF in Hz.  The only
+    // MHz quantity in the TNF stack is NotchMarker::freqMhz, converted once
+    // in MainWindow::refreshPanNotchMarkers.  Emitters land with the
+    // interaction layer (design sections 7.1 through 7.4).
+    void notchCreateRequested(double freqHz, bool narrow);
+    void notchMoveRequested(int id, double newFreqHz);
+    void notchWidthRequested(int id, double widthHz);
+    /// Emitted when a notch drag ends, so the coalesced DSP push can flush
+    /// immediately and the final position is exact rather than up to one
+    /// coalescing window stale.
+    void notchDragFinished();
+    void notchActiveRequested(int id, bool active);
+    void notchRemoveRequested(int id);
 
     // Emitted when user drags a filter edge
     void filterEdgeDragged(int lowHz, int highHz);
@@ -1287,7 +1421,8 @@ private:
     // Source-first port of Thetis processNoiseFloor — display.cs:5866-5912
     // [v2.10.3.13].  Called once per spectrum frame from
     // updateSpectrumLinear after m_renderedPixels is finalised; iterates
-    // those pixels to accumulate (count, linear-sum) of bins below the
+    // measurementPixels() (the UNDENTED copy, design section 8.3) to
+    // accumulate (count, linear-sum) of bins below the
     // previous-frame estimate (averageCount/averageSum), then updates
     // m_nfFftBinAverage (per-frame) and m_nfLerpAverage (smoothed).
     // Also runs the fast-attack convergence-gated auto-clear from
@@ -1351,6 +1486,48 @@ private:
     //  - Cluster badge popup menu with formatted spot lines.
     void drawSpotMarkers(QPainter& p, const QRect& specRect);
     void showSpotClusterPopup(const SpotCluster& cluster, const QPoint& globalPos);
+
+    // ---- TNF / notch overlay (design section 8.2) ----
+    // Geometry ported unchanged from AetherSDR drawTnfMarkers
+    // (src/gui/SpectrumWidget.cpp:13503-13554 [@c6481cbf]): translucent
+    // fill over the full spectrum height, diagonal hatch clipped to the
+    // notch rect, 1 px edge lines at both boundaries, downward triangle
+    // grab handle at the top.  Colours come from Thetis instead
+    // (display.cs:386-390, 8691-8722 [v2.10.3.15]).
+    void drawNotchMarkers(QPainter& p, const QRect& specRect);
+    QColor notchColor(const NotchMarker& n) const;
+
+    // The SINGLE notch geometry source.  Both paint call sites pass this
+    // rect, and the interaction layer's pixel hit test builds from it, so
+    // hit boxes cannot drift away from the drawn markers.  Reproduces the
+    // paint sites' own specRect construction on both render paths through
+    // specHFromHeight, which already encodes the GPU/CPU layout split.
+    QRect notchSpecRect() const;
+
+    // ---- TNF / notch interaction (design section 7) ----
+    // notchMarkerById: linear id lookup over the render-side mirror.
+    // notchAtPixel:    pixel-space port of Thetis
+    //                  MNotchDB.NotchThatSurroundsFrequencyInBW.
+    // notchGrabAt:     edge-vs-centre discrimination for a press.
+    // buildNotchContextMenu: right-click menu over a notch marker.
+    const NotchMarker* notchMarkerById(int id) const;
+    int       notchAtPixel(int x, const QRect& specRect) const;
+    NotchGrab notchGrabAt(int id, int x, bool shiftHeld,
+                          const QRect& specRect) const;
+    void      buildNotchContextMenu(int id, QMenu& menu);
+
+    // ---- Visual notch (design section 8.3) ----
+    /// True when this frame's pixels are to be dented: the toggle is on, we
+    /// are not transmitting, the master TNF enable is on, and at least one
+    /// marker exists. Mirrors the Thetis gate plus the _tnf_active half of
+    /// its per-notch _Use flag.
+    bool visualNotchWillDent() const;
+    /// Subtract the notch skirts from `pixels` in place. Safe on either
+    /// plane's array; the caller decides which.
+    void applyVisualNotchDent(QVector<float>& pixels) const;
+    /// The pristine (undented) spectrum pixels. Consumers that MEASURE
+    /// rather than draw read this, never m_renderedPixels.
+    const QVector<float>& measurementPixels() const;
 
     // ---- TX filter overlay (Plan 4 D9, Cluster E) ----
     // drawTxFilterOverlay: panadapter band fill + border lines + label.
@@ -1774,6 +1951,68 @@ private:
     // panadapter visibility toggle is off.  SpotHubDialog Display tab
     // drives this via setSpotSourceVisible.
     QHash<QString, bool> m_spotSourceVisible;
+
+    // ---- TNF / notch overlay state (design section 8.1) ----
+    // Main-thread only.  Both the paint path and the interaction layer run
+    // there, so plain members rather than atomics; NotchModel is the
+    // authoritative store and this is a render-side mirror of it.
+    // Shape mirrors AetherSDR src/gui/SpectrumWidget.h:1608-1609 and
+    // :1648 [@c6481cbf].
+    QVector<NotchMarker> m_notchMarkers;
+    // Master TNF enable, default OFF.  Matches NotchModel::globalEnabled()
+    // (also false) and both upstreams: Thetis ships chkTNF unchecked, and
+    // WDSP creates the notch database with master run 0
+    // (third_party/wdsp/src/RXA.c:87).  A widget default of true would
+    // paint every marker in the active colour for the one frame between
+    // construction and the first MainWindow::refreshPanNotchMarkers push.
+    bool   m_notchGlobalEnabled{false};
+    // 100 Hz on this tree: nc = 4096 at a 48 kHz dsp rate through the
+    // wintype-0 arm of min_notch_width (third_party/wdsp/src/nbp.c:88,
+    // 1600.0 / (nc / 256) * (rate / 48000)).  Overwritten by
+    // setNotchMinWidthHz once a channel is open.
+    double m_notchMinWidthHz{100.0};
+
+    // ---- Visual notch state (design section 8.3) ----
+    // From Thetis display.cs:1070 [v2.10.3.15]: m_bShowVisualNotch = false.
+    bool m_visualNotchEnabled{false};
+
+    // Pristine mirror of m_renderedPixels, populated ONLY on the frames that
+    // actually dent so the default-off path costs nothing. Thetis keeps a
+    // permanent second array instead (current_display_data_copy, filled by
+    // the memcpy at display.cs:5046-5049 and handed to the render loop at
+    // :5055 [v2.10.3.15]) because its analyzer hands one over for free.
+    // measurementPixels() falls back to m_renderedPixels when this is empty
+    // or stale-sized.
+    QVector<float> m_undentedPixels;
+
+    // From Thetis display.cs:4778 [v2.10.3.15]: float fAttenuation = 100f;
+    static constexpr float kNotchDentAttenuationDb = 100.0f;
+
+    // From Thetis display.cs:8680 [v2.10.3.15]:
+    //   dNewWidth += 20; // fudge factor to align better with spectrum notch
+    static constexpr double kNotchDentFudgeHz = 20.0;
+
+    // Written by the interaction layer (design section 7.4); drive the
+    // Chartreuse highlight and the hover popup respectively.  Declared
+    // here rather than in the interaction layer because notchColor() reads
+    // both.
+    int    m_selectedNotchId{-1};
+    int    m_hoveredNotchId{-1};
+
+    // ---- TNF / notch drag state (design section 7.2) ----
+    // From Thetis console.cs:33284-33288 [v2.10.3.15], the drag-state
+    // block.  m_notchGrab folds upstream's m_bDraggingNotch /
+    // m_bDraggingNotchBW / m_BDragginNotchBWRightSide trio into one value;
+    // m_notchDragStartX is _drag_notch_start_point.X (the press pixel, the
+    // delta is worked in the move handler); m_notchDragStartData is
+    // drag_notch_start_data, which carries the notch WIDTH for an edge
+    // drag and the notch CENTRE for a whole-notch drag.  m_nNotchRX has no
+    // analogue: the pan the drag started on is the widget receiving the
+    // events.
+    //NOTCH MW0LGE  [original section marker from console.cs:33283]
+    NotchGrab m_notchGrab{NotchGrab::None};
+    int       m_notchDragStartX{0};
+    double    m_notchDragStartData{0.0};
 
     // ── QStaticText label cache ──────────────────────────────────────────
     // Pre-shaped (HarfBuzz-run-once) labels for the high-rate paint

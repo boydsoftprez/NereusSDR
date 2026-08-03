@@ -607,7 +607,7 @@ void SetupDialog::buildTree()
         return cfcPage;
     });
 
-    registerPage(dsp, "MNF", [this] { return new MnfSetupPage(m_model); });
+    registerPage(dsp, "TNF", [this] { return new MnfSetupPage(m_model); });
     // Stage C2: user-customisable filter preset editor (10 slots × 12 modes).
     registerPage(dsp, "Filter Presets", [this]() -> QWidget* {
         return new FilterPresetsSetupPage(

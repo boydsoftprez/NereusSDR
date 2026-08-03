@@ -312,6 +312,9 @@ warren@wpratt.com
 #include "models/SpotTableModel.h"  // for SpotTableModel::extractMode (mode guess)
 #include "models/FreeDVStationModel.h"
 #include "models/RxDecodeModel.h"
+// TNF (design sections 5, 6.3): the notch store RadioModel owns and fans
+// out from.
+#include "models/NotchModel.h"
 
 // Phase 3R Task I5: RadeChannel signal-graph wiring. Forward-declared in
 // RadioModel.h; the .cpp pulls the full type for the connect() calls in
@@ -1600,6 +1603,20 @@ RadioModel::RadioModel(QObject* parent)
             emit externalAmpOperateChanged(false);
         }
     });
+
+    // ── TNF (design sections 5, 5.5): notch store construction + restore ──────
+    //
+    // Constructed before anything that can open a WDSP channel, and restored
+    // immediately, so section 5.5's ordering holds: the model is fully
+    // populated by the time openRxChannelPool's tail reconciles the pool
+    // (section 6.3). On a cold start no channel exists yet, which is exactly
+    // why the reconcile lives there rather than at channel-activation time.
+    m_notchModel = std::make_unique<NotchModel>(this);
+    // Wired before the restore so a restore that replays its list as signals
+    // is handled by the same path a live edit is. Harmless either way here:
+    // no WDSP channel exists yet, so the fan-out has nothing to walk.
+    wireNotchModel();
+    m_notchModel->restoreFromSettings();
 
     // ── Phase 3J-2 H2: spot-system construction + wiring ──────────────────────
     //
@@ -3115,6 +3132,16 @@ void RadioModel::openRxChannelPool(int poolSize, int inputBufferSize,
     // channels at all. Without this loop only Slice A would come back audible
     // after a reconnect.
     activateBoundSliceChannels();
+
+    // TNF design section 6.3: reconcile the notch set, the master run flag,
+    // the auto-increase flag and the NBP tune frequency across every channel
+    // this pool just opened, including channel 0, which the Slice A block in
+    // connectToRadio already activated and which activateSliceChannel
+    // therefore refuses to touch. Cheap when the notch list is empty
+    // (syncNotches deletes nothing and adds nothing) and idempotent when it
+    // is not (RXANBPSetTuneFrequency short-circuits at
+    // third_party/wdsp/src/nbp.c:479).
+    syncNotchesToAllChannels();
 }
 
 // ── Phase 3F Sub-Epic I: pooled-channel activation ──────────────────────────
@@ -3201,12 +3228,263 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
     // m_afGain anyway, but seeding first means the default never reaches the
     // mixer. Same reasoning as the Slice A block in connectToRadio.
     ch->setAfGain(slice->afGain() / 100.0);
-    // The offset the allocator resolved for this slice. bindSliceToStream
-    // pushes it too, but a reconnect re-opens the channel underneath an
-    // already-bound slice, so it has to be re-seeded here as well.
-    ch->setShiftFrequency(slice->shiftOffsetHz());
+    // The offset the allocator resolved for this slice, plus RIT and DIG.
+    // bindSliceToStream pushes it too, but a reconnect re-opens the channel
+    // underneath an already-bound slice, so it has to be re-seeded here as
+    // well. Composed, not bare: this call runs at the TAIL of
+    // bindSliceToStream on a first bind, so a plain slice->shiftOffsetHz()
+    // here would silently discard the RIT term that call had just pushed.
+    // Same single owner as every other origin write. The slice already holds
+    // its stream term here, so the stored-origin form supplies the centre.
+    pushNotchOrigin(slice, ch, slice->frequency() - slice->shiftOffsetHz());
+
+    // TNF design section 6.3: the notch set, the master run flag, the
+    // auto-increase flag and the NBP tune frequency. syncNotchesToAllChannels
+    // covers every channel the pool opened, but a slice added afterwards binds
+    // to a channel that has been sitting open and unreconciled since, and the
+    // signal fan-out only walks slices that already exist. This is the hook
+    // for that case. No-op on retune, because the early return above already
+    // fired.
+    syncNotchesToChannel(ch, slice->sliceIndex());
 
     ch->setActive(true);
+}
+
+// ── TNF fan-out (design section 6.3) ────────────────────────────────────────
+//
+// Thetis fans every notch mutation at three fixed WDSP ids, WDSP.id(0, 0),
+// WDSP.id(0, 1) and WDSP.id(2, 0):
+//
+//   From Thetis console.cs:40271-40273 [v2.10.3.15], AddNotch:
+//     WDSP.RXANBPAddNotch(WDSP.id(0, 0), nNumberofExistingNotches, fFreqHZ, fWidth, true);
+//     WDSP.RXANBPAddNotch(WDSP.id(0, 1), nNumberofExistingNotches, fFreqHZ, fWidth, true);
+//     WDSP.RXANBPAddNotch(WDSP.id(2, 0), nNumberofExistingNotches, fFreqHZ, fWidth, true);
+//
+// NereusSDR's slice count is dynamic post-3F, so we walk slices() instead of
+// naming three ids; the WDSP RX channel id is the slice index (Sub-Epic I
+// invariant).
+//
+// One list serves every slice (design D1). Notch centres are absolute RF Hz,
+// so a 20 m notch is inherently inert on a 40 m slice, which is what lets the
+// same list go to every channel unfiltered.
+QVector<RxChannel*> RadioModel::sliceRxChannels() const
+{
+    QVector<RxChannel*> out;
+    if (!m_wdspEngine) {
+        return out;
+    }
+    for (SliceModel* s : std::as_const(m_slices)) {
+        if (!s) {
+            continue;
+        }
+        if (RxChannel* ch = m_wdspEngine->rxChannel(s->sliceIndex())) {
+            out.append(ch);
+        }
+    }
+    return out;
+}
+
+void RadioModel::reconcileNotchCount(RxChannel* ch)
+{
+    if (!ch || !m_notchModel) {
+        return;
+    }
+    // RXANBPGetNumNotches takes the channel's DSP critical section
+    // (third_party/wdsp/src/nbp.c:465-472). Negligible next to
+    // UpdateNBPFilters, which every mutation already pays and which designs
+    // two filters, nbp0 plus recalc_bpsnba_filter (nbp.c:345-359 ->
+    // snb.c:814-828).
+    const int expected = m_notchModel->notches().size();
+    const int actual   = ch->notchCount();
+    if (actual == expected) {
+        return;
+    }
+    qCWarning(lcDsp) << "Notch index divergence on RX channel"
+                     << ch->channelId() << "- WDSP holds" << actual
+                     << "notches, the model holds" << expected
+                     << "- resyncing";
+    ch->syncNotches(m_notchModel->notches());
+}
+
+void RadioModel::syncNotchesToChannel(RxChannel* ch, int channelId)
+{
+    if (!ch || !m_notchModel) {
+        return;
+    }
+
+    // Notch DATA and notch ORIGIN are all-or-nothing. A channel whose slice or
+    // stream cannot be resolved has no RF origin to map from, and installing
+    // notches into it anyway produces a channel that looks entirely healthy
+    // (correct notch count, master_run 1, fnfrun 1) while every notch maps
+    // from tunefreq 0.
+    //
+    // 2026-08-02 bench (JJ, ANAN-G2E). openRxChannelPool opens every pool
+    // channel, but at connect only slice 0 exists, so channels 1..4 were
+    // handed the notch list with no resolvable origin:
+    //
+    //   WRN: notch origin unresolved for channel 1 (slice=-1 streamIndex=-1);
+    //        1 notch(es) on this channel will map from a stale origin
+    //
+    // Opening a second pan later binds its slice onto one of those channels,
+    // which is already carrying a notch pinned to the wrong origin. The marker
+    // drew over the carrier, WDSP genuinely held the notch, and the audio was
+    // untouched until a retune reached bindSliceToStream -> pushNotchOrigin.
+    // That is exactly the "pan 1 works, pan 2 needs a tune joggle" report.
+    //
+    // An unbound pool channel carries no notches at all. activateSliceChannel
+    // and bindSliceToStream both call back here once a slice owns the channel,
+    // and at that point the origin resolves and data and origin land together.
+    SliceModel* owner = sliceById(channelId);
+    const bool originResolvable = (owner != nullptr && owner->streamIndex() >= 0);
+    if (!originResolvable) {
+        if (ch->notchCount() > 0) {
+            // Leaving stale notches on a channel we are declining to own is
+            // how the bug survived a reconnect.
+            ch->syncNotches({});
+        }
+        qCDebug(lcDsp).nospace()
+            << "notch sync skipped for channel " << channelId
+            << " (slice=" << (owner ? owner->sliceIndex() : -1)
+            << " streamIndex=" << (owner ? owner->streamIndex() : -1)
+            << "): unbound pool channel, no RF origin to map from";
+        return;
+    }
+
+    ch->syncNotches(m_notchModel->notches());
+
+    // Every channel's notch database is built inert: create_notchdb takes
+    //   0,      // master run for all nbp's
+    // and create_nbp takes
+    //   0,      // run the notches
+    // (third_party/wdsp/src/RXA.c:85-93), and both calc_nbp_lightweight
+    // (nbp.c:190) and calc_nbp_impulse (nbp.c:223) bypass the database
+    // entirely while fnfrun is 0. RXANBPSetNotchesRun is its only writer
+    // (nbp.c:499), so a channel that misses this call is notch-inert rather
+    // than merely empty.
+    ch->setNotchesRun(m_notchModel->globalEnabled());
+
+    // Easy to drop and silent when dropped: without it a sub-minimum notch is
+    // never widened (nbp.c:122, "if (autoincr && width[k] < minwidth)") and
+    // the bench row for auto-increase fails with no other symptom. Design
+    // section 6.3 calls this out.
+    ch->setNotchAutoIncrease(m_notchModel->autoIncrease());
+
+    // Design section 4.1: NOTCHDB::tunefreq is the hosting stream's CENTRE,
+    // not the slice frequency. WDSP sums the two terms
+    // (offset = b->tunefreq + b->shift, nbp.c:192) and we already feed shift
+    // as the slice's displacement from its stream centre, so driving tunefreq
+    // from the slice frequency would compute 2*sliceFreq - streamCentre.
+    // Thetis proves the intent: it gives the sub-receiver its own shift
+    // (console.cs:31922 [v2.10.3.15]) while pushing the identical tunefreq to
+    // both ids (console.cs:31940-31941 [v2.10.3.15]).
+    SliceModel* s = sliceById(channelId);
+    if (s && s->streamIndex() >= 0) {
+        pushNotchOrigin(s, ch,
+                        m_streamAllocator.streamCentreHz(s->streamIndex()));
+    } else if (!m_notchModel->notches().isEmpty()) {
+        // Loud, because it used to be silent. This channel holds notches but
+        // has no resolvable stream centre, so NOTCHDB::tunefreq keeps whatever
+        // it had and every notch on it maps from the wrong RF origin. That is
+        // the 2026-08-02 bench failure's shape, and it produced no diagnostic
+        // at all: the markers drew correctly and the audio was simply
+        // unaffected.
+        qCWarning(lcDsp).nospace()
+            << "notch origin unresolved for channel " << channelId
+            << " (slice=" << (s ? s->sliceIndex() : -1)
+            << " streamIndex=" << (s ? s->streamIndex() : -1)
+            << "); " << m_notchModel->notches().size()
+            << " notch(es) on this channel will map from a stale origin";
+    }
+}
+
+void RadioModel::syncNotchesToAllChannels()
+{
+    if (!m_wdspEngine || !m_notchModel) {
+        return;
+    }
+    for (int ch = WdspEngine::kFirstSliceChannelId;
+         ch < WdspEngine::kMaxSliceChannels; ++ch) {
+        // rxChannel returns nullptr for ids this pool did not open, so the
+        // full sweep is safe even when the SKU's maxSlices is smaller.
+        syncNotchesToChannel(m_wdspEngine->rxChannel(ch), ch);
+    }
+}
+
+void RadioModel::wireNotchModel()
+{
+    NotchModel* nm = m_notchModel.get();
+    if (!nm) {
+        return;
+    }
+
+    connect(nm, &NotchModel::notchAdded, this, [this](int id) {
+        const int    index = m_notchModel->indexOfId(id);
+        const Notch* n     = m_notchModel->notchById(id);
+        if (!n || index < 0) {
+            return;
+        }
+        const QVector<RxChannel*> chans = sliceRxChannels();
+        for (RxChannel* ch : chans) {
+            // RXANBPAddNotch is an INSERT guarded by
+            // "notch <= b->nn && b->nn < b->maxnotches", returning -1 with no
+            // mutation at all (third_party/wdsp/src/nbp.c:362-390). Design
+            // section 6.2: surface it, and recover with a full resync rather
+            // than an assert, which a release build compiles out.
+            if (!ch->addNotch(index, *n)) {
+                ch->syncNotches(m_notchModel->notches());
+            }
+            reconcileNotchCount(ch);
+
+        }
+    });
+
+    connect(nm, &NotchModel::notchChanged, this, [this](int id) {
+        // Coalesced, not immediate. See scheduleNotchEditPush for why.
+        scheduleNotchEditPush(id);
+    });
+
+    connect(nm, &NotchModel::notchRemoved, this, [this](int, int formerIndex) {
+        if (formerIndex < 0) {
+            return;
+        }
+        const QVector<RxChannel*> chans = sliceRxChannels();
+        for (RxChannel* ch : chans) {
+            // formerIndex, not indexOfId: the entry is gone from the model by
+            // the time this lands. WDSP shifts its own array down internally
+            // (nbp.c:418-441) and our list does the same, so positions stay
+            // aligned (design section 5.2).
+            if (!ch->deleteNotch(formerIndex)) {
+                ch->syncNotches(m_notchModel->notches());
+            }
+            reconcileNotchCount(ch);
+        }
+    });
+
+    // Whole-list replacement, including NotchModel::clear(). Design section
+    // 5.3: a clear that emitted nothing would leave every channel's notch set
+    // installed while the model showed none.
+    connect(nm, &NotchModel::notchesReset, this, [this]() {
+        const QVector<RxChannel*> chans = sliceRxChannels();
+        for (RxChannel* ch : chans) {
+            ch->syncNotches(m_notchModel->notches());
+        }
+    });
+
+    // Master TNF toggle. Thetis's TNFActive is likewise global despite the
+    // per-rx command shape (console.cs:39987-40005 [v2.10.3.15]).
+    connect(nm, &NotchModel::globalEnabledChanged, this, [this](bool on) {
+        const QVector<RxChannel*> chans = sliceRxChannels();
+        for (RxChannel* ch : chans) {
+            ch->setNotchesRun(on);
+        }
+    });
+
+    connect(nm, &NotchModel::autoIncreaseChanged, this, [this](bool on) {
+        const QVector<RxChannel*> chans = sliceRxChannels();
+        for (RxChannel* ch : chans) {
+            ch->setNotchAutoIncrease(on);
+        }
+    });
 }
 
 // The disable half of the same Thetis pair (console.cs:37398-37400
@@ -3362,11 +3640,17 @@ void RadioModel::reshiftSlicesOnStream(int streamIndex, double newCentreHz)
         // actually demodulates. Leaving either behind reproduces the defect
         // in the half that was skipped.
         //
-        // From Thetis radio.cs:1417 [v2.10.3.15]: SetRXAShiftFreq receives
+        // From Thetis radio.cs:1419 [v2.10.3.15]: SetRXAShiftFreq receives
         // +(freq - center).
+        //
+        // Composed, not the bare stream term: this member may be sitting on
+        // RIT or a DIG click-tune offset, and pushing shiftHz alone would
+        // throw that away (design doc 4.4). setShiftOffsetHz above has
+        // already committed the stream term, which is what composedShiftHz
+        // reads.
         if (m_wdspEngine) {
             if (RxChannel* ch = m_wdspEngine->rxChannel(s->sliceIndex())) {
-                ch->setShiftFrequency(shiftHz);
+                pushNotchOrigin(s, ch, newCentreHz);
             }
         }
     }
@@ -3791,11 +4075,17 @@ void RadioModel::commitStreamSampleRateChange(
         slice->setShiftOffsetHz(planned.placement.shiftOffsetHz);
         slice->setSampleRateHz(planned.resolvedRateHz);
 
+        // Composed, not the bare placement offset: a slice re-placed by a
+        // rate change may be sitting on RIT or a DIG click-tune offset, and
+        // pushing the stream term alone would throw that away (design doc
+        // 4.4). setShiftOffsetHz above has already committed the stream
+        // term, which is what composedShiftHz reads.
         if (m_wdspEngine) {
             if (RxChannel* channel =
                     m_wdspEngine->rxChannel(planned.sliceId)) {
-                channel->setShiftFrequency(
-                    planned.placement.shiftOffsetHz);
+                pushNotchOrigin(slice, channel,
+                    m_streamAllocator.streamCentreHz(
+                        planned.placement.streamIndex));
             }
         }
     }
@@ -4104,9 +4394,26 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     // Push the offset into WDSP. RxChannel::setShiftFrequency is the Thetis
     // RXOsc port (radio.cs:1409-1420 [v2.10.3.15]): SetRXAShiftFreq +
     // RXANBPSetShiftFrequency.
+    //
+    // The notch database's tune frequency goes with it, unconditionally.
+    // From Thetis console.cs:31940-31941 [v2.10.3.15], where RX1DDSFreq is
+    // CentreFrequency (console.cs:31932) and the SAME value is pushed to
+    // both subrx ids on the stream. WDSP sums the two terms
+    // (offset = b->tunefreq + b->shift, third_party/wdsp/src/nbp.c:192), so
+    // the stream centre is exactly what makes tunefreq + shift land on the
+    // slice's demodulated RF. The slice frequency would compute
+    // 2*sliceFreq - streamCentre.
+    //
+    // Sourced from the allocator, never from placement.newStreamCentreHz:
+    // that field is left at 0.0 on the JoinedExisting path
+    // (SliceStreamAllocator.cpp:66-73), which is the normal case, and
+    // activateStream has already run above so the allocator is
+    // authoritative. RXANBPSetTuneFrequency is internally idempotent
+    // (nbp.c:479), so pushing on every bind costs nothing.
     if (m_wdspEngine) {
         if (RxChannel* ch = m_wdspEngine->rxChannel(slice->sliceIndex())) {
-            ch->setShiftFrequency(placement.shiftOffsetHz);
+            pushNotchOrigin(slice, ch,
+                m_streamAllocator.streamCentreHz(placement.streamIndex));
         }
     }
 
@@ -8818,6 +9125,236 @@ quint64 RadioModel::txFrequencyForSlice(const SliceModel* slice) const
     return (txHz < 0) ? 0 : static_cast<quint64>(txHz);
 }
 
+void RadioModel::seedConnectFrequency(SliceModel* slice)
+{
+    if (!slice) {
+        return;
+    }
+
+    // The hosting STREAM's centre, not slice->frequency(). A slice that
+    // joined an existing stream sits at a non-zero offset inside its window
+    // (SliceStreamAllocator.h:48) and the two quantities differ, so seeding
+    // from the slice frequency dragged the DDC off by the stream delta. Same
+    // wrong-quantity mistake the notch tune frequency corrects, and the same
+    // fix: the allocator owns the centre, exactly as it does at the
+    // stream-claim push in bindSliceToStream.
+    // See docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.5.
+    const int streamIndex = slice->streamIndex();
+    if (streamIndex >= 0 && m_receiverManager) {
+        const double centreHz = m_streamAllocator.streamCentreHz(streamIndex);
+        m_receiverManager->setReceiverFrequency(
+            streamIndex, static_cast<quint64>(centreHz));
+    }
+
+    // Seed the transmit frequency from the TX-bound slice, which on
+    // connect is usually but not necessarily this one.
+    pushTxFrequencyFromTxSlice();
+}
+
+// ---------------------------------------------------------------------------
+// composedShiftHz: the one WDSP shift every writer pushes.
+//
+// The RX mirror of txFrequencyForSlice above: one answer for five callers,
+// because they had drifted apart. bindSliceToStream, activateSliceChannel,
+// reshiftSlicesOnStream and commitStreamSampleRateChange each pushed the
+// stream term alone, while the RIT/DIG lambda in wireSliceSignals pushed
+// RIT + DIG alone, so whichever fired last threw the other's terms away:
+// toggling RIT on a shifted slice moved the demodulator off frequency, and
+// retuning with RIT on dropped the RIT.
+//
+// XIT is deliberately absent, and RIT deliberately present, the exact mirror
+// of txFrequencyForSlice. From Thetis console.cs:31782-31784 [v2.10.3.15]:
+// udXIT lands on tx_freq, udRIT on rx_freq.
+//
+// See docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.4.
+// ---------------------------------------------------------------------------
+// Coalescing window for notch edits pushed during a drag. 50 ms is 20 Hz:
+// below the point where a filter update is audible as stepping, and matching
+// the cadence already used for other coalesced UI-to-DSP pushes.
+//
+// 2026-08-02 bench (JJ): a drag logged ~50 mutations per second across two
+// channels, each running a full UpdateNBPFilters (nbp.c:345-359) and a bpsnba
+// recalculation (snb.c:814-828), from the GUI thread while the audio thread
+// read the other fircore mask set. Thetis pushes per mouse-move by named
+// design (console.cs:49967 [v2.10.3.15], "//MW0LGE [2.9.0.7] update on drag")
+// but does it for one notch on one channel; multi-pan multiplies the cost by
+// the channel count, so upstream parity stops being a sufficient argument.
+static constexpr int kNotchEditCoalesceMs = 50;
+
+void RadioModel::scheduleNotchEditPush(int id)
+{
+    m_pendingNotchEdits.insert(id);
+
+    if (m_notchEditTimer == nullptr) {
+        m_notchEditTimer = new QTimer(this);
+        m_notchEditTimer->setSingleShot(true);
+        m_notchEditTimer->setTimerType(Qt::PreciseTimer);
+        connect(m_notchEditTimer, &QTimer::timeout,
+                this, &RadioModel::flushNotchEditPush);
+    }
+
+    // Throttle with a guaranteed trailing edge, not a debounce: the first edit
+    // of a gesture lands immediately so the audio responds at once, and a
+    // continuous drag still cannot starve the flush the way a restarting
+    // debounce would.
+    if (!m_notchEditTimer->isActive()) {
+        flushNotchEditPush();
+        m_notchEditTimer->start(kNotchEditCoalesceMs);
+    }
+}
+
+void RadioModel::flushNotchEditPush()
+{
+    if (m_pendingNotchEdits.isEmpty() || !m_notchModel) {
+        return;
+    }
+    const QSet<int> pending = m_pendingNotchEdits;
+    m_pendingNotchEdits.clear();
+
+    const QVector<RxChannel*> chans = sliceRxChannels();
+    for (int id : pending) {
+        const int    index = m_notchModel->indexOfId(id);
+        const Notch* n     = m_notchModel->notchById(id);
+        if (!n || index < 0) {
+            continue;
+        }
+        for (RxChannel* ch : chans) {
+            // Incremental, not a resync. RXANBPEditNotch runs UpdateNBPFilters
+            // once (nbp.c:345-359), which designs nbp0 AND recalculates bpsnba
+            // (snb.c:814-828); syncNotches would pay that 2N times
+            // (nbp.c:384, :435, :456). Design section 6.2.
+            if (!ch->editNotch(index, *n)) {
+                ch->syncNotches(m_notchModel->notches());
+            }
+            reconcileNotchCount(ch);
+        }
+    }
+
+    // Keep the window open while edits keep arriving, so a long drag stays
+    // rate-limited rather than reverting to one push per move.
+    if (m_notchEditTimer && !m_notchEditTimer->isActive()) {
+        m_notchEditTimer->start(kNotchEditCoalesceMs);
+    }
+}
+
+int RadioModel::addNotchForSlice(SliceModel* slice, double centerHz,
+                                 double widthHz)
+{
+    if (!m_notchModel) {
+        return -1;
+    }
+
+    // Clamp to what THIS slice's filter can actually realise. min_notch_width
+    // is 1600 / (nc / 256) * (rate / 48000) (third_party/wdsp/src/nbp.c:88),
+    // so at the smaller supported filter sizes it is 400 Hz (nc 1024) or
+    // 200 Hz (nc 2048), both above the Thetis 100/200 Hz defaults
+    // (console.cs:40268-40269 [v2.10.3.15]). WDSP's auto-increase is on by
+    // default (RXA.c:105) and widens a sub-minimum notch silently, so an
+    // unclamped add stores and draws a width the DSP is not applying.
+    //
+    // Resolved from the slice passed in, never from activeSlice(): clicking a
+    // pan activates it in PanadapterStack without necessarily changing the
+    // active slice, so two pans on different filter sizes would otherwise
+    // clamp against each other.
+    if (slice) {
+        if (RxChannel* ch = rxChannelForSlice(slice->sliceIndex())) {
+            const double minHz = ch->minNotchWidthHz();
+            if (minHz > 0.0 && widthHz < minHz) {
+                widthHz = minHz;
+            }
+        }
+    }
+
+    return m_notchModel->addNotch(centerHz, widthHz);
+}
+
+void RadioModel::commitPendingNotchEdits()
+{
+    if (m_notchEditTimer) {
+        m_notchEditTimer->stop();
+    }
+    flushNotchEditPush();
+    if (m_notchEditTimer) {
+        m_notchEditTimer->stop();
+    }
+}
+
+void RadioModel::pushNotchOrigin(SliceModel* slice, RxChannel* ch,
+                                 double streamCentreHz)
+{
+    if (!slice || !ch) {
+        return;
+    }
+    // The only place these two are written. WDSP sums them (nbp.c:192), so a
+    // caller that set one without the other, or set them from two different
+    // notions of the stream centre, would silently displace every notch on
+    // this channel. See composedShiftHz(slice, centre) for the bench failure
+    // that produced this.
+    ch->setNotchTuneFrequency(streamCentreHz);
+    ch->setShiftFrequency(composedShiftHz(slice, streamCentreHz));
+}
+
+double RadioModel::composedShiftHz(const SliceModel* slice) const
+{
+    if (!slice) {
+        return 0.0;
+    }
+    // Stored-origin form: the stream term was committed to the slice by
+    // whichever writer ran before this. Prefer pushNotchOrigin(), which
+    // derives the term from an explicit centre so it cannot disagree with
+    // the tune frequency written alongside it.
+    return composedShiftHz(slice, slice->frequency() - slice->shiftOffsetHz());
+}
+
+double RadioModel::composedShiftHz(const SliceModel* slice,
+                                   double streamCentreHz) const
+{
+    if (!slice) {
+        return 0.0;
+    }
+
+    // The stream term, derived from the centre the CALLER is about to write
+    // as NOTCHDB::tunefreq, not from a separately stored copy.
+    //
+    // 2026-08-02 bench (JJ, ANAN-G2E): notches were placed correctly on the
+    // panadapter and had no audible effect until the slice was retuned. WDSP
+    // maps a notch with offset = tunefreq + shift (nbp.c:192), and those two
+    // terms had two different owners: reshiftSlicesOnStream pushes the real
+    // DDC position (a CTUN drag writes hardware directly and deliberately
+    // leaves the allocator where it was), while bindSliceToStream pushes the
+    // allocator's centre, and the shift came from a stored offset computed
+    // against the allocator. After a CTUN drag the pair described different
+    // origins, the sum was wrong by the drag distance, and every notch landed
+    // outside the passband. Probe on the failing run: tunefreq 7231100 +
+    // shift 3500 = 7234600 for a slice actually at 7250800, a 16.2 kHz error.
+    //
+    // Design section 4.1 states the invariant tunefreq + shift == the slice's
+    // demodulated RF. Stating it was not enough; deriving both terms from one
+    // argument is what enforces it.
+    double offset = slice->frequency() - streamCentreHz;
+
+    // RIT (Receive Incremental Tuning): client-side demodulation offset that
+    // does NOT retune the hardware VFO.
+    // From Thetis console.cs:31782-31784 [v2.10.3.15]: udRIT adjusts
+    // receive demodulation without moving the hardware DDC center.
+    if (slice->ritEnabled()) {
+        offset += static_cast<double>(slice->ritHz());
+    }
+
+    // DIG offset per mode. Thetis console.cs:14659 (DIGUClickTuneOffset,
+    // default 1500) and :14694 (DIGLClickTuneOffset, default 2210)
+    // [v2.10.3.15]. Both are int offsets in Hz; Thetis uses per-mode filter
+    // re-centering internally, but NereusSDR implements DIG offset as an
+    // additive shift on the same setShiftFrequency path as RIT.
+    if (slice->dspMode() == DSPMode::DIGL) {
+        offset += static_cast<double>(slice->diglOffsetHz());
+    } else if (slice->dspMode() == DSPMode::DIGU) {
+        offset += static_cast<double>(slice->diguOffsetHz());
+    }
+
+    return offset;
+}
+
 void RadioModel::pushTxFrequencyFromTxSlice()
 {
     if (!m_connection) {
@@ -9664,30 +10201,28 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     //
     // RIT (Receive Incremental Tuning): client-side demodulation offset that
     // does NOT retune the hardware VFO.
-    // From Thetis console.cs — RIT adjusts receive demodulation without moving
-    // the hardware DDC center.
+    // From Thetis console.cs:31782-31784 [v2.10.3.15]: udRIT adjusts receive
+    // demodulation without moving the hardware DDC center.
     //
     // DIG offset: per-mode click-tune demodulation offset for DIGL/DIGU.
-    // From Thetis console.cs:14637 (DIGUClickTuneOffset) and :14672
-    // (DIGLClickTuneOffset). Both are int offsets in Hz; Thetis uses per-mode
-    // filter re-centering internally, but NereusSDR implements DIG offset as
-    // an additive shift on the same setShiftFrequency path as RIT.
+    // From Thetis console.cs:14659 (DIGUClickTuneOffset) and :14694
+    // (DIGLClickTuneOffset) [v2.10.3.15]. Both are int offsets in Hz; Thetis
+    // uses per-mode filter re-centering internally, but NereusSDR implements
+    // DIG offset as an additive shift on the same setShiftFrequency path as
+    // RIT.
     //
-    // Combined: shift = ritOffset + digOffset (where digOffset is mode-gated).
-    // For 3G-10 (single RX, no CTUN), the shift = these two terms only.
+    // Post-3F these are NOT the only two terms. The slice also sits at an
+    // offset from its hosting stream's centre, and this lambda used to push
+    // RIT + DIG alone, so toggling RIT on a shifted slice clobbered the
+    // stream offset and moved the demodulator off frequency. composedShiftHz
+    // is the single sum every writer pushes (design doc 4.4).
     auto updateShiftFrequency = [this, slice]() {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
         if (!rxCh) { return; }
-        double offset = slice->ritEnabled()
-                        ? static_cast<double>(slice->ritHz())
-                        : 0.0;
-        // DIG offset per mode — Thetis console.cs:14637,14672
-        if (slice->dspMode() == DSPMode::DIGL) {
-            offset += static_cast<double>(slice->diglOffsetHz());
-        } else if (slice->dspMode() == DSPMode::DIGU) {
-            offset += static_cast<double>(slice->diguOffsetHz());
-        }
-        rxCh->setShiftFrequency(offset);
+        // RIT / DIG changed, not the stream. Re-push both terms from the
+        // slice's current stream centre so the pair stays coherent.
+        pushNotchOrigin(slice, rxCh,
+                        slice->frequency() - slice->shiftOffsetHz());
     };
     connect(slice, &SliceModel::ritEnabledChanged,  this, updateShiftFrequency);
     connect(slice, &SliceModel::ritHzChanged,        this, updateShiftFrequency);
@@ -9909,14 +10444,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     // XIT state without needing a separate update trigger.
     QTimer::singleShot(100, this, [this, slice]() {
         if (m_connection && m_connection->isConnected()) {
-            int rxIdx = slice->streamIndex();
-            quint64 freqHz = static_cast<quint64>(slice->frequency());
-            if (rxIdx >= 0) {
-                m_receiverManager->setReceiverFrequency(rxIdx, freqHz);
-            }
-            // Seed the transmit frequency from the TX-bound slice, which on
-            // connect is usually but not necessarily this one.
-            pushTxFrequencyFromTxSlice();
+            seedConnectFrequency(slice);
         }
     });
 }
@@ -12446,25 +12974,33 @@ bool RadioModel::rxApf(int rx) const
     return false;
 }
 
-// ── Stub DSP toggles (no model state yet) ───────────────────────────────────
+// ── Master notch enable (rx_nf_enable) ──────────────────────────────────────
 //
-// NF stays a stub, and deliberately so: upstream is asymmetric here.
-// handleRxNfEnable (TCIServer.cs:1895-1910 [v2.10.3.15]) answers a query with
-// the PER-RX notch state, consoleThreadSafe.GetMNF(rx + 1), but a set writes
-// the RADIO-GLOBAL consoleThreadSafe.TNFActive = enabled.  NereusSDR has no
-// MNF/TNF model to route either half to yet, and guessing which of the two
-// semantics to adopt would bake in a choice the upstream itself does not make
-// consistently.  Left storing and reading its own value so a round-trip still
-// returns what the operator last set.
+// TNF section 6.4: no longer a stub.  The apparent asymmetry that kept it one
+// (a query answered per-rx, a set written radio-global) is not an asymmetry at
+// all: GetMNF returns the one global TNFActive for either index, so both
+// halves address the same flag.
+//
+//   // mnf enabled globally  [original inline comment from console.cs:52319]
+//
+// From Thetis console.cs:52317-52330 [v2.10.3.15] (GetMNF, both cases return
+// TNFActive) and TCIServer.cs:3397 [v2.10.3.15] (the set branch writes that
+// same single property).
 void RadioModel::setRxNf(int rx, bool on)
 {
-    if (rx >= 0 && rx < kTciStubSliceMax) { m_tciStubRxNf[rx] = on; }
+    // From Thetis TCIServer.cs:3388 [v2.10.3.15]: "if (rx < 0 || rx > 1) return;"
+    if (rx < 0 || rx > 1) { return; }
+    if (m_notchModel) { m_notchModel->setGlobalEnabled(on); }
 }
 bool RadioModel::rxNf(int rx) const
 {
-    if (rx >= 0 && rx < kTciStubSliceMax) { return m_tciStubRxNf[rx]; }
-    return false;
+    // From Thetis console.cs:52320 [v2.10.3.15]: "if (rx < 1 || rx > 2) return false;"
+    // Thetis indexes receivers 1-based there; TCI hands us the 0-based index.
+    if (rx < 0 || rx > 1) { return false; }
+    return m_notchModel && m_notchModel->globalEnabled();
 }
+
+// ── Stub DSP toggles (no model state yet) ───────────────────────────────────
 void RadioModel::setRxEnable(int rx, bool on)
 {
     if (rx >= 0 && rx < kTciStubSliceMax) { m_tciStubRxEnable[rx] = on; }
