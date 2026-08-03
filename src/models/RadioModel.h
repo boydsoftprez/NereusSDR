@@ -72,6 +72,7 @@
 #include "core/Rf2ksConnection.h"
 #include "core/TgxlConnection.h"
 #include "core/FaultLog.h"
+#include "core/spectrum/ISpectrumSink.h"
 #include "core/TxInterlockPolicy.h"
 #include "core/TuneMemoryStore.h"
 #include "models/TunerModel.h"
@@ -247,6 +248,41 @@ public:
     /// without going through the widebandSpectrumReady signal hop.
     NereusSDR::WidebandFftEngine* widebandFftEngine(int adc) const {
         return (adc >= 0 && adc < 2) ? m_widebandFftEngines[adc] : nullptr;
+    }
+
+    /// R1 Task 11: injectable target for the wideband FFT dispatch hop
+    /// wired inside wireConnectionSignals (P2RadioConnection::
+    /// widebandFrameReady -> WidebandFftEngine::computeFft). That hop has
+    /// always landed on RadioModel's own thread via an auto-connection --
+    /// fine for the GUI, where RadioModel lives on the main thread and the
+    /// entire point is getting the FFT off the P2 connection thread onto
+    /// the thread that is idle between paint events. nereusd's DaemonApp
+    /// has no such spare thread of its own: its RadioModel lives on the
+    /// daemon's single Qt event-loop thread, which carries other daemon
+    /// responsibilities too, so it supplies a dedicated QThread here
+    /// instead (DaemonApp::widebandThread(), started in start() and
+    /// quit()+wait()'d in stop()).
+    ///
+    /// Call BEFORE any P2 connection exists (i.e. before connectToRadio())
+    /// so the very first wideband frame already targets the new thread --
+    /// Qt actually re-resolves an auto-connection's direct-vs-queued
+    /// dispatch on every emit based on the context object's CURRENT
+    /// thread(), so in practice this is safe to call at any time, but
+    /// "before connect" keeps the call order easy to reason about.
+    ///
+    /// `dispatchThread` is NOT owned by RadioModel -- the caller keeps it
+    /// alive and must quit()+wait() it before this RadioModel is
+    /// destroyed (see DaemonApp::stop()'s ordering comment). Passing
+    /// nullptr is a no-op: it does NOT reset to any particular thread, it
+    /// just leaves the current target alone. Never called at all (the GUI
+    /// path), m_widebandDispatchContext stays on whatever thread
+    /// constructed this RadioModel -- byte-for-byte the same target the
+    /// old `this`-context connection used.
+    void setWidebandDispatchThread(QThread* dispatchThread) {
+        if (!dispatchThread) {
+            return;
+        }
+        m_widebandDispatchContext.moveToThread(dispatchThread);
     }
 
     // OC matrix — single instance shared between the OC Outputs UI and the
@@ -852,6 +888,21 @@ public:
     // outlives both.
     class SpectrumWidget* spectrumWidget() const { return m_spectrumWidget; }
     void setSpectrumWidget(class SpectrumWidget* w) { m_spectrumWidget = w; }
+
+    // R1 Task 4: the abstract counterpart of m_spectrumWidget above.
+    // RadioModel's own DSP-facing calls (SwrProtectionController overlay
+    // push, applyClaritySmoothDefaults) go through this pointer instead of
+    // the concrete widget, so RadioModel.cpp needs no "gui/" include.
+    // m_spectrumWidget stays alongside it, untouched, because 82 Setup
+    // page call sites (DisplaySetupPages, AppearanceSetupPages,
+    // SpectrumPeaksPage; see MainWindow.cpp's activePanChanged handler
+    // comment) reach the renderer through spectrumWidget() for far more
+    // than the ISpectrumSink surface covers. Both members are set from the
+    // same SpectrumWidget* at every call site in MainWindow.cpp, so they
+    // always name the same object; only the static type callers see
+    // differs.
+    NereusSDR::ISpectrumSink* spectrumSink() const { return m_spectrumSink; }
+    void setSpectrumSink(NereusSDR::ISpectrumSink* sink) { m_spectrumSink = sink; }
     class FFTEngine* fftEngine() const { return m_fftEngine; }
     void setFftEngine(class FFTEngine* e) { m_fftEngine = e; }
     class ClarityController* clarityController() const { return m_clarityController; }
@@ -3116,6 +3167,19 @@ private:
     // a default 122.88 MHz ADC sample rate. Owned via QObject parent.
     std::array<NereusSDR::WidebandFftEngine*, 2> m_widebandFftEngines{};
 
+    // R1 Task 11: connection-context anchor for the wideband FFT dispatch
+    // hop inside wireConnectionSignals -- a bare QObject used only for its
+    // thread affinity, never for signals/slots of its own. Qt resolves an
+    // AutoConnection's direct-vs-queued dispatch PER EMIT based on this
+    // object's CURRENT thread() versus the emitting thread, so
+    // setWidebandDispatchThread()'s moveToThread() retargets the hop even
+    // for a connection made before the move. Deliberately NOT parented to
+    // `this`: QObject::moveToThread() refuses to move an object that has
+    // a parent. Starts life on whatever thread constructs this
+    // RadioModel -- identical to the pre-Task-11 `this` context it
+    // replaces in wireConnectionSignals.
+    QObject m_widebandDispatchContext;
+
     // Band-plan overlay manager — app-global, loaded once from Qt resources.
     // Phase 3G RX Epic sub-epic D.
     BandPlanManager m_bandPlanManager;
@@ -3228,6 +3292,9 @@ private:
 
     // View hooks (non-owning, set by MainWindow). Phase 3G-8 + 3G-9c.
     class SpectrumWidget*     m_spectrumWidget{nullptr};
+    // R1 Task 4: abstract twin of m_spectrumWidget above, see the
+    // spectrumSink() comment. Same object, different static type.
+    NereusSDR::ISpectrumSink* m_spectrumSink{nullptr};
     class FFTEngine*          m_fftEngine{nullptr};
     class ClarityController*  m_clarityController{nullptr};
     class StepAttenuatorController* m_stepAttController{nullptr};

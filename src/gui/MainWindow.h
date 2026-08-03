@@ -80,8 +80,13 @@
 #include <QMap>
 #include <QVector>
 
+// R1 Task 7: m_topology below is a plain value member (FftTopology has no
+// QObject parent to own it through, unlike the pointer members this header
+// otherwise forward-declares), so the complete type is needed here rather
+// than just in MainWindow.cpp.
+#include "core/spectrum/FftTopology.h"
+
 class QProgressDialog;
-class QThread;
 class QSplitter;
 class QMenu;
 
@@ -96,6 +101,7 @@ class ConnectionPanel;
 class SupportDialog;
 class WdspEngine;
 class FFTEngine;
+class FftEnginePool;
 class SpectrumWidget;
 class SliceModel;
 class VfoWidget;
@@ -519,23 +525,70 @@ private:
     void tryAutoReconnect();
     void wireSliceToSpectrum();
 
+    /// R1 Task 4 fix round 1 (reviewer Finding 2): the one place that sets
+    /// both of RadioModel's spectrum view hooks to the same widget --
+    /// the concrete m_spectrumWidget (82 Setup-page call sites) and the
+    /// abstract m_spectrumSink (RadioModel's own SWR-overlay and
+    /// applyClaritySmoothDefaults calls). Before this helper existed the
+    /// two calls were convention only: a future call site that wrote
+    /// setSpectrumWidget() without the matching setSpectrumSink() would
+    /// compile clean and pass every test, and would silently leave the SWR
+    /// overlay and Reset-to-Smooth-Defaults acting on a stale widget while
+    /// Setup pages kept following the live one. Routing every caller
+    /// through here makes that impossible instead of merely undocumented.
+    void setSpectrumHooks(SpectrumWidget* sw);
+
     /// Stream 0's engine. Back-compat accessor for call sites that still
     /// address "the" FFT engine (display settings, Max Bin, auto-zoom).
-    FFTEngine* primaryFftEngine() const { return m_fftEngines.value(0, nullptr); }
-
-    /// Build and register one FFTEngine for `streamIndex`, configured as
-    /// the old single-engine path was, moved onto the shared FFT thread.
-    /// Returns the existing engine if one is already registered.
     ///
-    /// Called on demand rather than once per pool slot: engines subscribe
-    /// to the shared RadioModel::rawIqDataForStream and filter by index, so
-    /// an engine for a stream that is never claimed would still take (and
-    /// discard) a queued event for every packet of every OTHER stream.
-    /// Building one only when the allocator actually claims the DDC keeps
-    /// that cost at zero for the single-stream case. Sizing off
-    /// streamPoolSize() at construction would not work anyway: the pool is
-    /// unsized until RadioModel::configureStreamPool runs at connect.
-    FFTEngine* createFftEngineForStream(int streamIndex);
+    /// R1 Task 6: delegates to m_fftEnginePool, which creates on first use.
+    /// Stream 0's engine is always built during buildUI() before any of
+    /// these call sites can run, so in practice this never triggers that
+    /// creation -- it is a lookup, exactly as the old
+    /// m_fftEngines.value(0, nullptr) was. Defined out-of-line in the .cpp:
+    /// FftEnginePool is only forward-declared here (m_fftEnginePool is a
+    /// pointer member), and calling a method on it needs the complete type.
+    FFTEngine* primaryFftEngine() const;
+
+    /// Fix round 1 finding 1 (coordinator spec review): re-reads the four
+    /// display AppSettings keys (DisplaySpectrumFps / DisplayFftSize /
+    /// DisplayFftWindow / DisplayHzPerBinTarget) into an FftPoolConfig.
+    /// Called from ensureStreamWired() immediately before building a
+    /// stream that does not exist yet, so a stream created after a live
+    /// Setup -> Display change picks up the current value rather than
+    /// whatever was last pushed to the pool -- restores the per-stream
+    /// freshness the pre-extraction createFftEngineForStream had (it read
+    /// these keys inside its own per-engine construction). Deliberately a
+    /// MainWindow method, not something FftEnginePool does itself: the
+    /// pool must stay settings-agnostic so the Task 9/10 daemon can supply
+    /// its own config with no AppSettings dependency in src/core. No-op if
+    /// the pool does not exist yet.
+    ///
+    /// Fix round 2 (coordinator spec review): calls
+    /// m_fftEnginePool->setConfigForNewStreams(), NOT setConfig(). The
+    /// difference matters here specifically because MainWindow's
+    /// auto-zoom lambda calls engine->setFftSize() directly on a single
+    /// stream, a deliberate, never-persisted-to-AppSettings override --
+    /// setConfig() would retroactively snap that stream's engine back to
+    /// the AppSettings baseline the moment ANY new stream appeared. See
+    /// FftEnginePool.h's doc comments on both methods for the full
+    /// reasoning.
+    void refreshFftPoolConfig();
+
+    /// R1 Task 6: wires a pool-provided engine into MainWindow's other
+    /// subsystems the first time streamIndex is seen -- the raw I/Q feed
+    /// from RadioModel, this stream's initial sample rate, and its own
+    /// NoiseFloorTracker. A no-op beyond the lookup on later calls for a
+    /// stream that is already wired. Returns nullptr only if the pool
+    /// itself is not ready yet or streamIndex is negative.
+    ///
+    /// Engine creation, reuse, the four display AppSettings-sourced
+    /// knobs, and thread parking all moved into FftEnginePool; this is
+    /// what is left of the old createFftEngineForStream once that part
+    /// is extracted -- the MainWindow-specific wiring the pool has no way
+    /// to express (I/Q routing and NoiseFloorTracker are RadioModel- and
+    /// MainWindow-owned concerns, not spectrum-engine concerns).
+    FFTEngine* ensureStreamWired(int streamIndex);
 
     /// Push the stream's cached DDC centre + sample rate onto one pan's
     /// SpectrumWidget so visibleBinRange maps its bins against the right
@@ -711,16 +764,50 @@ private:
     // slices sharing a DDC share its spectrum and appear as separate flags
     // on it.
     //
-    // All engines share m_fftThread. If a 5-stream 1536 kHz bench shows
-    // the thread saturating, splitting to one thread per engine is a
-    // follow-up needing maintainer sign-off (thread architecture).
-    QMap<int, FFTEngine*> m_fftEngines;
+    // R1 Task 6: per-stream engine lifecycle, the four global display
+    // AppSettings keys, and the shared FFT thread (formerly m_fftEngines /
+    // m_fftThread, plus createFftEngineForStream) now live in
+    // FftEnginePool (src/core/spectrum/FftEnginePool.h) -- core work that
+    // used to sit in this QWidget. refreshFftPoolConfig() reads the four
+    // AppSettings keys, fills an FftPoolConfig, and calls
+    // setConfigForNewStreams(); ensureStreamWired() is what invokes it,
+    // immediately before building a stream that does not exist yet.
+    // (An earlier version of this comment said buildUI() did the reading
+    // and that the pool's setConfig() was the setter. Neither is true:
+    // buildUI() reads none of those keys, and setConfig() -- which also
+    // reconfigures ALREADY-EXISTING engines -- would retroactively stomp
+    // a live auto-zoom override every time a new stream appeared, which
+    // is exactly why the two setters were split.) Every other call site
+    // reaches an engine via primaryFftEngine() or
+    // m_fftEnginePool->engineForStream(streamIndex). threadCount defaults
+    // to 1 (today's single shared thread); if a 5-stream 1536 kHz bench
+    // shows it saturating, raising it is a follow-up needing maintainer
+    // sign-off (thread architecture), per design section 4.5a.
+    FftEnginePool* m_fftEnginePool{nullptr};
+
+    /// R1 Task 7: consumer-to-stream subscription set of record.
+    /// rebuildFftRouting() resolves its pan/slice walk into this, and the
+    /// PanadapterStack::panRetired handler wired in buildUI() drops a
+    /// retired pan's subscriptions so a later applyTo() cannot resurrect a
+    /// mapping for a pan that no longer exists. applyTo() is the only thing
+    /// that then writes m_radioModel->fftRouter() itself, rebuilding it
+    /// wholesale from whatever this member currently holds. Plain value
+    /// member: it is a QMap wrapper with no signals and no heap ownership
+    /// question, not a QObject that needs a pointer + parent.
+    ///
+    /// disconnectPanadapter() also unsubscribes here, but it is NOT the
+    /// live teardown path and must not be read as one: it has had no
+    /// caller since before this branch (PanadapterStack.h says as much),
+    /// and panRetired is what actually fires when a pan goes away. Task 7
+    /// added the unsubscribe call into it anyway, so that the function
+    /// stays correct if it is ever revived; it is dead code that predates
+    /// this work, left alone deliberately rather than deleted here.
+    FftTopology m_topology;
 
     /// One NoiseFloorTracker per stream, fed by that stream's FFT engine.
     /// Auto AGC-T needs the noise floor of the band a slice is actually on;
     /// a single tracker fed from stream 0 would mis-set every other slice.
     QMap<int, class NoiseFloorTracker*> m_streamNoiseFloors;
-    QThread*            m_fftThread{nullptr};
 
     /// Last centre + sample rate RadioModel published for each stream, kept
     /// so a pan that subscribes AFTER the stream was centred still learns

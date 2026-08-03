@@ -296,7 +296,6 @@ warren@wpratt.com
 #include "core/ModelPaths.h"
 #include "core/SkuUiProfile.h"
 #include "core/wdsp_api.h"
-#include "gui/SpectrumWidget.h"
 
 // ── Phase 3J-2 H2: spot-system ownership ────────────────────────────────
 #include "core/DxClusterClient.h"
@@ -715,18 +714,18 @@ RadioModel::RadioModel(QObject* parent)
     //    consistent fwd/rev values.
 
     // 3. SwrProtectionController::highSwrChanged → SpectrumWidget overlay.
-    //    m_spectrumWidget may be null at construction time (set later by
-    //    MainWindow::setSpectrumWidget). Guard every access.
+    //    m_spectrumSink may be null at construction time (set later by
+    //    MainWindow::setSpectrumSink, R1 Task 4). Guard every access.
     connect(&m_swrProt, &safety::SwrProtectionController::highSwrChanged,
             this, [this](bool isHigh) {
-        if (m_spectrumWidget) {
-            m_spectrumWidget->setHighSwrOverlay(isHigh, m_swrProt.windBackLatched());
+        if (m_spectrumSink) {
+            m_spectrumSink->setHighSwrOverlay(isHigh, m_swrProt.windBackLatched());
         }
     });
     connect(&m_swrProt, &safety::SwrProtectionController::windBackLatchedChanged,
             this, [this](bool latched) {
-        if (m_spectrumWidget && m_swrProt.highSwr()) {
-            m_spectrumWidget->setHighSwrOverlay(true, latched);
+        if (m_spectrumSink && m_swrProt.highSwr()) {
+            m_spectrumSink->setHighSwrOverlay(true, latched);
         }
     });
 
@@ -5812,7 +5811,8 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         // hermes-filter-debug Bug 2: read PER-MAC, not global.  The legacy
         // global "hl2IoBoard/n2adrFilter" key has already been migrated into
         // hardware/<mac>/hl2IoBoard/n2adrFilter at app start by
-        // AppSettings::migrateLegacyN2adrFilter (see main.cpp).  This read
+        // AppSettings::migrateLegacyN2adrFilter (see CoreInit::initialize,
+        // R1 Task 8; called from main.cpp).  This read
         // matches the write side (Hl2IoBoardTab::onN2adrToggled →
         // HardwarePage::wire() → setHardwareValue).
         //
@@ -8412,12 +8412,21 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
         // P2RadioConnection::widebandFrameReady fires on the connection
         // thread once a 32-packet frame (16384 normalized real samples)
         // is assembled by WidebandFrameAccumulator (Sub-Epic F Task 3).
-        // We hop to the main thread (auto-connection: default) so the
+        // We hop off the connection thread via auto-connection so the
         // FFT runs out of the network hot path.  The 16k-pt real-to-
         // complex FFT typically completes well under one frame period
-        // even at 153.6 MHz; if profiling later flags this as a stall,
-        // move WidebandFftEngine to a dedicated worker thread.
-        connect(p2, &P2RadioConnection::widebandFrameReady, this,
+        // even at 153.6 MHz.
+        //
+        // R1 Task 11: the hop target is m_widebandDispatchContext, not
+        // `this` -- see setWidebandDispatchThread()'s doc comment in
+        // RadioModel.h. Left unset (the GUI never calls it),
+        // m_widebandDispatchContext stays on RadioModel's own thread, so
+        // this reproduces the exact pre-Task-11 "hop to the main thread"
+        // behaviour byte for byte. nereusd's DaemonApp redirects it to a
+        // dedicated QThread instead, because it has no main-thread
+        // protection concern of its own and wants this off its single
+        // event-loop thread entirely.
+        connect(p2, &P2RadioConnection::widebandFrameReady, &m_widebandDispatchContext,
                 [this](int adcIdx, const QVector<float>& samples) {
             if (adcIdx < 0 || adcIdx >= 2) { return; }
             if (!m_widebandFftEngines[adcIdx]) { return; }
@@ -11642,7 +11651,7 @@ void RadioModel::teardownConnection()
 // Phase 3G-9b — 7 smooth-default recipe values. See docs/architecture/waterfall-tuning.md.
 void RadioModel::applyClaritySmoothDefaults()
 {
-    SpectrumWidget* sw = spectrumWidget();
+    NereusSDR::ISpectrumSink* sw = spectrumSink();
     if (!sw) { return; }  // not yet wired by MainWindow — Task 3 re-invokes
 
     // 1. Palette — narrow-band monochrome. See docs/architecture/waterfall-tuning.md §1.

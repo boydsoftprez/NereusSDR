@@ -1,5 +1,5 @@
 // =================================================================
-// src/gui/spectrum/SpectrumDetector.cpp  (NereusSDR)
+// src/core/spectrum/SpectrumDetector.cpp  (NereusSDR)
 // =================================================================
 //
 // Ported from WDSP source:
@@ -23,6 +23,11 @@
 //   2026-05-05 — Created in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via
 //                 Anthropic Claude Code.
+//   2026-08-02  J.J. Boyd / KG4VCF  Relocated from src/gui/spectrum/ to
+//                                    src/core/spectrum/ for the headless
+//                                    daemon build split (R1).  No logic
+//                                    change.  AI-assisted transformation via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -61,7 +66,7 @@
 namespace NereusSDR {
 
 // From WDSP analyzer.c:283-462 [v2.10.3.13] — verbatim port.
-void applySpectrumDetector(SpectrumDetector detType,
+void applySpectrumDetector(NereusSDR::SpectrumDetectorMode detType,
                            int m,
                            int numPixels,
                            double pixPerBin,
@@ -260,7 +265,7 @@ void applySpectrumDetector(SpectrumDetector detType,
     }
 }
 
-void applySpectrumDetector(SpectrumDetector detType,
+void applySpectrumDetector(NereusSDR::SpectrumDetectorMode detType,
                            const QVector<float>& bins,
                            int numPixels,
                            QVector<float>& pixels,

@@ -101,7 +101,7 @@ endfunction()
 # guarantee that keeps ctest runs from overwriting the developer's real
 # NereusSDR.settings (see the header comment in TestSandboxInit.cpp).
 #
-# Deliberately does NOT reuse the NereusSDRObjs PCH.  This is one 50-line
+# Deliberately does NOT reuse the NereusCore PCH.  This is one 50-line
 # TU whose only include is <QStandardPaths>, so the PCH buys nothing, and
 # reusing it means compiling with a different -D set than the PCH was
 # built with (this target links only Qt6::Core, not the HAVE_WDSP /
@@ -112,6 +112,19 @@ add_library(nereus_test_sandbox OBJECT EXCLUDE_FROM_ALL TestSandboxInit.cpp)
 target_link_libraries(nereus_test_sandbox PRIVATE Qt6::Core)
 
 function(nereus_add_test name)
+    # EXTRA_LABELS <label...> for the handful of tests whose subject
+    # cannot be derived from their own #include lines. Guard tests are
+    # the case that forced this: tst_core_has_no_gui_includes is the
+    # invariant check for the whole src/core boundary but includes no
+    # core header (it greps the tree instead), so derivation put it in
+    # `unclassified` and the project's own documented dev-loop command,
+    # `ctest -L core`, skipped the one test guarding that boundary.
+    #
+    # Everything not consumed by the keyword stays ARGN's original
+    # meaning: additional source files.
+    cmake_parse_arguments(_nat "" "" "EXTRA_LABELS" ${ARGN})
+    set(_extra_sources ${_nat_UNPARSED_ARGUMENTS})
+
     # Sharding gate — when this test's hash bucket doesn't match the
     # active shard, register a stub OBJECT library (EXCLUDE_FROM_ALL,
     # backed by the shared stub source set up at the top of this file)
@@ -161,19 +174,19 @@ function(nereus_add_test name)
     # The aggregate `all_tests` target is created at the bottom of
     # this file from a global property each nereus_add_test() call
     # appends to.
-    add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox> ${ARGN})
+    add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox> ${_extra_sources})
     target_link_libraries(${name} PRIVATE NereusSDRObjs Qt6::Test)
     set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS ${name})
 
-    # Reuse the NereusSDRObjs precompiled header (CMakeLists.txt §PCH).
-    # 451 test executables × per-target PCH compile would burn the wins;
-    # REUSE_FROM means the PCH is built once on NereusSDRObjs and shared
+    # Reuse the NereusCore precompiled header (CMakeLists.txt §PCH).
+    # 589 test executables × per-target PCH compile would burn the wins;
+    # REUSE_FROM means the PCH is built once on NereusCore and shared
     # across every test target. Save 5 to 10 minutes of test compile
     # time on Linux CI. Gated on NEREUS_USE_PCH so users who turn the
     # PCH off (e.g. for header-hygiene auditing) don't get a broken
     # link.
     if(NEREUS_USE_PCH)
-        target_precompile_headers(${name} REUSE_FROM NereusSDRObjs)
+        target_precompile_headers(${name} REUSE_FROM NereusCore)
     endif()
 
     add_test(NAME ${name} COMMAND ${name})
@@ -183,6 +196,13 @@ function(nereus_add_test name)
     # generous: the slowest test in the suite as of 2026-07-25 is
     # tst_ps_feedback_channel at ~30s.
     _nereus_derive_test_labels(_test_labels "${name}.cpp")
+    if(_nat_EXTRA_LABELS)
+        # Drop the "unclassified" placeholder derivation assigns when it
+        # found nothing; an explicit label is a classification.
+        list(REMOVE_ITEM _test_labels "unclassified")
+        list(APPEND _test_labels ${_nat_EXTRA_LABELS})
+        list(REMOVE_DUPLICATES _test_labels)
+    endif()
     set_tests_properties(${name} PROPERTIES
         LABELS "${_test_labels}"
         TIMEOUT 120)
@@ -1683,6 +1703,17 @@ nereus_add_test(tst_pan_active_slice_sync)
 # remove).
 nereus_add_test(tst_fft_router_fanout)
 
+# ── Phase 3F Sub-Epic I Tasks 8-9: FFTRouter subscription dedup + rebuild ──
+# Renamed from tst_fft_engine_pool.cpp when R1 Task 6 claimed that filename
+# for the real FftEnginePool class (src/core/spectrum/FftEnginePool.h).
+# Content unchanged: still pins the FFTRouter contract MainWindow's
+# per-stream FFTEngine pool relied on before FftEnginePool existed as a
+# class -- distinct streams reach distinct pans, co-hosted slices subscribe
+# their shared pan once (not once per slice), one stream can feed several
+# pans at different zooms, and a wholesale rebuild (remove + re-add) drops
+# stale receiver bindings.
+nereus_add_test(tst_fft_router_topology)
+
 # ── Phase 3F Sub-Epic I Task 2: SliceStreamAllocator placement policy ──────
 # NereusSDR-original pure-policy class. Decides whether a slice shares an
 # active DDC stream's window (shift offset only) or claims a free DDC.
@@ -1725,12 +1756,32 @@ nereus_add_test(tst_notch_tune_frequency)
 # assert which ids it really opens.
 nereus_add_test(tst_wdsp_channel_id_map)
 
-# ── Phase 3F Sub-Epic I Tasks 8-9: per-stream FFT dispatch topology ────────
-# Pins the FFTRouter contract MainWindow's per-stream FFTEngine pool relies
-# on: distinct streams reach distinct pans, co-hosted slices subscribe their
-# shared pan once (not once per slice), one stream can feed several pans at
-# different zooms, and a wholesale rebuild drops stale subscriptions.
+# ── R1 Task 6: FftEnginePool -- per-stream FFTEngine lifecycle ─────────────
+# Extracted from MainWindow::createFftEngineForStream / m_fftEngines /
+# m_fftThread (MainWindow.cpp:1430-1530, MainWindow.h:597-626): one engine
+# per stream, reused on lookup, dropped on removeStream, configured from one
+# FftPoolConfig that reaches engines created before AND after setConfig() so
+# two streams never silently run different FFT sizes. threadCount defaults
+# to 1 per design section 4.5a's Pi 4B measurement (4 threads bought only
+# 1.35x aggregate throughput, the workload being memory-bandwidth bound).
 nereus_add_test(tst_fft_engine_pool)
+
+# ── R1 Task 7: FftTopology -- consumer-to-stream subscription algebra ──────
+# Extracted from the router-mutation half of MainWindow::rebuildFftRouting:
+# holds a consumer-to-stream SET (a consumer may hold more than one stream
+# at once -- subscribing to a second stream ADDS, it does not move the
+# consumer off the first) and rebuilds an FFTRouter from that set on
+# applyTo(). The one-active-stream-per-consumer reading this comment used
+# to give was the pre-fix-round-1 design; tst_fft_topology.cpp's
+# subscribingToASecondStreamAdds explicitly supersedes the
+# resubscribe-moves case it replaced. Covers subscription algebra
+# FftTopology owns itself (dedup by construction, whole-consumer and
+# single-stream unsubscribe, rebuild-not-patch idempotency, multi-stream
+# subscription) that
+# tst_fft_router_fanout.cpp and tst_fft_router_topology.cpp do not touch --
+# both of those pin FFTRouter's own pan/receiver mapping contract directly
+# and never construct an FftTopology.
+nereus_add_test(tst_fft_topology)
 
 # ── Phase 3F Sub-Epic D Task 8: PanFloatingWindow (multi-monitor detach) ────
 # Top-level QWidget wrapper for detaching a PanadapterApplet to a second
@@ -4383,6 +4434,47 @@ nereus_add_test(tst_dsp_options_warning_logic)
 # running app.  Direct SpectrumAvenger unit tests are a follow-up item.
 nereus_add_test(tst_detector_modes)
 
+# R1 Task 2 -- SpectrumDetectorMode extraction.  Pins the detector-mode
+# enumerator values (WDSP analyzer.c detector modes, Peak/Rosenfell/Average/
+# Sample/RMS) now that they live in core/spectrum/SpectrumDetectorMode.h
+# instead of gui/SpectrumWidget.h.  gui/SpectrumWidget.h keeps a using-alias
+# (SpectrumDetector = NereusSDR::SpectrumDetectorMode) so this is purely a
+# relocation, not a behavior change.
+nereus_add_test(tst_spectrum_detector_mode)
+
+# R1 Task 5 -- crop-and-reduce extracted from SpectrumWidget into
+# core/spectrum/SpectrumReducer.  Pins the bin-range arithmetic that used
+# to be SpectrumWidget::visibleBinRange (a private method reading widget
+# member state) and the detector -> avenger call sequence out of
+# updateSpectrumLinear, now driven by an explicit pixel count instead of
+# widget geometry.  The plan specified five tests; the rest pin guards and
+# clamping rules found by reading the implementation being extracted.
+nereus_add_test(tst_spectrum_reducer)
+
+# R1 Task 5 -- the standing guarantee behind the daemon split: what
+# SpectrumWidget renders must equal what a bare SpectrumReducer produces
+# from the same inputs, bit for bit, across widget widths / dBm-strip
+# visibility / crop windows / all 5 detectors x 4 averaging modes.  The
+# widget's only remaining contribution is filling ReducerConfig::pixels
+# from its geometry; anything else leaking back into the reduction path
+# fails here instead of shipping two different spectra.
+nereus_add_test(tst_spectrum_reducer_widget_parity)
+
+# R1 Task 4 -- guard test for the ISpectrumSink extraction.  Walks src/core
+# and src/models and fails on any include that reaches into src/gui or into
+# the Qt widget / GUI rendering stack.  This is the property the whole R1
+# build split depends on: nereusd links NereusCore alone only as long as
+# neither tree reaches into src/gui.
+#
+# EXTRA_LABELS core because the test greps the tree instead of including
+# any core header, so label derivation cannot see its subject and left it
+# `unclassified` -- which meant `ctest -L core`, the command
+# docs/development/fast-test-loop.md tells everyone to use, skipped the
+# one test guarding the core boundary.
+nereus_add_test(tst_core_has_no_gui_includes EXTRA_LABELS core)
+target_compile_definitions(tst_core_has_no_gui_includes PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
 # Phase 1B verification -- exhaustive sweep of every detector x averaging
 # combination through SpectrumWidget::updateSpectrumLinear():
 #   spectrum  5 detectors x 4 averagings = 20
@@ -6063,6 +6155,55 @@ nereus_add_test(tst_pan_flag_positions)
 # constrains QMenu, so the right-click waterfall panel opened below the bottom
 # edge on the lower pan of a 2v layout. Bench-reported 2026-07-28.
 nereus_add_test(tst_popup_placement)
+
+# R1 Task 8: CoreInit bundles the settings-migration sequence and the
+# file-logging install that used to live inline in main(), guarded by a
+# file-static flag so a second call is a genuine no-op. Pins the migration
+# floor (SettingsSchemaVersion >= 6), the idempotency guard via a run
+# counter, and that the profile argument (not AppSettings::profileOverride())
+# drives where the log file lands, so a daemon can call this without
+# replaying main()'s pre-QApplication argv scan.
+nereus_add_test(tst_core_init)
+
+# R1 Task 9: DaemonConfig parses nereusd's "key = value" config file
+# (src/core/daemon/DaemonConfig.{h,cpp}). Pins the on-disk format (# full
+# and trailing comments, whitespace trimmed), that a missing file yields
+# defaults() plus a non-empty error rather than a crash, and the generic
+# validate() floor (slice_count >= 1) that does not depend on any specific
+# radio being connected.  Also cross-checks the shipped
+# packaging/nereusd.conf.sample against the parser's key list, hence
+# NEREUS_SOURCE_DIR.
+nereus_add_test(tst_daemon_config)
+target_compile_definitions(tst_daemon_config PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+# R1 Task 10: DaemonApp connects the daemon to a radio (or runs discovery)
+# and creates min(cfg.sliceCount, connected-board-maxSlices) slices via
+# RadioModel's own addSlice() -- the same entry point connectToRadio()
+# uses for Slice A, not the GUI-only addSliceOnPan(). Pins that a headless
+# start() creates the full configured slice count (not just Slice A), that
+# the count clamps to the connected board's real BoardCapabilities::
+# maxSlices (HermesLite's 5, primed via DaemonApp::primeBoardForTest() --
+# see the test file header for why this bypasses RadioModel::
+# connectToRadio() entirely: it blocks on cold-cache WDSP wisdom
+# generation for minutes, which no test in this suite can afford), that
+# stop() is safe with no prior start() and leaves sliceCount() == 0, and
+# that a restart does not accumulate slices from the previous run.
+nereus_add_test(tst_daemon_app)
+
+# R1 Task 11: nereusd needs its own thread for the wideband FFT dispatch
+# hop (P2RadioConnection::widebandFrameReady -> WidebandFftEngine::
+# computeFft, wired in RadioModel::wireConnectionSignals) because that hop
+# has always implicitly targeted RadioModel's own thread -- fine for the
+# GUI (that thread IS the main thread; the whole point is getting off the
+# network thread), but nereusd's RadioModel lives on the daemon's single
+# Qt event-loop thread, which will carry other daemon responsibilities
+# too. Pins that RadioModel::setWidebandDispatchThread makes the hop
+# target injectable and that DaemonApp::widebandThread() is running after
+# start(), never the calling thread, and joined (quit()+wait()'d, but not
+# destroyed -- see the header doc comment) after stop(); also that a
+# restart on the same DaemonApp instance produces a running thread again.
+nereus_add_test(tst_wideband_thread)
 
 # ── TNF build-order step 8: +TNF button, status-bar light, menu action ─────
 # The operator-facing TNF controls that live outside the panadapter:

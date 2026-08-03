@@ -312,6 +312,21 @@ cmake --build build -j$(nproc)
 ./build/NereusSDR
 ```
 
+The build produces **two** binaries. `NereusSDR` is the GUI. `nereusd` is the
+headless daemon added in remote-daemon R1: it links `NereusCore` only, no GUI
+object code, and is guarded by `tst_core_has_no_gui_includes`. It is installed
+separately so the GUI's release artifacts are unaffected:
+
+```
+cmake --install build --component nereusd
+```
+
+A plain `cmake --install` deliberately installs neither `nereusd` nor its
+systemd unit. Note that `release.yml` is the only workflow that runs
+`cmake --install` and it triggers only on `v*` tags, so **the daemon's install
+path has no PR-CI coverage**. Always pass `--profile <name>` when running
+`nereusd` by hand, or it writes the same settings the GUI reads.
+
 Dependencies (Arch): `qt6-base qt6-multimedia qt6-svg qt6-websockets cmake ninja pkgconf fftw alsa-lib jack2 pipewire`
 Dependencies (Ubuntu/Debian): `qt6-base-dev qt6-base-private-dev qt6-multimedia-dev qt6-shadertools-dev qt6-svg-dev qt6-websockets-dev cmake ninja-build pkg-config libfftw3-dev libgl1-mesa-dev libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev`
 Notes:
@@ -395,6 +410,21 @@ Key source directories: `src/core/` (protocol, audio, DSP), `src/models/`
 * `Resampler` / `RadeTxHpf80` / `RadeTx48to16` (`src/core/audio/`): TX-path helpers (HPF + 48-to-16 kHz polyphase resampler). Used by TxWorkerThread's RADE TxPath; the earlier K-bench deferral has been retired.
 * `MicProfileManager` (existing): gains a new RADE factory profile (22 total, was 21). Leveler enabled; ALC + CFC + CESSB + Phase Rotator all bypassed. Auto-selected on mode entry to RADE.
 * `SliceModel` (existing): gains `snrDb` Q_PROPERTY for the VFO flag SNR row, mode-aware visibility (RADE only).
+
+**Remote-daemon R1 classes (build split + headless `nereusd`):**
+
+The rule these exist to enforce: **nothing under `src/core/` or `src/models/` may
+include a GUI header.** `tst_core_has_no_gui_includes` fails the build if that
+breaks. Before adding a GUI type to a core class, extract an interface instead,
+the way `ISpectrumSink` did.
+
+* `ISpectrumSink` (`src/core/spectrum/ISpectrumSink.h`): abstract sink `RadioModel` pushes spectrum-adjacent state through, so it no longer includes `gui/SpectrumWidget.h`. `SpectrumWidget` implements it. Also houses the `WfColorScheme` and `AverageMode` display enums.
+* `SpectrumDetector` / `SpectrumAvenger` (`src/core/spectrum/`): relocated verbatim from `src/gui/spectrum/`. WDSP `detector()` / `avenger()` ports; bin-to-pixel reduction and frame averaging.
+* `SpectrumReducer` (`src/core/spectrum/SpectrumReducer.h`): crop-and-reduce stage, detector then avenger, configured by an injected `ReducerConfig` with no AppSettings dependency. `reduce()` writes into a **caller-owned out-parameter**; do not change it back to returning a reference, that aliases the caller's buffer and costs a detach every frame on the render hot path.
+* `FftEnginePool` (`src/core/spectrum/FftEnginePool.h`): per-stream `FFTEngine` lifecycle plus worker-thread parking, previously inline in `MainWindow`. Note `setConfigForNewStreams()` is the live path; `setConfig()` overwrites existing engines and has no production caller.
+* `FftTopology` (`src/core/spectrum/FftTopology.h`): which streams each consumer subscribes to, as data rather than as state living inside `PanadapterStack`. `applyTo(FFTRouter&)` is a full rebuild. Many streams per consumer.
+* `CoreInit` (`src/core/CoreInit.h`): the process setup both binaries share (settings load, schema migrations, logging). `initialize(profile)` / `shutdown()`, idempotent.
+* `DaemonConfig` / `DaemonApp` (`src/core/daemon/`): `/etc/nereusd.conf` parsing and the daemon's own lifecycle. A key that reaches `DaemonConfig` must reach behaviour too, or it does not belong in `packaging/nereusd.conf.sample`; a test pins the two key sets against each other.
 
 **Thread Architecture:**
 
@@ -550,6 +580,9 @@ preferences. OpenHPSDR radios don't store per-slice state.
 | [phase-pgxl-tgxl-smeter-verification/README.md](docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md) | 3P-II: 36-row bench verification matrix | Matrix drafted (pending live PGXL + TGXL hardware) |
 | [2026-05-21-anan-g2e-verification/README.md](docs/architecture/2026-05-21-anan-g2e-verification/README.md) | ANAN-G2E SKU port: 12-row bench verification matrix | Matrix drafted (4 documented gaps; pending live G2E hardware) |
 | [phase3f-multi-panadapter-plan.md](docs/architecture/phase3f-multi-panadapter-plan.md) | 3F: Multi-Panadapter + DDC Assignment | Planning (after 3I-4) |
+| [2026-07-28-remote-daemon-architecture-design.md](docs/architecture/2026-07-28-remote-daemon-architecture-design.md) | Remote daemon: split point, transport ladder (direct first, relay as fallback), NAT traversal incl. CGNAT-to-CGNAT, measured Pi 4 floor capacity, R1-R6 phasing | **Approved** |
+| [2026-08-02-remote-daemon-r1-plan.md](docs/architecture/2026-08-02-remote-daemon-r1-plan.md) | R1: build split + spectrum extraction + headless `nereusd` (13 tasks, 91 steps) | **Complete** |
+| [2026-08-02-remote-daemon-r1-verification/README.md](docs/architecture/2026-08-02-remote-daemon-r1-verification/README.md) | R1: 12-row Pi 4 bench matrix (Rows 5/10/11 found real defects; Row 10 fixed, 5 and 11 chipped) | Matrix verified (Pi 4 + ANAN-G2E) |
 
 ### Protocol Reference (`docs/protocols/`)
 
@@ -650,6 +683,8 @@ preferences. OpenHPSDR radios don't store per-slice state.
 | **3P-II: External RF Accessories (PGXL + TGXL + Analog S-Meter)** | **Phase 1 PGXL/TGXL baseline (`PgxlConnection` + `TgxlConnection` V/R/S frame parsers + `TunerModel` + `LanDiscovery` + `AmpApplet` + `TunerApplet` rewire + `RelayBar` + Peripherals page). Phase 2 analog S-Meter port from Thetis (`SMeterWidget`: 180° needle arc, 4 RX modes: Signal / Sig Avg `RXA_S_AV` / Signal Peak / Max Bin `SetupDetectMaxBin`+`GetDetectMaxBin`; right-click context menu; PGXL 2 kW snap; peak hold Fast/Medium/Slow). Phase 3 connection robustness (exponential auto-reconnect, keepalive, RTT-correlated ping, full PGXL pairing flow with serial capture, band-change notifications, `ConnectionDiagnostics`, PeripheralsPage live status). Phase 4 advanced UI (`PgxlAdvancedPage` + `TgxlAdvancedPage` Setup pages, `FaultLog` ring buffer with likelyCause heuristic, `TuneMemoryStore` per-(antenna, band) auto-recall, `TxInterlockPolicy` Disabled/Warn/Block + SWR gate + grace, antenna label persistence, power-cap toast, applet right-click navigation).** | **Complete (pending bench in v0.5.2)** |
 | **3P-III: RF-Kit RF2K-S** | Applet + Setup pages + SMeter generalization + 8 new tests. REST polling, TCI band tracking via existing TciServer. TUNE/BYPASS greyed pending firmware. | **Complete (pending bench)** |
 | **ANAN-G2E (HermesC10) SKU Port** | **Tasks A3-A4 + B4'-B7' + D1-D5 + E1-E5 + F1-F6: new board enum + capability row, hardware profile init (verified against Thetis v2.10.3.15), codec wrappers (`SetADCSupply` + `LRAudioSwap`), discovery byte 0x14 → HPSDRHW::HermesC10, BPF1 algorithm family (`setAlex1HPF`), Hermes-class DDC4 + DDC0 + PS-DDC, PA telemetry (fwd-power triplet, current / supply-volts), per-model preamp items, `SkuUiProfile` EXT label overrides, AddCustomRadioDialog wiring, G2E P2 RX unblock (mask dither/random for HermesC10, zero rate on disabled DDCs, retry SendStop + bounds-check I/Q batch).** | **Complete (pending G2E bench in v0.5.2; F2/F3/F4/F6 documented as DONE_WITH_CONCERNS)** |
+| **Remote Daemon R1: Build Split + Headless `nereusd`** | **`NereusCore` / `NereusGui` OBJECT-library split behind an INTERFACE aggregate (589 test call sites unchanged, zero targets removed). Spectrum production stack extracted out of GUI classes into `src/core/spectrum/` (`ISpectrumSink`, `SpectrumReducer`, `FftEnginePool`, `FftTopology`, plus relocated detector/avenger); `RadioModel` no longer includes any GUI header, enforced by `tst_core_has_no_gui_includes`. Shared `CoreInit`. New `nereusd` binary linking no GUI object code: config, discovery, connect, slice creation, hardened systemd unit, `--component nereusd` install kept out of the default install. Benched on a Pi 4 against a live ANAN-G2E.** | **Complete (R1 acceptance NOT met at N>1 slices, see limitations)** |
+| Remote Daemon R2: Control Plane | TCI over `wss` so the GUI drives a daemon-owned radio. Blocked on the N>1 slice defect: R2 assumes a daemon that receives on N slices. | Planned |
 | 3M-2: CW TX (was 3I-CW) | Sidetone, firmware keyer, QSK/break-in. Deferred until after 3M-3 ships AND the HL2 ATT/filter audit closes (so an HL2 can be CW-bench'd safely). Absorbs the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-1252 [@c26a8a4]` — desk-review B3). | Planned |
 | **3M-4: PureSignal** | **Feedback DDC plumbing on P1 + P2, `calcc.c` + `iqc.c` vendored verbatim from Thetis, `PureSignal` coordinator + `PsccPump` + per-board `PsDdcConfig`, `PsForm` modeless dialog (Tools → PureSignal), `AmpView` modeless dialog, two-tone IMD overlay, `PsaIndicatorWidget` bottom-banner FB+PS pair. Enabled on every supported P1 + P2 SKU including HL2 (negative-ATT support, AutoAtt convergence, ATT-on-TX master force-enable, psSampleRate=0 sentinel resolution) and plain Hermes.** | **Complete (shipped v0.4.0)** |
 | 3F: Multi-Panadapter | DDC assignment (incl. PS states), FFTRouter, PanadapterStack, enable RX2 | Planned |

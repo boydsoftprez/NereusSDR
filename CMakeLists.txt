@@ -80,9 +80,9 @@ endif()
 # unoptimised so single-step debugging still works.
 option(NEREUSSDR_AGGRESSIVE_OPT "Use -O3 (instead of -O2) for release builds" ON)
 # 2026-05-26 KG4VCF: LTO default flipped to OFF.  With LTO enabled on
-# the shared NereusSDRObjs object library, every test binary (526 of
-# them) inherits the LTO bitcode and triggers a multi-minute LTO link
-# of its own.  Net effect on a clean build: 1+ hour, load avg 250+,
+# the shared NereusCore/NereusGui object libraries, every test binary
+# (589 of them) inherits the LTO bitcode and triggers a multi-minute LTO
+# link of its own.  Net effect on a clean build: 1+ hour, load avg 250+,
 # unusable while building.  Per-target IPO=FALSE on tests doesn't
 # undo the bitcode embed.  Default LTO off makes dev builds fast;
 # release artifacts can opt in via `cmake -DNEREUSSDR_ENABLE_LTO=ON`.
@@ -110,14 +110,14 @@ if(NEREUSSDR_ENABLE_LTO)
     check_ipo_supported(RESULT _lto_ok OUTPUT _lto_err)
     if(_lto_ok)
         # 2026-05-26 KG4VCF: LTO is applied PER-TARGET below (only the
-        # main NereusSDR executable + the parallel NereusSDRObjs_LTO
-        # object library it links).  We deliberately do NOT set the
-        # global CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO
-        # flag, because that would make the shared NereusSDRObjs (used
-        # by 526 test executables) produce LTO bitcode, and every test
-        # link would then trigger a multi-minute LTO pass.  Net effect
-        # of the old global setting on a clean build: ~1 hour, load
-        # avg 250+, dev-loop unusable while building.
+        # main NereusSDR executable + the parallel NereusCore_LTO/
+        # NereusGui_LTO object libraries it links).  We deliberately do
+        # NOT set the global CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO
+        # flag, because that would make the shared NereusCore/NereusGui
+        # (used by 589 test executables) produce LTO bitcode, and every
+        # test link would then trigger a multi-minute LTO pass.  Net
+        # effect of the old global setting on a clean build: ~1 hour,
+        # load avg 250+, dev-loop unusable while building.
         set(NEREUSSDR_LTO_AVAILABLE TRUE)
         message(STATUS "NereusSDR: link-time optimization enabled (main app only)")
     else()
@@ -622,6 +622,50 @@ set(CORE_SOURCES
     # scratch, audio ring) so the kernel can not compress / page them
     # under heavy memory pressure (parallel builds, Spotlight, etc.).
     src/core/MemoryLock.cpp
+    # R1 Task 3: SpectrumDetector/SpectrumAvenger relocated from
+    # src/gui/spectrum/ -- verbatim WDSP analyzer.c ports with no GUI
+    # dependency, needed by the headless daemon build split.
+    src/core/spectrum/SpectrumDetector.cpp
+    src/core/spectrum/SpectrumAvenger.cpp
+    # R1 Task 5: crop-and-reduce extracted from SpectrumWidget.  Takes an
+    # explicit pixel count and an explicit (centreHz, spanHz) window rather
+    # than reading widget geometry and widget member state, so the daemon
+    # can run the same reduction with no widget in the process.
+    src/core/spectrum/SpectrumReducer.cpp
+    # R1 Task 6: per-stream FFTEngine pool extracted from
+    # MainWindow::createFftEngineForStream / m_fftEngines / m_fftThread.
+    # Owns engine lifecycle, the four global display AppSettings-sourced
+    # knobs (as FftPoolConfig), and the shared worker thread(s), so the
+    # daemon can produce spectrum with no widget toolkit in the process.
+    src/core/spectrum/FftEnginePool.cpp
+    # R1 Task 7: consumer-to-stream subscription set extracted from the
+    # router-mutation half of MainWindow::rebuildFftRouting. Rebuilds an
+    # FFTRouter from its own subscription set on demand, so the daemon can
+    # drive the same router from remote-endpoint ids with no PanadapterStack
+    # (a QWidget) in the process.
+    src/core/spectrum/FftTopology.cpp
+    # R1 Task 8: shared startup sequence (settings load, one-shot schema
+    # migrations, LogManager restore, file-logging install) extracted from
+    # main(), each of which used to have exactly one call site. Lets
+    # server_main.cpp (R1 Task 9) run the identical sequence instead of a
+    # daemon-first install running against an unmigrated settings store.
+    src/core/CoreInit.cpp
+    # R1 Task 9: nereusd's own "key = value" config file parser (default
+    # /etc/nereusd.conf). Widget-free by construction (QString/QFile/
+    # QTextStream only) so it links into nereusd alongside NereusCore with
+    # no NereusGui dependency.
+    src/core/daemon/DaemonConfig.cpp
+    # R1 Task 10: connects the daemon to a radio (or runs discovery) and
+    # tops the slice list up to min(cfg.sliceCount, connected-board-
+    # maxSlices) using RadioModel's own addSlice() -- the same entry
+    # point RadioModel::connectToRadio() uses for Slice A, not the
+    # GUI-only addSliceOnPan(). Includes models/RadioModel.h (declared in
+    # MODEL_SOURCES below); CMake source-list variables are plain lists
+    # evaluated at generate time, so this forward reference to a set
+    # declared later in the file is fine -- both lists end up as sources
+    # on the same NereusCore target either way (see the add_library
+    # call further down).
+    src/core/daemon/DaemonApp.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the
@@ -691,8 +735,6 @@ set(GUI_SOURCES
     src/gui/VaxFirstRunDialog.cpp
     src/gui/spectrum/ActivePeakHoldTrace.cpp
     src/gui/spectrum/PeakBlobDetector.cpp
-    src/gui/spectrum/SpectrumDetector.cpp
-    src/gui/spectrum/SpectrumAvenger.cpp
     src/gui/SpectrumWidget.cpp
     src/gui/PanadapterApplet.cpp
     src/gui/PanadapterStack.cpp
@@ -957,9 +999,16 @@ endif()
 # the executable target below so .icns lands in Contents/Resources/ and
 # Windows .rc lands on the linker line.
 # --------------------------------------------------------------------------
-add_library(NereusSDRObjs OBJECT
+# Split for the headless daemon (docs/architecture/2026-07-28-remote-daemon-architecture-design.md
+# section 4.1).  NereusCore must reference no widget symbol so nereusd can link
+# it alone.  NereusSDRObjs survives as an INTERFACE aggregate because 589
+# nereus_add_test() call sites link it by name and reuse its PCH.
+add_library(NereusCore OBJECT
     ${CORE_SOURCES}
     ${MODEL_SOURCES}
+)
+
+add_library(NereusGui OBJECT
     ${GUI_SOURCES}
     ${RESOURCES}
 )
@@ -969,42 +1018,72 @@ add_library(NereusSDRObjs OBJECT
 # already gates the menu wiring on Q_OS_LINUX, so the .cpp shouldn't enter
 # the build on macOS or Windows.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_sources(NereusSDRObjs PRIVATE src/gui/VaxLinuxFirstRunDialog.cpp)
+    target_sources(NereusGui PRIVATE src/gui/VaxLinuxFirstRunDialog.cpp)
 endif()
 
-# 2026-05-26 KG4VCF: parallel LTO-enabled object library, ONLY built
-# when NEREUSSDR_ENABLE_LTO=ON.  Same sources as NereusSDRObjs above,
+add_library(NereusSDRObjs INTERFACE)
+target_link_libraries(NereusSDRObjs INTERFACE NereusCore NereusGui)
+# target_link_libraries() alone propagates NereusCore/NereusGui's USAGE
+# REQUIREMENTS (link libraries, include dirs, compile definitions) to
+# whatever links NereusSDRObjs, but does NOT propagate their compiled
+# object files: CMake's "linking an OBJECT library adds its objects to my
+# sources" behavior only triggers when a target names the OBJECT library
+# directly in its own target_link_libraries call, not through another
+# level of indirection. Verified by an actual link failure (every symbol
+# from both object libraries came back undefined) before this line was
+# added. Declaring the objects as INTERFACE sources here is what actually
+# makes every existing target_link_libraries(x PRIVATE NereusSDRObjs) call
+# site link real code.
+target_sources(NereusSDRObjs INTERFACE
+    $<TARGET_OBJECTS:NereusCore>
+    $<TARGET_OBJECTS:NereusGui>
+)
+
+# 2026-05-26 KG4VCF: parallel LTO-enabled object library pair, ONLY built
+# when NEREUSSDR_ENABLE_LTO=ON.  Same sources as NereusCore/NereusGui above,
 # but compiled with LTO bitcode so the main NereusSDR app's link can
 # do cross-translation-unit optimization.  Tests continue to link the
-# plain NereusSDRObjs (no bitcode), so test link times stay fast.
+# plain NereusSDRObjs aggregate (no bitcode), so test link times stay fast.
 #
 # This is more work to build a release artifact (sources compile
 # twice) but it keeps the dev loop fast while preserving the LTO perf
 # benefit for shipped binaries.
+#
+# NereusCore_LTO/NereusGui_LTO independently recompile the same source
+# lists rather than linking their non-LTO twins PUBLIC: linking, say,
+# NereusCore_LTO to NereusCore would pull NereusCore's already-compiled
+# objects into the same link as NereusCore_LTO's own copies of the same
+# translation units, producing duplicate symbols. The nereus_apply_*_deps()
+# functions defined below are called once per twin so all four targets'
+# dependency sets stay identical without that link.
 if(NEREUSSDR_LTO_AVAILABLE)
-    add_library(NereusSDRObjs_LTO OBJECT
+    add_library(NereusCore_LTO OBJECT
         ${CORE_SOURCES}
         ${MODEL_SOURCES}
+    )
+    add_library(NereusGui_LTO OBJECT
         ${GUI_SOURCES}
         ${RESOURCES}
     )
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_sources(NereusSDRObjs_LTO PRIVATE src/gui/VaxLinuxFirstRunDialog.cpp)
+        target_sources(NereusGui_LTO PRIVATE src/gui/VaxLinuxFirstRunDialog.cpp)
     endif()
-    set_target_properties(NereusSDRObjs_LTO PROPERTIES
-        INTERPROCEDURAL_OPTIMIZATION TRUE
-        INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
-        INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
+    foreach(_nereus_lto_target NereusCore_LTO NereusGui_LTO)
+        set_target_properties(${_nereus_lto_target} PROPERTIES
+            INTERPROCEDURAL_OPTIMIZATION TRUE
+            INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+            INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
+    endforeach()
 endif()
 
 add_executable(NereusSDR src/main.cpp ${APP_ICON_SOURCES})
 if(NEREUSSDR_LTO_AVAILABLE)
-    # Main app + its OBJECT-lib link both get LTO when enabled.  The
+    # Main app + its OBJECT-lib twins link both get LTO when enabled.  The
     # IPO property on the executable arranges -flto on the link line;
-    # the IPO property on NereusSDRObjs_LTO above puts -flto on every
-    # compile.  Together: full cross-TU optimization for the shipped
+    # the IPO property on NereusCore_LTO/NereusGui_LTO above puts -flto on
+    # every compile.  Together: full cross-TU optimization for the shipped
     # binary.
-    target_link_libraries(NereusSDR PRIVATE NereusSDRObjs_LTO)
+    target_link_libraries(NereusSDR PRIVATE NereusCore_LTO NereusGui_LTO)
     set_target_properties(NereusSDR PROPERTIES
         INTERPROCEDURAL_OPTIMIZATION TRUE
         INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
@@ -1043,90 +1122,244 @@ if(APPLE)
     )
 endif()
 
-target_include_directories(NereusSDRObjs PUBLIC
-    ${CMAKE_SOURCE_DIR}/src
-)
+# --------------------------------------------------------------------------
+# nereusd -- headless daemon (R1 Task 9; see
+# docs/architecture/2026-08-02-remote-daemon-r1-plan.md Task 9 and
+# docs/architecture/2026-07-28-remote-daemon-architecture-design.md section 4).
+#
+# Links NereusCore ONLY: no NereusGui, no NereusSDRObjs, no LTO twin. This is
+# the acceptance test the whole R1 CMake split (Task 1) exists to make
+# possible -- a build failure here on a widget symbol means an extraction
+# from Tasks 2 through 7 is incomplete and must be fixed at the source, not
+# papered over by linking NereusGui. A plain console executable (no
+# WIN32_EXECUTABLE, no MACOSX_BUNDLE): it has no window to show, and a Pi
+# running it under systemd wants stdout/stderr and an exit code, not an
+# app bundle. No LTO twin for the same reason NereusSDR gets one and this
+# does not yet: nereusd is a new, still-growing binary (R1 Tasks 10-13 add
+# to it), and NereusCore/NereusCore_LTO's dependency sets are kept identical
+# by nereus_apply_core_deps() below regardless, so adding one is a
+# non-behavioural follow-up whenever the daemon's own performance profile
+# asks for it, not a Task 9 concern.
+# --------------------------------------------------------------------------
+add_executable(nereusd src/server_main.cpp)
+target_link_libraries(nereusd PRIVATE NereusCore)
 
 # --------------------------------------------------------------------------
-# Linking
+# NereusCore / NereusGui dependency application (R1 Task 1; see
+# docs/architecture/2026-07-28-remote-daemon-architecture-design.md section 4.1)
+#
+# NereusCore, NereusGui, and their LTO twins are four distinct OBJECT
+# library targets. Rather than hand-duplicating each target_link_libraries /
+# target_include_directories / target_compile_definitions call for all four,
+# the dependency set each half needs is hoisted into the two functions below
+# and applied by calling them once per target. NereusGui/NereusGui_LTO see
+# the NereusCore dependencies transitively because they link their
+# NereusCore twin PUBLIC (below).
+#
+# Qt6::Svg is GUI-only. Qt6::Widgets and Qt6::GuiPrivate are still on
+# NereusCore too, despite being the two names the R1 plan expected to be
+# GUI-only. R1 Task 4 removed the #include chain that used to force this
+# (src/models/RadioModel.cpp no longer reaches gui/SpectrumWidget.h), but
+# the links themselves stay here on purpose: dropping them is a separate
+# build-and-fix pass that has to verify nothing else compiled into
+# NereusCore still needs Qt Widgets or GuiPrivate transitively, and
+# removing them without that verification could break the app link in
+# ways a source-only change cannot catch. See the comments in
+# nereus_apply_core_deps() for detail.
 # --------------------------------------------------------------------------
-target_link_libraries(NereusSDRObjs PUBLIC
-    Qt6::Core
-    Qt6::Widgets
-    Qt6::Network
-    Qt6::Multimedia
-    Qt6::Svg
-    ZLIB::ZLIB
-)
+function(nereus_apply_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W3 /Zc:__cplusplus)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            target_compile_options(${target} PUBLIC -fsanitize=address)
+        endif()
+    endif()
+endfunction()
+
+function(nereus_apply_core_deps target)
+    target_include_directories(${target} PUBLIC
+        ${CMAKE_SOURCE_DIR}/src
+    )
+
+    target_link_libraries(${target} PUBLIC
+        Qt6::Core
+        Qt6::Network
+        Qt6::Multimedia
+        ZLIB::ZLIB
+    )
+
+    # Qt6::Widgets is linked onto NereusCore deliberately, and it is NOT a
+    # leftover waiting to be removed.
+    #
+    # R1 Task 4 ("Extract ISpectrumSink from RadioModel") removed the
+    # reason this link was originally load-bearing: RadioModel.cpp no
+    # longer includes gui/SpectrumWidget.h, and its former direct
+    # m_spectrumWidget->setHighSwrOverlay(...) calls now go through the
+    # abstract NereusSDR::ISpectrumSink interface. An earlier version of
+    # this comment therefore said the removal was pending "an actual
+    # build" verifying nothing else in NereusCore needs Widgets
+    # transitively. That audit has now been done (R1 merge-blocker fix
+    # round): the only widget-family include anywhere in src/core or
+    # src/models is <QDesktopServices> in core/SupportBundle.cpp, and
+    # that header is QtGui, not QtWidgets. No source-level need remains.
+    #
+    # The link still cannot be dropped, for a build-system reason rather
+    # than a source one: the precompiled header attached to NereusCore
+    # below has a "GUI commons" section carrying <QWidget> / <QPainter> /
+    # <QPen> / <QBrush>, and NereusGui (217 of 351 TUs) consumes that same
+    # PCH via REUSE_FROM, which is what makes the PCH pay for itself.
+    # Dropping Widgets here breaks PCH compilation. Splitting the PCH is
+    # a build-performance change that needs its own measurement, and is
+    # not something to do as a drive-by.
+    #
+    # What keeps the invariant honest in the meantime is
+    # tests/tst_core_has_no_gui_includes.cpp, which fails on any include
+    # from src/core or src/models that reaches into src/gui, into
+    # QtWidgets / QtQuick and friends, into the QtGui rendering stack, or
+    # into QRhi. That guard, not this link, is the enforcement point.
+    target_link_libraries(${target} PUBLIC Qt6::Widgets)
+
+    if(APPLE)
+        # AVFoundation provides AVCaptureDevice for the launch-time mic-permission
+        # prompt (src/core/MacMicPermission.mm, issue #203).
+        target_link_libraries(${target} PUBLIC "-framework AVFoundation")
+
+        # CoreAudio framework for AudioObjectGetPropertyData +
+        # kAudioDevicePropertyIOThreadOSWorkgroup used by
+        # src/core/audio/RealtimeAudioPriority.cpp.  The os_workgroup_*
+        # APIs themselves come from libSystem (already linked) but the
+        # property-query helpers and AudioDeviceID type live in CoreAudio.
+        target_link_libraries(${target} PUBLIC "-framework CoreAudio")
+    endif()
+
+    if(WIN32)
+        # avrt provides AvSetMmThreadCharacteristicsW + AvRevertMmThreadCharacteristics
+        # used by src/core/audio/RealtimeAudioPriority.cpp to join the
+        # "Pro Audio" MMCSS task class.
+        target_link_libraries(${target} PUBLIC avrt)
+    endif()
+
+    if(Qt6SerialPort_FOUND)
+        target_link_libraries(${target} PUBLIC Qt6::SerialPort)
+        target_compile_definitions(${target} PUBLIC HAVE_SERIALPORT)
+    endif()
+
+    # Qt6::WebSockets is REQUIRED above; the link and HAVE_WEBSOCKETS define
+    # are unconditional. The #ifdef HAVE_WEBSOCKETS guards in TciServer,
+    # FreeDVReporterClient, MainWindow, and SpotHubDialog are now redundant
+    # but left in place to keep this PR surgical; cleanup tracked as a
+    # follow-up.
+    target_link_libraries(${target} PUBLIC Qt6::WebSockets)
+    target_compile_definitions(${target} PUBLIC HAVE_WEBSOCKETS)
+
+    if(FFTW3_FOUND)
+        target_include_directories(${target} PUBLIC ${FFTW3_INCLUDE_DIRS})
+        target_link_libraries(${target} PUBLIC ${FFTW3_LIBRARIES})
+        target_compile_definitions(${target} PUBLIC HAVE_FFTW3)
+    endif()
+
+    # libpipewire-0.3, gated by the pkg_check_modules block above. Only links on
+    # Linux when the dev package is present; NEREUS_HAVE_PIPEWIRE lets follow-up
+    # PipeWire sources compile conditionally.
+    if(PIPEWIRE_FOUND)
+        target_link_libraries(${target} PUBLIC ${PIPEWIRE_LIBRARIES})
+        target_include_directories(${target} PUBLIC ${PIPEWIRE_INCLUDE_DIRS})
+        target_compile_options(${target} PUBLIC ${PIPEWIRE_CFLAGS_OTHER})
+        target_compile_definitions(${target} PUBLIC NEREUS_HAVE_PIPEWIRE)
+        target_sources(${target} PRIVATE
+            src/core/audio/PipeWireThreadLoop.cpp
+            src/core/audio/PipeWireStream.cpp
+            src/core/audio/PipeWireBus.cpp
+        )
+    endif()
+
+    if(WDSP_FOUND)
+        target_link_libraries(${target} PUBLIC wdsp_static)
+        target_compile_definitions(${target} PUBLIC HAVE_WDSP)
+    endif()
+
+    target_link_libraries(${target} PUBLIC rade)
+    target_include_directories(${target} PUBLIC
+        ${CMAKE_SOURCE_DIR}/third_party/rade/src
+        ${CMAKE_BINARY_DIR}/third_party/rade/build_opus-prefix/src/build_opus/include
+        ${CMAKE_BINARY_DIR}/third_party/rade/build_opus-prefix/src/build_opus/dnn
+        ${CMAKE_BINARY_DIR}/third_party/rade/build_opus-prefix/src/build_opus/celt
+        ${CMAKE_BINARY_DIR}/third_party/rade/build_opus-prefix/src/build_opus
+    )
+
+    target_link_libraries(${target} PUBLIC r8brain)
+
+    if(ENABLE_DFNR)
+        target_sources(${target} PRIVATE src/core/DeepFilterFilter.cpp)
+        target_include_directories(${target} PRIVATE ${DEEPFILTER_DIR}/include)
+        target_link_libraries(${target} PRIVATE ${DFNR_LIB})
+        # PUBLIC, not PRIVATE: src/gui/setup/DspSetupPages.cpp checks
+        # #ifdef HAVE_DFNR to decide whether to show the real DeepFilter NR
+        # controls or a "not compiled in" note, and DspSetupPages.cpp
+        # compiles into NereusGui. The define has to cross the
+        # NereusGui->NereusCore link, so it cannot stay PRIVATE the way it
+        # was on the single pre-split object library.
+        target_compile_definitions(${target} PUBLIC HAVE_DFNR)
+    endif()
+
+    if(ENABLE_MNR AND APPLE)
+        target_sources(${target} PRIVATE src/core/MacNRFilter.cpp)
+        target_link_libraries(${target} PUBLIC "-framework Accelerate")
+        target_compile_definitions(${target} PUBLIC HAVE_MNR)
+    endif()
+
+    # PortAudio (Phase 3O VAX): always linked; PortAudioBus is the cross-platform
+    # IAudioBus fallback when no native low-latency backend is available.
+    target_link_libraries(${target} PRIVATE portaudio_static)
+    target_include_directories(${target} PUBLIC ${portaudio_SOURCE_DIR}/include)
+
+    if(NEREUS_GPU_SPECTRUM)
+        target_compile_definitions(${target} PUBLIC NEREUS_GPU_SPECTRUM)
+
+        # Same history as the Qt6::Widgets link above: this used to be
+        # load-bearing only because RadioModel.cpp (a NereusCore source)
+        # reached gui/SpectrumWidget.h, a QRhiWidget subclass that pulls in
+        # <rhi/qrhi.h> (Qt6::GuiPrivate) whenever GPU spectrum is enabled.
+        # R1 Task 4 removed that include. The link is kept here for the
+        # same reason as Qt6::Widgets above, pending the same follow-up
+        # verification before either is dropped.
+        target_link_libraries(${target} PUBLIC Qt6::GuiPrivate)
+    endif()
+
+    target_compile_definitions(${target} PUBLIC
+        NEREUSSDR_VERSION="${PROJECT_VERSION}"
+    )
+
+    nereus_apply_warnings(${target})
+endfunction()
+
+function(nereus_apply_gui_deps target)
+    # Qt6::Widgets and Qt6::GuiPrivate are NOT listed here: both are
+    # NereusCore dependencies for now (see the comments in
+    # nereus_apply_core_deps()), and NereusGui/NereusGui_LTO see them
+    # transitively through the NereusCore PUBLIC link below.
+    target_link_libraries(${target} PUBLIC
+        Qt6::Svg
+    )
+
+    nereus_apply_warnings(${target})
+endfunction()
 
 if(WIN32)
     # Needed by RadioDiscovery.cpp's setsockopt() call for SO_BROADCAST.
     target_link_libraries(NereusSDR PRIVATE ws2_32)
 endif()
 
-if(APPLE)
-    # AVFoundation provides AVCaptureDevice for the launch-time mic-permission
-    # prompt (src/core/MacMicPermission.mm, issue #203).
-    target_link_libraries(NereusSDRObjs PUBLIC "-framework AVFoundation")
-
-    # CoreAudio framework for AudioObjectGetPropertyData +
-    # kAudioDevicePropertyIOThreadOSWorkgroup used by
-    # src/core/audio/RealtimeAudioPriority.cpp.  The os_workgroup_*
-    # APIs themselves come from libSystem (already linked) but the
-    # property-query helpers and AudioDeviceID type live in CoreAudio.
-    target_link_libraries(NereusSDRObjs PUBLIC "-framework CoreAudio")
-endif()
-
-if(WIN32)
-    # avrt provides AvSetMmThreadCharacteristicsW + AvRevertMmThreadCharacteristics
-    # used by src/core/audio/RealtimeAudioPriority.cpp to join the
-    # "Pro Audio" MMCSS task class.
-    target_link_libraries(NereusSDRObjs PUBLIC avrt)
-endif()
-
-if(Qt6SerialPort_FOUND)
-    target_link_libraries(NereusSDRObjs PUBLIC Qt6::SerialPort)
-    target_compile_definitions(NereusSDRObjs PUBLIC HAVE_SERIALPORT)
-endif()
-
-# Qt6::WebSockets is REQUIRED above; the link and HAVE_WEBSOCKETS define
-# are unconditional. The #ifdef HAVE_WEBSOCKETS guards in TciServer,
-# FreeDVReporterClient, MainWindow, and SpotHubDialog are now redundant
-# but left in place to keep this PR surgical; cleanup tracked as a
-# follow-up.
-target_link_libraries(NereusSDRObjs PUBLIC Qt6::WebSockets)
-target_compile_definitions(NereusSDRObjs PUBLIC HAVE_WEBSOCKETS)
-
-if(FFTW3_FOUND)
-    target_include_directories(NereusSDRObjs PUBLIC ${FFTW3_INCLUDE_DIRS})
-    target_link_libraries(NereusSDRObjs PUBLIC ${FFTW3_LIBRARIES})
-    target_compile_definitions(NereusSDRObjs PUBLIC HAVE_FFTW3)
-endif()
-
-# libpipewire-0.3 — gated by the pkg_check_modules block above. Only links on
-# Linux when the dev package is present; NEREUS_HAVE_PIPEWIRE lets follow-up
-# PipeWire sources compile conditionally.
-if(PIPEWIRE_FOUND)
-    target_link_libraries(NereusSDRObjs PUBLIC ${PIPEWIRE_LIBRARIES})
-    target_include_directories(NereusSDRObjs PUBLIC ${PIPEWIRE_INCLUDE_DIRS})
-    target_compile_options(NereusSDRObjs PUBLIC ${PIPEWIRE_CFLAGS_OTHER})
-    target_compile_definitions(NereusSDRObjs PUBLIC NEREUS_HAVE_PIPEWIRE)
-    target_sources(NereusSDRObjs PRIVATE
-        src/core/audio/PipeWireThreadLoop.cpp
-        src/core/audio/PipeWireStream.cpp
-        src/core/audio/PipeWireBus.cpp
-    )
-endif()
-
 if(WDSP_FOUND)
     # Sub-epic C-1 NR backends: rnnoise (NR3/rnnr.c) and libspecbleach (NR4/sbnr.c).
     # Must be add_subdirectory'd before wdsp so the targets exist when
     # third_party/wdsp/CMakeLists.txt pulls them in as PUBLIC link deps.
+    # wdsp_static is linked from nereus_apply_core_deps(), called below.
     add_subdirectory(third_party/rnnoise)
     add_subdirectory(third_party/libspecbleach)
     add_subdirectory(third_party/wdsp)
-    target_link_libraries(NereusSDRObjs PUBLIC wdsp_static)
-    target_compile_definitions(NereusSDRObjs PUBLIC HAVE_WDSP)
 endif()
 
 # --------------------------------------------------------------------------
@@ -1144,24 +1377,15 @@ endif()
 # Opus source tree (under build_opus-prefix/src/build_opus). Upstream
 # adds these via directory-scope include_directories() in BuildOpus.cmake,
 # which only reaches sources compiled inside the rade subdirectory.
-# We re-expose them as target-scope include dirs on NereusSDRObjs so
-# any future NereusSDR consumer that #includes "rade_api.h" can resolve
-# the transitive Opus headers.
+# We re-expose them as target-scope include dirs on NereusCore (via
+# nereus_apply_core_deps(), called below) so any future NereusSDR consumer
+# that #includes "rade_api.h" can resolve the transitive Opus headers.
 # --------------------------------------------------------------------------
 add_subdirectory(third_party/rade)
 
 if(NOT TARGET rade)
     message(FATAL_ERROR "RADE library target 'rade' not found after add_subdirectory(third_party/rade)")
 endif()
-
-target_link_libraries(NereusSDRObjs PUBLIC rade)
-target_include_directories(NereusSDRObjs PUBLIC
-    ${CMAKE_SOURCE_DIR}/third_party/rade/src
-    ${CMAKE_BINARY_DIR}/third_party/rade/build_opus-prefix/src/build_opus/include
-    ${CMAKE_BINARY_DIR}/third_party/rade/build_opus-prefix/src/build_opus/dnn
-    ${CMAKE_BINARY_DIR}/third_party/rade/build_opus-prefix/src/build_opus/celt
-    ${CMAKE_BINARY_DIR}/third_party/rade/build_opus-prefix/src/build_opus
-)
 
 # rade is a SHARED library on Windows (rade.dll). NereusSDR.exe load-time
 # imports it via __declspec(dllimport), so without rade.dll on the DLL
@@ -1187,7 +1411,6 @@ endif()
 # "CDSPResampler.h".
 # --------------------------------------------------------------------------
 add_subdirectory(third_party/r8brain)
-target_link_libraries(NereusSDRObjs PUBLIC r8brain)
 
 # --------------------------------------------------------------------------
 # DeepFilterNet3 DFNR — pre-built neural noise reduction library (MIT/Apache-2.0)
@@ -1238,10 +1461,8 @@ if(ENABLE_DFNR)
 endif()
 
 if(ENABLE_DFNR)
-    target_sources(NereusSDRObjs PRIVATE src/core/DeepFilterFilter.cpp)
-    target_include_directories(NereusSDRObjs PRIVATE ${DEEPFILTER_DIR}/include)
-    target_link_libraries(NereusSDRObjs PRIVATE ${DFNR_LIB})
-    target_compile_definitions(NereusSDRObjs PRIVATE HAVE_DFNR)
+    # Sources / include dirs / link lib / HAVE_DFNR define applied by
+    # nereus_apply_core_deps(), called below.
     if(WIN32)
         target_link_libraries(NereusSDR PRIVATE ws2_32 bcrypt userenv ntdll)
         if(DFNR_DLL AND EXISTS ${DFNR_DLL})
@@ -1299,45 +1520,53 @@ endif()
 # --------------------------------------------------------------------------
 option(ENABLE_MNR "Enable MNR Apple Accelerate noise reduction (macOS only)" ON)
 if(ENABLE_MNR AND APPLE)
-    target_sources(NereusSDRObjs PRIVATE src/core/MacNRFilter.cpp)
-    target_link_libraries(NereusSDRObjs PUBLIC "-framework Accelerate")
-    target_compile_definitions(NereusSDRObjs PUBLIC HAVE_MNR)
+    # Sources / link / HAVE_MNR define applied by nereus_apply_core_deps(),
+    # called below.
     message(STATUS "MNR (Apple Accelerate) enabled")
 elseif(ENABLE_MNR)
     set(ENABLE_MNR OFF)
     message(STATUS "MNR (Apple Accelerate) disabled — macOS only")
 endif()
 
-# PortAudio (Phase 3O VAX) — always linked; PortAudioBus is the cross-platform
-# IAudioBus fallback when no native low-latency backend is available.
-target_link_libraries(NereusSDRObjs PRIVATE portaudio_static)
-target_include_directories(NereusSDRObjs PUBLIC ${portaudio_SOURCE_DIR}/include)
+nereus_apply_core_deps(NereusCore)
+nereus_apply_gui_deps(NereusGui)
+target_link_libraries(NereusGui PUBLIC NereusCore)
 
-if(NEREUS_GPU_SPECTRUM)
-    target_link_libraries(NereusSDRObjs PUBLIC Qt6::GuiPrivate)
-    target_compile_definitions(NereusSDRObjs PUBLIC NEREUS_GPU_SPECTRUM)
+if(NEREUSSDR_LTO_AVAILABLE)
+    nereus_apply_core_deps(NereusCore_LTO)
+    nereus_apply_gui_deps(NereusGui_LTO)
+    target_link_libraries(NereusGui_LTO PUBLIC NereusCore_LTO)
+endif()
 
-    if(Qt6ShaderTools_FOUND)
-        qt_add_shaders(NereusSDRObjs "nereus_shaders"
-            PREFIX "/shaders"
-            FILES
-                resources/shaders/waterfall.vert
-                resources/shaders/waterfall.frag
-                resources/shaders/spectrum.vert
-                resources/shaders/spectrum.frag
-                resources/shaders/overlay.vert
-                resources/shaders/overlay.frag
-        )
+# GPU shader resources are attached to NereusCore only, not to
+# NereusCore_LTO. qt_add_shaders()'s generated custom command uses an
+# OUTPUT path derived from CMAKE_CURRENT_BINARY_DIR plus the shader's
+# relative source path, not from the target name; calling it a second
+# time for the same shader files from this same directory scope would
+# register a second custom command for the same output file and fail the
+# configure. This matches the pre-split object library exactly:
+# NereusSDRObjs_LTO never carried the shader resource either, since
+# qt_add_shaders(NereusSDRObjs ...) was the only call site.
+if(NEREUS_GPU_SPECTRUM AND Qt6ShaderTools_FOUND)
+    qt_add_shaders(NereusCore "nereus_shaders"
+        PREFIX "/shaders"
+        FILES
+            resources/shaders/waterfall.vert
+            resources/shaders/waterfall.frag
+            resources/shaders/spectrum.vert
+            resources/shaders/spectrum.frag
+            resources/shaders/overlay.vert
+            resources/shaders/overlay.frag
+    )
 
-        qt_add_shaders(NereusSDRObjs "nereus_meter_shaders"
-            PREFIX "/shaders"
-            FILES
-                resources/shaders/meter_textured.vert
-                resources/shaders/meter_textured.frag
-                resources/shaders/meter_geometry.vert
-                resources/shaders/meter_geometry.frag
-        )
-    endif()
+    qt_add_shaders(NereusCore "nereus_meter_shaders"
+        PREFIX "/shaders"
+        FILES
+            resources/shaders/meter_textured.vert
+            resources/shaders/meter_textured.frag
+            resources/shaders/meter_geometry.vert
+            resources/shaders/meter_geometry.frag
+    )
 endif()
 
 # --------------------------------------------------------------------------
@@ -1404,7 +1633,7 @@ add_custom_target(nereus_build_tag ALL
 add_dependencies(NereusSDR nereus_build_tag)
 
 # Deliberately PRIVATE to the executable, and deliberately consumed only by
-# src/main.cpp. Every one of the ~450 test executables links NereusSDRObjs,
+# src/main.cpp. Every one of the 589 test executables links NereusCore,
 # so a generated header reaching that object library would relink all of them
 # each time HEAD moved. Confined here, a new commit recompiles one small
 # translation unit and relinks one binary. main.cpp hands the value to
@@ -1412,23 +1641,22 @@ add_dependencies(NereusSDR nereus_build_tag)
 target_include_directories(NereusSDR PRIVATE "${CMAKE_BINARY_DIR}/generated")
 
 # --------------------------------------------------------------------------
-# Version define
+# Version define + compiler warnings
+#
+# Both are applied via nereus_apply_core_deps() / nereus_apply_warnings()
+# above (called once per OBJECT library twin: NereusCore, NereusGui, and
+# their LTO variants). NereusSDRObjs is now a source-less INTERFACE
+# aggregate and cannot carry PUBLIC/PRIVATE compile definitions or options
+# directly, so those calls moved to the concrete targets.
+#
+# The one exception is the address-sanitizer LINK flag below: main.cpp is
+# compiled directly into the NereusSDR executable target (not into
+# NereusCore/NereusGui), so it needs its own -fsanitize=address on the
+# link line to match the compile-time instrumentation nereus_apply_warnings()
+# already gives NereusCore/NereusGui in Debug builds.
 # --------------------------------------------------------------------------
-target_compile_definitions(NereusSDRObjs PUBLIC
-    NEREUSSDR_VERSION="${PROJECT_VERSION}"
-)
-
-# --------------------------------------------------------------------------
-# Compiler warnings
-# --------------------------------------------------------------------------
-if(MSVC)
-    target_compile_options(NereusSDRObjs PRIVATE /W3 /Zc:__cplusplus)
-else()
-    target_compile_options(NereusSDRObjs PRIVATE -Wall -Wextra -Wpedantic)
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        target_compile_options(NereusSDRObjs PUBLIC -fsanitize=address)
-        target_link_options(NereusSDR PRIVATE -fsanitize=address)
-    endif()
+if(NOT MSVC AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_link_options(NereusSDR PRIVATE -fsanitize=address)
 endif()
 
 # --------------------------------------------------------------------------
@@ -1437,12 +1665,19 @@ endif()
 # CI bake-off (ubuntu-24.04, 4 vCPU, 451 test executables) showed Linux
 # spending ~33m in the build step vs ~6m on macOS / ~12m on Windows.
 # Most of that is repeated parsing of Qt6 + STL headers across the
-# NereusSDRObjs translation units AND across every test target that
+# NereusCore translation units AND across every test target that
 # REUSE_FROMs this PCH (see tests/CMakeLists.txt nereus_add_test()).
 #
 # Keep the list conservative: only headers used by the vast majority of
 # TUs. Adding rarely-used headers slows incremental builds because every
 # PCH change retriggers all consumers.
+#
+# NereusGui reuses this PCH too (REUSE_FROM below). NereusGui accounts for
+# 217 of the object libraries' 351 translation units, so the PCH needs to
+# cover both to actually pay for itself; the "GUI commons" header set
+# right below exists for exactly those TUs. Safe to reuse: GUI_SOURCES
+# has zero .mm files, so the Objective-C++ SKIP_PRECOMPILE_HEADERS
+# problem below (which is specific to MacMicPermission.mm) doesn't apply.
 #
 # ccache must be configured with sloppiness=pch_defines,time_macros for
 # PCH'd compiles to be cacheable; CI sets this in the "Configure ccache"
@@ -1463,7 +1698,7 @@ if(APPLE)
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 endif()
 if(NEREUS_USE_PCH)
-    target_precompile_headers(NereusSDRObjs PRIVATE
+    target_precompile_headers(NereusCore PRIVATE
         # Qt6 core (every model + worker TU)
         <QObject>
         <QString>
@@ -1477,7 +1712,12 @@ if(NEREUS_USE_PCH)
         <QPointer>
         <QTimer>
         <QDebug>
-        # GUI commons (every applet + dialog + widget TU)
+        # GUI commons (every applet + dialog + widget TU). Still resolves
+        # on NereusCore: Qt6::Widgets stays a NereusCore link even after R1
+        # Task 4's ISpectrumSink extraction landed. See
+        # nereus_apply_core_deps()'s Qt6::Widgets comment for why the link
+        # was kept rather than dropped alongside the include it used to
+        # justify.
         <QWidget>
         <QPainter>
         <QPaintEvent>
@@ -1497,16 +1737,175 @@ if(NEREUS_USE_PCH)
         <cstdint>
         <utility>
     )
+    target_precompile_headers(NereusGui REUSE_FROM NereusCore)
 endif()
 
 # --------------------------------------------------------------------------
 # Install
 # --------------------------------------------------------------------------
 include(GNUInstallDirs)
+
+# The vendored RADE codec (third_party/rade/src/CMakeLists.txt) builds
+# `rade` as a SHARED library, and both NereusSDR and nereusd link it. It
+# had no install() rule of its own, so nothing that `cmake --install`
+# produced could actually run: ld.so cannot find librade.so.0.1 outside
+# the build tree. The release artifacts hid this because linuxdeploy
+# (AppImage) and macdeployqt (DMG) each bundle shared deps by tracing the
+# binary, neither of which is involved in a plain install.
+#
+# Installing it turns install-tree binaries into runnable binaries, and
+# is what makes the INSTALL_RPATH below resolvable. It is a no-op for the
+# packaged artifacts, which continue to get their copy from the deploy
+# tool.
+#
+# Scoped to the `nereusd` component only, deliberately. The GUI's packaged
+# artifacts already get librade from their deploy tool, so a default-component
+# copy would buy nothing while perturbing the one path that actually ships:
+# at prefix /usr the AppImage job would land a second copy under a multiarch
+# libdir alongside linuxdeploy's, with an untested interaction against
+# linuxdeploy's rpath rewriting. release.yml is tag-triggered and is the only
+# workflow that runs `cmake --install`, so PR CI would never catch a mistake
+# there. Keeping the daemon's rules out of the default component leaves this
+# branch's effect on the default install exactly nil.
+#
+# NereusSDR ships an application, not a RADE SDK, so the runtime library
+# is installed and the development header is not. Upstream sets
+# PUBLIC_HEADER "rade_api.h" on the target but declares no install rule of
+# its own, so the property is inert in the vendored build; clearing it here
+# keeps install() from warning about a PUBLIC_HEADER with nowhere to go.
+# It cannot simply be given a DESTINATION either: the property holds a
+# relative path, which install() resolves against the directory of the
+# install() call (this file) rather than the target's own directory, so it
+# fails to find third_party/rade/src/rade_api.h and aborts the install.
+set_target_properties(rade PROPERTIES PUBLIC_HEADER "")
+
+# COMPONENT and EXCLUDE_FROM_ALL are repeated inside each artifact group on
+# purpose: install(TARGETS) binds them to the group they follow, so a single
+# trailing "COMPONENT nereusd EXCLUDE_FROM_ALL" would apply to RUNTIME only
+# and silently leave the ELF/Mach-O LIBRARY artifact in the default
+# component, which is exactly the failure this rule exists to prevent.
+install(TARGETS rade
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            COMPONENT nereusd EXCLUDE_FROM_ALL
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+            COMPONENT nereusd EXCLUDE_FROM_ALL
+)
+
+# Point the install-tree daemon at the install-tree librade.
+#
+# Computed rather than hardcoded to "$ORIGIN/../lib": GNUInstallDirs
+# resolves CMAKE_INSTALL_LIBDIR to a multiarch path (lib/x86_64-linux-gnu)
+# on Debian-family distros when the prefix is /usr, which the release
+# AppImage job uses, so a literal ../lib would miss the library it is
+# meant to find.
+#
+# nereusd only, not NereusSDR. The GUI binary had no INSTALL_RPATH before
+# this branch and gets none now, so linuxdeploy's rpath rewriting in the
+# AppImage job sees exactly what it saw before. See the rade install rule
+# above for why leaving the default install path untouched matters here.
+#
+# Not applied on Apple: the macOS artifact is an .app bundle deployed by
+# macdeployqt, which rewrites install names into Contents/Frameworks
+# itself. nereusd is not shipped on macOS.
+if(NOT APPLE AND UNIX)
+    file(RELATIVE_PATH NEREUS_BIN_TO_LIB
+         "${CMAKE_INSTALL_FULL_BINDIR}"
+         "${CMAKE_INSTALL_FULL_LIBDIR}")
+    set_target_properties(nereusd PROPERTIES
+        INSTALL_RPATH "$ORIGIN/${NEREUS_BIN_TO_LIB}"
+    )
+endif()
+
 install(TARGETS NereusSDR
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     BUNDLE  DESTINATION .
 )
+
+# nereusd -- headless daemon (R1 Task 12; see
+# docs/architecture/2026-08-02-remote-daemon-r1-plan.md Task 12).
+#
+# EXCLUDE_FROM_ALL, so a bare `cmake --install` does NOT install the
+# daemon; it takes an explicit `--component nereusd`. This is not a
+# preference, it is a release-artifact fix: .github/workflows/release.yml
+# runs `DESTDIR=.../AppDir cmake --install build` for the Linux AppImage,
+# so without the exclusion this rule and the two below silently push the
+# daemon binary plus a systemd unit into the AppDir of a desktop GUI
+# artifact, where a systemd unit can never be enabled and the binary is
+# unreachable behind AppRun. Excluding at the CMake side fixes it without
+# the workflow needing to know the daemon exists.
+#
+# Install the daemon with:
+#   cmake --install build --component nereusd
+install(TARGETS nereusd
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT nereusd
+    EXCLUDE_FROM_ALL
+)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Ask pkg-config for systemd's own vendor unit directory when
+    # systemd.pc is available (the project's own dependency lists in
+    # CLAUDE.md do not require libsystemd-dev, so this is not guaranteed);
+    # fall back to the FHS-standard /usr/lib/systemd/system otherwise,
+    # which is what every mainstream distro in a merged-/usr layout
+    # (Debian, Ubuntu, Fedora, Arch, RHEL) ships as the vendor unit
+    # directory.
+    #
+    # This is a packaging-convention choice, not a correctness fix.
+    # systemd's documented system-unit load path also includes the
+    # CMAKE_INSTALL_PREFIX-relative /usr/local/lib/systemd/system
+    # (confirmed against Debian 13 trixie's own systemd.unit(5), this
+    # project's named target distro per design doc section 4.5a), so
+    # installing there under this project's default /usr/local prefix
+    # would still be found by `systemctl enable` and would still work --
+    # an earlier version of this comment claimed otherwise; that claim
+    # was wrong (task-12-report.md, fix round 1, Finding 1). Resolving
+    # the real vendor directory via pkg-config is simply the conventional
+    # choice: systemdsystemunitdir is what systemd itself publishes as
+    # the correct install location for this distro, so following it means
+    # the unit lands wherever the target distro actually puts vendor
+    # units, rather than wherever this project's CMAKE_INSTALL_PREFIX
+    # happens to point. (A later version of this paragraph additionally
+    # claimed a priority/precedence relationship between the two paths;
+    # that claim was also wrong, in the opposite direction, and has been
+    # removed rather than re-attempted -- see task-12-report.md, fix
+    # round 2, Finding 1. The rationale above needs no ordering claim and
+    # stands without one.)
+    set(NEREUSD_SYSTEMD_UNIT_DIR "/usr/lib/systemd/system")
+    if(PkgConfig_FOUND)
+        pkg_check_modules(SYSTEMD QUIET systemd)
+        if(SYSTEMD_FOUND)
+            pkg_get_variable(_nereusd_systemd_unit_dir systemd systemdsystemunitdir)
+            if(_nereusd_systemd_unit_dir)
+                set(NEREUSD_SYSTEMD_UNIT_DIR "${_nereusd_systemd_unit_dir}")
+            endif()
+        endif()
+    endif()
+    message(STATUS "nereusd: systemd unit -> ${NEREUSD_SYSTEMD_UNIT_DIR}")
+
+    # ExecStart= and the bring-up instructions in the unit's own header
+    # used to be hardcoded to this project's default /usr/local prefix,
+    # with a comment saying a differently-prefixed package "will need this
+    # path generated instead". Generate it now: the release AppImage job
+    # already configures with -DCMAKE_INSTALL_PREFIX=/usr, so the
+    # hardcoded /usr/local was already wrong for the one non-default
+    # prefix this repository builds with.
+    configure_file(packaging/nereusd.service.in
+                   "${CMAKE_CURRENT_BINARY_DIR}/generated/nereusd.service"
+                   @ONLY)
+
+    # COMPONENT nereusd + EXCLUDE_FROM_ALL for the same reason as the
+    # nereusd target above: keep the daemon out of a plain
+    # `cmake --install`, which the AppImage job runs.
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/generated/nereusd.service"
+            DESTINATION "${NEREUSD_SYSTEMD_UNIT_DIR}"
+            COMPONENT nereusd
+            EXCLUDE_FROM_ALL)
+    install(FILES packaging/nereusd.conf.sample
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/nereusd"
+            COMPONENT nereusd
+            EXCLUDE_FROM_ALL)
+endif()
 
 # Bundle third-party license notices + NereusSDR's LICENSE into release artifacts.
 # LICENSE-DUAL-LICENSING is shipped alongside LICENSE because Thetis maintains
@@ -1526,9 +1925,9 @@ install(FILES LICENSE LICENSE-DUAL-LICENSING
 option(NEREUS_BUILD_TESTS "Build NereusSDR test suite" OFF)
 if(NEREUS_BUILD_TESTS)
     # Propagate the define to the object library so test-guard blocks
-    # (e.g. isTabVisibleForTest) are compiled into NereusSDRObjs and
+    # (e.g. isTabVisibleForTest) are compiled into NereusCore and
     # therefore available for linking into test executables.
-    target_compile_definitions(NereusSDRObjs PUBLIC NEREUS_BUILD_TESTS)
+    target_compile_definitions(NereusCore PUBLIC NEREUS_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()

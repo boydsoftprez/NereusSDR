@@ -9,6 +9,15 @@ namespace NereusSDR {
 
 // Logging categories for NereusSDR.
 // Usage: qCDebug(lcDiscovery) << "message";
+//
+// lcApp: application-level lifecycle messages (startup, shutdown, config)
+// shared by both binaries. Added in R1 Task 9 for src/server_main.cpp
+// (nereusd) and src/core/daemon/DaemonConfig.cpp; not wired into
+// LogManager's category list below, which drives the GUI's per-category
+// debug-log toggle in src/gui/SupportDialog.cpp -- nereusd has no such UI,
+// and adding a row there for a category the GUI itself does not otherwise
+// use is a UX change this task did not need to make.
+Q_DECLARE_LOGGING_CATEGORY(lcApp)
 Q_DECLARE_LOGGING_CATEGORY(lcDiscovery)
 Q_DECLARE_LOGGING_CATEGORY(lcConnection)
 Q_DECLARE_LOGGING_CATEGORY(lcProtocol)

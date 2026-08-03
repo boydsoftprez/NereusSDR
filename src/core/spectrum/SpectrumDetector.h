@@ -1,7 +1,7 @@
 #pragma once
 
 // =================================================================
-// src/gui/spectrum/SpectrumDetector.h  (NereusSDR)
+// src/core/spectrum/SpectrumDetector.h  (NereusSDR)
 // =================================================================
 //
 // Ported from WDSP source:
@@ -29,6 +29,11 @@
 //                 and pix_per_bin > 1.0 — multi-pixel per bin)
 //                 included.  Type-narrowed from double to float
 //                 to match NereusSDR's spectrum pipeline.
+//   2026-08-02  J.J. Boyd / KG4VCF  Relocated from src/gui/spectrum/ to
+//                                    src/core/spectrum/ for the headless
+//                                    daemon build split (R1).  No logic
+//                                    change.  AI-assisted transformation via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -59,7 +64,7 @@
 //  warren@wpratt.com
 //=================================================================
 
-#include "gui/SpectrumWidget.h"   // SpectrumDetector enum
+#include "core/spectrum/SpectrumDetectorMode.h"
 
 #include <QVector>
 
@@ -86,7 +91,7 @@ namespace NereusSDR {
 ///   detOffset      — output-pixel offset added during pixel-index calc
 ///
 /// For NereusSDR's typical call site: fsclipL=0, fsclipH=m, detOffset=0.
-void applySpectrumDetector(SpectrumDetector detType,
+void applySpectrumDetector(NereusSDR::SpectrumDetectorMode detType,
                            int m,
                            int numPixels,
                            double pixPerBin,
@@ -101,7 +106,7 @@ void applySpectrumDetector(SpectrumDetector detType,
 /// QVector-friendly wrapper.  Resizes `pixels` to `numPixels` if needed.
 /// Defaults fsclipL = 0, fsclipH = bins.size(), detOffset = 0 — the
 /// NereusSDR call shape (no sub-band segmentation).
-void applySpectrumDetector(SpectrumDetector detType,
+void applySpectrumDetector(NereusSDR::SpectrumDetectorMode detType,
                            const QVector<float>& bins,
                            int numPixels,
                            QVector<float>& pixels,
