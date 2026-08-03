@@ -8105,12 +8105,21 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
         // P2RadioConnection::widebandFrameReady fires on the connection
         // thread once a 32-packet frame (16384 normalized real samples)
         // is assembled by WidebandFrameAccumulator (Sub-Epic F Task 3).
-        // We hop to the main thread (auto-connection: default) so the
+        // We hop off the connection thread via auto-connection so the
         // FFT runs out of the network hot path.  The 16k-pt real-to-
         // complex FFT typically completes well under one frame period
-        // even at 153.6 MHz; if profiling later flags this as a stall,
-        // move WidebandFftEngine to a dedicated worker thread.
-        connect(p2, &P2RadioConnection::widebandFrameReady, this,
+        // even at 153.6 MHz.
+        //
+        // R1 Task 11: the hop target is m_widebandDispatchContext, not
+        // `this` -- see setWidebandDispatchThread()'s doc comment in
+        // RadioModel.h. Left unset (the GUI never calls it),
+        // m_widebandDispatchContext stays on RadioModel's own thread, so
+        // this reproduces the exact pre-Task-11 "hop to the main thread"
+        // behaviour byte for byte. nereusd's DaemonApp redirects it to a
+        // dedicated QThread instead, because it has no main-thread
+        // protection concern of its own and wants this off its single
+        // event-loop thread entirely.
+        connect(p2, &P2RadioConnection::widebandFrameReady, &m_widebandDispatchContext,
                 [this](int adcIdx, const QVector<float>& samples) {
             if (adcIdx < 0 || adcIdx >= 2) { return; }
             if (!m_widebandFftEngines[adcIdx]) { return; }

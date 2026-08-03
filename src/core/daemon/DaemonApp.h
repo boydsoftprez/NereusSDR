@@ -125,6 +125,8 @@
 #include <optional>
 #endif
 
+class QThread;
+
 namespace NereusSDR {
 
 class RadioModel;
@@ -141,6 +143,15 @@ class RadioModel;
 // called before any start() (test-covered: a daemon's SIGTERM handler
 // calls stop() unconditionally on the quit path, with no prior knowledge
 // of whether start() ever succeeded).
+//
+// R1 Task 11: also owns a dedicated QThread for the wideband FFT dispatch
+// hop that RadioModel::wireConnectionSignals wires off the P2 connection
+// thread (see widebandThread()'s own doc comment below). Unlike the
+// RadioModel/FFT-topology state above, this thread is NOT torn down and
+// rebuilt every start()/stop() cycle -- it is created once (lazily, on
+// the first start()) and reused: stop() quit()+wait()s it (joins) without
+// destroying it, and the next start() calls start() on the same QThread
+// again, which Qt supports for a thread that has already finished.
 class DaemonApp : public QObject {
     Q_OBJECT
 
@@ -179,6 +190,22 @@ public:
     // 0 before the first start(), after stop(), and whenever no radio
     // was ever connected. Otherwise the RadioModel's live slice count.
     int sliceCount() const;
+
+    // R1 Task 11. The dedicated thread start() injects into RadioModel
+    // (RadioModel::setWidebandDispatchThread) as the target for the
+    // wideband FFT dispatch hop -- see that method's own doc comment in
+    // RadioModel.h for why nereusd needs this instead of relying on
+    // RadioModel's implicit "hop to my own thread" default.
+    //
+    // nullptr before the first start() has ever run on this instance.
+    // Running (isRunning() == true) after a successful start(). Joined --
+    // quit()+wait()'d, but the SAME pointer, still non-null, still
+    // isRunning() == false -- after stop(). NOT destroyed by stop(): the
+    // pointer stays valid so a caller holding it across a stop() can
+    // still observe the joined state, exactly as widebandThread() itself
+    // continues to report it. Only ~DaemonApp() (via the owning
+    // unique_ptr) or a later start() destroys/replaces it.
+    QThread* widebandThread() const { return m_widebandThread.get(); }
 
 #ifdef NEREUS_BUILD_TESTS
     // Test-only seam, only compiled when NEREUS_BUILD_TESTS is defined.
@@ -296,6 +323,11 @@ private:
 
     std::unique_ptr<RadioModel> m_radioModel;
     FftTopology m_topology;
+
+    // R1 Task 11. See widebandThread()'s doc comment above for the
+    // lifecycle (lazily created on first start(), reused and restarted
+    // across a stop()/start() cycle rather than destroyed on stop()).
+    std::unique_ptr<QThread> m_widebandThread;
 
     // Monotonic; deliberately NOT reset on stop(), so ids never repeat
     // across a restart within one process. No correctness requirement

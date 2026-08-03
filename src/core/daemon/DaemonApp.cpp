@@ -13,6 +13,8 @@
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
+#include <QThread>
+
 #include <algorithm>
 
 namespace NereusSDR {
@@ -47,6 +49,31 @@ bool DaemonApp::start(const DaemonConfig& cfg)
     NereusSDR::CoreInit::initialize();
 
     m_radioModel = std::make_unique<RadioModel>();
+
+    // R1 Task 11: dedicated thread for the wideband FFT dispatch hop --
+    // RadioModel currently hops that work onto ITS OWN thread to stay off
+    // the P2 connection thread's hot path (wireConnectionSignals,
+    // RadioModel.cpp), which is fine for the GUI (that own thread IS the
+    // main thread, and getting off the network thread onto it is the
+    // whole point) but nereusd has no such spare thread of its own -- its
+    // RadioModel lives on the daemon's single Qt event-loop thread, which
+    // will carry other daemon responsibilities from R1 Task 12 onward.
+    //
+    // Lazily created once and reused across a restart (see
+    // widebandThread()'s doc comment in the header for why stop() joins
+    // rather than destroys it): a QThread that has been quit()+wait()'d
+    // can be start()ed again.
+    if (!m_widebandThread) {
+        m_widebandThread = std::make_unique<QThread>();
+        m_widebandThread->setObjectName(QStringLiteral("WidebandFftThread"));
+    }
+    m_widebandThread->start();
+
+    // Injected BEFORE either branch below that might call connectToRadio()
+    // (and therefore wireConnectionSignals()), so the very first P2
+    // connection's wideband-frame hop already targets the dedicated
+    // thread instead of RadioModel's own.
+    m_radioModel->setWidebandDispatchThread(m_widebandThread.get());
 
     // Relay connection-state transitions to this class's own signal.
     // Fires only on a REAL state change (RadioModel emits
@@ -119,6 +146,24 @@ void DaemonApp::stop()
     // (fix round 2, Finding 1 reopened -- the wholesale-replacement
     // version silently made the removal a no-op).
     clearFftTopology();
+
+    // R1 Task 11: quiesce the wideband thread before destroying the
+    // RadioModel below. RadioModel::setWidebandDispatchThread pointed a
+    // member OF this (about to be destroyed) RadioModel --
+    // m_widebandDispatchContext -- at this thread; if the thread's event
+    // loop were still processing when ~RadioModel() runs, a queued
+    // wideband-frame delivery could land mid-dispatch against an object
+    // being destroyed concurrently on this thread. quit()+wait() blocks
+    // until the thread's event loop has fully stopped, so nothing can
+    // touch RadioModel from another thread by the time m_radioModel.reset()
+    // runs below. Deliberately NOT reset()/destroyed here -- see
+    // widebandThread()'s own doc comment in the header for why the same
+    // pointer must stay valid (joined, not running) after stop() rather
+    // than going null or dangling.
+    if (m_widebandThread) {
+        m_widebandThread->quit();
+        m_widebandThread->wait();
+    }
 
     // ~RadioModel() calls teardownConnection() and deletes every slice
     // (RadioModel.cpp), so resetting the pointer alone satisfies

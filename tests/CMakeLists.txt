@@ -6002,6 +6002,20 @@ nereus_add_test(tst_daemon_config)
 # that a restart does not accumulate slices from the previous run.
 nereus_add_test(tst_daemon_app)
 
+# R1 Task 11: nereusd needs its own thread for the wideband FFT dispatch
+# hop (P2RadioConnection::widebandFrameReady -> WidebandFftEngine::
+# computeFft, wired in RadioModel::wireConnectionSignals) because that hop
+# has always implicitly targeted RadioModel's own thread -- fine for the
+# GUI (that thread IS the main thread; the whole point is getting off the
+# network thread), but nereusd's RadioModel lives on the daemon's single
+# Qt event-loop thread, which will carry other daemon responsibilities
+# too. Pins that RadioModel::setWidebandDispatchThread makes the hop
+# target injectable and that DaemonApp::widebandThread() is running after
+# start(), never the calling thread, and joined (quit()+wait()'d, but not
+# destroyed -- see the header doc comment) after stop(); also that a
+# restart on the same DaemonApp instance produces a running thread again.
+nereus_add_test(tst_wideband_thread)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
