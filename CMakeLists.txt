@@ -1725,6 +1725,73 @@ endif()
 # Install
 # --------------------------------------------------------------------------
 include(GNUInstallDirs)
+
+# The vendored RADE codec (third_party/rade/src/CMakeLists.txt) builds
+# `rade` as a SHARED library, and both NereusSDR and nereusd link it. It
+# had no install() rule of its own, so nothing that `cmake --install`
+# produced could actually run: ld.so cannot find librade.so.0.1 outside
+# the build tree. The release artifacts hid this because linuxdeploy
+# (AppImage) and macdeployqt (DMG) each bundle shared deps by tracing the
+# binary, neither of which is involved in a plain install.
+#
+# Installing it turns install-tree binaries into runnable binaries, and
+# is what makes the INSTALL_RPATH below resolvable. It is a no-op for the
+# packaged artifacts, which continue to get their copy from the deploy
+# tool.
+#
+# The rule is issued twice, once into the default component and once into
+# the `nereusd` component, so that a headless box that installs only the
+# daemon (`cmake --install build --component nereusd`, see below) still
+# gets a librade the daemon can load, without also having to run a full
+# default install that would drag in the GUI.
+#
+# NereusSDR ships an application, not a RADE SDK, so the runtime library
+# is installed and the development header is not. Upstream sets
+# PUBLIC_HEADER "rade_api.h" on the target but declares no install rule of
+# its own, so the property is inert in the vendored build; clearing it here
+# keeps install() from warning about a PUBLIC_HEADER with nowhere to go.
+# It cannot simply be given a DESTINATION either: the property holds a
+# relative path, which install() resolves against the directory of the
+# install() call (this file) rather than the target's own directory, so it
+# fails to find third_party/rade/src/rade_api.h and aborts the install.
+set_target_properties(rade PROPERTIES PUBLIC_HEADER "")
+
+install(TARGETS rade
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}   # Windows: rade.dll
+)
+# COMPONENT and EXCLUDE_FROM_ALL are repeated inside each artifact group on
+# purpose: install(TARGETS) binds them to the group they follow, so a single
+# trailing "COMPONENT nereusd EXCLUDE_FROM_ALL" would apply to RUNTIME only
+# and silently leave the ELF/Mach-O LIBRARY artifact in the default
+# component, which is exactly the failure this rule exists to prevent.
+install(TARGETS rade
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            COMPONENT nereusd EXCLUDE_FROM_ALL
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+            COMPONENT nereusd EXCLUDE_FROM_ALL
+)
+
+# Point install-tree ELF binaries at the install-tree librade.
+#
+# Computed rather than hardcoded to "$ORIGIN/../lib": GNUInstallDirs
+# resolves CMAKE_INSTALL_LIBDIR to a multiarch path (lib/x86_64-linux-gnu)
+# on Debian-family distros when the prefix is /usr, which the release
+# AppImage job uses, so a literal ../lib would miss the library it is
+# meant to find.
+#
+# Not applied on Apple: the macOS artifact is an .app bundle deployed by
+# macdeployqt, which rewrites install names into Contents/Frameworks
+# itself. nereusd is not shipped on macOS.
+if(NOT APPLE AND UNIX)
+    file(RELATIVE_PATH NEREUS_BIN_TO_LIB
+         "${CMAKE_INSTALL_FULL_BINDIR}"
+         "${CMAKE_INSTALL_FULL_LIBDIR}")
+    set_target_properties(NereusSDR nereusd PROPERTIES
+        INSTALL_RPATH "$ORIGIN/${NEREUS_BIN_TO_LIB}"
+    )
+endif()
+
 install(TARGETS NereusSDR
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     BUNDLE  DESTINATION .
@@ -1732,8 +1799,23 @@ install(TARGETS NereusSDR
 
 # nereusd -- headless daemon (R1 Task 12; see
 # docs/architecture/2026-08-02-remote-daemon-r1-plan.md Task 12).
+#
+# EXCLUDE_FROM_ALL, so a bare `cmake --install` does NOT install the
+# daemon; it takes an explicit `--component nereusd`. This is not a
+# preference, it is a release-artifact fix: .github/workflows/release.yml
+# runs `DESTDIR=.../AppDir cmake --install build` for the Linux AppImage,
+# so without the exclusion this rule and the two below silently push the
+# daemon binary plus a systemd unit into the AppDir of a desktop GUI
+# artifact, where a systemd unit can never be enabled and the binary is
+# unreachable behind AppRun. Excluding at the CMake side fixes it without
+# the workflow needing to know the daemon exists.
+#
+# Install the daemon with:
+#   cmake --install build --component nereusd
 install(TARGETS nereusd
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT nereusd
+    EXCLUDE_FROM_ALL
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -1777,10 +1859,28 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
     message(STATUS "nereusd: systemd unit -> ${NEREUSD_SYSTEMD_UNIT_DIR}")
 
-    install(FILES packaging/nereusd.service
-            DESTINATION "${NEREUSD_SYSTEMD_UNIT_DIR}")
+    # ExecStart= and the bring-up instructions in the unit's own header
+    # used to be hardcoded to this project's default /usr/local prefix,
+    # with a comment saying a differently-prefixed package "will need this
+    # path generated instead". Generate it now: the release AppImage job
+    # already configures with -DCMAKE_INSTALL_PREFIX=/usr, so the
+    # hardcoded /usr/local was already wrong for the one non-default
+    # prefix this repository builds with.
+    configure_file(packaging/nereusd.service.in
+                   "${CMAKE_CURRENT_BINARY_DIR}/generated/nereusd.service"
+                   @ONLY)
+
+    # COMPONENT nereusd + EXCLUDE_FROM_ALL for the same reason as the
+    # nereusd target above: keep the daemon out of a plain
+    # `cmake --install`, which the AppImage job runs.
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/generated/nereusd.service"
+            DESTINATION "${NEREUSD_SYSTEMD_UNIT_DIR}"
+            COMPONENT nereusd
+            EXCLUDE_FROM_ALL)
     install(FILES packaging/nereusd.conf.sample
-            DESTINATION share/nereusd)
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/nereusd"
+            COMPONENT nereusd
+            EXCLUDE_FROM_ALL)
 endif()
 
 # Bundle third-party license notices + NereusSDR's LICENSE into release artifacts.

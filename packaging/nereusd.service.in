@@ -3,10 +3,17 @@
 # Design: docs/architecture/2026-07-28-remote-daemon-architecture-design.md
 #         docs/architecture/2026-08-02-remote-daemon-r1-plan.md (R1 Task 12)
 #
+# This is a configure_file(@ONLY) template, not a ready-to-use unit: the
+# @...@ placeholders below are substituted with the configured install
+# prefix at CMake configure time. The generated copy lands in the build
+# tree and is what gets installed. Edit this file, never the generated one.
+#
 # Installed by CMake to systemd's vendor unit directory (see the install()
-# rule in CMakeLists.txt for why that is NOT CMAKE_INSTALL_PREFIX-relative).
+# rule in CMakeLists.txt for why that is NOT CMAKE_INSTALL_PREFIX-relative),
+# under the `nereusd` install component:
+#   sudo cmake --install build --component nereusd
 # Bring-up on a fresh install:
-#   sudo cp /usr/local/share/nereusd/nereusd.conf.sample /etc/nereusd.conf
+#   sudo cp @CMAKE_INSTALL_FULL_DATADIR@/nereusd/nereusd.conf.sample /etc/nereusd.conf
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now nereusd
 #
@@ -25,10 +32,11 @@ Wants=network-online.target
 
 [Service]
 Type=exec
-# Hardcoded to this project's unmodified default /usr/local prefix (not
-# templated via configure_file()); a future .deb/.rpm build targeting a
-# different prefix will need this path generated instead.
-ExecStart=/usr/local/bin/nereusd --config /etc/nereusd.conf
+# Generated from CMAKE_INSTALL_FULL_BINDIR at configure time, so a build
+# with a non-default CMAKE_INSTALL_PREFIX (this repository's own release
+# AppImage job configures with -DCMAKE_INSTALL_PREFIX=/usr) gets a unit
+# whose ExecStart actually matches where the binary was installed.
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/nereusd --config /etc/nereusd.conf
 Restart=on-failure
 RestartSec=5
 

@@ -213,6 +213,18 @@ $ systemd-analyze verify ./packaging/nereusd.service
 Clean pass, both the installed unit and the repository source file, zero
 complaints.
 
+> **Reproducing this later.** The commands above are recorded exactly as
+> they ran. The R1 merge-blocker fix round afterwards turned the source
+> file into a `configure_file` template, `packaging/nereusd.service.in`,
+> so `ExecStart=` tracks `CMAKE_INSTALL_PREFIX` instead of being pinned to
+> `/usr/local`. A `systemd-analyze verify` on the repository source file
+> now has to target the generated copy in the build tree
+> (`build/generated/nereusd.service`) rather than `./packaging/...`; the
+> installed-unit check is unchanged. Installing the unit also now takes
+> `cmake --install build --component nereusd`, because a plain
+> `cmake --install` no longer carries the daemon (it was leaking into the
+> AppImage).
+
 ---
 
 ## Row 4: Daemon connects to the ANAN
