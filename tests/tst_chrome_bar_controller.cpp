@@ -102,6 +102,39 @@ private slots:
         QCOMPARE(spy.count(), 2);
     }
 
+    // A width refresh must not discard the separator overhead folded in at
+    // registration. It used to: setNaturalWidth overwrote the whole cached
+    // figure with the primary widget's width alone, so the system tile shed
+    // its separator on the first CPU tick and the TCI indicator on its first
+    // state change, leaving the fold plan undercounting the bar. Found by
+    // Codex on PR #316.
+    void refreshingWidthKeepsTheSeparatorOverhead() {
+        ChromeBarController c;
+        QLabel* anchor = makeItem(100);
+        QLabel* item   = makeItem(60);
+        QLabel* sep    = makeItem(14);
+        c.addItem(anchor, nullptr, 0, QString());
+        c.addItem(item, sep, 1, QStringLiteral("Item"));
+
+        // Registered width is 60 + 14 + one 6 px gap = 80. With the anchor,
+        // one gap and the padding, the bar needs 198 to show everything.
+        c.relayout(198);
+        QVERIFY(!item->isHidden());
+
+        // Re-report the SAME primary width. The overhead must survive, so
+        // the decision must not move.
+        c.setNaturalWidth(item, 60);
+        c.relayout(198);
+        QVERIFY2(!item->isHidden(),
+                 "a no-op width refresh changed the fold decision");
+
+        // One pixel under and it folds, proving the overhead is still
+        // counted rather than quietly dropped.
+        c.relayout(197);
+        QVERIFY2(item->isHidden(),
+                 "separator overhead was lost, so the bar was undercounted");
+    }
+
     void setNaturalWidthChangesTheDecision() {
         ChromeBarController c;
         QLabel* sys = makeItem(60);

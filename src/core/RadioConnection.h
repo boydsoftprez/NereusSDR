@@ -178,8 +178,20 @@ public:
     // for a steady reading that never changes again. A fresh listener
     // should read these once right after connecting, then rely on the
     // signal for subsequent changes.
-    float lastSupplyVolts() const { return m_lastSupplyVolts; }
-    float lastUserAdc0Volts() const { return m_lastUserAdc0Volts; }
+    /// Last cached supply / PA-drain reading, or -1 if none has arrived.
+    ///
+    /// Read from the GUI thread while the connection worker thread writes
+    /// them as status frames arrive, so both are atomic. Plain floats here
+    /// were a data race, and therefore undefined behaviour, not merely a
+    /// torn read: the Connected-state priming read can land mid-update.
+    /// Relaxed ordering is sufficient; these are independent scalars that
+    /// guard no other state. Found by Codex on PR #316. CLAUDE.md's
+    /// cross-thread rule ("main thread writes via std::atomic") applies
+    /// here in the reading direction.
+    float lastSupplyVolts() const
+    { return m_lastSupplyVolts.load(std::memory_order_relaxed); }
+    float lastUserAdc0Volts() const
+    { return m_lastUserAdc0Volts.load(std::memory_order_relaxed); }
 
 public slots:
     // Must be called on the worker thread after moveToThread().
@@ -668,8 +680,8 @@ private:
 
     // Last-emitted voltage values for identical-raw suppression (50 mV epsilon).
     // Initialised to -1 so the first call always emits.
-    float m_lastSupplyVolts{-1.0f};
-    float m_lastUserAdc0Volts{-1.0f};
+    std::atomic<float> m_lastSupplyVolts{-1.0f};
+    std::atomic<float> m_lastUserAdc0Volts{-1.0f};
 
 protected:
     void setState(ConnectionState newState);

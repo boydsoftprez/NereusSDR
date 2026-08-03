@@ -77,6 +77,9 @@ public:
     /// Update a cached width after a content change (a new PA reading with
     /// more digits, a longer radio name). Explicit, because an implicit
     /// re-measure is the feedback path this design removes.
+    /// Report a new width for a registered item after a content change.
+    /// `px` is the PRIMARY widget's width only; any separator overhead
+    /// recorded at registration is re-added internally.
     void setNaturalWidth(QWidget* widget, int px);
 
     /// Report whether a registered item is currently applicable at all,
@@ -112,6 +115,9 @@ private:
         QWidget* separator{nullptr};
         int      rung{0};
         int      naturalWidth{0};
+        /// Separator width plus its gap, held apart from the widget's own
+        /// width so setNaturalWidth can re-add it instead of dropping it.
+        int      separatorOverhead{0};
         QString  label;
         /// See setItemAvailable. Defaults true: most items have no second
         /// visibility owner and are available whenever not folded.

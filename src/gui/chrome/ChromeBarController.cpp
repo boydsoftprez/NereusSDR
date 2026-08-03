@@ -29,11 +29,13 @@ void ChromeBarController::addItem(QWidget* widget, QWidget* separator,
     // setStyleSheet() effect is deferred to QStyle::polish() would bake a
     // wrong width into the cache for its entire lifetime, silently.
     widget->ensurePolished();
-    r.naturalWidth = widget->sizeHint().width();
     if (separator) {
         separator->ensurePolished();
-        r.naturalWidth += separator->sizeHint().width() + ChromeFoldPlan::kGapPx;
+        // Kept apart from the widget's own width so a later setNaturalWidth
+        // cannot silently drop it. See setNaturalWidth.
+        r.separatorOverhead = separator->sizeHint().width() + ChromeFoldPlan::kGapPx;
     }
+    r.naturalWidth = widget->sizeHint().width() + r.separatorOverhead;
     m_indexByWidget.insert(widget, m_items.size());
     m_items.append(r);
     // A new item invalidates the last decision.
@@ -47,10 +49,22 @@ void ChromeBarController::setNaturalWidth(QWidget* widget, int px)
         return;
     }
     Registered& r = m_items[*it];
-    if (r.naturalWidth == px) {
+    // px is the PRIMARY widget's width. The separator's width plus its gap
+    // are re-added here rather than being the caller's problem.
+    //
+    // Callers pass widget->sizeHint().width() at a content change, which is
+    // the only number they can reasonably know. Before this, that value
+    // replaced the whole cached figure, so an item registered WITH a
+    // separator lost that overhead on its first refresh: the system tile
+    // shed it on the first CPU tick, the TCI indicator on its first state
+    // change. The fold plan then undercounted the bar and could pick a rung
+    // that still overflowed near a boundary, which is the stale-width class
+    // this controller exists to remove. Found by Codex on PR #316.
+    const int updated = px + r.separatorOverhead;
+    if (r.naturalWidth == updated) {
         return;
     }
-    r.naturalWidth = px;
+    r.naturalWidth = updated;
     // Content width moved, so the previous decision no longer applies.
     m_foldedThrough = -1;
 }
