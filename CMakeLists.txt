@@ -1189,17 +1189,35 @@ function(nereus_apply_core_deps target)
         ZLIB::ZLIB
     )
 
-    # Qt6::Widgets is NOT GUI-only in this codebase today, however much it
-    # should be. R1 Task 4 ("Extract ISpectrumSink from RadioModel") has
-    # landed and removed the reason this link used to be load-bearing:
-    # RadioModel.cpp no longer includes gui/SpectrumWidget.h, and its former
-    # direct m_spectrumWidget->setHighSwrOverlay(...) calls now go through
-    # the abstract NereusSDR::ISpectrumSink interface instead. The link
-    # stays here anyway, kept deliberately rather than dropped as a
-    # drive-by: nobody has yet verified, with an actual build, that nothing
-    # else compiled into NereusCore still needs Qt6::Widgets transitively.
-    # That verification, and the removal if it holds, is a separate
-    # follow-up task's job.
+    # Qt6::Widgets is linked onto NereusCore deliberately, and it is NOT a
+    # leftover waiting to be removed.
+    #
+    # R1 Task 4 ("Extract ISpectrumSink from RadioModel") removed the
+    # reason this link was originally load-bearing: RadioModel.cpp no
+    # longer includes gui/SpectrumWidget.h, and its former direct
+    # m_spectrumWidget->setHighSwrOverlay(...) calls now go through the
+    # abstract NereusSDR::ISpectrumSink interface. An earlier version of
+    # this comment therefore said the removal was pending "an actual
+    # build" verifying nothing else in NereusCore needs Widgets
+    # transitively. That audit has now been done (R1 merge-blocker fix
+    # round): the only widget-family include anywhere in src/core or
+    # src/models is <QDesktopServices> in core/SupportBundle.cpp, and
+    # that header is QtGui, not QtWidgets. No source-level need remains.
+    #
+    # The link still cannot be dropped, for a build-system reason rather
+    # than a source one: the precompiled header attached to NereusCore
+    # below has a "GUI commons" section carrying <QWidget> / <QPainter> /
+    # <QPen> / <QBrush>, and NereusGui (217 of 351 TUs) consumes that same
+    # PCH via REUSE_FROM, which is what makes the PCH pay for itself.
+    # Dropping Widgets here breaks PCH compilation. Splitting the PCH is
+    # a build-performance change that needs its own measurement, and is
+    # not something to do as a drive-by.
+    #
+    # What keeps the invariant honest in the meantime is
+    # tests/tst_core_has_no_gui_includes.cpp, which fails on any include
+    # from src/core or src/models that reaches into src/gui, into
+    # QtWidgets / QtQuick and friends, into the QtGui rendering stack, or
+    # into QRhi. That guard, not this link, is the enforcement point.
     target_link_libraries(${target} PUBLIC Qt6::Widgets)
 
     if(APPLE)

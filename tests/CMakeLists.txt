@@ -112,6 +112,19 @@ add_library(nereus_test_sandbox OBJECT EXCLUDE_FROM_ALL TestSandboxInit.cpp)
 target_link_libraries(nereus_test_sandbox PRIVATE Qt6::Core)
 
 function(nereus_add_test name)
+    # EXTRA_LABELS <label...> for the handful of tests whose subject
+    # cannot be derived from their own #include lines. Guard tests are
+    # the case that forced this: tst_core_has_no_gui_includes is the
+    # invariant check for the whole src/core boundary but includes no
+    # core header (it greps the tree instead), so derivation put it in
+    # `unclassified` and the project's own documented dev-loop command,
+    # `ctest -L core`, skipped the one test guarding that boundary.
+    #
+    # Everything not consumed by the keyword stays ARGN's original
+    # meaning: additional source files.
+    cmake_parse_arguments(_nat "" "" "EXTRA_LABELS" ${ARGN})
+    set(_extra_sources ${_nat_UNPARSED_ARGUMENTS})
+
     # Sharding gate — when this test's hash bucket doesn't match the
     # active shard, register a stub OBJECT library (EXCLUDE_FROM_ALL,
     # backed by the shared stub source set up at the top of this file)
@@ -161,7 +174,7 @@ function(nereus_add_test name)
     # The aggregate `all_tests` target is created at the bottom of
     # this file from a global property each nereus_add_test() call
     # appends to.
-    add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox> ${ARGN})
+    add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox> ${_extra_sources})
     target_link_libraries(${name} PRIVATE NereusSDRObjs Qt6::Test)
     set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS ${name})
 
@@ -183,6 +196,13 @@ function(nereus_add_test name)
     # generous: the slowest test in the suite as of 2026-07-25 is
     # tst_ps_feedback_channel at ~30s.
     _nereus_derive_test_labels(_test_labels "${name}.cpp")
+    if(_nat_EXTRA_LABELS)
+        # Drop the "unclassified" placeholder derivation assigns when it
+        # found nothing; an explicit label is a classification.
+        list(REMOVE_ITEM _test_labels "unclassified")
+        list(APPEND _test_labels ${_nat_EXTRA_LABELS})
+        list(REMOVE_DUPLICATES _test_labels)
+    endif()
     set_tests_properties(${name} PROPERTIES
         LABELS "${_test_labels}"
         TIMEOUT 120)
@@ -4403,10 +4423,17 @@ nereus_add_test(tst_spectrum_reducer)
 nereus_add_test(tst_spectrum_reducer_widget_parity)
 
 # R1 Task 4 -- guard test for the ISpectrumSink extraction.  Walks src/core
-# and src/models and fails on any "#include \"gui/" line.  This is the
-# property the whole R1 build split depends on: nereusd links NereusCore
-# alone only as long as neither tree reaches into src/gui.
-nereus_add_test(tst_core_has_no_gui_includes)
+# and src/models and fails on any include that reaches into src/gui or into
+# the Qt widget / GUI rendering stack.  This is the property the whole R1
+# build split depends on: nereusd links NereusCore alone only as long as
+# neither tree reaches into src/gui.
+#
+# EXTRA_LABELS core because the test greps the tree instead of including
+# any core header, so label derivation cannot see its subject and left it
+# `unclassified` -- which meant `ctest -L core`, the command
+# docs/development/fast-test-loop.md tells everyone to use, skipped the
+# one test guarding the core boundary.
+nereus_add_test(tst_core_has_no_gui_includes EXTRA_LABELS core)
 target_compile_definitions(tst_core_has_no_gui_includes PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
