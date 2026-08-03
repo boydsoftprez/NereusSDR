@@ -92,9 +92,13 @@ void registerChromeBarItems(ChromeBarController& c, const ChromeBarWidgets& w)
     }
 
     // Rung 10, last resort: placeholders fold only after every live
-    // reading has already gone.
+    // reading has already gone. Label lists all five members in the same
+    // left-to-right order MainWindow::buildStatusBar adds them to
+    // m_placeholderGroup's QHBoxLayout; Band Stack was missing from this
+    // label even though it is the first widget in that layout
+    // (final-fix-wave finding 12).
     add(c, w.placeholderGroup, w.placeholderSep, 10,
-        QCoreApplication::translate("ChromeBar", "TNF / CWX / DVK / FDX"));
+        QCoreApplication::translate("ChromeBar", "Band Stack / TNF / CWX / DVK / FDX"));
 }
 
 } // namespace NereusSDR

@@ -5205,25 +5205,25 @@ void MainWindow::buildMenuBar()
 
     // Phase 3F Sub-Epic D Task 14: live Pan Layout / Add slice / Float
     // entries. Replace the NYI submenu and disabled Add/Remove placeholders
-    // with the working stack actions. The bottom-bar +PAN dropdown
-    // (Task 10) is kept as the operator-facing primary; these menu items
-    // are for operators who prefer the menubar / keyboard shortcuts.
+    // with the working stack actions. The bottom-bar +PAN icon (a drawn
+    // pixmap since Task B4, not a dropdown menu) is kept as the operator-
+    // facing primary and shares showPanLayoutDialog() with the menu action
+    // below it; these menu items are for operators who prefer the menubar
+    // / keyboard shortcuts.
     {
         QAction* panLayoutAct = viewMenu->addAction(QStringLiteral("Pan &Layout…"));
         panLayoutAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
         panLayoutAct->setToolTip(QStringLiteral(
             "Pick a panadapter layout template"));
-        connect(panLayoutAct, &QAction::triggered, this, [this]() {
-            const int maxSlices = m_radioModel ? m_radioModel->maxSlices() : 1;
-            const QString boardName = m_radioModel ? m_radioModel->name() : QString();
-            PanLayoutDialog dialog(maxSlices,
-                                   m_panStack ? m_panStack->currentLayoutId()
-                                              : QStringLiteral("1"),
-                                   boardName, this);
-            if (dialog.exec() == QDialog::Accepted && !dialog.selectedLayout().isEmpty()) {
-                applyPanLayout(dialog.selectedLayout());
-            }
-        });
+        // Delegates to showPanLayoutDialog() rather than duplicating dialog
+        // construction here: this call site used to build its own
+        // PanLayoutDialog inline with no isConnected() guard, so with no
+        // radio it opened a dialog gated on a stale maxSlices()-only
+        // fallback (final-fix-wave finding 12). showPanLayoutDialog() is
+        // already connection-gated and DDC-axis-correct (finding 2); the
+        // bottom-bar +PAN icon uses the same method.
+        connect(panLayoutAct, &QAction::triggered, this,
+                &MainWindow::showPanLayoutDialog);
     }
 
     {
@@ -8248,8 +8248,14 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     // updateAddPanButtonState() disables the label while disconnected, so
     // this fires only when a layout change is actually possible; the
     // showPanLayoutDialog() body re-checks the same guard defensively.
+    // Left button only (final-fix-wave finding 12): a bare
+    // QEvent::MouseButtonPress check fires on right-click and middle-
+    // click too, which is not how every other clickable icon on this bar
+    // behaves (compare StationBlock::mousePressEvent's explicit button
+    // check).
     if (watched->property("isAddPanButton").toBool()
-        && event->type() == QEvent::MouseButtonPress) {
+        && event->type() == QEvent::MouseButtonPress
+        && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
         showPanLayoutDialog();
         return true;
     }
