@@ -158,8 +158,9 @@ UMask=0077
 #
 # Local audio monitoring on a "shack machine" (design doc section 4.3) is
 # a secondary, explicitly-supported use case, but is NOT the primary R1
-# target (a headless Pi with no sound card, per the nereusd.conf.sample
-# "empty = no local audio" default). A DynamicUser account has no
+# target (a headless Pi with no sound card, where nereusd.conf.sample's
+# unset audio_device resolves to the platform default and simply fails to
+# open, which is the paragraph below). A DynamicUser account has no
 # supplementary group memberships by default, so on real ALSA hardware
 # (/dev/snd/* is typically root:audio mode 660) this unit as shipped will
 # NOT be able to open a physical device even when one is present --

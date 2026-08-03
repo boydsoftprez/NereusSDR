@@ -73,6 +73,7 @@ DaemonConfig DaemonConfig::fromFile(const QString& path, QString* errorOut)
             const int v = value.toInt(&ok);
             if (ok) {
                 cfg.sampleRateHz = v;
+                cfg.sampleRateExplicit = true;
             } else {
                 qCWarning(lcApp) << "nereusd.conf" << path << "line" << lineNo
                                   << "sample_rate_hz is not a number, keeping"

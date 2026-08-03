@@ -191,7 +191,13 @@ void DaemonApp::applyConfigToSettings(const DaemonConfig& cfg,
 {
     auto& settings = AppSettings::instance();
 
-    if (!mac.isEmpty() && cfg.sampleRateHz > 0) {
+    // sampleRateExplicit, not sampleRateHz > 0: the field always holds a
+    // usable rate (validate() rejects <= 0), so it cannot express "the
+    // operator did not ask". Writing unconditionally would stamp the
+    // struct default over a rate already persisted for this radio every
+    // time nereusd ran without a config file. Same reasoning as the
+    // audioDevice branch below.
+    if (!mac.isEmpty() && cfg.sampleRateExplicit && cfg.sampleRateHz > 0) {
         // resolveSampleRate() (SampleRateCatalog.cpp) reads exactly this
         // key at connect time and validates it against the board's
         // allowed-rate list, falling back to the board default with a

@@ -1757,11 +1757,15 @@ include(GNUInstallDirs)
 # packaged artifacts, which continue to get their copy from the deploy
 # tool.
 #
-# The rule is issued twice, once into the default component and once into
-# the `nereusd` component, so that a headless box that installs only the
-# daemon (`cmake --install build --component nereusd`, see below) still
-# gets a librade the daemon can load, without also having to run a full
-# default install that would drag in the GUI.
+# Scoped to the `nereusd` component only, deliberately. The GUI's packaged
+# artifacts already get librade from their deploy tool, so a default-component
+# copy would buy nothing while perturbing the one path that actually ships:
+# at prefix /usr the AppImage job would land a second copy under a multiarch
+# libdir alongside linuxdeploy's, with an untested interaction against
+# linuxdeploy's rpath rewriting. release.yml is tag-triggered and is the only
+# workflow that runs `cmake --install`, so PR CI would never catch a mistake
+# there. Keeping the daemon's rules out of the default component leaves this
+# branch's effect on the default install exactly nil.
 #
 # NereusSDR ships an application, not a RADE SDK, so the runtime library
 # is installed and the development header is not. Upstream sets
@@ -1774,10 +1778,6 @@ include(GNUInstallDirs)
 # fails to find third_party/rade/src/rade_api.h and aborts the install.
 set_target_properties(rade PROPERTIES PUBLIC_HEADER "")
 
-install(TARGETS rade
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}   # Windows: rade.dll
-)
 # COMPONENT and EXCLUDE_FROM_ALL are repeated inside each artifact group on
 # purpose: install(TARGETS) binds them to the group they follow, so a single
 # trailing "COMPONENT nereusd EXCLUDE_FROM_ALL" would apply to RUNTIME only
@@ -1790,13 +1790,18 @@ install(TARGETS rade
             COMPONENT nereusd EXCLUDE_FROM_ALL
 )
 
-# Point install-tree ELF binaries at the install-tree librade.
+# Point the install-tree daemon at the install-tree librade.
 #
 # Computed rather than hardcoded to "$ORIGIN/../lib": GNUInstallDirs
 # resolves CMAKE_INSTALL_LIBDIR to a multiarch path (lib/x86_64-linux-gnu)
 # on Debian-family distros when the prefix is /usr, which the release
 # AppImage job uses, so a literal ../lib would miss the library it is
 # meant to find.
+#
+# nereusd only, not NereusSDR. The GUI binary had no INSTALL_RPATH before
+# this branch and gets none now, so linuxdeploy's rpath rewriting in the
+# AppImage job sees exactly what it saw before. See the rade install rule
+# above for why leaving the default install path untouched matters here.
 #
 # Not applied on Apple: the macOS artifact is an .app bundle deployed by
 # macdeployqt, which rewrites install names into Contents/Frameworks
@@ -1805,7 +1810,7 @@ if(NOT APPLE AND UNIX)
     file(RELATIVE_PATH NEREUS_BIN_TO_LIB
          "${CMAKE_INSTALL_FULL_BINDIR}"
          "${CMAKE_INSTALL_FULL_LIBDIR}")
-    set_target_properties(NereusSDR nereusd PROPERTIES
+    set_target_properties(nereusd PROPERTIES
         INSTALL_RPATH "$ORIGIN/${NEREUS_BIN_TO_LIB}"
     )
 endif()

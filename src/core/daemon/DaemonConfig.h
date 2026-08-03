@@ -60,6 +60,16 @@ struct DaemonConfig {
                                                 // AppSettings key the shared
                                                 // connect path reads; see
                                                 // DaemonApp::applyConfigToSettings
+    // True only when sample_rate_hz was actually present in the config
+    // file. sampleRateHz alone cannot express "unset", because validate()
+    // rejects <= 0 and so the field must always hold a usable rate. Without
+    // this flag, a bare `nereusd` with no config file (a non-fatal case:
+    // server_main logs a warning and continues with defaults) would stamp
+    // the 192000 default over whatever rate the operator had already
+    // persisted for that radio, and the GUI would come up at the wrong rate
+    // on its next launch. Writing per-MAC settings is a side effect on
+    // shared user state, so it happens only on an explicit request.
+    bool    sampleRateExplicit {false};
     int     sliceCount   {1};                  // see header comment: the
                                                 // board-specific ceiling is
                                                 // applied later, by R1 Task 10

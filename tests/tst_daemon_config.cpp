@@ -53,6 +53,57 @@ private slots:
         QCOMPARE(c.sampleRateHz, 384000);
         QCOMPARE(c.sliceCount, 3);
         QCOMPARE(c.audioDevice, QStringLiteral("hw:CARD=Device"));
+        QVERIFY(c.sampleRateExplicit);
+    }
+
+    // sampleRateHz always holds a usable rate (validate() rejects <= 0), so
+    // it cannot itself express "the operator did not ask for one".
+    // DaemonApp::applyConfigToSettings writes the rate into the per-MAC
+    // AppSettings key the shared connect path reads, which is persisted
+    // state the GUI reads back on its next launch. Without a separate
+    // "was it asked for" flag, a bare `nereusd` with no config file (a
+    // non-fatal case: server_main warns and continues with defaults) would
+    // stamp the 192000 struct default over a rate the operator had already
+    // persisted for that radio. Pinned in both directions.
+    void sampleRateExplicitOnlyWhenTheKeyIsPresent()
+    {
+        QTemporaryFile absent;
+        QVERIFY(absent.open());
+        absent.write("radio_mac = aa:bb:cc:dd:ee:ff\n"
+                     "slice_count = 1\n");
+        absent.flush();
+        QString err;
+        const DaemonConfig noKey = DaemonConfig::fromFile(absent.fileName(), &err);
+        QVERIFY2(err.isEmpty(), qPrintable(err));
+        QVERIFY(!noKey.sampleRateExplicit);
+        QCOMPARE(noKey.sampleRateHz, DaemonConfig::defaults().sampleRateHz);
+
+        // Defaults, and an unreadable file that falls back to them, are
+        // equally "not asked for".
+        QVERIFY(!DaemonConfig::defaults().sampleRateExplicit);
+        const DaemonConfig missing =
+            DaemonConfig::fromFile(QStringLiteral("/nonexistent/nereusd.conf"), &err);
+        QVERIFY(!missing.sampleRateExplicit);
+
+        // A present but unparseable value keeps the default rate, and must
+        // not count as explicit either.
+        QTemporaryFile garbage;
+        QVERIFY(garbage.open());
+        garbage.write("sample_rate_hz = not-a-number\n");
+        garbage.flush();
+        const DaemonConfig bad = DaemonConfig::fromFile(garbage.fileName(), &err);
+        QVERIFY(!bad.sampleRateExplicit);
+
+        // And the value the operator did ask for still round-trips, even
+        // when it happens to equal the default.
+        QTemporaryFile same;
+        QVERIFY(same.open());
+        same.write("sample_rate_hz = 192000\n");
+        same.flush();
+        const DaemonConfig explicitDefault =
+            DaemonConfig::fromFile(same.fileName(), &err);
+        QVERIFY(explicitDefault.sampleRateExplicit);
+        QCOMPARE(explicitDefault.sampleRateHz, 192000);
     }
 
     // Every key nereusd.conf.sample documents must parse, and nothing it
