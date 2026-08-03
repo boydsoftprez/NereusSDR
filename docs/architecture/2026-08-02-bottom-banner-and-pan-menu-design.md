@@ -304,28 +304,39 @@ operator reaches it elsewhere.
 | 2 | TGXL chip | TunerApplet |
 | 3 | CAT + TCI, together | Tools menu, both |
 | 4 | CH chain tags | `SpectrumStatusOverlay`, per pan and correct |
-| 5 | RX pills, **one at a time**, right to left: SQL, then APF, then NB, then NR, then AGC | DSP menu and the VFO flag |
-| 6 | Placeholder row: FDX, DVK, CWX, TNF, Band Stack | collapses to one `⋯ 5` chip |
+| 5 | SQL pill | DSP menu and the VFO flag |
+| 6 | APF pill | DSP menu and the VFO flag |
+| 7 | NB pill | DSP menu and the VFO flag |
+| 8 | NR pill | DSP menu and the VFO flag |
+| 9 | AGC pill | DSP menu and the VFO flag |
+| 10 | Placeholder row: FDX, DVK, CWX, TNF, Band Stack | collapses to one `⋯ 5` chip |
 | : | **Never folds:** `+PAN`, `☰`, StationBlock, the four safety slots, and the mode + filter pills | nothing else reaches them |
+
+Rungs 5-9 are numbered individually here to match `ChromeBarItems.cpp`,
+the implementation's single source of truth for the rung table; an
+earlier draft of this section grouped them as "rung 5, five sub-steps"
+under a six-rung ladder, which the code never actually built.
 
 Notes:
 
-* Rungs 5 and 6 mean live RX state yields before inert placeholders. That is
-  a deliberate consequence of the "left buttons are last resort" call, and it
-  is acceptable because §4.6 puts the fold point well below any width in
-  normal use. The ladder is insurance, not everyday behaviour.
-* Rung 5 is five sub-steps, not one. Each pill folds individually so the
-  ladder degrades smoothly rather than dropping 90 px at a stroke. The slice
-  tag stays with mode and filter and never folds.
-* Rung 6 collapses the placeholders to a single chip rather than removing
+* Rungs 5 through 10 mean live RX state yields before inert placeholders.
+  That is a deliberate consequence of the "left buttons are last resort"
+  call, and it is acceptable because §4.6 puts the fold point well below
+  any width in normal use. The ladder is insurance, not everyday behaviour.
+* RX pills occupy five consecutive rungs, one pill each, right to left:
+  SQL (5), then APF (6), then NB (7), then NR (8), then AGC (9). Each pill
+  folds individually so the ladder degrades smoothly rather than dropping
+  90 px at a stroke. The slice tag stays with mode and filter and never
+  folds.
+* Rung 10 collapses the placeholders to a single chip rather than removing
   them, so the group keeps a position.
 * CAT and TCI fold as a pair to avoid a "TCI but no CAT" half-state, matching
   the existing grouping at `MainWindow.cpp:7789`.
 * Every folded item's label and current value go into `OverflowChip`'s
   popover.
 
-**Floor.** With all six rungs folded, the banner requires about 746 px, so it
-survives any window the rest of the UI does.
+**Floor.** With all ten rungs folded, the banner requires about 746 px, so
+it survives any window the rest of the UI does.
 
 ---
 

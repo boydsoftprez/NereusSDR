@@ -47,7 +47,7 @@ const QVector<PanLayoutGeometry> kPanLayouts = {
 };
 
 namespace {
-// From AetherSDR PanLayoutDialog.cpp:43,53-56 [@c6481cb].
+// From AetherSDR PanLayoutDialog.cpp:33,43,53-56 [@c6481cb].
 constexpr int kThumbW = 120;
 constexpr int kThumbH = 90;
 constexpr int kPad    = 4;
