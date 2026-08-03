@@ -198,8 +198,18 @@ int main(int argc, char* argv[])
         return 2;
     }
 
+    // "requested" on both counts, deliberately. Neither value is final
+    // here: sliceCount is clamped to the connected board's maxSlices by
+    // DaemonApp, and sampleRateHz is seeded into the per-MAC settings key
+    // and then validated against the board's allowed-rate list by
+    // resolveSampleRate(), which logs the rate it actually connects with
+    // ("Connecting with sampleRate=" in RadioModel). An earlier version
+    // of this line printed the rate as a bare "rate", which read as
+    // "applied" for a value that at the time reached nothing but a
+    // test-only branch.
     qCInfo(NereusSDR::lcApp) << "nereusd starting, requested slices"
-                             << cfg.sliceCount << "rate" << cfg.sampleRateHz;
+                             << cfg.sliceCount
+                             << "requested rate" << cfg.sampleRateHz;
 
     // `daemon` is declared after `app` (QCoreApplication), so C++ runs
     // its destructor before app's when main() returns -- teardown still

@@ -35,11 +35,20 @@ sample_rate_hz = 192000
 slice_count = 1
 
 # Local audio output device name, for monitoring on a Pi with a sound
-# card attached. Leave unset to run with no local audio at all -- a
-# headless Pi with no sound card is a supported configuration.
-# Default: (unset -- no local audio)
+# card attached. Leave unset to use the platform default output device.
+# A headless Pi with no sound card is a supported configuration: opening
+# the device fails harmlessly, is logged, and the daemon keeps running
+# and demodulating with no local monitoring.
+# Default: (unset -- platform default)
 audio_device =
 
-# Logging verbosity: debug, info, warning, or critical.
-# Default: info
-log_level = info
+# Logging verbosity is NOT set here. Use Qt's own QT_LOGGING_RULES
+# environment variable, which takes precedence over the filter rules
+# NereusSDR installs at startup, and which systemd can set for you:
+#
+#   [Service]
+#   Environment=QT_LOGGING_RULES=nereus.*.debug=true
+#
+# Category names are the nereus.* ids in src/core/LogCategories.cpp
+# (nereus.connection, nereus.audio, nereus.dsp, ...); nereus.* matches
+# all of them.

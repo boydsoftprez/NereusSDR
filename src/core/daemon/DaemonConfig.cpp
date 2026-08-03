@@ -68,8 +68,6 @@ DaemonConfig DaemonConfig::fromFile(const QString& path, QString* errorOut)
             cfg.radioMac = value;
         } else if (key == QLatin1String("audio_device")) {
             cfg.audioDevice = value;
-        } else if (key == QLatin1String("log_level")) {
-            cfg.logLevel = value;
         } else if (key == QLatin1String("sample_rate_hz")) {
             bool ok = false;
             const int v = value.toInt(&ok);

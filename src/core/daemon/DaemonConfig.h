@@ -44,14 +44,26 @@ namespace NereusSDR {
 
 // Parsed, validated configuration for one nereusd process. See the file
 // header above for the on-disk format and the design rationale.
+//
+// Every field here has a production consumer. An earlier revision shipped
+// a `logLevel` field that nothing read, alongside a nereusd.conf.sample
+// documenting it, which is why the rule is now written down: a key that
+// reaches this struct must reach the daemon's behaviour too, or it does
+// not belong in the sample file. Log verbosity is Qt's own
+// QT_LOGGING_RULES environment variable instead (verified to take
+// precedence over the QLoggingCategory::setFilterRules() call
+// LogManager makes), set from the systemd unit, which needs no field
+// here and no code at all.
 struct DaemonConfig {
     QString radioMac;                          // empty = first discovered
-    int     sampleRateHz {192000};
+    int     sampleRateHz {192000};             // seeded into the per-MAC
+                                                // AppSettings key the shared
+                                                // connect path reads; see
+                                                // DaemonApp::applyConfigToSettings
     int     sliceCount   {1};                  // see header comment: the
                                                 // board-specific ceiling is
                                                 // applied later, by R1 Task 10
-    QString audioDevice;                       // empty = no local audio
-    QString logLevel     {QStringLiteral("info")};
+    QString audioDevice;                       // empty = platform default
 
     // Reads and parses `path`. If the file cannot be opened, returns
     // defaults() with *errorOut set to a human-readable message describing

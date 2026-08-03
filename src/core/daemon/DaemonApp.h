@@ -269,6 +269,29 @@ private:
     // is armed -- see start()'s implementation.
     bool resolveRadioInfo(const DaemonConfig& cfg, RadioInfo& out) const;
 
+    // Seeds the AppSettings keys the shared connect path reads, so that
+    // config-file values actually take effect, from `cfg`:
+    //
+    //   sample_rate_hz -> hardware/<mac>/radioInfo/sampleRate
+    //   audio_device   -> audio/Speakers/DeviceName
+    //
+    // Seeding the settings store rather than passing values down through
+    // new parameters is deliberate. Both keys already have a single
+    // production reader that does more than store the value:
+    // resolveSampleRate() (SampleRateCatalog.h) validates the rate
+    // against the connected board's allowed list and falls back to the
+    // board default with a warning if it is not supported, and
+    // AudioEngine::ensureSpeakersOpen() resolves an empty device name to
+    // the platform default. A config file that bypassed those would be
+    // able to ask for a rate the board cannot do. This way the daemon
+    // and the GUI take the identical path, and the config file simply
+    // decides what the persisted value is on this start.
+    //
+    // Requires a resolved `mac`, which is why it is called after
+    // resolveRadioInfo() and before RadioModel::connectToRadio(): with
+    // an empty radio_mac the MAC is not known until discovery answers.
+    void applyConfigToSettings(const DaemonConfig& cfg, const QString& mac) const;
+
     // Tops up m_radioModel's slice list to min(cfg.sliceCount,
     // connected-board-maxSlices), starting from however many slices
     // connectToRadio() (or the disconnected-default / primed-board path)

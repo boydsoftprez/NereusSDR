@@ -6012,8 +6012,12 @@ nereus_add_test(tst_core_init)
 # and trailing comments, whitespace trimmed), that a missing file yields
 # defaults() plus a non-empty error rather than a crash, and the generic
 # validate() floor (slice_count >= 1) that does not depend on any specific
-# radio being connected.
+# radio being connected.  Also cross-checks the shipped
+# packaging/nereusd.conf.sample against the parser's key list, hence
+# NEREUS_SOURCE_DIR.
 nereus_add_test(tst_daemon_config)
+target_compile_definitions(tst_daemon_config PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # R1 Task 10: DaemonApp connects the daemon to a radio (or runs discovery)
 # and creates min(cfg.sliceCount, connected-board-maxSlices) slices via

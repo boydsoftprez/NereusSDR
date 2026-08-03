@@ -7,6 +7,7 @@
 
 #include "core/daemon/DaemonApp.h"
 
+#include "core/AppSettings.h"
 #include "core/CoreInit.h"
 #include "core/FFTRouter.h"
 #include "core/LogCategories.h"
@@ -105,6 +106,11 @@ bool DaemonApp::start(const DaemonConfig& cfg)
     {
         RadioInfo info;
         if (resolveRadioInfo(cfg, info)) {
+            // Before connectToRadio(), which is where resolveSampleRate()
+            // reads the per-MAC key. See applyConfigToSettings()'s doc
+            // comment for why the config file goes through the settings
+            // store instead of new parameters on the connect call.
+            applyConfigToSettings(cfg, info.macAddress);
             m_radioModel->connectToRadio(info);
         } else {
             // Not a startup failure -- see start()'s own doc comment. The
@@ -178,6 +184,36 @@ void DaemonApp::stop()
 int DaemonApp::sliceCount() const
 {
     return m_radioModel ? m_radioModel->slices().size() : 0;
+}
+
+void DaemonApp::applyConfigToSettings(const DaemonConfig& cfg,
+                                      const QString& mac) const
+{
+    auto& settings = AppSettings::instance();
+
+    if (!mac.isEmpty() && cfg.sampleRateHz > 0) {
+        // resolveSampleRate() (SampleRateCatalog.cpp) reads exactly this
+        // key at connect time and validates it against the board's
+        // allowed-rate list, falling back to the board default with a
+        // warning when the value is not supported. That is the behaviour
+        // nereusd.conf.sample documents for this key ("must be a rate the
+        // connected board actually supports"), so the daemon gets it by
+        // using the same path the GUI does rather than by re-deriving it.
+        settings.setHardwareValue(mac,
+                                  QStringLiteral("radioInfo/sampleRate"),
+                                  cfg.sampleRateHz);
+    }
+
+    // Only written when set. An empty audio_device must not stamp an
+    // empty DeviceName over a value the operator configured some other
+    // way; leaving the key untouched lets
+    // AudioDeviceConfig::loadFromSettings keep whatever is already there,
+    // and a genuinely unset key resolves to the platform default inside
+    // AudioEngine::ensureSpeakersOpen().
+    if (!cfg.audioDevice.isEmpty()) {
+        settings.setValue(QStringLiteral("audio/Speakers/DeviceName"),
+                          cfg.audioDevice);
+    }
 }
 
 bool DaemonApp::resolveRadioInfo(const DaemonConfig& cfg, RadioInfo& out) const
