@@ -5174,11 +5174,15 @@ void MainWindow::buildMenuBar()
         QAction* panLayoutAct = viewMenu->addAction(QStringLiteral("Pan &Layout…"));
         panLayoutAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
         panLayoutAct->setToolTip(QStringLiteral(
-            "Pick a panadapter layout template (1 / 2v / 2h / 12h / 2x2)"));
+            "Pick a panadapter layout template"));
         connect(panLayoutAct, &QAction::triggered, this, [this]() {
-            if (!m_panStack) { return; }
-            PanLayoutDialog dialog(this);
-            if (dialog.exec() == QDialog::Accepted) {
+            const int maxSlices = m_radioModel ? m_radioModel->maxSlices() : 1;
+            const QString boardName = m_radioModel ? m_radioModel->name() : QString();
+            PanLayoutDialog dialog(maxSlices,
+                                   m_panStack ? m_panStack->currentLayoutId()
+                                              : QStringLiteral("1"),
+                                   boardName, this);
+            if (dialog.exec() == QDialog::Accepted && !dialog.selectedLayout().isEmpty()) {
                 applyPanLayout(dialog.selectedLayout());
             }
         });

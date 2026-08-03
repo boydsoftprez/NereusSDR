@@ -5956,6 +5956,14 @@ nereus_add_test(tst_popup_placement)
 # rect count before checking overlap/containment.
 nereus_add_test(tst_layout_thumbnail)
 
+# Phase 3F Task B3: PanLayoutDialog gates the nine-layout grid on the
+# connected board's real slice capacity (design doc §8.4). Unavailable
+# layouts are HIDDEN, not greyed, and a footer names the board and count.
+# fiveSliceBoardSeesEverything asserts the exact id list in grid order
+# rather than a bare count, so a wrong-nine or out-of-order regression
+# still fails. See task-B3-brief.md "Test rigour".
+nereus_add_test(tst_pan_layout_dialog_gating)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
