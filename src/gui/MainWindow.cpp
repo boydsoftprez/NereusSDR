@@ -7146,18 +7146,19 @@ void MainWindow::buildStatusBar()
     // Setting a second, competing tooltip here would just get clobbered
     // by the next PA reading, unpredictably.
 
-    // ── Phase 3M-0 Task 14: TX Inhibit indicator ─────────────────────────
-    // "INH" pill, dimmed by default, full opacity when
-    // TxInhibitMonitor::inhibited() asserts. Signal wiring to the monitor
-    // lands in Task 17 (final integration pass); setTxInhibited() (Task 17)
-    // drives the same dimSafetyBadge() helper this construction uses.
-    m_txInhibitLabel = new QLabel(QStringLiteral("INH"), barWidget);
-    m_txInhibitLabel->setObjectName(QStringLiteral("txInhibitLabel"));
-    m_txInhibitLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #ff6060; font-weight: bold; font-size: 11px;"
-        "         padding: 2px 6px; border: 1px solid #ff6060; border-radius: 3px; }"));
-    m_txInhibitLabel->setToolTip(tr("External TX Inhibit asserted. TX is blocked."));
-    dimSafetyBadge(m_txInhibitLabel, false);  // dimmed until inhibit asserts
+    // TX Inhibit has no slot of its own any more.
+    //
+    // It used to be an "INH" pill dimmed to 14%. Two problems, both found on
+    // a bench: the abbreviation meant nothing to the operator, and the pill
+    // carried a 1 px #ff6060 border that survived the dimming while its text
+    // did not, so the safety corner sat there showing an empty alarm-red
+    // outline while nothing was wrong. That is the opposite of what the
+    // corner is for.
+    //
+    // Inhibit is a property OF transmit, not a peer indicator beside it, so
+    // it now paints onto the TX badge itself: a prohibition symbol replaces
+    // the TX dot and a toast names the reason at the moment it asserts. See
+    // setTxInhibited(). That reclaims a whole reserved slot as well.
 
     // ── sub-PR-8: PA Status StatusBadge ──────────────────────────────────
     // Variant::On (green ✓ PA OK) / Variant::Tx (red ✓ PA FAULT).
@@ -7290,7 +7291,6 @@ void MainWindow::buildStatusBar()
         safetyRow->addWidget(slot);
     };
 
-    addSlot(m_txInhibitLabel);
     addSlot(m_paStatusBadge);
     addSlot(m_adcOvlBadge);
     addSlot(m_txStatusBadge);
@@ -7302,6 +7302,11 @@ void MainWindow::buildStatusBar()
         // Qt::UniqueConnection is not supported for lambda connects — this
         // connect runs once at construction so no deduplication is needed.
         connect(mox, &MoxController::moxStateChanged, this, [this](bool tx) {
+            // While inhibited the badge is showing the prohibition symbol and
+            // must keep showing it; a MOX transition underneath must not
+            // repaint over an active interlock.
+            if (m_txInhibited) { return; }
+            m_txStatusBadge->setSvgIcon(QStringLiteral(":/icons/badge-dot.svg"));
             m_txStatusBadge->setVariant(tx ? StatusBadge::Variant::Tx
                                            : StatusBadge::Variant::Off);
             m_txStatusBadge->setToolTip(tx ? tr("Transmitting (MOX engaged)")
@@ -7572,8 +7577,44 @@ void MainWindow::setPaTripped(bool tripped)
 // direction: the label stays Qt-visible at all times once inside its slot.
 void MainWindow::setTxInhibited(bool inhibited)
 {
-    if (!m_txInhibitLabel) { return; }
-    dimSafetyBadge(m_txInhibitLabel, inhibited);
+    if (!m_txStatusBadge) { return; }
+    if (m_txInhibited == inhibited) { return; }
+    m_txInhibited = inhibited;
+
+    if (inhibited) {
+        // A prohibition symbol over TX, not a separate "INH" pill. Inhibit is
+        // a property of transmit, so it belongs on the transmit indicator;
+        // and the pill's abbreviation meant nothing to an operator who had
+        // not read the source (bench report, 2026-08-03).
+        m_txStatusBadge->setSvgIcon(QStringLiteral(":/icons/badge-prohibited.svg"));
+        m_txStatusBadge->setVariant(StatusBadge::Variant::Tx);
+        m_txStatusBadge->setToolTip(
+            tr("Transmit blocked by an external TX Inhibit signal."));
+
+        // The symbol says transmit is blocked; the toast says why, once, at
+        // the moment it happens. Error severity because an interlock is
+        // actively refusing the operator, which is what that level means.
+        // Held so it can be taken down the instant inhibit clears rather
+        // than aging out and leaving a stale notice on screen.
+        m_txInhibitToast = showToast(
+            tr("Transmit blocked: external TX Inhibit asserted."),
+            ToastSeverity::Error, 8000);
+        return;
+    }
+
+    // Cleared. Hand the badge back to whatever MOX currently says, so the
+    // operator does not have to key up to get a truthful indicator again.
+    if (m_txInhibitToast) {
+        m_txInhibitToast->close();
+        m_txInhibitToast = nullptr;
+    }
+    const bool tx = m_radioModel && m_radioModel->moxController()
+                    && m_radioModel->moxController()->isMox();
+    m_txStatusBadge->setSvgIcon(QStringLiteral(":/icons/badge-dot.svg"));
+    m_txStatusBadge->setVariant(tx ? StatusBadge::Variant::Tx
+                                   : StatusBadge::Variant::Off);
+    m_txStatusBadge->setToolTip(tx ? tr("Transmitting (MOX engaged)")
+                                   : tr("Receive (MOX off)"));
 }
 
 // ── Phase 23: TCI indicator update + Setup navigation ────────────────────────

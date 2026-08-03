@@ -145,10 +145,10 @@ public:
     ~MainWindow() override;
 
     // ── Phase 3M-0 Task 14 test accessors ────────────────────────────────
-    // Returns the TX Inhibit status-bar label. Visible iff
-    // TxInhibitMonitor::inhibited() is true. Wiring to the monitor lands
-    // in Task 17 (final integration). Non-null after construction.
-    QLabel* txInhibitLabel() const noexcept { return m_txInhibitLabel; }
+    // TX Inhibit no longer has a label of its own. It paints onto the TX
+    // badge (prohibition symbol) and raises a toast; see setTxInhibited().
+    /// True while an external TX Inhibit is asserted.
+    bool isTxInhibited() const noexcept { return m_txInhibited; }
 
     // Returns the PA status badge. Variant is On (green) or Tx (red) per
     // RadioModel::paTripped(). Wiring to RadioModel lands in Task 17.
@@ -955,13 +955,18 @@ private:
 
     // Status bar safety indicators (Phase 3M-0 Task 14 / sub-PR-8 restyle;
     // reserved safety slots added per design §4.5).
-    // m_txInhibitLabel: "INH" pill, dimmed by default, full opacity when
+    // TX Inhibit: no widget. Formerly an "INH" pill, dimmed when
     //   TxInhibitMonitor::inhibited() asserts (wired Task 17).
     // m_paStatusBadge:  PA OK (green check) / PA FAULT (red check) StatusBadge.
     // m_txStatusBadge:  TX indicator, solid red when MOX engaged.
     // All four safety badges (TX Inhibit, PA, ADC overload, TX) live in
     // m_safetyGroup's fixed-width slots so an alarm never shifts geometry.
-    QLabel*      m_txInhibitLabel{nullptr};
+    // TX Inhibit has no widget of its own; it paints onto m_txStatusBadge.
+    // m_txInhibited guards the MOX handler from repainting over an active
+    // interlock, and the toast is held so it can be dismissed the instant
+    // inhibit clears rather than aging out.
+    bool                     m_txInhibited{false};
+    QPointer<class StatusToast> m_txInhibitToast;
     StatusBadge* m_paStatusBadge{nullptr};
     StatusBadge* m_txStatusBadge{nullptr};
     // Reserved safety slot group. Registered at rung 0 (never folds).

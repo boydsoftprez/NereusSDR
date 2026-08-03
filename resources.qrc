@@ -22,6 +22,7 @@
         <file alias="spin-down.svg">resources/icons/spin-down.svg</file>
         <file alias="badge-check.svg">resources/icons/badge-check.svg</file>
         <file alias="badge-dot.svg">resources/icons/badge-dot.svg</file>
+        <file alias="badge-prohibited.svg">resources/icons/badge-prohibited.svg</file>
         <file alias="badge-mode.svg">resources/icons/badge-mode.svg</file>
         <file alias="badge-filter.svg">resources/icons/badge-filter.svg</file>
         <file alias="badge-agc.svg">resources/icons/badge-agc.svg</file>

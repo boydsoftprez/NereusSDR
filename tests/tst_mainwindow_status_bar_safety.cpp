@@ -78,38 +78,42 @@ private:
 
 private slots:
 
-    // ── 1. TX Inhibit label is dimmed by default ───────────────────────────
+    // ── 1. TX Inhibit paints onto the TX badge, it has no pill ────────────
     //
-    // Mirrors the CURRENT buildStatusBar() contract (bottom-banner cleanup
-    // Task A6, design §4.5): the label lives permanently in its reserved
-    // safety slot and is dimmed via dimSafetyBadge(), never hidden with
-    // setVisible(false) -- a fixed-width slot showing at 14% opacity holds
-    // its geometry; an outright-hidden widget would collapse it. This slot
-    // used to assert the pre-A6 "TX INHIBIT" / setVisible(false) / em-dash
-    // tooltip contract, none of which buildStatusBar() does any more, and
-    // passed anyway because it is a self-contained mirror -- Task A8
-    // Step 5b retires that drift.
+    // The old "INH" pill is gone. It carried a 1 px #ff6060 border that
+    // survived dimming to 14% while its text did not, so the safety corner
+    // showed an empty alarm-red outline while nothing was wrong, and the
+    // abbreviation meant nothing to an operator (bench report 2026-08-03).
+    // Inhibit is a property OF transmit, so it now paints the prohibition
+    // icon onto the TX badge and raises a toast naming the reason.
+    //
+    // MainWindow is not constructible here, so this mirrors the contract:
+    // the asserted look is the prohibition icon at Variant::Tx, and the
+    // cleared look hands the badge back to MOX.
 
-    void txInhibitLabel_hiddenByDefault()
+    void txInhibitPaintsOntoTheTxBadge()
     {
-        QLabel label(u"INH"_s);
-        label.setObjectName(u"txInhibitLabel"_s);
-        label.setStyleSheet(
-            u"QLabel { color: #ff6060; font-weight: bold; font-size: 11px;"
-            "         padding: 2px 6px; border: 1px solid #ff6060; border-radius: 3px; }"_s);
-        label.setToolTip(u"External TX Inhibit asserted. TX is blocked."_s);
-        dimBadge(&label, false);
+        StatusBadge tx;
+        tx.setObjectName(u"txStatusBadge"_s);
+        tx.setSvgIcon(u":/icons/badge-dot.svg"_s);
+        tx.setLabel(u"TX"_s);
+        tx.setVariant(StatusBadge::Variant::Off);
 
-        // Dimming (opacity), not setVisible(false), is the mechanism.
-        // isVisible() itself is not asserted: an unshown, unparented
-        // top-level QLabel like this one defaults to invisible regardless
-        // of dimming state, so that read would be vacuous either way (see
-        // the file-header note on asserting the constraint, not the
-        // laid-out geometry).
-        auto* fx = qobject_cast<QGraphicsOpacityEffect*>(label.graphicsEffect());
-        QVERIFY(fx);
-        QCOMPARE(fx->opacity(), 0.14);
-        QCOMPARE(label.text(), u"INH"_s);
+        // Asserted.
+        tx.setSvgIcon(u":/icons/badge-prohibited.svg"_s);
+        tx.setVariant(StatusBadge::Variant::Tx);
+        tx.setToolTip(u"Transmit blocked by an external TX Inhibit signal."_s);
+        QCOMPARE(tx.variant(), StatusBadge::Variant::Tx);
+        QVERIFY(tx.toolTip().contains(u"blocked"_s));
+        // The operator must never be shown a bare abbreviation again.
+        QVERIFY(!tx.toolTip().contains(u"INH"_s));
+
+        // Cleared, MOX off.
+        tx.setSvgIcon(u":/icons/badge-dot.svg"_s);
+        tx.setVariant(StatusBadge::Variant::Off);
+        tx.setToolTip(u"Receive (MOX off)"_s);
+        QCOMPARE(tx.variant(), StatusBadge::Variant::Off);
+        QVERIFY(tx.toolTip().contains(u"Receive"_s));
     }
 
     // ── 2. PA Status badge shows "PA OK" by default ───────────────────────
@@ -227,19 +231,16 @@ private slots:
         safetyRow->setContentsMargins(8, 0, 0, 0);
         safetyRow->setSpacing(6);
 
-        auto* txInhibit = new QLabel(QStringLiteral("INH"), &host);
         auto* pa = new StatusBadge(&host);
         auto* ovl = new AdcOverloadBadge(&host);
         ovl->setObjectName(QStringLiteral("adcOvlBadge"));
         auto* tx = new StatusBadge(&host);
         tx->setObjectName(QStringLiteral("txStatusBadge"));
 
-        addSlot(safetyRow, group, txInhibit);
         addSlot(safetyRow, group, pa);
         addSlot(safetyRow, group, ovl);
         addSlot(safetyRow, group, tx);
         hbox->addWidget(group);
-        dimBadge(txInhibit, false);
         dimBadge(ovl, false);
 
         host.resize(400, 60);
@@ -267,7 +268,6 @@ private slots:
         group->setObjectName(QStringLiteral("safetyGroup"));
         auto* safetyRow = new QHBoxLayout(group);
 
-        addSlot(safetyRow, group, new QLabel(QStringLiteral("INH"), &host));
         addSlot(safetyRow, group, new StatusBadge(&host));
         addSlot(safetyRow, group, new AdcOverloadBadge(&host));
         addSlot(safetyRow, group, new StatusBadge(&host));
@@ -276,7 +276,7 @@ private slots:
         const QList<QWidget*> slotWidgets =
             group->findChildren<QWidget*>(QStringLiteral("safetySlot"),
                                           Qt::FindDirectChildrenOnly);
-        QCOMPARE(slotWidgets.size(), 4);
+        QCOMPARE(slotWidgets.size(), 3);
         for (QWidget* s : slotWidgets) {
             // Assert the CONSTRAINT, not the laid-out geometry. Qt does not
             // lay out an unshown window, so width() would read the default
@@ -322,17 +322,6 @@ private slots:
                  qPrintable(QStringLiteral("TX badge needs %1 px, slot is %2")
                                 .arg(tx.sizeHint().width()).arg(kSlotWidth)));
 
-        // The TX-inhibit pill is a plain QLabel in buildStatusBar, styled
-        // the same way and carrying the same shortened text.
-        QLabel inh(QStringLiteral("INH"));
-        inh.setStyleSheet(QStringLiteral(
-            "QLabel { color: #ff6060; font-weight: bold; font-size: 11px;"
-            "         padding: 2px 6px; border: 1px solid #ff6060;"
-            "         border-radius: 3px; }"));
-        inh.ensurePolished();
-        QVERIFY2(inh.sizeHint().width() <= kSlotWidth,
-                 qPrintable(QStringLiteral("INH pill needs %1 px, slot is %2")
-                                .arg(inh.sizeHint().width()).arg(kSlotWidth)));
     }
 };
 
