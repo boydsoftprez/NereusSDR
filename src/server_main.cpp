@@ -36,6 +36,25 @@
 //      main.cpp does, adapted to this file's simpler global-pointer
 //      structure (no pre-QApplication argv scan to share it with).
 //
+// R1 Task 10, fix round 1, Finding 3: daemon.start(cfg) is scheduled via
+// a queued QMetaObject::invokeMethod rather than called inline before
+// app.exec() below. Reachability matters here in a way it did not
+// before this task: before Task 10, this file never constructed a
+// RadioModel at all, so nothing here could ever run
+// RadioModel::connectToRadio()'s cold-cache WDSP wisdom wait (a
+// synchronous nested QEventLoop that can block for many minutes -- see
+// DaemonApp.h). Calling start() inline meant that wait was the ONLY
+// event loop alive during a cold-cache first connect: app.exec() was
+// never reached, so onTerm()'s QMetaObject::invokeMethod(g_app, "quit",
+// Qt::QueuedConnection) had no outer loop to land on, and a SIGTERM
+// arriving in that window could not be serviced -- confirmed live
+// (task-10-report.md): SIGTERM sent mid-wisdom-generation did not
+// unwind within 10 seconds and required SIGKILL. Deferring start() to
+// run AFTER app.exec() begins means the SAME nested QEventLoop
+// (RadioModel.cpp) is now nested INSIDE a live outer loop, so a queued
+// quit() posted during the wait is serviced exactly like it would be
+// for any other nested-loop wait in this codebase.
+//
 // One further reconciliation beyond the brief's own server_main.cpp
 // sketch (task-9-brief.md Step 4): that sketch predates CoreInit::shutdown()
 // (added by Task 8 itself, beyond its own brief's literal interface) and so
@@ -182,27 +201,38 @@ int main(int argc, char* argv[])
     qCInfo(NereusSDR::lcApp) << "nereusd starting, requested slices"
                              << cfg.sliceCount << "rate" << cfg.sampleRateHz;
 
-    // R1 Task 10: connects to a radio (or runs discovery when
-    // cfg.radioMac is empty) and creates min(cfg.sliceCount,
-    // connected-board-maxSlices) slices. See DaemonApp.h for why this
-    // returns true even when no radio was found at startup -- the same
-    // reason the equally-unconditional CoreInit::initialize() check
-    // above exists: a documented bool return value gets checked at this
-    // entry point regardless of whether today's implementation can
-    // currently return false.
-    //
     // `daemon` is declared after `app` (QCoreApplication), so C++ runs
     // its destructor before app's when main() returns -- teardown still
     // has a live QCoreApplication to run on. The explicit stop() call on
     // the quit path below runs that same teardown earlier, and visibly,
     // rather than relying solely on the implicit destructor call.
     NereusSDR::DaemonApp daemon;
-    if (!daemon.start(cfg)) {
-        qCCritical(NereusSDR::lcApp) << "daemon failed to start";
-        NereusSDR::CoreInit::shutdown();
-        return 4;
-    }
-    qCInfo(NereusSDR::lcApp) << "nereusd started, slices" << daemon.sliceCount();
+
+    // R1 Task 10: connects to a radio (or runs discovery when
+    // cfg.radioMac is empty) and creates min(cfg.sliceCount,
+    // connected-board-maxSlices) slices. See DaemonApp.h for why this
+    // returns true even when no radio was found at startup -- the same
+    // reason the equally-unconditional CoreInit::initialize() check
+    // above exists: a documented bool return value gets checked
+    // regardless of whether today's implementation can currently return
+    // false.
+    //
+    // Fix round 1, Finding 3: scheduled via a queued invokeMethod rather
+    // than called inline here, so app.exec() below is already running
+    // by the time it executes -- see the file header above for why that
+    // ordering is load-bearing, not cosmetic. `daemon` and `cfg` are
+    // captured by reference: both are local to this function and stay
+    // alive for the rest of main(), well past the point this queued call
+    // runs (the queued event is serviced from the very first turn of
+    // app.exec()'s loop, still inside this stack frame).
+    QMetaObject::invokeMethod(g_app, [&daemon, &cfg]() {
+        if (!daemon.start(cfg)) {
+            qCCritical(NereusSDR::lcApp) << "daemon failed to start";
+            QCoreApplication::exit(4);
+            return;
+        }
+        qCInfo(NereusSDR::lcApp) << "nereusd started, slices" << daemon.sliceCount();
+    }, Qt::QueuedConnection);
 
     const int rc = app.exec();
 

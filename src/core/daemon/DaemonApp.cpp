@@ -8,6 +8,7 @@
 #include "core/daemon/DaemonApp.h"
 
 #include "core/CoreInit.h"
+#include "core/FFTRouter.h"
 #include "core/LogCategories.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -94,6 +95,12 @@ bool DaemonApp::start(const DaemonConfig& cfg)
     createConfiguredSlices(cfg.sliceCount);
     mintFftEndpoints();
 
+    // Fix round 1, Finding 1: mintFftEndpoints() only fills m_topology's
+    // own private bookkeeping. Without this call the subscriptions never
+    // reached RadioModel's live FFTRouter (RadioModel::fftRouter()) and
+    // were completely inert. See the file header above.
+    publishFftTopology();
+
     return true;
 }
 
@@ -103,10 +110,15 @@ void DaemonApp::stop()
         return;
     }
 
-    // Reverse of start(): drop this run's FFT-topology bookkeeping
-    // before the RadioModel (and the streams its subscriptions pointed
-    // at) goes away.
+    // Reverse of start(): drop this run's FFT-topology subscriptions and
+    // push the now-empty set to the router BEFORE the RadioModel that
+    // owns it is destroyed, so the router explicitly drops every mapping
+    // rather than simply ceasing to exist mid-mapping. Both statements
+    // matter: clearing m_topology alone (as fix round 1, Finding 1 found)
+    // never reaches the router at all without the applyTo() call
+    // publishFftTopology() makes.
     m_topology = FftTopology{};
+    publishFftTopology();
 
     // ~RadioModel() calls teardownConnection() and deletes every slice
     // (RadioModel.cpp), so resetting the pointer alone satisfies
@@ -219,5 +231,23 @@ void DaemonApp::mintFftEndpoints()
         m_topology.subscribe(endpointId, stream);
     }
 }
+
+void DaemonApp::publishFftTopology()
+{
+    if (!m_radioModel) {
+        return;
+    }
+    m_topology.applyTo(*m_radioModel->fftRouter());
+}
+
+#ifdef NEREUS_BUILD_TESTS
+QList<int> DaemonApp::fftRouterMappingsForTest(const QString& consumerId) const
+{
+    if (!m_radioModel) {
+        return {};
+    }
+    return m_radioModel->fftRouter()->receiversForPan(consumerId);
+}
+#endif
 
 } // namespace NereusSDR

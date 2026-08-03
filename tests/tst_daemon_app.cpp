@@ -67,6 +67,43 @@ private slots:
         app.stop();
     }
 
+    // Fix round 1, Finding 1: mintFftEndpoints() populating m_topology
+    // is not enough by itself -- it has to reach RadioModel's own live
+    // FFTRouter (RadioModel::fftRouter()) via FftTopology::applyTo(),
+    // the same way MainWindow::rebuildFftRouting() ends with
+    // m_topology.applyTo(*router). Before the fix, m_topology was
+    // subscribed to but never pushed anywhere, so the router never knew
+    // about any of it.
+    //
+    // A fresh DaemonApp's endpoint-id counter starts at 0, so with
+    // sliceCount = 1 the single slice created gets "daemon-ep-0" and
+    // binds to stream 0 (the allocator's first placement for a slice
+    // with no existing occupant to share with).
+    void fftRouterReflectsSubscriptions()
+    {
+        DaemonConfig cfg = DaemonConfig::defaults();
+        cfg.sliceCount = 1;
+
+        DaemonApp app;
+        app.primeBoardForTest(HPSDRHW::HermesLite);
+
+        QVERIFY(app.start(cfg));
+        QCOMPARE(app.sliceCount(), 1);
+
+        const QList<int> mapped =
+            app.fftRouterMappingsForTest(QStringLiteral("daemon-ep-0"));
+        QCOMPARE(mapped.size(), 1);
+        QCOMPARE(mapped.first(), 0);
+
+        app.stop();
+
+        // The RadioModel (and the FFTRouter it owned) is gone after
+        // stop(); the observable contract is that DaemonApp reports no
+        // mapping for anything, rather than a test reaching into a
+        // dangling router pointer.
+        QVERIFY(app.fftRouterMappingsForTest(QStringLiteral("daemon-ep-0")).isEmpty());
+    }
+
     // HermesLite's maxSlices is 5 -- the request must clamp DOWN to the
     // board's real capability, not silently create 99 slices.
     void clampsSliceCountToBoardCapability()

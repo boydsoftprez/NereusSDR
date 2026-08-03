@@ -45,8 +45,25 @@
 // with no call site -- exactly what CLAUDE.md's ISpectrumSink note warns
 // against adding speculatively. Feeding real I/Q into per-stream FFT
 // engines needs a tap on RxDspWorker/ReceiverManager this task's brief
-// does not describe; that wiring belongs with Task 11 (wideband FFT
-// thread), which can construct its own pool alongside the tap it adds.
+// does not describe. Fix round 1 correction: an earlier version of this
+// comment named Task 11 (wideband FFT thread) as the natural owner of
+// that future FftEnginePool construction. Task 11's actual scope is
+// narrowly giving the wideband FFT dispatch its own QThread -- it does
+// not construct an FftEnginePool, and no task currently in the R1 plan
+// does. The deferral itself still stands; there is just no specific
+// task to point future readers at yet.
+//
+// FIX ROUND 1, FINDING 1: subscribing endpoints in m_topology is only
+// half the job -- RadioModel already unconditionally owns a live
+// FFTRouter (m_fftRouter = new FFTRouter(this), RadioModel.cpp:794,
+// exposed via RadioModel::fftRouter()), and the daemon-minted
+// subscriptions have to actually reach it via FftTopology::applyTo(),
+// the same way MainWindow::rebuildFftRouting() ends with
+// m_topology.applyTo(*router) (MainWindow.cpp:2274). Without that call
+// m_topology was 100% inert: subscribed but never pushed anywhere.
+// publishFftTopology() below is that call, run from both start() (after
+// minting) and stop() (after clearing, before the RadioModel that owns
+// the router is destroyed).
 //
 // IMPORTANT, found while verifying this task (see task-10-report.md):
 // RadioModel::connectToRadio() is not safely exercisable end-to-end from
@@ -66,6 +83,21 @@
 // class's tests can follow the same established, wisdom-free pattern.
 // The production discovery/connectToRadio() path is unchanged and is
 // exercised only by manual verification (task-10-report.md), not ctest.
+//
+// FIX ROUND 1, FINDING 3: this same nested wait is reachable in
+// production, and before this task server_main.cpp never constructed a
+// RadioModel at all, so nothing could ever hit it -- this task's own
+// commit was the first to make it reachable by nereusd. Calling
+// DaemonApp::start() inline in main(), before app.exec(), meant the
+// nested wisdom loop was the ONLY event loop alive during a cold-cache
+// first connect, so a SIGTERM landing in that window had no outer loop
+// to be serviced on (confirmed live: required SIGKILL after 10+ seconds
+// unresponsive). server_main.cpp now schedules start() via a queued
+// QMetaObject::invokeMethod so it runs AFTER app.exec() begins; verified
+// live afterward that a SIGTERM sent mid-wisdom-generation now unwinds
+// within about a second (qApp->quit() interrupts the nested loop too,
+// same as any other nested QEventLoop wait in this codebase -- see
+// server_main.cpp's own comment for the mechanism).
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -151,6 +183,20 @@ public:
     // this task, which is incompatible with an automated test's budget.
     // Not part of the public API.
     void primeBoardForTest(HPSDRHW board) { m_testBoard = board; }
+
+    // Test-only: the receiver/stream indices FFTRouter currently has
+    // mapped for `consumerId` (RadioModel::fftRouter()->
+    // receiversForPan(consumerId), despite the "Pan" name in that
+    // method -- FFTRouter predates the pan/endpoint distinction design
+    // section 9.4 draws; a daemon-minted endpoint id is just another
+    // string key to it). Returns an empty list both when the id has no
+    // mapping AND when there is no active RadioModel at all (before the
+    // first start(), or after stop()) -- from a caller's perspective
+    // those two cases are indistinguishable, and deliberately so: this
+    // is what proves publishFftTopology() actually reached a live
+    // router, not a probe into a dangling one. Not part of the public
+    // API.
+    QList<int> fftRouterMappingsForTest(const QString& consumerId) const;
 #endif
 
 signals:
@@ -185,8 +231,18 @@ private:
     // Mints one placeholder endpoint id per current slice whose
     // streamIndex() is bound (>= 0) and subscribes it in m_topology. See
     // the file header above for why these ids are daemon-minted rather
-    // than pan ids.
+    // than pan ids. Does NOT reach the router by itself -- see
+    // publishFftTopology().
     void mintFftEndpoints();
+
+    // Pushes m_topology's current subscription set to
+    // m_radioModel->fftRouter() (FftTopology::applyTo() does a full
+    // rebuild, not an incremental patch, so this is safe to call
+    // whenever m_topology changes, not just once). No-op if there is no
+    // active RadioModel. Called from start() (after mintFftEndpoints())
+    // and from stop() (after m_topology is cleared, so the router drops
+    // every mapping before the RadioModel that owns it is destroyed).
+    void publishFftTopology();
 
     std::unique_ptr<RadioModel> m_radioModel;
     FftTopology m_topology;
