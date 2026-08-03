@@ -20,6 +20,12 @@ StationBlock::StationBlock(QWidget* parent) : QWidget(parent)
 
     m_label = new QLabel(this);
     m_label->setObjectName(QStringLiteral("StationBlock_Label"));
+    // Both rows centre. This label predates the hardware row and had no
+    // alignment, so it defaulted to left while the row added beneath it was
+    // centred. With the hardware line ("HermesC10 · v110") wider than the
+    // name ("ANAN-G2E"), the name visibly hung to the left inside its own
+    // box. Bench report, 2026-08-03.
+    m_label->setAlignment(Qt::AlignCenter);
     vbox->addWidget(m_label);
 
     m_hardwareLabel = new QLabel(this);

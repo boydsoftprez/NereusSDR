@@ -2,6 +2,7 @@
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 
+#include <QLabel>
 #include "gui/widgets/StationBlock.h"
 
 using namespace NereusSDR;
@@ -93,6 +94,25 @@ private slots:
         QVERIFY(!b.hardwareLine().isEmpty());
         b.setHardwareLine(QString(), QString());
         QCOMPARE(b.hardwareLine(), QString());
+    }
+
+    // Both rows must centre. The name label predated the hardware row and
+    // had no alignment set, so it defaulted to left while the row beneath
+    // it was centred. With the hardware line wider than the name, the name
+    // hung visibly left inside the box (bench report 2026-08-03). Nothing
+    // asserted alignment before, which is how it shipped.
+    void bothRowsAreCentred() {
+        StationBlock b;
+        b.setRadioName(QStringLiteral("ANAN-G2E"));
+        b.setHardwareLine(QStringLiteral("HermesC10"), QStringLiteral("v110"));
+
+        const QList<QLabel*> labels = b.findChildren<QLabel*>();
+        QVERIFY2(labels.size() >= 2, "expected a name row and a hardware row");
+        for (QLabel* l : labels) {
+            QVERIFY2(l->alignment().testFlag(Qt::AlignHCenter),
+                     qPrintable(QStringLiteral("row not centred: '%1'")
+                                    .arg(l->text())));
+        }
     }
 
     void clearingTheNameAlsoClearsTheHardwareLine() {
