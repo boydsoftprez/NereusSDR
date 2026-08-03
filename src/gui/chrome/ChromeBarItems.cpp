@@ -30,17 +30,19 @@ void registerChromeBarItems(ChromeBarController& c, const ChromeBarWidgets& w)
     add(c, w.stationBlock, nullptr, 0, QString());
     add(c, w.safetyGroup,  nullptr, 0, QString());
 
-    // w.psaIndicator is deliberately NOT registered here. It already has an
-    // independent visibility owner (MainWindow::updatePsaIndicatorVisibility,
-    // gated on caps.hasPureSignal && isAutoCalEnabled(), per design doc
-    // degenerate case §7 "PS not armed -> hidden as today"). This
-    // controller's own contract (ChromeBarController::addItem doc comment)
-    // says it assumes it is the SOLE writer of visibility for every item it
-    // registers, and relayout() force-shows every rung-0 item on every
-    // decision change. Registering psaIndicator here would fight
-    // updatePsaIndicatorVisibility() and re-show an unarmed/absent PS
-    // indicator on the very first relayout of every session. Not on the
-    // §6 fold ladder either, so omitting it costs nothing on that front.
+    // psaIndicator is registered at rung 0 (never folds on width) so its
+    // ~154 px (two QLabel minimumWidth pins, PsaIndicatorWidget.cpp) is
+    // counted in the width budget on every PS-capable, PS-armed board --
+    // omitting it entirely under-counts the budget on exactly that bench
+    // (Task A8 fix round 1 finding 2). Its ARMED/unarmed state is not a
+    // fold concept, so it does not decide visibility here; MainWindow
+    // reports that through setItemAvailable from
+    // updatePsaIndicatorVisibility(), per design doc degenerate case §7
+    // "PS not armed -> hidden as today". Not on the §6 fold ladder either
+    // way. Empty label, matching every other rung-0 item above: rung 0
+    // never appears in foldedLabels(), so a label here would never render.
+    add(c, w.psaIndicator, nullptr, 0, QString());
+
     // w.rxDashRow is also deliberately not registered: mode and filter
     // never fold (RxDashboard.h), so the row's own baseline width is not
     // part of the ladder, and RxDashboard is built with a Preferred size

@@ -136,6 +136,72 @@ private slots:
         c.relayout(300);
         QCOMPARE(sys->isHidden(), before);
     }
+
+    // ── Task A8 fix round 1, finding-driven: the availability axis ────────
+    // Two independent gates decide visibility: fold (width-driven, internal)
+    // and availability (an external fact reported via setItemAvailable).
+    // An item shows only when both hold.
+
+    void unavailableItemStaysHiddenAtAWidthWhereItsRungIsNotFolded()
+    {
+        ChromeBarController c;
+        QLabel* anchor = makeItem(100);
+        QLabel* sys    = makeItem(60);
+        c.addItem(anchor, nullptr, 0, QString());
+        c.addItem(sys, nullptr, 1, QStringLiteral("System"));
+
+        // Wide enough that rung 1 would not fold on width alone.
+        c.relayout(2000);
+        QVERIFY(!sys->isHidden());
+
+        c.setItemAvailable(sys, false);
+        c.relayout(2000);
+        QVERIFY(sys->isHidden());
+        // The never-fold anchor is unaffected by another item's
+        // availability.
+        QVERIFY(!anchor->isHidden());
+    }
+
+    void availableItemAtAFoldedRungStaysHidden()
+    {
+        ChromeBarController c;
+        QLabel* anchor = makeItem(100);
+        QLabel* sys    = makeItem(60);
+        c.addItem(anchor, nullptr, 0, QString());
+        c.addItem(sys, nullptr, 1, QStringLiteral("System"));
+
+        // Explicitly available (the default), but the width forces rung 1
+        // to fold regardless -- availability cannot un-fold something.
+        c.setItemAvailable(sys, true);
+        c.relayout(120);
+        QVERIFY(sys->isHidden());
+        QCOMPARE(c.foldedThroughRung(), 1);
+    }
+
+    void togglingAvailabilityAtFixedWidthFlipsVisibilityWithoutChangingFoldRung()
+    {
+        ChromeBarController c;
+        QLabel* anchor = makeItem(100);
+        QLabel* sys    = makeItem(60);
+        c.addItem(anchor, nullptr, 0, QString());
+        c.addItem(sys, nullptr, 1, QStringLiteral("System"));
+
+        // Wide enough that width pressure alone never folds rung 1, at
+        // this width, regardless of what buildTable() includes.
+        c.relayout(2000);
+        const int rungBefore = c.foldedThroughRung();
+        QVERIFY(!sys->isHidden());
+
+        c.setItemAvailable(sys, false);
+        c.relayout(2000);
+        QVERIFY(sys->isHidden());
+        QCOMPARE(c.foldedThroughRung(), rungBefore);
+
+        c.setItemAvailable(sys, true);
+        c.relayout(2000);
+        QVERIFY(!sys->isHidden());
+        QCOMPARE(c.foldedThroughRung(), rungBefore);
+    }
 };
 QTEST_MAIN(TstChromeBarController)
 #include "tst_chrome_bar_controller.moc"

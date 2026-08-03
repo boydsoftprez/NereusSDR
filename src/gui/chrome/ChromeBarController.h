@@ -23,6 +23,25 @@ namespace NereusSDR {
 ///   1. Nothing shrinks. An item is at its natural width or hidden.
 ///   2. Widths are cached, never re-measured mid-decision.
 ///   3. One pass per relayout. No second look, no feedback.
+///
+/// Two independent axes decide an item's visibility, both owned here:
+///   - FOLD, computed internally from width pressure (the rung ladder).
+///   - AVAILABILITY, an external fact a caller reports via
+///     setItemAvailable (PS-A armed, TGXL present, a second ADC chain,
+///     an RX pill's DSP-active state). An item is visible only when
+///     BOTH hold: available && !folded. This closes the gap Task A8's
+///     first round left: several banner items already have a legitimate
+///     second visibility owner (their feature's own on/armed/present
+///     state), and this class's addItem contract requires it to be the
+///     SOLE writer of setVisible. Before this axis existed, the only way
+///     to reconcile the two was an external caller ANDing a live query
+///     on top of relayout()'s decision after the fact, which cannot see
+///     signals that fire between relayout() calls and does not adjust
+///     the WIDTH budget for an item that is currently unavailable
+///     (Task A8 fix round 1 findings 1 and 2). availability is a stored
+///     input, not a live read, so it cannot introduce the
+///     measure-mutate-measure oscillation this whole design exists to
+///     remove: it only changes when a caller explicitly says so.
 class ChromeBarController : public QObject {
     Q_OBJECT
 
@@ -46,7 +65,12 @@ public:
     /// controller to learn about it. This controller also assumes it is the
     /// sole writer of visibility for every item it registers; calling
     /// setVisible directly on a registered widget or separator from
-    /// elsewhere will desync it from the next relayout's decision.
+    /// elsewhere will desync it from the next relayout's decision. If the
+    /// item's visibility ALSO depends on something other than width (an
+    /// armed/present/DSP-active flag), report that through
+    /// setItemAvailable instead of a direct setVisible call -- that is the
+    /// one sanctioned side channel. Availability defaults to true, so an
+    /// item with no such flag needs no extra call.
     void addItem(QWidget* widget, QWidget* separator, int rung,
                  const QString& overflowLabel);
 
@@ -54,6 +78,14 @@ public:
     /// more digits, a longer radio name). Explicit, because an implicit
     /// re-measure is the feedback path this design removes.
     void setNaturalWidth(QWidget* widget, int px);
+
+    /// Report whether a registered item is currently applicable at all,
+    /// independent of width. An item is visible only when available AND
+    /// not folded. No-op if widget was never registered. Idempotent (a
+    /// repeated call with the same value does not invalidate the cached
+    /// decision). Like setNaturalWidth, this only updates stored state;
+    /// the caller must still call relayout() to apply it.
+    void setItemAvailable(QWidget* widget, bool available);
 
     /// Apply the fold decision for this bar width. Idempotent.
     void relayout(int barWidthPx);
@@ -76,6 +108,9 @@ private:
         int      rung{0};
         int      naturalWidth{0};
         QString  label;
+        /// See setItemAvailable. Defaults true: most items have no second
+        /// visibility owner and are available whenever not folded.
+        bool     available{true};
     };
 
     QVector<ChromeFoldEntry> buildTable() const;

@@ -501,25 +501,18 @@ private:
     void saveMainWindowGeometry();
     bool restoreMainWindowGeometry();
 
-    // Re-apply the true hardware/board-capability gate on top of
-    // m_chromeBar's fold decision, for the items that carry BOTH a fold
-    // rung (design §6) AND an independent presence gate the controller
-    // cannot express.
-    //
-    // ChromeBarController::addItem's contract says it is the sole writer
-    // of visibility for every item it registers, and relayout() re-asserts
-    // setVisible() for every registered item on any rung change -- not
-    // just the item whose own state changed. m_tgxlChip and
-    // m_chain1IndicatorWidget are registered (they are explicitly on the
-    // §6 ladder, rungs 2 and 4) but ALSO already have a pre-existing,
-    // independent visibility owner: TunerModel::presenceChanged and the
-    // rxFilterChainCount capability gate respectively. Without this second
-    // pass, any resize that changes the fold rung force-shows a "TGXL" or
-    // "CH 1" tile that has no hardware behind it, and nothing else
-    // corrects it afterwards (TunerModel never emits presenceChanged(false),
-    // and the capability gate only re-fires on the next currentRadioChanged).
-    // Called immediately after every m_chromeBar->relayout() call.
-    void reapplyHardwarePresenceGates();
+    // Task A8 fix round 1 shipped reapplyHardwarePresenceGates(), a second
+    // pass ANDing a live hardware query on top of m_chromeBar's fold
+    // decision after every relayout(). Fix round 2 removed it: it only
+    // ran from resize/tick call sites, so a signal that fired BETWEEN
+    // relayout() calls (plug in a TGXL while folded past rung 2) bypassed
+    // it entirely. ChromeBarController::setItemAvailable (see its own doc
+    // comment) replaces it -- the presence/DSP-active facts are now
+    // reported straight from the signal that changes them
+    // (TunerModel::presenceChanged, the rxFilterChainCount capability
+    // gate, updatePsaIndicatorVisibility, RxDashboard::badgeAvailabilityChanged),
+    // each followed by a relayout() call at that same call site, so there
+    // is no window where the fact and the controller's decision disagree.
 
     // CPU usage helpers — return instantaneous percent since the last call.
     // First call after a toggle returns 0 (delta-state reset). The timer
@@ -636,11 +629,11 @@ private:
     ClarityController*  m_clarityController{nullptr};
     class StepAttenuatorController* m_stepAttController{nullptr};
     /// Phase 3F Sub-Epic D Task 11: CH 1 stacked-indicator widget in the
-    /// bottom status bar. Shown only on 2-ADC SKUs (gated by
-    /// BoardCapabilities::adcCount in the currentRadioChanged handler).
-    /// Also registered with m_chromeBar at rung 4 (design §6) so it folds
-    /// under width pressure; see reapplyHardwarePresenceGates() for why
-    /// that registration needs a second, narrower gate on top.
+    /// bottom status bar. Shown only on 2-ADC SKUs. Registered with
+    /// m_chromeBar at rung 4 (design §6) so it folds under width pressure;
+    /// its rxFilterChainCount>=2 capability gate is reported via
+    /// ChromeBarController::setItemAvailable from the currentRadioChanged
+    /// handler, not a direct setVisible call.
     QWidget*            m_chain1IndicatorWidget{nullptr};
     /// CH 0's stacked-indicator widget, captured the same way as CH 1 so
     /// it can be registered with m_chromeBar (chain0 shares rung 4).

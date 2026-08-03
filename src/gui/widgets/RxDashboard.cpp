@@ -252,13 +252,17 @@ void RxDashboard::onAgcChanged(int agcMode)
     m_agcBadge->setLabel(letter);
     m_agcBadge->setVariant(StatusBadge::Variant::Info);
     m_agcBadge->setToolTip(tr("AGC %1").arg(full));
+    // AGC has no "off"/hidden state (always available); reported anyway
+    // so MainWindow re-checks the badge's width, which setLabel() above
+    // just changed live (StatusBadge::setLabel).
+    emit badgeAvailabilityChanged(9, true);
 }
 
 void RxDashboard::onNrChanged(int nrSlot)
 {
     // NrSlot: Off=0, NR1=1, NR2=2, NR3=3, NR4=4, DFNR=5, BNR=6, MNR=7
     if (nrSlot <= 0) {
-        m_nrBadge->setVisible(false);
+        emit badgeAvailabilityChanged(8, false);
         return;
     }
     static const char* kNrLabels[] = {
@@ -272,14 +276,14 @@ void RxDashboard::onNrChanged(int nrSlot)
     m_nrBadge->setLabel(name);
     m_nrBadge->setVariant(StatusBadge::Variant::On);
     m_nrBadge->setToolTip(tr("Noise reduction %1 active").arg(name));
-    m_nrBadge->setVisible(true);
+    emit badgeAvailabilityChanged(8, true);
 }
 
 void RxDashboard::onNbChanged(int nbMode)
 {
     // NbMode: Off=0, NB=1, NB2=2
     if (nbMode <= 0) {
-        m_nbBadge->setVisible(false);
+        emit badgeAvailabilityChanged(7, false);
         return;
     }
     const QString label = (nbMode == 2)
@@ -288,31 +292,31 @@ void RxDashboard::onNbChanged(int nbMode)
     m_nbBadge->setLabel(label);
     m_nbBadge->setVariant(StatusBadge::Variant::On);
     m_nbBadge->setToolTip(tr("Noise blanker %1 active").arg(label));
-    m_nbBadge->setVisible(true);
+    emit badgeAvailabilityChanged(7, true);
 }
 
 void RxDashboard::onApfChanged(bool active)
 {
     if (!active) {
-        m_apfBadge->setVisible(false);
+        emit badgeAvailabilityChanged(6, false);
         return;
     }
     m_apfBadge->setLabel(QStringLiteral("APF"));
     m_apfBadge->setVariant(StatusBadge::Variant::On);
     m_apfBadge->setToolTip(tr(kApfTooltip));
-    m_apfBadge->setVisible(true);
+    emit badgeAvailabilityChanged(6, true);
 }
 
 void RxDashboard::onSsqlChanged(bool active)
 {
     if (!active) {
-        m_sqlBadge->setVisible(false);
+        emit badgeAvailabilityChanged(5, false);
         return;
     }
     m_sqlBadge->setLabel(QStringLiteral("SQL"));
     m_sqlBadge->setVariant(StatusBadge::Variant::On);
     m_sqlBadge->setToolTip(tr(kSqlTooltip));
-    m_sqlBadge->setVisible(true);
+    emit badgeAvailabilityChanged(5, true);
 }
 
 } // namespace NereusSDR

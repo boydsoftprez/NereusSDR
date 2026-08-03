@@ -2649,10 +2649,17 @@ void MainWindow::buildUI()
     // does not have.
     // Upstream inline attribution preserved verbatim (console.cs:15441):
     //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    // Registered with m_chromeBar at rung 4 (design §6); the >=2 fact is
+    // reported via setItemAvailable, not a direct setVisible call, per
+    // ChromeBarController::setItemAvailable's own doc comment.
     auto updateChain1Visibility = [this]() {
         if (!m_chain1IndicatorWidget) { return; }
         const auto caps = m_radioModel->boardCapabilities();
-        m_chain1IndicatorWidget->setVisible(caps.rxFilterChainCount >= 2);
+        if (m_chromeBar && m_chromeBarWidget) {
+            m_chromeBar->setItemAvailable(m_chain1IndicatorWidget,
+                                          caps.rxFilterChainCount >= 2);
+            m_chromeBar->relayout(m_chromeBarWidget->width());
+        }
     };
     connect(m_radioModel, &RadioModel::currentRadioChanged, this,
             updateChain1Visibility);
@@ -6440,15 +6447,13 @@ void MainWindow::buildStatusBar()
     m_systemTileSep = makeSep();
     hbox->addWidget(m_systemTileSep);
 
-    // Phase 3P-II Task 21: TGXL presence chip.
-    // Hidden until TunerModel::presenceChanged fires true; text reflects
-    // operate/bypass/standby state via stateChanged. Also registered with
-    // m_chromeBar at rung 2 (design §6); reapplyHardwarePresenceGates()
-    // (called after every relayout()) re-asserts this same presence gate
-    // on top of the controller's fold decision, since presenceChanged
-    // only ever fires true (never false) and the controller would
-    // otherwise force this chip visible on the very first resize even
-    // with no TGXL attached.
+    // Phase 3P-II Task 21: TGXL presence chip. Registered with m_chromeBar
+    // at rung 2 (design §6), so it folds under width pressure, but
+    // presence is not a fold concept -- it is reported to the controller
+    // via setItemAvailable, straight from the signal that changes it, per
+    // ChromeBarController::setItemAvailable's own doc comment. Hidden
+    // (available=false) until TunerModel::presenceChanged fires true;
+    // text reflects operate/bypass/standby state via stateChanged.
     m_tgxlChip = new QLabel(QStringLiteral("TGXL"), barWidget);
     m_tgxlChip->setStyleSheet(QStringLiteral(
         "QLabel { background:#1a3a5a; border:1px solid #205070; "
@@ -6457,7 +6462,11 @@ void MainWindow::buildStatusBar()
     hbox->addWidget(m_tgxlChip);
 
     connect(m_radioModel->tunerModel(), &TunerModel::presenceChanged,
-            m_tgxlChip, &QWidget::setVisible);
+            this, [this](bool present) {
+        if (!m_chromeBar || !m_chromeBarWidget) { return; }
+        m_chromeBar->setItemAvailable(m_tgxlChip, present);
+        m_chromeBar->relayout(m_chromeBarWidget->width());
+    });
     connect(m_radioModel->tunerModel(), &TunerModel::stateChanged,
             this, [this]() {
         TunerModel* t = m_radioModel->tunerModel();
@@ -6466,6 +6475,13 @@ void MainWindow::buildStatusBar()
                                      : QStringLiteral("OPER"))
                     : QStringLiteral("SBY");
         m_tgxlChip->setText(QStringLiteral("TGXL ") + s);
+        // TGXL / TGXL OPER / TGXL BYPS / TGXL SBY are different widths
+        // (Task A8 fix round 1 finding 4); report the new one.
+        if (m_chromeBar && m_chromeBarWidget) {
+            m_chromeBar->setNaturalWidth(m_tgxlChip,
+                                         m_tgxlChip->sizeHint().width());
+            m_chromeBar->relayout(m_chromeBarWidget->width());
+        }
     });
 
     // Helper: SystemTile's content just changed width (a reading gained or
@@ -6478,7 +6494,6 @@ void MainWindow::buildStatusBar()
         m_chromeBar->setNaturalWidth(m_systemTile,
                                      m_systemTile->sizeHint().width());
         m_chromeBar->relayout(m_chromeBarWidget->width());
-        reapplyHardwarePresenceGates();
     };
 
     // Wire voltage signals: re-bind on every new connection, reset on disconnect.
@@ -6789,7 +6804,6 @@ void MainWindow::buildStatusBar()
                 m_chromeBar->setNaturalWidth(m_systemTile,
                                              m_systemTile->sizeHint().width());
                 m_chromeBar->relayout(m_chromeBarWidget->width());
-                reapplyHardwarePresenceGates();
             }
         }
     });
@@ -6831,6 +6845,37 @@ void MainWindow::buildStatusBar()
     }
 
     registerChromeBarItems(*m_chromeBar, bar);
+
+    // Items that start unavailable until their owning signal says
+    // otherwise (Task A8 fix round 1, findings 1-3). No radio has
+    // connected and no slice has bound yet at this point in construction,
+    // so nothing is known to be present, armed or DSP-active. Without
+    // this, availability defaults to true (addItem's default) and the
+    // FIRST relayout() -- which always runs a full pass, since
+    // m_foldedThrough starts at -1 -- would force-show a blank PSA
+    // indicator and stray "TGXL" / "CH 1" tiles, and RxDashboard's four
+    // toggle pills would pop up empty on every cold launch.
+    m_chromeBar->setItemAvailable(m_psaIndicator, false);
+    m_chromeBar->setItemAvailable(m_tgxlChip, false);
+    m_chromeBar->setItemAvailable(m_chain1IndicatorWidget, false);
+    for (int rung = 5; rung <= 8; ++rung) {  // SQL, APF, NB, NR
+        m_chromeBar->setItemAvailable(m_rxDashboard->badgeForRung(rung), false);
+    }
+    // AGC (rung 9) has no off state and keeps the default available=true.
+
+    // RxDashboard's on*Changed handlers report DSP-active state (and
+    // hence width, since StatusBadge::setLabel changes minimum width
+    // live) through this signal instead of calling setVisible directly
+    // (RxDashboard.h doc comment).
+    connect(m_rxDashboard, &RxDashboard::badgeAvailabilityChanged,
+            this, [this](int rung, bool available) {
+        if (!m_chromeBar || !m_chromeBarWidget) { return; }
+        StatusBadge* badge = m_rxDashboard->badgeForRung(rung);
+        if (!badge) { return; }
+        m_chromeBar->setItemAvailable(badge, available);
+        m_chromeBar->setNaturalWidth(badge, badge->sizeHint().width());
+        m_chromeBar->relayout(m_chromeBarWidget->width());
+    });
 
     connect(m_chromeBar, &ChromeBarController::foldStateChanged,
             m_overflowChip, &OverflowChip::setDroppedItems);
@@ -6998,6 +7043,13 @@ void MainWindow::updateTciIndicator()
         QStringLiteral("QLabel { color: %1; font-size: 11px; }").arg(color));
     if (m_tciIndicator) {
         m_tciIndicator->setToolTip(tooltip);
+        // Bottom row text ranges from "Off" to "On · 3 ▸TX" -- a real
+        // width change (Task A8 fix round 1 finding 4).
+        if (m_chromeBar && m_chromeBarWidget) {
+            m_chromeBar->setNaturalWidth(m_tciIndicator,
+                                         m_tciIndicator->sizeHint().width());
+            m_chromeBar->relayout(m_chromeBarWidget->width());
+        }
     }
 }
 
@@ -7153,7 +7205,6 @@ void MainWindow::setVoltsAmpsVisible(bool visible)
             m_chromeBar->setNaturalWidth(m_systemTile,
                                          m_systemTile->sizeHint().width());
             m_chromeBar->relayout(m_chromeBarWidget->width());
-            reapplyHardwarePresenceGates();
         }
     }
     // Note: toggling back to visible=true does not force-show the reading;
@@ -7776,32 +7827,6 @@ void MainWindow::wireSliceToSpectrum()
     }
 }
 
-void MainWindow::reapplyHardwarePresenceGates()
-{
-    // m_tgxlChip (rung 2) and m_chain1IndicatorWidget (rung 4) are both on
-    // the §6 fold ladder, so both are registered with m_chromeBar. Both
-    // ALSO have a pre-existing, independent presence owner:
-    // TunerModel::presenceChanged (only ever emits true; TunerModel.cpp
-    // has no false emission) and the rxFilterChainCount board-capability
-    // gate (updateChain1Visibility, fired from currentRadioChanged).
-    // ChromeBarController::relayout() force-shows every non-folded
-    // registered item on any rung change, with no knowledge of either
-    // gate, so without this second pass a resize can re-show a "TGXL" or
-    // "CH 1" tile with no hardware behind it, and nothing else corrects
-    // it afterwards. AND the true gate on top of the controller's
-    // decision every time relayout() runs.
-    if (m_tgxlChip && m_radioModel && m_radioModel->tunerModel()) {
-        const bool present = m_radioModel->tunerModel()->isPresent();
-        m_tgxlChip->setVisible(m_tgxlChip->isVisible() && present);
-    }
-    if (m_chain1IndicatorWidget && m_radioModel) {
-        const bool has2Adc =
-            m_radioModel->boardCapabilities().rxFilterChainCount >= 2;
-        m_chain1IndicatorWidget->setVisible(
-            m_chain1IndicatorWidget->isVisible() && has2Adc);
-    }
-}
-
 // ── CPU usage source toggle ──────────────────────────────────────────────────
 // Right-click menu on m_systemTile — System / App radio choice.
 // Mirrors Thetis's toolStripDropDownButton_CPU with systemToolStripMenuItem
@@ -8011,10 +8036,12 @@ void MainWindow::resizeEvent(QResizeEvent* event)
     }
 
     // Single layout authority for the banner (design §5). One relayout()
-    // call per resize; no re-measure mid-decision, no deadband.
+    // call per resize; no re-measure mid-decision, no deadband. Presence/
+    // DSP-active facts (TGXL, CH1, PSA, RX pills) are reported to the
+    // controller via setItemAvailable at the signal that changes them,
+    // not re-derived here -- see ChromeBarController::setItemAvailable.
     if (m_chromeBar && m_chromeBarWidget) {
         m_chromeBar->relayout(m_chromeBarWidget->width());
-        reapplyHardwarePresenceGates();
     }
 }
 
@@ -8719,6 +8746,13 @@ void MainWindow::showPanMenu()
 // gated on (caps.hasPureSignal && PureSignal::isAutoCalEnabled).
 // Centralised so onConnectionStateChanged + autoCalEnabledChanged +
 // pureSignalCoordinatorReady can all share one truth-source.
+//
+// m_psaIndicator is registered with m_chromeBar at rung 0 so its width
+// (two QLabel minimumWidth pins, ~154 px) is counted in the fold budget
+// on every PS-capable, PS-armed board (Task A8 fix round 1 finding 2).
+// The armed fact itself is reported via setItemAvailable, not a direct
+// setVisible call, per ChromeBarController::setItemAvailable's own doc
+// comment.
 void MainWindow::updatePsaIndicatorVisibility()
 {
     if (!m_psaIndicator) { return; }
@@ -8728,7 +8762,10 @@ void MainWindow::updatePsaIndicatorVisibility()
         && m_radioModel->boardCapabilities().hasPureSignal;
     auto* ps = m_radioModel ? m_radioModel->pureSignal() : nullptr;
     const bool armed = ps && ps->isAutoCalEnabled();
-    m_psaIndicator->setVisible(caps && armed);
+    if (m_chromeBar && m_chromeBarWidget) {
+        m_chromeBar->setItemAvailable(m_psaIndicator, caps && armed);
+        m_chromeBar->relayout(m_chromeBarWidget->width());
+    }
 }
 
 void MainWindow::showAudioDiagnoseDialog()
@@ -8770,6 +8807,13 @@ void MainWindow::onConnectionStateChanged()
             const QString code  = QString::fromLatin1(boardCodeName(board));
             m_stationBlock->setHardwareLine(
                 code, QStringLiteral("v%1").arg(m_radioModel->version()));
+            // The second row's text (and hence StationBlock's sizeHint)
+            // just changed (Task A8 fix round 1 finding 4).
+            if (m_chromeBar && m_chromeBarWidget) {
+                m_chromeBar->setNaturalWidth(
+                    m_stationBlock, m_stationBlock->sizeHint().width());
+                m_chromeBar->relayout(m_chromeBarWidget->width());
+            }
         }
 
         // Phase 3Q-6/D.1: setRadio() removed — radio identity moves to the

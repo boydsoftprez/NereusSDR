@@ -25,6 +25,17 @@ class StatusBadge;
 // register each foldable badge individually at its rung. Mode and filter
 // never fold, so they are not on the ladder.
 //
+// Task A8 fix round 1: the on*Changed handlers below no longer call
+// setVisible() on the pills directly. ChromeBarController::addItem's
+// contract requires it to be the sole writer of a registered widget's
+// visibility; a pill also directly setVisible()'d from here would desync
+// from the controller's next relayout(), which force-asserts visibility
+// for every registered item on any rung change with no knowledge of
+// DSP-active state. Each handler instead emits badgeAvailabilityChanged,
+// which MainWindow forwards to ChromeBarController::setItemAvailable (and
+// reports the badge's new width via setNaturalWidth, since
+// StatusBadge::setLabel changes its own minimum width live).
+//
 // Signal-name notes (verified against SliceModel.h 2026-04-30):
 //   - dspModeChanged(DSPMode)         — typed enum
 //   - filterChanged(int low, int high) — two params
@@ -58,6 +69,17 @@ public:
     /// Badge that folds at this rung, or nullptr if the rung is not ours.
     /// 5 SQL, 6 APF, 7 NB, 8 NR, 9 AGC. Mode and filter never fold.
     StatusBadge* badgeForRung(int rung) const;
+
+signals:
+    /// A pill's DSP-active state (and/or its content, hence its width)
+    /// just changed. rung matches badgeForRung's mapping (5 SQL .. 9 AGC).
+    /// available is the badge's new should-show state; AGC has no "off"
+    /// state and always reports true, purely so its width is re-checked
+    /// too (StatusBadge::setLabel changes minimum width live). The
+    /// receiver (MainWindow) is expected to resolve the widget via
+    /// badgeForRung(rung) and forward both facts to
+    /// ChromeBarController::setItemAvailable / setNaturalWidth.
+    void badgeAvailabilityChanged(int rung, bool available);
 
 private slots:
     void onModeChanged(int mode);

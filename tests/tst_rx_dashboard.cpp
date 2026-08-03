@@ -5,6 +5,7 @@
 // 4 tests: unbound construction, bind, rebind, active-only badge visibility.
 
 #include <QtTest/QtTest>
+#include <QSignalSpy>
 
 #include "gui/widgets/RxDashboard.h"
 #include "gui/widgets/StatusBadge.h"
@@ -41,18 +42,34 @@ private slots:
     }
 
     void activeOnlyBadgesHiddenWhenFeaturesOff() {
+        // Task A8 fix round 1: RxDashboard no longer setVisible()'s these
+        // pills itself (ChromeBarController owns visibility once
+        // registered); it reports DSP-active state via
+        // badgeAvailabilityChanged instead. isVisible() is not a
+        // meaningful check here any more -- and was already a weak one
+        // even before this change, since an unshown, unparented top-level
+        // RxDashboard reports isVisible()==false for EVERY child
+        // regardless of intent, mode/filter/AGC included, not just the
+        // 4 that are meant to start off.
         RxDashboard d;
+        QSignalSpy spy(&d, &RxDashboard::badgeAvailabilityChanged);
         SliceModel slice;
         d.bindSlice(&slice);
         // Default SliceModel state: NR=Off, NB=Off, APF=off, ssql=off
-        // → the 4 active-only badges should be hidden.
-        const auto badges = d.findChildren<StatusBadge*>();
-        int hidden = 0;
-        for (auto* b : badges) {
-            if (!b->isVisible()) { ++hidden; }
+        // → each of the 4 active-only rungs reports available=false
+        // during the bind-time seed pass. AGC has no off state.
+        QHash<int, bool> lastByRung;
+        for (const QList<QVariant>& call : spy) {
+            lastByRung[call.at(0).toInt()] = call.at(1).toBool();
         }
-        QVERIFY2(hidden >= 4,
-                 qPrintable(QStringLiteral("expected >=4 hidden badges, got %1").arg(hidden)));
+        QVERIFY(lastByRung.contains(5));  // SQL
+        QVERIFY(lastByRung.contains(6));  // APF
+        QVERIFY(lastByRung.contains(7));  // NB
+        QVERIFY(lastByRung.contains(8));  // NR
+        QCOMPARE(lastByRung.value(5), false);
+        QCOMPARE(lastByRung.value(6), false);
+        QCOMPARE(lastByRung.value(7), false);
+        QCOMPARE(lastByRung.value(8), false);
     }
 
     void sliceLetterRoundTrips() {

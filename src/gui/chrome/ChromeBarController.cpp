@@ -55,11 +55,39 @@ void ChromeBarController::setNaturalWidth(QWidget* widget, int px)
     m_foldedThrough = -1;
 }
 
+void ChromeBarController::setItemAvailable(QWidget* widget, bool available)
+{
+    const auto it = m_indexByWidget.constFind(widget);
+    if (it == m_indexByWidget.constEnd()) {
+        return;
+    }
+    Registered& r = m_items[*it];
+    if (r.available == available) {
+        return;
+    }
+    r.available = available;
+    // Availability moved, exactly like a width change: the previous
+    // decision no longer applies, and an unavailable item's width must
+    // stop (or start) counting toward the budget -- see buildTable().
+    m_foldedThrough = -1;
+}
+
 QVector<ChromeFoldEntry> ChromeBarController::buildTable() const
 {
     QVector<ChromeFoldEntry> table;
     table.reserve(m_items.size());
     for (const Registered& r : m_items) {
+        // An unavailable item is not a candidate for the width budget at
+        // all: it contributes exactly what it does in the real hbox,
+        // which is zero, matching a plain hidden widget. Folding math
+        // that ignored this would under-fold when something ELSE needs
+        // the space an unavailable-but-still-registered item is not
+        // using (Task A8 fix round 1 finding 2 in reverse: the original
+        // bug was UNDER-counting an item that WAS showing; the fix must
+        // not now OVER-count one that currently is not).
+        if (!r.available) {
+            continue;
+        }
         table.append(ChromeFoldEntry{r.rung, r.naturalWidth, r.label});
     }
     return table;
@@ -75,10 +103,11 @@ void ChromeBarController::relayout(int barWidthPx)
     m_foldedThrough = rung;
 
     for (const Registered& r : m_items) {
-        const bool hide = (r.rung != 0 && r.rung <= rung);
-        r.widget->setVisible(!hide);
+        const bool folded  = (r.rung != 0 && r.rung <= rung);
+        const bool visible = r.available && !folded;
+        r.widget->setVisible(visible);
         if (r.separator) {
-            r.separator->setVisible(!hide);
+            r.separator->setVisible(visible);
         }
     }
 
