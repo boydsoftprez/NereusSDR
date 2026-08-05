@@ -4771,6 +4771,16 @@ nereus_add_test(tst_gradient_picker)
 # this target is RED until then. Uses QTEST_MAIN (QCoreApplication only —
 # TxAnalyzer is non-GUI).
 nereus_add_test(tst_tx_analyzer_settings)
+
+# ── TX display frequency window (bench 2026-08-04) ───────────────────────────
+# The two pure Thetis ports that decide where the transmit trace lands on the
+# dial: txDisplayWindowHz (console.cs:8024-8056 UpdateTXDisplayVars) and
+# spanClipBins (specHPSDR.cs:762-775 CalcSpectrum). Before these, the analyzer
+# emitted the full +/-48 kHz baseband while the pan kept its RX window and
+# SpectrumWidget stretched one across the other, so the tone rendered at the
+# wrong frequency while the RF was correct. Both functions are pure, so unlike
+# the rest of the TX display they need no WDSP channel and no bench.
+nereus_add_test(tst_tx_display_window)
 # ── Phase 3J-1 Task 2.1: TciServer + ClientSession lifecycle ─────────────────
 # 3 tests: start/listen/signal, double-start rejection, stop/clear.
 # Gated on Qt6WebSockets_FOUND — TciServer.h/.cpp are #ifdef HAVE_WEBSOCKETS.

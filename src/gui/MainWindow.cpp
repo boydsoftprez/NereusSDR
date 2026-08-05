@@ -3698,6 +3698,14 @@ void MainWindow::buildUI()
                     // largeShift-clear path in SpectrumWidget.
                     m_savedSpectrumSampleRate = sw->sampleRate();
                     m_savedSpectrumDdcHz      = sw->ddcCenterFrequency();
+                    // All four now, not two. The old code saved only the
+                    // rate and DDC centre because it deliberately left the
+                    // operator's zoom alone; the passband view moves the
+                    // window itself, so centre and bandwidth have to come
+                    // back on un-key or the receive pan would stay parked
+                    // on a 3 kHz slice of the band.
+                    m_savedSpectrumCenterHz   = sw->centerFrequency();
+                    m_savedSpectrumBandwidth  = sw->bandwidth();
 
                     // TX FFT is centered on the active slice's carrier.
                     // If no slice (shouldn't happen during MOX, but guard
@@ -3716,8 +3724,53 @@ void MainWindow::buildUI()
                     // carrier) instead of the RX DDC bins.  Both setters
                     // bypass setFrequencyRange so neither triggers the
                     // history-clear path.
-                    sw->setSampleRate(96000.0);
-                    sw->setDdcCenterFrequency(carrierHz);
+                    // ── The transmit window (bench 2026-08-04) ───────────
+                    //
+                    // Thetis does not show transmit over the receive span.
+                    // It derives a narrow window from the TX filter edges
+                    // (console.cs:8024-8056 [v2.10.3.15] UpdateTXDisplayVars),
+                    // clips the analyzer to exactly that window
+                    // (specHPSDR.cs:762-775 CalcSpectrum -> SetAnalyzer's
+                    // fscLin / fscHin), and shows the passband.
+                    //
+                    // Leaving the pan on its receive window, as this did
+                    // before, is what put the TUNE tone at the wrong dial
+                    // frequency while the RF was correct: the analyzer
+                    // emitted the whole 96 kHz baseband, visibleBinRange
+                    // clamped to the whole array because the window asked
+                    // for more than existed, and the renderer stretched
+                    // 96 kHz of data across an axis labelled far wider
+                    // (SpectrumWidget.cpp:2886, displayWidth / sliceCount).
+                    // The zoom-preservation this replaces was a NereusSDR
+                    // divergence, and it cannot be made to work: an axis
+                    // wider than the data is an axis that lies.
+                    int iqLow = 0, iqHigh = 0;
+                    if (TxChannel* tx = m_radioModel->txChannel()) {
+                        iqLow  = tx->txFilterLowIq();
+                        iqHigh = tx->txFilterHighIq();
+                    }
+                    const auto [winLow, winHigh] =
+                        TxAnalyzer::txDisplayWindowHz(iqLow, iqHigh);
+                    const double spanHz =
+                        static_cast<double>(winHigh - winLow);
+                    if (spanHz <= 0.0) { return; }
+
+                    m_txAnalyzer->setSpectrumWindow(winLow, winHigh);
+
+                    // Tell the widget where the clipped bins actually sit,
+                    // so visibleBinRange stops guessing from the RX rate.
+                    // txSampleRate is the window's WIDTH, not a sample
+                    // rate: visibleBinRange only ever uses it as the span
+                    // the bin array covers, and after clipping that span
+                    // is the window, not the baseband.
+                    sw->setTxCenterFrequency(
+                        carrierHz + (winLow + winHigh) / 2.0);
+                    sw->setTxSampleRate(spanHz);
+
+                    // And point the pan at that window, so the axis the
+                    // operator reads is the one the data covers.
+                    sw->setFrequencyRange(carrierHz + (winLow + winHigh) / 2.0,
+                                          spanHz);
 
                     // PR #212 follow-up bench fix (KG4VCF, 2026-05-10):
                     // disable Clarity so the waterfall AGC takes over for
@@ -3830,6 +3883,18 @@ void MainWindow::buildUI()
                     if (m_savedSpectrumSampleRate > 0.0) {
                         sw->setSampleRate(m_savedSpectrumSampleRate);
                         sw->setDdcCenterFrequency(m_savedSpectrumDdcHz);
+                    }
+                    // Leave TX context behind, so visibleBinRange goes back
+                    // to the RX rate and DDC centre. Its useTx test requires
+                    // a non-zero centre, so zeroing that is what disarms it;
+                    // clearing the analyzer's span clip in the same breath
+                    // keeps the two from disagreeing if the next key-up
+                    // finds a different filter.
+                    sw->setTxCenterFrequency(0.0);
+                    m_txAnalyzer->setSpectrumWindow(0, 0);
+                    if (m_savedSpectrumBandwidth > 0.0) {
+                        sw->setFrequencyRange(m_savedSpectrumCenterHz,
+                                              m_savedSpectrumBandwidth);
                     }
                     // Symmetric AGC reset on un-key so the waterfall
                     // snaps back to the RX dynamic range without the

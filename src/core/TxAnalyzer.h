@@ -62,6 +62,8 @@
 #include <QTimer>
 #include <QVector>
 
+#include <utility>
+
 namespace NereusSDR {
 
 class TxAnalyzer : public QObject {
@@ -77,6 +79,51 @@ public:
 
     explicit TxAnalyzer(int dispId = kTxDispId, QObject* parent = nullptr);
     ~TxAnalyzer() override;
+
+    /// The display window, in Hz either side of the carrier, that a TX
+    /// filter of `lowIq`..`highIq` should be shown over.
+    ///
+    /// Verbatim port of Thetis console.cs:8024-8056 [v2.10.3.15]
+    /// UpdateTXDisplayVars. Three cases, keyed on the filter's sign:
+    ///   LSB-like (l < 0, h <= 0)  -> high = 0, low = 1.1*l, floored at -1000
+    ///   USB-like (l >= 0, h > 0)  -> low  = 0, high = 1.1*h, floored at +1000
+    ///   straddling (l < 0, h > 0) -> symmetric about zero on the wider edge
+    /// The 1.1 factor is Thetis's, and it is what leaves the filter skirts
+    /// visible rather than clipping exactly at the passband edge.
+    ///
+    /// Returned as {low, high} in Hz relative to the carrier. A filter that
+    /// matches none of the three cases (l >= 0 and h <= 0, i.e. inverted or
+    /// empty) yields {0, 0}, matching Thetis's `int low = 0, high = 0;`
+    /// initialisation falling through untouched.
+    static std::pair<int, int> txDisplayWindowHz(int lowIq, int highIq);
+
+    /// Bins to clip from the low and high ends of the FFT so the analyzer
+    /// emits only `lowHz`..`highHz` around the carrier.
+    ///
+    /// Verbatim port of Thetis specHPSDR.cs:762-775 [v2.10.3.15]
+    /// CalcSpectrum, whose results become SetAnalyzer's fscLin / fscHin:
+    ///   high_clip_bw = 0.5*rate - high;  low_clip_bw = 0.5*rate + low
+    ///   fsclipH = floor(high_clip_bw / bin_width)
+    ///   fsclipL = ceil (low_clip_bw  / bin_width)
+    /// Note the asymmetry -- floor on one, ceil on the other -- is Thetis's
+    /// and is preserved.
+    ///
+    /// Returned as {fsclipL, fsclipH}.
+    static std::pair<int, int> spanClipBins(int lowHz, int highHz,
+                                            double sampleRateHz, int fftSize);
+
+    /// Restrict analyzer output to `lowHz`..`highHz` around the carrier.
+    /// Pass {0, 0} to go back to the full unclipped span.
+    ///
+    /// This is what makes the transmit panadapter's frequency axis honest.
+    /// Without it the analyzer emits the whole +/-48 kHz baseband, the pan
+    /// still carries its RX window, and SpectrumWidget stretches the one
+    /// across the other -- so the trace lands at the wrong dial frequency
+    /// while the RF is perfectly correct. Bench 2026-08-04.
+    void setSpectrumWindow(int lowHz, int highHz);
+
+    int spectrumWindowLowHz()  const noexcept { return m_spanLowHz;  }
+    int spectrumWindowHighHz() const noexcept { return m_spanHighHz; }
 
     /// Update output pixel count to match the panadapter's display width.
     /// Called when SpectrumWidget resizes.  Triggers a SetAnalyzer re-call
@@ -235,6 +282,13 @@ private:
     // matches the m_size passed to XCreateAnalyzer (TxAnalyzer.cpp).
     int m_fftSize{32768};
     double m_sampleRate{96000.0};   // matches WdspEngine::kTxDspSampleRate
+
+    // Display window around the carrier, in Hz, from
+    // txDisplayWindowHz(). Both zero means "no clipping, full span", which
+    // is the pre-bench behaviour and the state before the first MOX edge
+    // configures a filter-derived window.
+    int m_spanLowHz {0};
+    int m_spanHighHz{0};
     // From Thetis specHPSDR.cs:335 [v2.10.3.13+501e3f51] — frame_rate default = 15.
     int m_outputFps{15};
 

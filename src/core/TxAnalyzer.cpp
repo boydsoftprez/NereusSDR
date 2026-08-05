@@ -216,6 +216,123 @@ void TxAnalyzer::poll()
 }
 
 #ifdef HAVE_WDSP
+// ---------------------------------------------------------------------------
+// txDisplayWindowHz — how wide a window the transmit pan should show
+//
+// From Thetis console.cs:8024-8056 [v2.10.3.15] — UpdateTXDisplayVars:
+//
+//     int low = 0, high = 0;
+//     if (l < 0 && h <= 0)
+//     {
+//         high = 0;
+//         if (l >= -910)
+//             low = -1000;
+//         else
+//             low = (int)(l * 1.1);
+//     }
+//     else if (l >= 0 && h > 0)
+//     {
+//         low = 0;
+//         if (h <= 910)
+//             high = 1000;
+//         else
+//             high = (int)(h * 1.1);
+//     }
+//     else if (l < 0 && h > 0)
+//     {
+//         int max_edge = Math.Max(-l, h);
+//         low = (int)(max_edge * -1.1);
+//         high = (int)(max_edge * 1.1);
+//     }
+//
+// The 910 threshold and the 1.1 factor are Thetis's and are preserved
+// exactly: 1.1 is what leaves the filter skirts on screen instead of
+// cutting at the passband edge, and the 910 floor stops a very narrow
+// filter (CW) collapsing the window to nothing.
+// ---------------------------------------------------------------------------
+std::pair<int, int> TxAnalyzer::txDisplayWindowHz(int lowIq, int highIq)
+{
+    int low = 0, high = 0;
+    if (lowIq < 0 && highIq <= 0) {
+        high = 0;
+        if (lowIq >= -910) {
+            low = -1000;
+        } else {
+            low = static_cast<int>(lowIq * 1.1);
+        }
+    } else if (lowIq >= 0 && highIq > 0) {
+        low = 0;
+        if (highIq <= 910) {
+            high = 1000;
+        } else {
+            high = static_cast<int>(highIq * 1.1);
+        }
+    } else if (lowIq < 0 && highIq > 0) {
+        const int maxEdge = (-lowIq > highIq) ? -lowIq : highIq;
+        low  = static_cast<int>(maxEdge * -1.1);
+        high = static_cast<int>(maxEdge * 1.1);
+    }
+    return {low, high};
+}
+
+// ---------------------------------------------------------------------------
+// spanClipBins — turn that window into SetAnalyzer's fscLin / fscHin
+//
+// From Thetis specHPSDR.cs:762-775 [v2.10.3.15] — CalcSpectrum:
+//
+//     int upper_freq = filter_high;
+//     int lower_freq = filter_low;
+//     //bandwidth to clip off on the high and low sides
+//     double high_clip_bw = 0.5 * sample_rate - upper_freq;
+//     double low_clip_bw = 0.5 * sample_rate + lower_freq;
+//     //calculate the width of each frequency bin
+//     double bin_width = (double)sample_rate / fft_size;
+//     //calculate span clip parameters
+//     int fsclipH = (int)Math.Floor(high_clip_bw / bin_width);
+//     int fsclipL = (int)Math.Ceiling(low_clip_bw / bin_width);
+//
+// floor on the high side and ceil on the low side is not a typo in the
+// port; it is what upstream does, and it biases the surviving span to
+// sit inside the requested window rather than overhang it.
+// ---------------------------------------------------------------------------
+std::pair<int, int> TxAnalyzer::spanClipBins(int lowHz, int highHz,
+                                             double sampleRateHz, int fftSize)
+{
+    if (sampleRateHz <= 0.0 || fftSize <= 0) {
+        return {0, 0};
+    }
+    const double highClipBw = 0.5 * sampleRateHz - static_cast<double>(highHz);
+    const double lowClipBw  = 0.5 * sampleRateHz + static_cast<double>(lowHz);
+    const double binWidth   = sampleRateHz / static_cast<double>(fftSize);
+
+    int fsclipH = static_cast<int>(std::floor(highClipBw / binWidth));
+    int fsclipL = static_cast<int>(std::ceil(lowClipBw / binWidth));
+
+    // A window wider than the baseband, or an inverted one, would ask for a
+    // negative clip. WDSP has no meaning for that, and the sum must leave at
+    // least one bin standing or the analyzer emits nothing at all and the
+    // pan goes blank -- indistinguishable, from the operator's seat, from
+    // the frozen waterfall this whole change exists to fix.
+    if (fsclipH < 0) { fsclipH = 0; }
+    if (fsclipL < 0) { fsclipL = 0; }
+    if (fsclipL + fsclipH >= fftSize) {
+        return {0, 0};
+    }
+    return {fsclipL, fsclipH};
+}
+
+void TxAnalyzer::setSpectrumWindow(int lowHz, int highHz)
+{
+    if (m_spanLowHz == lowHz && m_spanHighHz == highHz) {
+        return;
+    }
+    m_spanLowHz  = lowHz;
+    m_spanHighHz = highHz;
+    if (m_analyzerCreated) {
+        applySetAnalyzer();
+    }
+}
+
 void TxAnalyzer::applySetAnalyzer()
 {
     // From Thetis specHPSDR.cs:529 + :534-643 [v2.10.3.13+501e3f51] —
@@ -238,6 +355,14 @@ void TxAnalyzer::applySetAnalyzer()
         kKeepTime * static_cast<double>(m_fftSize) *
                     static_cast<double>(m_outputFps)));
     int flp[1] = {0};
+
+    // Span clip. Both zero leaves the analyzer emitting the full +/-48 kHz
+    // baseband, which is what it did before the 2026-08-04 bench and is
+    // still the state until MOX configures a filter-derived window.
+    const auto [fsclipL, fsclipH] =
+        (m_spanLowHz == 0 && m_spanHighHz == 0)
+            ? std::pair<int, int>{0, 0}
+            : spanClipBins(m_spanLowHz, m_spanHighHz, m_sampleRate, m_fftSize);
 
     // 3M-5d: n_pixout = 2 mirrors Thetis specHPSDR.cs:471 [v2.10.3.13+501e3f51]
     // (_pixel_out default = 2) so pan + waterfall planes carry independent
@@ -262,8 +387,15 @@ void TxAnalyzer::applySetAnalyzer()
         /*pi=*/14.0,               // Thetis default (unused for non-Kaiser)
         /*ovrlp=*/ovrlp,
         /*clp=*/clip,              // Thetis: floor(0.04 * fft_size) = 163
-        /*fscLin=*/0.0,
-        /*fscHin=*/0.0,
+        // fscLin / fscHin are BIN COUNTS to clip from the low and high ends,
+        // not frequencies. Thetis computes them in CalcSpectrum
+        // (specHPSDR.cs:772-774 [v2.10.3.15]) and passes them in these two
+        // slots. Leaving them at zero, as this did before, is what made the
+        // transmit trace land at the wrong dial frequency: the analyzer
+        // emitted the whole baseband while the pan kept its RX window, and
+        // SpectrumWidget stretched one across the other.
+        /*fscLin=*/static_cast<double>(fsclipL),
+        /*fscHin=*/static_cast<double>(fsclipH),
         /*n_pix=*/m_numPixels,
         /*n_stch=*/1,
         /*calset=*/0,
