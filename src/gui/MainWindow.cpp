@@ -3631,6 +3631,20 @@ void MainWindow::buildUI()
         // Qt::QueuedConnection mirrors the pattern established by the
         // hardwareFlipped + setMoxOverlay connects above.  Capture
         // shouldn't outlive MainWindow (this), so the lambda is safe.
+        // Hydrate the persisted transmit grid before the first key-up, so a
+        // relaunch comes back to the operator's scale rather than the
+        // Thetis seed. Missing keys leave the member initialisers alone.
+        {
+            auto& st = AppSettings::instance();
+            bool okRef = false, okRange = false;
+            const float ref = st.value(QStringLiteral("DisplayTxGridRefLevel"),
+                                       QString()).toString().toFloat(&okRef);
+            const float rng = st.value(QStringLiteral("DisplayTxGridDynamicRange"),
+                                       QString()).toString().toFloat(&okRange);
+            if (okRef)                  { m_txGridRefLevel     = ref; }
+            if (okRange && rng > 0.0f)  { m_txGridDynamicRange = rng; }
+        }
+
         if (m_txAnalyzer) {
             connect(mox, &MoxController::moxStateChanged, this,
                     [this](bool isTx) {
@@ -3707,6 +3721,32 @@ void MainWindow::buildUI()
                     m_savedSpectrumCenterHz   = sw->centerFrequency();
                     m_savedSpectrumBandwidth  = sw->bandwidth();
 
+                    // ── The transmit grid ────────────────────────────────
+                    //
+                    // From Thetis display.cs:1887-1905 [v2.10.3.15]:
+                    //     private static int tx_spectrum_grid_max  =  20;
+                    //     private static int tx_spectrum_grid_min  = -80;
+                    //     public static int SpectrumGridMaxMoxModified {
+                    //         get { return localMox(1) ? tx_spectrum_grid_max
+                    //                                  : spectrum_grid_max; }
+                    //     }
+                    // Thetis swaps the whole graticule on the MOX edge and
+                    // swaps it back on un-key. Nothing about the receive
+                    // range suits transmit: a scale picked for signals near
+                    // the noise floor is being asked to show something at
+                    // about -9 dBm, so the trace leaves the top of the
+                    // graticule and its skirt fills the screen.
+                    //
+                    // Bench 2026-08-05: this is what made the display look
+                    // "goofy" and unadjustable. Unadjustable literally --
+                    // the TX Grid Scale group in Setup is still a
+                    // placeholder (3M-5e), so there was no control to reach
+                    // for and no automatic switch either.
+                    m_savedSpectrumRefLevel     = sw->refLevel();
+                    m_savedSpectrumDynamicRange = sw->dynamicRange();
+                    sw->setDbmRange(m_txGridRefLevel - m_txGridDynamicRange,
+                                    m_txGridRefLevel);
+
                     // TX FFT is centered on the active slice's carrier.
                     // If no slice (shouldn't happen during MOX, but guard
                     // anyway) reuse the RX DDC center as a best-effort
@@ -3724,53 +3764,75 @@ void MainWindow::buildUI()
                     // carrier) instead of the RX DDC bins.  Both setters
                     // bypass setFrequencyRange so neither triggers the
                     // history-clear path.
-                    // ── The transmit window (bench 2026-08-04) ───────────
+                    // ── The transmit window ──────────────────────────────
                     //
-                    // Thetis does not show transmit over the receive span.
-                    // It derives a narrow window from the TX filter edges
-                    // (console.cs:8024-8056 [v2.10.3.15] UpdateTXDisplayVars),
-                    // clips the analyzer to exactly that window
-                    // (specHPSDR.cs:762-775 CalcSpectrum -> SetAnalyzer's
-                    // fscLin / fscHin), and shows the passband.
+                    // From Thetis display.cs:1284-1295 + :4585-4590
+                    // [v2.10.3.15]:
+                    //     private static int tx_display_low  = -4000;
+                    //     private static int tx_display_high =  4000;
+                    //     if (local_mox) {
+                    //         if (!displayduplex) {
+                    //             Low  = tx_display_low;
+                    //             High = tx_display_high;
+                    //         }
+                    // The panadapter shows a fixed +/-4 kHz around the
+                    // carrier while transmitting. Nothing in Thetis ever
+                    // assigns those two properties, so the defaults are what
+                    // ships.
                     //
-                    // Leaving the pan on its receive window, as this did
-                    // before, is what put the TUNE tone at the wrong dial
-                    // frequency while the RF was correct: the analyzer
-                    // emitted the whole 96 kHz baseband, visibleBinRange
-                    // clamped to the whole array because the window asked
-                    // for more than existed, and the renderer stretched
-                    // 96 kHz of data across an axis labelled far wider
-                    // (SpectrumWidget.cpp:2886, displayWidth / sliceCount).
-                    // The zoom-preservation this replaces was a NereusSDR
-                    // divergence, and it cannot be made to work: an axis
-                    // wider than the data is an axis that lies.
-                    int iqLow = 0, iqHigh = 0;
-                    if (TxChannel* tx = m_radioModel->txChannel()) {
-                        iqLow  = tx->txFilterLowIq();
-                        iqHigh = tx->txFilterHighIq();
+                    // NOT the filter-derived passband from
+                    // UpdateTXDisplayVars: that function returns immediately
+                    // unless the display mode is SPECTRUM, HISTOGRAM or
+                    // SPECTRASCOPE (console.cs:8026-8029), so it governs the
+                    // old scope-style displays and never a panadapter. I
+                    // ported it first and it zoomed to ~3 kHz, which is not
+                    // what Thetis looks like. Bench 2026-08-05.
+                    //
+                    // The analyzer is clipped to that same window, and this
+                    // is not optional. Thetis derives its analyzer span and
+                    // its display window from ONE zoom state, in
+                    // initAnalyzer (specHPSDR.cs:565-584 [v2.10.3.15]):
+                    //     span_clip_l = pan_slider * (intervals - width);
+                    //     span_clip_h = intervals - width - span_clip_l;
+                    //     _low_freq  = -(int)((intervals / 2.0 - span_clip_l)
+                    //                         * bin_width);
+                    //     _high_freq = +(int)((intervals / 2.0 - span_clip_h)
+                    //                         * bin_width);
+                    // so the pixels it returns always cover exactly what is
+                    // on screen -- one data point per pixel.
+                    //
+                    // Leaving the analyzer at full span and slicing 8 kHz out
+                    // of 96 kHz afterwards gives about 100 real points
+                    // upsampled twelvefold across the width. A pure tune tone
+                    // rendered that way is a broad interpolated blob with
+                    // shoulders, and every FFT-size / window / detector /
+                    // averaging control is smeared away underneath the
+                    // interpolation -- which is exactly the "all the settings
+                    // look the same, with shoulders" bench report of
+                    // 2026-08-05.
+                    static constexpr double kTxDisplayHalfSpanHz = 4000.0;
+                    static constexpr int    kTxDisplayLowHz  = -4000;
+                    static constexpr int    kTxDisplayHighHz = +4000;
+
+                    // Tell the analyzer how many samples the siphon
+                    // actually hands it per push. Spectrum0() carries no
+                    // length, so SetAnalyzer's bf_sz is the only thing
+                    // telling WDSP where the buffer ends; it had been given
+                    // the FFT size, which is a different and much larger
+                    // number. See TxAnalyzer::setBlockSize.
+                    if (TxChannel* txc = m_radioModel->txChannel()) {
+                        m_txAnalyzer->setBlockSize(txc->dspBlockFrames());
                     }
-                    const auto [winLow, winHigh] =
-                        TxAnalyzer::txDisplayWindowHz(iqLow, iqHigh);
-                    const double spanHz =
-                        static_cast<double>(winHigh - winLow);
-                    if (spanHz <= 0.0) { return; }
 
-                    m_txAnalyzer->setSpectrumWindow(winLow, winHigh);
+                    m_txAnalyzer->setSpectrumWindow(kTxDisplayLowHz,
+                                                    kTxDisplayHighHz);
 
-                    // Tell the widget where the clipped bins actually sit,
-                    // so visibleBinRange stops guessing from the RX rate.
-                    // txSampleRate is the window's WIDTH, not a sample
-                    // rate: visibleBinRange only ever uses it as the span
-                    // the bin array covers, and after clipping that span
-                    // is the window, not the baseband.
-                    sw->setTxCenterFrequency(
-                        carrierHz + (winLow + winHigh) / 2.0);
-                    sw->setTxSampleRate(spanHz);
-
-                    // And point the pan at that window, so the axis the
-                    // operator reads is the one the data covers.
-                    sw->setFrequencyRange(carrierHz + (winLow + winHigh) / 2.0,
-                                          spanHz);
+                    // Bins now cover the window and nothing else, so the
+                    // span handed to visibleBinRange is the window width.
+                    sw->setTxCenterFrequency(carrierHz);
+                    sw->setTxSampleRate(2.0 * kTxDisplayHalfSpanHz);
+                    sw->setFrequencyRange(carrierHz,
+                                          2.0 * kTxDisplayHalfSpanHz);
 
                     // PR #212 follow-up bench fix (KG4VCF, 2026-05-10):
                     // disable Clarity so the waterfall AGC takes over for
@@ -3895,6 +3957,28 @@ void MainWindow::buildUI()
                     if (m_savedSpectrumBandwidth > 0.0) {
                         sw->setFrequencyRange(m_savedSpectrumCenterHz,
                                               m_savedSpectrumBandwidth);
+                    }
+                    // Keep whatever the operator settled on as THE transmit
+                    // grid, before putting receive back. This is what makes
+                    // the strip usable during transmit: drag it once, and
+                    // the next key-up comes up where you left it instead of
+                    // snapping back to the Thetis defaults.
+                    m_txGridRefLevel     = sw->refLevel();
+                    m_txGridDynamicRange = sw->dynamicRange();
+                    AppSettings::instance().setValue(
+                        QStringLiteral("DisplayTxGridRefLevel"),
+                        QString::number(m_txGridRefLevel));
+                    AppSettings::instance().setValue(
+                        QStringLiteral("DisplayTxGridDynamicRange"),
+                        QString::number(m_txGridDynamicRange));
+
+                    // Grid back to what receive was using. Guarded on a
+                    // positive range so a fall edge that never had a
+                    // matching rise cannot flatten the graticule to zero.
+                    if (m_savedSpectrumDynamicRange > 0.0f) {
+                        sw->setDbmRange(
+                            m_savedSpectrumRefLevel - m_savedSpectrumDynamicRange,
+                            m_savedSpectrumRefLevel);
                     }
                     // Symmetric AGC reset on un-key so the waterfall
                     // snaps back to the RX dynamic range without the

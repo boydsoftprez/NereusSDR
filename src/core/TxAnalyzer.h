@@ -112,6 +112,25 @@ public:
     static std::pair<int, int> spanClipBins(int lowHz, int highHz,
                                             double sampleRateHz, int fftSize);
 
+    /// Samples the siphon hands the analyzer per push, i.e. the TXA chain's
+    /// dsp_size. Becomes SetAnalyzer's `bf_sz`.
+    ///
+    /// This is NOT the FFT size, and getting it wrong is not a rounding
+    /// error. Spectrum0() takes no length argument (analyzer.c), so the
+    /// analyzer consumes exactly `bf_sz` samples from the pointer the
+    /// siphon gives it. Declaring the FFT size here told WDSP to read tens
+    /// of thousands of samples out of a buffer holding a few hundred, and
+    /// the resulting spectrum is dominated by whatever follows it in
+    /// memory -- which is why every window, detector and averaging setting
+    /// looked identical at the bench on 2026-08-05: the window was being
+    /// applied to garbage.
+    ///
+    /// From Thetis specHPSDR.cs:624-642 [v2.10.3.15], initAnalyzer passes
+    /// `fft_size` for sz and `blocksize` for bf_sz -- two different values.
+    void setBlockSize(int frames);
+
+    int blockSize() const noexcept { return m_blockSize; }
+
     /// Restrict analyzer output to `lowHz`..`highHz` around the carrier.
     /// Pass {0, 0} to go back to the full unclipped span.
     ///
@@ -287,6 +306,11 @@ private:
     // txDisplayWindowHz(). Both zero means "no clipping, full span", which
     // is the pre-bench behaviour and the state before the first MOX edge
     // configures a filter-derived window.
+    // SetAnalyzer's bf_sz. Zero means "not told yet", in which case
+    // applySetAnalyzer falls back to the FFT size to preserve the
+    // pre-2026-08-05 behaviour rather than pass a nonsense zero.
+    int m_blockSize {0};
+
     int m_spanLowHz {0};
     int m_spanHighHz{0};
     // From Thetis specHPSDR.cs:335 [v2.10.3.13+501e3f51] — frame_rate default = 15.

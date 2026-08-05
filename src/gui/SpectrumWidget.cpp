@@ -464,8 +464,22 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // ticker thread, slot runs on the main thread when the event loop
     // is free.  See WaterfallTicker.h for the cadence-isolation rationale.
     connect(m_waterfallTicker, &WaterfallTicker::tick, this, [this]() {
-        // ALWAYS push on tick.  Empty-cache guard so we do nothing
-        // before the very first FFT.
+        // Push on tick, EXCEPT while the TX analyzer owns the waterfall.
+        //
+        // "Always" was right when this was the only writer. During transmit
+        // it is not: pushTxWaterfallRow feeds rows straight in at the
+        // analyzer's own frame rate, and this ticker went on re-pushing the
+        // last cached RX row alongside them. Two writers at two cadences
+        // interleave, which paints the waterfall in horizontal bands of
+        // transmit and stale receive. Bench 2026-08-05, and it is the
+        // scanline artifact in that report.
+        //
+        // The cache write is already gated in updateSpectrumLinear, so the
+        // contents here are frozen RX data during transmit -- there is
+        // nothing worth drawing even if the cadence did line up.
+        if (m_txExternalWaterfall) {
+            return;
+        }
         m_pendingWfPixelsDbmDirty = false;
         if (!m_pendingWfPixelsDbm.isEmpty()) {
             pushWaterfallRow(m_pendingWfPixelsDbm);

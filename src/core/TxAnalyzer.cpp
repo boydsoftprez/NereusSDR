@@ -321,6 +321,17 @@ std::pair<int, int> TxAnalyzer::spanClipBins(int lowHz, int highHz,
     return {fsclipL, fsclipH};
 }
 
+void TxAnalyzer::setBlockSize(int frames)
+{
+    if (frames <= 0 || m_blockSize == frames) {
+        return;
+    }
+    m_blockSize = frames;
+    if (m_analyzerCreated) {
+        applySetAnalyzer();
+    }
+}
+
 void TxAnalyzer::setSpectrumWindow(int lowHz, int highHz)
 {
     if (m_spanLowHz == lowHz && m_spanHighHz == highHz) {
@@ -408,7 +419,10 @@ void TxAnalyzer::applySetAnalyzer()
         /*typ=*/1,
         flp,
         /*sz=*/m_fftSize,
-        /*bf_sz=*/m_fftSize,
+        // bf_sz is the SIPHON's push size, not the FFT size. See
+        // setBlockSize. Falls back to m_fftSize only when nothing has told
+        // us the real block size yet.
+        /*bf_sz=*/(m_blockSize > 0 ? m_blockSize : m_fftSize),
         /*win_type=*/m_windowType,
         /*pi=*/14.0,               // Thetis default (unused for non-Kaiser)
         /*ovrlp=*/ovrlp,
@@ -431,6 +445,24 @@ void TxAnalyzer::applySetAnalyzer()
 
     SetDisplaySampleRate(m_dispId, static_cast<int>(m_sampleRate));
     ++m_analyzerConfigCount;
+
+    // Every parameter WDSP is actually given, on each reconfiguration.
+    // Kept because it is what made the 2026-08-05 bench tractable: bf_sz
+    // silently carrying the FFT size, and the symmetric clip overrunning the
+    // span, are both invisible from the outside and obvious here. Fires only
+    // when the analyzer is reconfigured, not per frame.
+    qCDebug(lcDsp).nospace()
+        << "TxAnalyzer SetAnalyzer: disp=" << m_dispId
+        << " fft=" << m_fftSize
+        << " bf_sz=" << (m_blockSize > 0 ? m_blockSize : m_fftSize)
+        << " (blockSize=" << m_blockSize << ")"
+        << " win=" << m_windowType
+        << " ovrlp=" << ovrlp
+        << " clp=" << effectiveClip
+        << " fsclipL=" << fsclipL << " fsclipH=" << fsclipH
+        << " n_pix=" << m_numPixels
+        << " rate=" << m_sampleRate
+        << " window=[" << m_spanLowHz << "," << m_spanHighHz << "]";
 }
 
 void TxAnalyzer::applyDetectorMode(int pixout, int mode)

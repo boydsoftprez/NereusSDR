@@ -740,6 +740,16 @@ public:
     int txFilterLowIq()  const noexcept { return m_filterLowHz;  }
     int txFilterHighIq() const noexcept { return m_filterHighHz; }
 
+    /// Complex samples the TXA chain processes per mainstream DSP buffer,
+    /// read live from WDSP (`ch[id].dsp_size`, channel.h:40). 0 when the
+    /// channel is not open.
+    ///
+    /// The display siphon pushes exactly this many samples per call, and
+    /// Spectrum0() takes no length argument -- the analyzer reads however
+    /// many its `bf_sz` says. So this is the number SetAnalyzer must be
+    /// given, and it is not the FFT size.
+    int dspBlockFrames() const;
+
     /// Set the AM/SAM sub-mode dispatch (0=DSB, 1=AM_LSB, 2=AM_USB).
     ///
     /// **Deferred to 3M-3b.** Throws std::logic_error if called in 3M-1b
