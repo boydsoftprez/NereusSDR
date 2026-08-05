@@ -2303,6 +2303,8 @@ void SpectrumWidget::setWaterfallAGCOffsetDb(int db)
 // 3M-5b: TX waterfall colormap setters.
 // From Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51] -- TX thresholds,
 // palette, and low-color switch inline per-frame when m_moxOverlay is active.
+// MW0LGE [2.9.0.7]  [original inline comment from display.cs:6588; the
+// cited 6506-6595 range spans it]
 void SpectrumWidget::setTxWfLowLevel(int dbm)
 {
     if (m_txWfLowLevel == dbm) { return; }
@@ -5024,6 +5026,7 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
 QRgb SpectrumWidget::dbmToRgb(float dbm) const
 {
     // From Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51] -- per-frame
+    // MW0LGE [2.9.0.7]  [original inline comment from display.cs:6588]
     // MOX-conditional render path.  No state machine; branch is inline
     // per pixel.  When MOX is active, TX-specific thresholds + palette are
     // used instead of RX values.  Black-level / color-gain sliders are NOT

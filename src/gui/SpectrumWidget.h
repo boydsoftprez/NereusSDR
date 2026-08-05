@@ -961,6 +961,7 @@ public slots:
     // ---- 3M-5b: TX waterfall colormap setters / getters ----
     // From Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51] -- TX thresholds,
     // palette, and low-color are switched inline per-frame when MOX is active.
+    // MW0LGE [2.9.0.7]  [original inline comment from display.cs:6588]
     int  txWfLowLevel()  const noexcept { return m_txWfLowLevel;  }
     int  txWfHighLevel() const noexcept { return m_txWfHighLevel; }
     WfColorScheme txWfPalette()   const noexcept { return m_txWfPalette;   }

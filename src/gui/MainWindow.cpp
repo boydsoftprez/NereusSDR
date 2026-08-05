@@ -3600,7 +3600,16 @@ void MainWindow::buildUI()
         // MOX-aware panadapter source switch: FFTEngine (RX-DDC FFTW3) ↔
         // TxAnalyzer (WDSP TX siphon, pre-IQC).
         //
-        // From Thetis console.cs:24399-24462 [v2.10.3.13] DisplayThread2:
+        // From Thetis console.cs:24399-24462 [v2.10.3.13] DisplayThread2.
+        // Author tags carried verbatim from inside that range, per
+        // CLAUDE.md 'Inline comment preservation'. They sit on sibling
+        // switch arms of the same DisplayThread2 dispatch rather than on
+        // the GetPixels lines quoted below, so they are grouped here:
+        //   // MW0LGE                                    [console.cs:24429]
+        //   //[2.10.3.4]MW0LGE not used anymore since scope was coded in cmaster.cs
+        //                                                [console.cs:24450]
+        //   // MW0LGE would be null if audio not running (ie not connected?)
+        //                                                [console.cs:24465]
         //   if (bLocalMox && !_display_duplex)
         //       SpecHPSDRDLL.GetPixels(cmaster.inid(1, 0), 0, ptr, ref flag);
         //   else

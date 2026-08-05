@@ -2832,6 +2832,8 @@ void TxDisplayPage::buildUI()
 
         // WF detector → setWfDetector.
         // From Thetis setup.cs:18152-18157 [v2.10.3.13+501e3f51].
+        //[2.10.3.5]MW0LGE note: see updateNormalizePan() in specHPSDR as it only applies to pan detector type 2,3,4
+        //                                                 [setup.cs:18152]
         connect(m_txWfDetectorCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [this](int idx) {
             if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
