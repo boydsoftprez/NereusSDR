@@ -3641,8 +3641,18 @@ void MainWindow::buildUI()
                                        QString()).toString().toFloat(&okRef);
             const float rng = st.value(QStringLiteral("DisplayTxGridDynamicRange"),
                                        QString()).toString().toFloat(&okRange);
-            if (okRef)                  { m_txGridRefLevel     = ref; }
-            if (okRange && rng > 0.0f)  { m_txGridDynamicRange = rng; }
+            // Same bounds the fall-edge capture enforces. A range outside
+            // them cannot have come from a deliberate drag, and loading one
+            // back would resurrect an unusable graticule that the operator
+            // cannot drag their way out of -- so a bad stored value heals
+            // itself to the Thetis seed on next launch rather than
+            // persisting forever. Bench 2026-08-05.
+            if (okRef && ref >= -160.0f && ref <= 20.0f) {
+                m_txGridRefLevel = ref;
+            }
+            if (okRange && rng >= 10.0f && rng <= 200.0f) {
+                m_txGridDynamicRange = rng;
+            }
         }
 
         if (m_txAnalyzer) {
@@ -3976,14 +3986,24 @@ void MainWindow::buildUI()
                     // the strip usable during transmit: drag it once, and
                     // the next key-up comes up where you left it instead of
                     // snapping back to the Thetis defaults.
-                    m_txGridRefLevel     = sw->refLevel();
-                    m_txGridDynamicRange = sw->dynamicRange();
-                    AppSettings::instance().setValue(
-                        QStringLiteral("DisplayTxGridRefLevel"),
-                        QString::number(m_txGridRefLevel));
-                    AppSettings::instance().setValue(
-                        QStringLiteral("DisplayTxGridDynamicRange"),
-                        QString::number(m_txGridDynamicRange));
+                    //
+                    // Guarded, because a range this captures is a range every
+                    // future key-up inherits. An unusable one persists and
+                    // there is no obvious way for the operator to get back
+                    // out: the strip they would drag to fix it is the thing
+                    // that stopped drawing. Belt and braces alongside the
+                    // MOX gate now on the noise-floor grid follow.
+                    const float capturedRange = sw->dynamicRange();
+                    if (capturedRange >= 10.0f && capturedRange <= 200.0f) {
+                        m_txGridRefLevel     = sw->refLevel();
+                        m_txGridDynamicRange = capturedRange;
+                        AppSettings::instance().setValue(
+                            QStringLiteral("DisplayTxGridRefLevel"),
+                            QString::number(m_txGridRefLevel));
+                        AppSettings::instance().setValue(
+                            QStringLiteral("DisplayTxGridDynamicRange"),
+                            QString::number(m_txGridDynamicRange));
+                    }
 
                     // Grid back to what receive was using. Guarded on a
                     // positive range so a fall edge that never had a

@@ -2144,6 +2144,23 @@ void SpectrumWidget::onNoiseFloorChanged(float nfDbm)
     // density.
     if (!m_adjustGridMinToNF) { return; }
 
+    // Not while transmitting. This tracks a RECEIVE noise floor, and on an
+    // ORION-class radio the receiver keeps running through transmit, so the
+    // tracker goes on firing at its 500 ms cadence and dragging the grid
+    // underneath the transmit graticule.
+    //
+    // Two things break. The transmit scale the operator is looking at moves
+    // on its own, and the MOX fall edge captures whatever the tracker last
+    // set rather than what the operator chose -- so the next key-up comes up
+    // on a noise-floor-derived range, which is how the dBm labels vanished
+    // on the second TUNE at the bench on 2026-08-05.
+    //
+    // Same reasoning as the Clarity gate 3M-5 already added, and the same
+    // reasoning as composeWaterfallActiveThresholds's early return: every
+    // receive-side tracker has to stand down while the pan is showing
+    // transmit. This one was missed.
+    if (m_moxOverlay) { return; }
+
     const float oldMin = m_refLevel - m_dynamicRange;
     const float oldMax = m_refLevel;
     // abs incase //MW0LGE [2.9.0.7] [original inline comment from console.cs:46081]
