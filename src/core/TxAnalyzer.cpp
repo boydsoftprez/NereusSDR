@@ -359,10 +359,36 @@ void TxAnalyzer::applySetAnalyzer()
     // Span clip. Both zero leaves the analyzer emitting the full +/-48 kHz
     // baseband, which is what it did before the 2026-08-04 bench and is
     // still the state until MOX configures a filter-derived window.
+    const bool windowed = !(m_spanLowHz == 0 && m_spanHighHz == 0);
     const auto [fsclipL, fsclipH] =
-        (m_spanLowHz == 0 && m_spanHighHz == 0)
-            ? std::pair<int, int>{0, 0}
-            : spanClipBins(m_spanLowHz, m_spanHighHz, m_sampleRate, m_fftSize);
+        windowed
+            ? spanClipBins(m_spanLowHz, m_spanHighHz, m_sampleRate, m_fftSize)
+            : std::pair<int, int>{0, 0};
+
+    // Symmetric clip must go to zero once a span window is in play, and this
+    // is not a tidy-up: WDSP subtracts the span clips from a span ALREADY
+    // reduced by 2*clp.
+    //
+    //   From wdsp/analyzer.c:1283 [TAPR v1.29]:
+    //     a->pix_per_bin = (double)a->num_pixels /
+    //       ((double)(a->num_stitch * (a->out_size - 1 - 2 * a->clip))
+    //        - a->fsclipL - a->fsclipH - 1.0);
+    //
+    // With the 0.04 clip left in at 32768 bins that denominator goes
+    // NEGATIVE for a 3 kHz window (30147 - 15295 - 16384 - 1), and the
+    // analyzer emits nothing at all -- a black pan, which at the bench is
+    // indistinguishable from the frozen waterfall this work exists to fix.
+    // Bench 2026-08-05: TUNE on a 7000DLE showed exactly that.
+    //
+    // Thetis says so in as many words, and this is the line that was missed
+    // when the fsclip computation was ported without its companion.
+    //   From Thetis specHPSDR.cs:776-777 [v2.10.3.15], inside CalcSpectrum:
+    //     //no need for any symmetrical clipping
+    //     int sclip = 0;
+    // The 0.04 CLIP_FRACTION belongs to the OTHER path, initAnalyzer
+    // (specHPSDR.cs:529), which does no span clipping and therefore has
+    // room for it.
+    const int effectiveClip = windowed ? 0 : clip;
 
     // 3M-5d: n_pixout = 2 mirrors Thetis specHPSDR.cs:471 [v2.10.3.13+501e3f51]
     // (_pixel_out default = 2) so pan + waterfall planes carry independent
@@ -386,7 +412,7 @@ void TxAnalyzer::applySetAnalyzer()
         /*win_type=*/m_windowType,
         /*pi=*/14.0,               // Thetis default (unused for non-Kaiser)
         /*ovrlp=*/ovrlp,
-        /*clp=*/clip,              // Thetis: floor(0.04 * fft_size) = 163
+        /*clp=*/effectiveClip,     // 0 while span-clipped; see above
         // fscLin / fscHin are BIN COUNTS to clip from the low and high ends,
         // not frequencies. Thetis computes them in CalcSpectrum
         // (specHPSDR.cs:772-774 [v2.10.3.15]) and passes them in these two

@@ -189,6 +189,54 @@ private slots:
         QCOMPARE(TxAnalyzer::spanClipBins(0, 3135, 96000.0, 0).second, 0);
     }
 
+    // ── WDSP must be left with bins to work with ───────────────────────────
+    //
+    // Bench 2026-08-05: with the span clip landing correctly, TUNE on a
+    // 7000DLE still showed a completely black pan. The span clips are not
+    // applied to the raw FFT; WDSP subtracts them from a span ALREADY
+    // reduced by the symmetric clip:
+    //
+    //   From wdsp/analyzer.c:1283 [TAPR v1.29]:
+    //     a->pix_per_bin = (double)a->num_pixels /
+    //       ((double)(a->num_stitch * (a->out_size - 1 - 2 * a->clip))
+    //        - a->fsclipL - a->fsclipH - 1.0);
+    //
+    // Carrying the 0.04 CLIP_FRACTION through drives that denominator
+    // negative for any narrow window and the analyzer emits nothing.
+    // Thetis sets `int sclip = 0;` in CalcSpectrum for exactly this reason
+    // (specHPSDR.cs:776-777 [v2.10.3.15]).
+    //
+    // This test asserts the arithmetic that has to hold. It cannot reach
+    // into TxAnalyzer's private clip choice, so it checks the property that
+    // choice exists to satisfy: with sclip = 0 there is room, and with the
+    // 0.04 clip there is not.
+    void wdspIsLeftWithBinsAfterSpanClipping()
+    {
+        constexpr int    fftSize = 32768;
+        constexpr double rateHz  = 96000.0;
+
+        // The bench filter: LSB 100..2900 Hz -> IQ [-2900, -100].
+        const auto [low, high]   = TxAnalyzer::txDisplayWindowHz(-2900, -100);
+        const auto [clipL, clipH] =
+            TxAnalyzer::spanClipBins(low, high, rateHz, fftSize);
+
+        auto denominator = [&](int sclip) {
+            return static_cast<double>(fftSize - 1 - 2 * sclip)
+                   - clipL - clipH - 1.0;
+        };
+
+        QVERIFY2(denominator(0) > 0.0,
+                 "no bins survive even with symmetric clipping off");
+
+        // And the state that produced the black pan: the 0.04 fraction is
+        // simply too expensive to combine with a 3 kHz window.
+        const int clipFraction = static_cast<int>(0.04 * fftSize);
+        QVERIFY2(denominator(clipFraction) < 0.0,
+                 "expected the 0.04 clip to overrun the span; if this ever "
+                 "stops holding, re-check why TxAnalyzer zeroes clp when a "
+                 "window is set");
+    }
+
     // ── End to end: the bench case ─────────────────────────────────────────
 
     void benchUsbFilterProducesAWindowMatchingTheFilter()
