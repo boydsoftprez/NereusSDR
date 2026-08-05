@@ -19,6 +19,14 @@ struct ChromeFoldEntry {
     int     rung{0};
     int     widthPx{0};
     QString label;
+    /// True for an item that only EXISTS because something folded: the
+    /// overflow chip, and nothing else. Such an item costs nothing while
+    /// nothing is folded, because it is not on screen then. Charging it at
+    /// rung 0 anyway asks "does everything fit alongside the chip that
+    /// announces things did not fit", which has no consistent answer and
+    /// left the bar with a width band it could only enter, never leave.
+    /// See requiredWidth.
+    bool    onlyWhenFolded{false};
 };
 
 /// Fold decisions as pure functions over a width table.

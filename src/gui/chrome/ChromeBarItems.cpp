@@ -50,7 +50,12 @@ void registerChromeBarItems(ChromeBarController& c, const ChromeBarWidgets& w)
     // ARMED state (dropped-items list non-empty) is reported through
     // setItemAvailable from the foldStateChanged handler that also feeds
     // it its content, exactly like psaIndicator above.
-    add(c, w.overflowChip, nullptr, 0, QString());
+    //
+    // addOverflowChip rather than add(): "once it is showing" above is the
+    // whole point, and charging it at rung 0 -- where by definition nothing
+    // folded and the chip is not showing -- made a band of widths that the
+    // bar could enter but not leave. See ChromeFoldEntry::onlyWhenFolded.
+    if (w.overflowChip) { c.addOverflowChip(w.overflowChip); }
 
     // w.rxDashRow: mode and filter never fold (RxDashboard.h), so this
     // registers the row's own non-pill residual (slice tag + mode +

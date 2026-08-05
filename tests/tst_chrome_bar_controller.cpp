@@ -18,6 +18,19 @@ private:
         return l;
     }
 
+    /// Anchor + two foldable rungs + the overflow chip. See the arithmetic
+    /// table above overflowChipIsNotChargedWhileNothingIsFolded.
+    void addChipLadder(ChromeBarController& c, QLabel*& sys, QLabel*& extra) {
+        QLabel* anchor = makeItem(100);
+        sys            = makeItem(60);
+        extra          = makeItem(40);
+        QLabel* chip   = makeItem(26);
+        c.addItem(anchor, nullptr, 0, QString());
+        c.addItem(sys, nullptr, 1, QStringLiteral("System"));
+        c.addItem(extra, nullptr, 2, QStringLiteral("Extra"));
+        c.addOverflowChip(chip);
+    }
+
 private slots:
     void init() {
         host = new QWidget;
@@ -234,6 +247,63 @@ private slots:
         c.relayout(2000);
         QVERIFY(!sys->isHidden());
         QCOMPARE(c.foldedThroughRung(), rungBefore);
+    }
+
+    // The math for this lives in tst_chrome_fold_plan; what is checked
+    // here is that addOverflowChip actually carries onlyWhenFolded through
+    // buildTable, so registering the chip via the plain addItem path (as
+    // ChromeBarItems did before) is caught.
+    //
+    // Both tests below use anchor 100 (rung 0) + sys 60 (rung 1) +
+    // extra 40 (rung 2) + chip 26 (rung 0, charged only once folded):
+    //
+    //   rung 0, chip free    : 100 + 60 + 40      + 2 gaps + 12 pad = 224
+    //   rung 0, chip charged : 100 + 60 + 40 + 26 + 3 gaps + 12 pad = 256
+    //   rung 1, chip charged : 100 +      40 + 26 + 2 gaps + 12 pad = 190
+    //   rung 1, chip free    : 100 +      40      + 1 gap  + 12 pad = 158
+    //   rung 2, chip charged : 100 +           26 + 1 gap  + 12 pad = 144
+    //
+    // A third rung matters: planFold falls back to the highest rung present
+    // when nothing fits, so a two-rung ladder cannot tell "rung 1 was
+    // chosen" from "rung 1 was all there was". Built by addChipLadder,
+    // declared with makeItem above -- a helper taking arguments must not
+    // sit in the private slots block, where QTest would try to run it.
+    void overflowChipIsNotChargedWhileNothingIsFolded() {
+        ChromeBarController c;
+        QLabel* sys = nullptr;
+        QLabel* extra = nullptr;
+        addChipLadder(c, sys, extra);
+
+        // 240 sits between 224 and 256: everything fits, so nothing may
+        // fold, and the chip must not be charged for announcing a fold
+        // that has not happened.
+        c.relayout(240);
+        QCOMPARE(c.foldedThroughRung(), 0);
+        QVERIFY2(!sys->isHidden(),
+                 "the system tile folded at a width where it fits, because "
+                 "the overflow chip was charged for reporting the fold");
+        QVERIFY(c.foldedLabels().isEmpty());
+    }
+
+    // The other direction: once the chip IS on screen its width counts,
+    // which is why it is registered at all (final-fix-wave finding 4).
+    // Dropping the chip from the budget outright, rather than
+    // conditionally, passes the test above and fails this one.
+    void overflowChipIsChargedOnceSomethingFolds() {
+        ChromeBarController c;
+        QLabel* sys = nullptr;
+        QLabel* extra = nullptr;
+        addChipLadder(c, sys, extra);
+
+        // 189 clears rung 2 (144) but not rung 1 (190) -- by one pixel, and
+        // only because the chip's 26 is in that 190. Uncharged, rung 1
+        // costs 158 and would be accepted here.
+        c.relayout(189);
+        QCOMPARE(c.foldedThroughRung(), 2);
+        QVERIFY(sys->isHidden());
+        QVERIFY(extra->isHidden());
+        QCOMPARE(c.foldedLabels(),
+                 (QStringList{QStringLiteral("System"), QStringLiteral("Extra")}));
     }
 };
 QTEST_MAIN(TstChromeBarController)

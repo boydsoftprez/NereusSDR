@@ -42,6 +42,16 @@ void ChromeBarController::addItem(QWidget* widget, QWidget* separator,
     m_foldedThrough = -1;
 }
 
+void ChromeBarController::addOverflowChip(QWidget* chip)
+{
+    addItem(chip, nullptr, 0, QString());
+    const auto it = m_indexByWidget.constFind(chip);
+    if (it == m_indexByWidget.constEnd()) {
+        return;
+    }
+    m_items[*it].onlyWhenFolded = true;
+}
+
 void ChromeBarController::setNaturalWidth(QWidget* widget, int px)
 {
     const auto it = m_indexByWidget.constFind(widget);
@@ -102,7 +112,8 @@ QVector<ChromeFoldEntry> ChromeBarController::buildTable() const
         if (!r.available) {
             continue;
         }
-        table.append(ChromeFoldEntry{r.rung, r.naturalWidth, r.label});
+        table.append(ChromeFoldEntry{r.rung, r.naturalWidth, r.label,
+                                     r.onlyWhenFolded});
     }
     return table;
 }

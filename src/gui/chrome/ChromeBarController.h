@@ -74,6 +74,15 @@ public:
     void addItem(QWidget* widget, QWidget* separator, int rung,
                  const QString& overflowLabel);
 
+    /// Register the ladder's own output surface: the chip that names what
+    /// folded. Separate from addItem because this item alone is charged to
+    /// the budget conditionally -- it is on screen only while something is
+    /// folded, so it costs nothing at rung 0. See ChromeFoldEntry's
+    /// onlyWhenFolded for the width band that charging it unconditionally
+    /// made unreachable. Registered at rung 0: the chip must never itself
+    /// fold, or the bar would hide the one thing explaining what it hid.
+    void addOverflowChip(QWidget* chip);
+
     /// Update a cached width after a content change (a new PA reading with
     /// more digits, a longer radio name). Explicit, because an implicit
     /// re-measure is the feedback path this design removes.
@@ -122,6 +131,9 @@ private:
         /// See setItemAvailable. Defaults true: most items have no second
         /// visibility owner and are available whenever not folded.
         bool     available{true};
+        /// Set only by addOverflowChip. Carried into ChromeFoldEntry so the
+        /// pure math can leave the chip out of the nothing-folded case.
+        bool     onlyWhenFolded{false};
     };
 
     QVector<ChromeFoldEntry> buildTable() const;

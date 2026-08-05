@@ -40,6 +40,26 @@ QVector<ChromeFoldEntry> noAnchorTable()
         {2, 62, QStringLiteral("TGXL")},
     };
 }
+
+// An anchor, one foldable item, and the overflow chip. The chip is rung 0
+// (it must never fold) and onlyWhenFolded (it is on screen only once
+// something has). Deliberately small so the arithmetic in the tests below
+// is checkable by hand:
+//
+//   rung 0, chip free    : 100 + 60          + 1 gap  + 12 pad = 178
+//   rung 0, chip charged : 100 + 60 + 26     + 2 gaps + 12 pad = 210
+//   rung 1 (item folded) : 100      + 26     + 1 gap  + 12 pad = 144
+//
+// 178..209 is therefore the band where everything fits without the chip
+// but not with it -- the band the bar could enter and never leave.
+QVector<ChromeFoldEntry> tableWithOverflowChip()
+{
+    return {
+        {0, 100, QStringLiteral("anchor"), false},
+        {1,  60, QStringLiteral("System"), false},
+        {0,  26, QString(),                true},
+    };
+}
 } // namespace
 
 class TstChromeFoldPlan : public QObject {
@@ -156,6 +176,47 @@ private slots:
         // requiredWidth(), the general formula collapses to
         // kPadPx - kGapPx == 6 instead of kPadPx == 12.
         QCOMPARE(ChromeFoldPlan::requiredWidth(noAnchorTable(), 2), ChromeFoldPlan::kPadPx);
+    }
+
+    // ── The overflow chip is charged only once something has folded ──────
+    //
+    // The chip announces what folded, so at rung 0 it has nothing to say
+    // and is not on screen. Charging it there asked whether everything
+    // fits alongside the chip that reports things did not fit, and the
+    // answer decided whether that chip would exist. Widths in the band
+    // between "fits without it" and "fits with it" could then be entered
+    // from below but never left: rung 0 was rejected over a chip that only
+    // rung >= 1 puts on screen, so an item stayed folded with room to
+    // spare, and the chip stayed up naming it. Arriving at the identical
+    // width from a wider window gave the correct, fully unfolded bar --
+    // two layouts for one width. Found by Codex on PR #316.
+    void overflowChipCostsNothingWhileNothingIsFolded() {
+        QCOMPARE(ChromeFoldPlan::requiredWidth(tableWithOverflowChip(), 0), 178);
+    }
+
+    void widthThatFitsWithoutTheChipDoesNotFold() {
+        // 190 px sits inside the 178..209 band. Everything fits (178), so
+        // nothing may fold. Charging the chip at rung 0 makes this 210 > 190
+        // and folds the system tile for no reason.
+        QCOMPARE(ChromeFoldPlan::planFold(tableWithOverflowChip(), 190), 0);
+    }
+
+    void foldOutcomeDoesNotDependOnHowTheWidthWasReached() {
+        // The property the band violated, stated directly: planFold is a
+        // function of the table and the width, so every width in the band
+        // has exactly one answer regardless of resize history.
+        for (int w = 178; w <= 209; ++w) {
+            QCOMPARE(ChromeFoldPlan::planFold(tableWithOverflowChip(), w), 0);
+        }
+    }
+
+    void overflowChipIsStillChargedOnceSomethingFolds() {
+        // The other half, and the reason the chip is registered at all
+        // (final-fix-wave finding 4): once it IS on screen its width must
+        // count, or each fold step frees less than the plan believes.
+        // Excluding the chip outright -- rather than conditionally --
+        // would pass the three tests above and fail this one.
+        QCOMPARE(ChromeFoldPlan::requiredWidth(tableWithOverflowChip(), 1), 144);
     }
 };
 QTEST_MAIN(TstChromeFoldPlan)

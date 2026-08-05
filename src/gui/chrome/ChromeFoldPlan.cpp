@@ -16,6 +16,20 @@ int ChromeFoldPlan::requiredWidth(const QVector<ChromeFoldEntry>& items,
         if (e.rung != 0 && e.rung <= foldThroughRung) {
             continue;
         }
+        // At rung 0 nothing is folded, so the overflow chip has nothing to
+        // report and is not shown; it costs zero. Charging it here made the
+        // bar's layout depend on how it ARRIVED at a width rather than on
+        // the width itself. Widths between "everything fits" and
+        // "everything fits plus the chip" could be entered from below but
+        // never left: rung 0 was rejected for a chip that only rung >= 1
+        // puts on screen, so an item stayed folded that had room, and the
+        // chip stayed up citing it. Coming down from a wider window the
+        // same pixel width gave the correct, fully-unfolded bar. Two
+        // answers for one width is the history-dependence this class exists
+        // to remove. Found by Codex on PR #316.
+        if (e.onlyWhenFolded && foldThroughRung == 0) {
+            continue;
+        }
         content += e.widthPx;
         ++visible;
     }
