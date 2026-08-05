@@ -114,7 +114,15 @@
 
 #include "Band.h"
 #include "core/AppSettings.h"
+#include "core/LogCategories.h"
+#include "core/RadeChannel.h"
+#include "core/WdspEngine.h"
 #include "core/accessories/AlexController.h"
+#include "core/SkuUiProfile.h"  // issue #257 — rxOnlyLabels lookup in refreshAntennasFromAlex
+#include "models/RadioModel.h"
+
+#include <QFile>
+#include <QStandardPaths>
 
 #include <algorithm>
 
@@ -123,12 +131,63 @@ namespace NereusSDR {
 SliceModel::SliceModel(QObject* parent)
     : QObject(parent)
 {
+    setupRadeIdleClearTimer();
 }
 
 SliceModel::SliceModel(int sliceId, QObject* parent)
     : QObject(parent)
     , m_sliceIndex(sliceId)
 {
+    setupRadeIdleClearTimer();
+}
+
+// 2026-05-12 bench: RADE idle-clear timer setup.
+//
+// One-time construction during SliceModel ctor.  Reads
+// RadeIdleClearMs from AppSettings (default 20 s, clamp 5..120 s).
+// Single-shot QTimer; expiry lambda clears callsign + SNR back to
+// the "no decode yet" sentinels.  Timer is parented to `this` so
+// destruction is automatic; safe to leave running across mode swaps
+// because the expiry only clears state that's already cleared in
+// those paths.
+void SliceModel::setupRadeIdleClearTimer()
+{
+    auto& s = AppSettings::instance();
+    int ms = s.value(QStringLiteral("RadeIdleClearMs"), 20000).toInt();
+    if (ms < 5000)   { ms = 5000;   }
+    if (ms > 120000) { ms = 120000; }
+    m_radeIdleClearMs = ms;
+
+    m_radeIdleClearTimer = new QTimer(this);
+    m_radeIdleClearTimer->setSingleShot(true);
+    m_radeIdleClearTimer->setInterval(m_radeIdleClearMs);
+    connect(m_radeIdleClearTimer, &QTimer::timeout, this, [this]() {
+        // Clear callsign back to empty.  Renderer (VfoWidget) falls
+        // back to the "RADE" literal prefix when callsign is empty,
+        // so no "NaN" or empty cell on screen.
+        if (!m_lastRadeRxCallsign.isEmpty()) {
+            m_lastRadeRxCallsign.clear();
+            emit lastRadeRxCallsignChanged(m_lastRadeRxCallsign);
+        }
+        // Clear SNR to NaN.  VfoWidget renders NaN as "---" (not
+        // the literal string "NaN") in the SNR column.
+        if (!qIsNaN(m_snrDb)) {
+            m_snrDb = std::numeric_limits<double>::quiet_NaN();
+            emit snrDbChanged(m_snrDb);
+        }
+    });
+}
+
+// Restart the idle timer when fresh activity arrives.  Only runs the
+// timer while in a RADE sideband -- SSB / WSJT-X paths don't care
+// about RADE idle and would burn cycles on an irrelevant timer.
+void SliceModel::restartRadeIdleClearTimer()
+{
+    if (!m_radeIdleClearTimer) { return; }
+    if (m_dspMode != DSPMode::RADE_U && m_dspMode != DSPMode::RADE_L) {
+        return;
+    }
+    m_radeIdleClearTimer->start();  // restarts even if already running
 }
 
 SliceModel::~SliceModel() = default;
@@ -145,6 +204,15 @@ void SliceModel::setFrequency(double freq)
     if (!qFuzzyCompare(m_frequency, freq)) {
         m_frequency = freq;
         emit frequencyChanged(freq);
+
+        // Phase 3P-II Task 64: emit bandChanged on band boundary cross.
+        // Uses Band::bandFromFrequency (IARU Region 2, GEN fallback).
+        // Guarded so the signal fires at most once per distinct Band change.
+        Band newBand = bandFromFrequency(freq);
+        if (newBand != m_currentBand) {
+            m_currentBand = newBand;
+            emit bandChanged(newBand);
+        }
     }
 }
 
@@ -154,12 +222,183 @@ void SliceModel::setFrequency(double freq)
 
 void SliceModel::setDspMode(DSPMode mode)
 {
-    bool modeChanged = (m_dspMode != mode);
+    const bool modeChanged = (m_dspMode != mode);
+    const DSPMode oldMode = m_dspMode;
     m_dspMode = mode;
 
-    // Apply default filter for the new mode
-    // From Thetis console.cs:5180-5575 — InitFilterPresets, F5 per mode
-    auto [low, high] = defaultFilterForMode(mode);
+    // ── Phase 3R J3 + K-bench: RADE channel-additive lifecycle ────────────
+    //
+    // RADE_U / RADE_L are NereusSDR-native DSPModes (J1).  Original J3
+    // design destroyed the WDSP RxChannel and replaced it with a
+    // RadeChannel on entry into RADE.  K-bench reframed the RX pipeline
+    // (RxDspWorker.cpp:160-191) so RADE is now ADDITIVE rather than
+    // replacement:
+    //   - WDSP RxChannel stays alive in EVERY mode.  WDSP serves as
+    //     the SSB demod front-end and produces decoded audio that
+    //     feeds the S-meter / spectrum / AGC every tick.
+    //   - RadeChannel is created ALONGSIDE RxChannel in RADE_U /
+    //     RADE_L, consumes WDSP's decoded audio (downsampled to
+    //     24 kHz), and owns the speaker path while active.
+    //   - The WDSP-facing mode is mapped at the RxChannel boundary
+    //     (RxChannel::wdspModeFor): RADE_U -> USB, RADE_L -> LSB.
+    //     Without that mapping, raw enum 12/13 would land in WDSP's
+    //     mode enum (review finding 2026-05-12, PR #238).
+    //
+    // So the swap logic below is now only about RadeChannel
+    // create/destroy.  RxChannel is created once at connect time
+    // (RadioModel) and stays alive.
+    //
+    // RADE_U <-> RADE_L is still a destroy-and-recreate of RadeChannel
+    // because the sideband flag is set on construction; the RxChannel
+    // is untouched (RxChannel::setMode below will retune USB <-> LSB
+    // via the wdspModeFor mapping when it fires from the
+    // dspModeChanged signal).
+    //
+    // Reach the WdspEngine via the parent RadioModel rather than holding
+    // a direct pointer on SliceModel; this keeps the construction graph
+    // unchanged (slices are parented to RadioModel; see RadioModel.cpp:
+    // 1374 [Phase 3R J3] new SliceModel(this)).
+    if (modeChanged) {
+        const auto isRade = [](DSPMode m) {
+            return m == DSPMode::RADE_U || m == DSPMode::RADE_L;
+        };
+
+        // 2026-05-12 bench: clear last RADE-decoded speaker callsign
+        // when leaving the *current* RADE sideband.  Two cases now
+        // covered (refined from 2026-05-11 design which kept the
+        // callsign sticky on U <-> L swap):
+        //   1. RADE -> non-RADE: leaving RADE entirely.
+        //   2. RADE_U <-> RADE_L: still in RADE, but the channel is
+        //      destroyed and recreated below so the decoder state is
+        //      no longer associated with the old caller's transmission.
+        // Trigger: oldMode was a RADE sideband AND mode actually changed
+        // (we're already inside the modeChanged guard).
+        if (isRade(oldMode) && !m_lastRadeRxCallsign.isEmpty()) {
+            m_lastRadeRxCallsign.clear();
+            emit lastRadeRxCallsignChanged(m_lastRadeRxCallsign);
+        }
+
+        // 2026-05-12 bench: stop the idle-clear timer when leaving
+        // RADE.  The clear above already happened; letting the timer
+        // fire would just re-emit lastRadeRxCallsignChanged("") and
+        // snrDbChanged(NaN) needlessly.  Also stop on RADE_U <-> RADE_L
+        // swaps for the same reason.
+        if (isRade(oldMode) && m_radeIdleClearTimer) {
+            m_radeIdleClearTimer->stop();
+        }
+
+        auto* radio = qobject_cast<RadioModel*>(parent());
+        if (radio != nullptr) {
+            WdspEngine* engine = radio->wdspEngine();
+            if (engine != nullptr) {
+                const int channelId = m_sliceIndex;
+                const bool oldIsRade = isRade(oldMode);
+                const bool newIsRade = isRade(mode);
+
+                auto wireAndStartRade = [&](RadeChannel* radeCh,
+                                            const char* context) {
+                    if (radeCh == nullptr) return;
+                    radeCh->setSideband(mode == DSPMode::RADE_U);
+                    radio->wireRadeChannel(channelId, radeCh, this);
+                    const QString modelPath = radeModelPath();
+                    if (!radeCh->start(modelPath)) {
+                        qCWarning(lcDsp)
+                            << "SliceModel" << m_sliceIndex
+                            << context
+                            << ": RadeChannel.start() failed for"
+                            << modelPath
+                            << "- channel-swap proceeds but RADE will"
+                               " not decode";
+                    }
+                };
+
+                if (oldIsRade && !newIsRade) {
+                    // RADE -> any WDSP mode: tear down the RadeChannel
+                    // only.  K-bench: WDSP RxChannel was running the
+                    // whole time as the demod front-end; leave it
+                    // alone.  WDSP-facing mode will retune from
+                    // USB/LSB (the wdspModeFor mapping) to the new
+                    // mode via the dspModeChanged -> rxCh->setMode
+                    // path in RadioModel.cpp:5202-5206.
+                    engine->destroyRadeChannel(channelId);
+                } else if (!oldIsRade && newIsRade) {
+                    // Any WDSP mode -> RADE: create RadeChannel
+                    // alongside the still-running RxChannel.  Wire
+                    // its signals into RadioModel's per-slice slot
+                    // graph and start it with the configured model
+                    // path.  WDSP-facing mode will map to USB/LSB
+                    // via the dspModeChanged path.
+                    wireAndStartRade(engine->createRadeChannel(channelId),
+                                     "setDspMode(RADE)");
+                } else if (oldIsRade && newIsRade) {
+                    // RADE_U <-> RADE_L: destroy + recreate the
+                    // RadeChannel so the sideband flag is set fresh
+                    // on a clean instance.  RxChannel is untouched;
+                    // the dspModeChanged path retunes it USB <-> LSB
+                    // through wdspModeFor.
+                    engine->destroyRadeChannel(channelId);
+                    wireAndStartRade(engine->createRadeChannel(channelId),
+                                     "setDspMode(RADE U<->L)");
+                }
+            }
+        }
+    }
+
+    // Phase 3J-1 closeout Item 4 (2026-05-12): per-(band, mode) LastFilter.
+    //
+    // Before the mode swap, save the CURRENT filter under (currentBand,
+    // OLD mode) so coming back to that mode in this band restores the
+    // operator's last-set cutoffs.  Then look up the saved filter for the
+    // (currentBand, NEW mode) tuple; if persisted, use it; if absent, fall
+    // back to defaultFilterForMode (Thetis F5 presets).  Mirrors
+    // Thetis preset[m].LastFilter (console.cs:14653-14671 [v2.10.3.13]).
+    //
+    // Band is computed from the slice's current frequency rather than read
+    // off PanadapterModel, so SliceModel stays decoupled from the
+    // panadapter (no signal subscription needed).  bandFromFrequency
+    // returns the same Band PanadapterModel uses, so the keyspace is
+    // shared between the panadapter band-crossing save path (RadioModel
+    // signal handler) and this mode-change save path.
+    // bandModePrefix() lives in the anonymous namespace later in this
+    // file; reach it via a forward-declared helper to keep the source
+    // order stable.  Same with AppSettings::save -- we don't call it
+    // here because writes are flushed on shutdown / band-change /
+    // explicit caller save; mode-change writes are best-effort and
+    // shouldn't block on disk I/O.
+    auto& s = AppSettings::instance();
+    int low = 0, high = 0;
+    if (modeChanged) {
+        const Band currentBand = bandFromFrequency(m_frequency);
+        // 1. Save current filter under (currentBand, OLD mode)
+        const QString oldPrefix =
+            QStringLiteral("Slice%1/Band%2/Mode%3/")
+                .arg(m_sliceIndex)
+                .arg(bandKeyName(currentBand))
+                .arg(SliceModel::modeName(oldMode));
+        s.setValue(oldPrefix + QStringLiteral("FilterLow"),  m_filterLow);
+        s.setValue(oldPrefix + QStringLiteral("FilterHigh"), m_filterHigh);
+
+        // 2. Restore filter for (currentBand, NEW mode); fall back to default.
+        const QString newPrefix =
+            QStringLiteral("Slice%1/Band%2/Mode%3/")
+                .arg(m_sliceIndex)
+                .arg(bandKeyName(currentBand))
+                .arg(SliceModel::modeName(mode));
+        if (s.contains(newPrefix + QStringLiteral("FilterLow")) &&
+            s.contains(newPrefix + QStringLiteral("FilterHigh"))) {
+            low  = s.value(newPrefix + QStringLiteral("FilterLow")).toInt();
+            high = s.value(newPrefix + QStringLiteral("FilterHigh")).toInt();
+        } else {
+            // From Thetis console.cs:5180-5575 — InitFilterPresets, F5 per mode
+            auto pair = defaultFilterForMode(mode);
+            low  = pair.first;
+            high = pair.second;
+        }
+    } else {
+        // Mode didn't actually change -- preserve current cutoffs.
+        low  = m_filterLow;
+        high = m_filterHigh;
+    }
     bool filterChanged = (m_filterLow != low || m_filterHigh != high);
     m_filterLow = low;
     m_filterHigh = high;
@@ -170,6 +409,20 @@ void SliceModel::setDspMode(DSPMode mode)
     if (filterChanged) {
         emit this->filterChanged(m_filterLow, m_filterHigh);
     }
+}
+
+// Phase 3R Task J3 - see SliceModel.h declaration for the design rationale.
+QString SliceModel::radeModelPath() const
+{
+    auto& s = AppSettings::instance();
+    const QString configured =
+        s.value(QStringLiteral("Rade/ModelPath"), QString()).toString();
+    if (!configured.isEmpty() && QFile::exists(configured)) {
+        return configured;
+    }
+    // From AetherSDR RADEEngine.cpp:34 [@0cd4559] - librade convention
+    // "use the built-in weights, ignore the model_file argument".
+    return QStringLiteral("dummy");
 }
 
 // ---------------------------------------------------------------------------
@@ -275,10 +528,22 @@ void SliceModel::setTxAntenna(const QString& ant)
 // is idempotent — AlexController::setRxAnt/setTxAnt returns early (without
 // emitting antennaChanged) when the stored value equals the new value
 // (AlexController.cpp:95,107), so no signal loop occurs.
-void SliceModel::refreshAntennasFromAlex(const AlexController& alex, Band band)
+//
+// Issue #257: when AlexController::rxOnlyAnt(band) != 0 the radio is
+// actually routing through the rx-only mux (EXT1 / EXT2 / BYPS / XVTR
+// depending on SKU). The cached m_rxAntenna label must reflect that or
+// the user sees "ANT1" while the radio is on EXT1 — and the next pick of
+// "ANT1" in the popup gets no-op'd by setRxAntenna's equality guard,
+// trapping the user on the bypass path. With the SkuUiProfile in hand
+// we resolve rxOnlyAnt (1..3) to the per-SKU label trio (BYPS/EXT1/XVTR
+// for ANAN-7000D, EXT2/EXT1/XVTR for ANAN-100D, etc).
+void SliceModel::refreshAntennasFromAlex(const AlexController& alex,
+                                         Band band,
+                                         const SkuUiProfile* sku)
 {
-    const int rx = alex.rxAnt(band);   // 1..3
-    const int tx = alex.txAnt(band);
+    const int rxOnly = alex.rxOnlyAnt(band);  // 0=none, 1/2/3 indexed
+    const int rx     = alex.rxAnt(band);      // 1..3
+    const int tx     = alex.txAnt(band);      // 1..3
     auto name = [](int n) {
         switch (n) {
             case 2:  return QStringLiteral("ANT2");
@@ -286,12 +551,26 @@ void SliceModel::refreshAntennasFromAlex(const AlexController& alex, Band band)
             default: return QStringLiteral("ANT1");
         }
     };
+
+    // Issue #257: prefer the SKU-specific RX-only label when the bypass mux
+    // is engaged. Fall back to the ANT* label when sku is null, when the
+    // mux is disengaged (rxOnly == 0), or when the indexed slot in the SKU
+    // is empty (defensive — should never happen because rxOnlyLabels is
+    // always-3 in SkuUiProfile.h).
+    QString rxLabel;
+    if (sku && rxOnly >= 1 && rxOnly <= 3) {
+        const QString& slot = sku->rxOnlyLabels[static_cast<size_t>(rxOnly - 1)];
+        rxLabel = slot.isEmpty() ? name(rx) : slot;
+    } else {
+        rxLabel = name(rx);
+    }
+
     // Use the public setters so rxAntennaChanged / txAntennaChanged
     // signals fire — VFO Flag and RxApplet listen. The loop back to
     // AlexController via T12's handler is idempotent: AlexController's
     // setRxAnt/setTxAnt returns early on equal value, so no signal is
     // emitted.
-    setRxAntenna(name(rx));
+    setRxAntenna(rxLabel);
     setTxAntenna(name(tx));
 }
 
@@ -312,6 +591,114 @@ void SliceModel::setTxSlice(bool tx)
     if (m_txSlice != tx) {
         m_txSlice = tx;
         emit txSliceChanged(tx);
+    }
+}
+
+// ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
+
+void SliceModel::setChainIndex(int idx)
+{
+    if (m_chainIndex != idx) {
+        m_chainIndex = idx;
+        emit chainIndexChanged(idx);
+    }
+}
+
+void SliceModel::setDdcIndex(int ddc)
+{
+    if (m_ddcIndex != ddc) {
+        m_ddcIndex = ddc;
+        emit ddcIndexChanged(ddc);
+    }
+}
+
+void SliceModel::setStreamIndex(int idx)
+{
+    if (m_streamIndex != idx) {
+        m_streamIndex = idx;
+        emit streamIndexChanged(idx);
+    }
+}
+
+void SliceModel::setShiftOffsetHz(double hz)
+{
+    // qFuzzyCompare is undefined when either arg is 0.0; use the subtraction-to-zero pattern.
+    if (qFuzzyIsNull(m_shiftOffsetHz - hz)) {
+        return;
+    }
+    m_shiftOffsetHz = hz;
+    emit shiftOffsetHzChanged(hz);
+}
+
+void SliceModel::setPanKey(const QString& key)
+{
+    if (m_panKey != key) {
+        m_panKey = key;
+        emit panKeyChanged(key);
+    }
+}
+
+void SliceModel::setSampleRateHz(int hz)
+{
+    if (m_sampleRateHz != hz) {
+        m_sampleRateHz = hz;
+        emit sampleRateHzChanged(hz);
+    }
+}
+
+void SliceModel::setDiversityEnabled(bool on)
+{
+    if (m_diversityEnabled != on) {
+        m_diversityEnabled = on;
+        emit diversityEnabledChanged(on);
+    }
+}
+
+// ── Phase 3F Sub-Epic G Task 2: per-band diversity tuning setters ────────────
+//
+// Behaviour mirrors the rest of the Sub-Epic A setters: emit-on-change so the
+// future DiversityDialog (T8-T10) and the RadioModel signal wire (T13) only
+// fire downstream work when the value actually moves. Domain clamping is the
+// caller's responsibility for now; the spinner ranges in DiversityDialog
+// will enforce 0..360 / -20..+20 at the UI edge.
+
+void SliceModel::setDiversityPhaseDeg(double deg)
+{
+    if (m_diversityPhaseDeg != deg) {
+        m_diversityPhaseDeg = deg;
+        emit diversityPhaseDegChanged(deg);
+    }
+}
+
+void SliceModel::setDiversityGainDb(double db)
+{
+    if (m_diversityGainDb != db) {
+        m_diversityGainDb = db;
+        emit diversityGainDbChanged(db);
+    }
+}
+
+void SliceModel::setDiversityFineNullEnabled(bool on)
+{
+    if (m_diversityFineNullEnabled != on) {
+        m_diversityFineNullEnabled = on;
+        emit diversityFineNullEnabledChanged(on);
+    }
+}
+
+void SliceModel::setWidebandExtensionRequested(bool on)
+{
+    if (m_widebandExtensionRequested != on) {
+        m_widebandExtensionRequested = on;
+        emit widebandExtensionRequestedChanged(on);
+    }
+}
+
+void SliceModel::setPsPaused(bool paused)
+{
+    if (m_psPaused != paused) {
+        m_psPaused = paused;
+        emit psPausedChanged(paused);
     }
 }
 
@@ -748,6 +1135,101 @@ void SliceModel::setSnbEnabled(bool v)
     }
 }
 
+void SliceModel::setAnfEnabled(bool v)
+{
+    if (m_anfEnabled != v) {
+        m_anfEnabled = v;
+        emit anfEnabledChanged(v);
+    }
+}
+
+// ── NB1 / NB2 / SNB detailed tuning ─────────────────────────────────────────
+// Ranges mirror Thetis's NumericUpDown limits byte-for-byte (grpDSPNB
+// setup.designer.cs:44399-44604, grpDSPSNB :44280-44398 [v2.10.3.13]).
+// Clamping here rather than at the UI edge keeps a TCI client or a corrupt
+// settings file from handing WDSP a value the upstream widget could never
+// produce; SetEXTANBTau and friends take the number without validating it.
+//
+// The idempotency guard is load-bearing beyond the usual signal hygiene: the
+// NB1 / NB2 setters feed RadioModel's cross-slice mirror, so a setter that
+// re-emitted on an unchanged value would bounce between co-hosted slices.
+void SliceModel::setNb1Threshold(int v)
+{
+    const int clamped = qBound(1, v, 1000);
+    if (m_nb1Threshold != clamped) {
+        m_nb1Threshold = clamped;
+        emit nb1ThresholdChanged(clamped);
+    }
+}
+
+void SliceModel::setNb1TransitionMs(double v)
+{
+    const double clamped = qBound(0.01, v, 2.00);
+    if (!qFuzzyCompare(m_nb1TransitionMs, clamped)) {
+        m_nb1TransitionMs = clamped;
+        emit nb1TransitionMsChanged(clamped);
+    }
+}
+
+void SliceModel::setNb1LeadMs(double v)
+{
+    const double clamped = qBound(0.01, v, 2.00);
+    if (!qFuzzyCompare(m_nb1LeadMs, clamped)) {
+        m_nb1LeadMs = clamped;
+        emit nb1LeadMsChanged(clamped);
+    }
+}
+
+void SliceModel::setNb1LagMs(double v)
+{
+    const double clamped = qBound(0.01, v, 2.00);
+    if (!qFuzzyCompare(m_nb1LagMs, clamped)) {
+        m_nb1LagMs = clamped;
+        emit nb1LagMsChanged(clamped);
+    }
+}
+
+// comboDSPNOBmode has five entries: Zero / Sample and Hold / Mean-Hold /
+// Hold and Sample / Linear Interpolate (setup.designer.cs:44434 [v2.10.3.13]).
+void SliceModel::setNb2Mode(int v)
+{
+    const int clamped = qBound(0, v, 4);
+    if (m_nb2Mode != clamped) {
+        m_nb2Mode = clamped;
+        emit nb2ModeChanged(clamped);
+    }
+}
+
+void SliceModel::setSnbK1(double v)
+{
+    const double clamped = qBound(2.0, v, 20.0);
+    if (!qFuzzyCompare(m_snbK1, clamped)) {
+        m_snbK1 = clamped;
+        emit snbK1Changed(clamped);
+    }
+}
+
+void SliceModel::setSnbK2(double v)
+{
+    const double clamped = qBound(4.0, v, 60.0);
+    if (!qFuzzyCompare(m_snbK2, clamped)) {
+        m_snbK2 = clamped;
+        emit snbK2Changed(clamped);
+    }
+}
+
+// No Thetis Setup control for this one: Thetis picks SNB output bandwidth per
+// mode at rxa.cs:112-124. The range is NereusSDR's own native override,
+// unchanged from the slider it replaces.
+void SliceModel::setSnbOutputBandwidthHz(int v)
+{
+    const int clamped = qBound(100, v, 96000);
+    if (m_snbOutputBandwidthHz != clamped) {
+        m_snbOutputBandwidthHz = clamped;
+        emit snbOutputBandwidthHzChanged(clamped);
+    }
+}
+
 void SliceModel::setApfEnabled(bool v)
 {
     if (m_apfEnabled != v) {
@@ -858,8 +1340,20 @@ void SliceModel::setRttyShiftHz(int hz)
 // DIGL: centered on -digl_click_tune_offset (-2210 Hz from Thetis console.cs:14671)
 std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
 {
-    // From Thetis display.cs:1023
-    static constexpr int kCwPitch = 600;
+    // Phase 3J-1 closeout Item 6 (2026-05-12): read CW pitch from
+    // AppSettings instead of hardcoding 600.  Operator-configurable in
+    // Thetis (Setup → Keyboard / DSP → CW pitch slider; default 600 Hz);
+    // the dedicated NereusSDR setter lands with Phase 3M-2 CW TX, but the
+    // read path needs to be in place now so the filter center moves with
+    // the setting once that UI ships.  Range matches Thetis udCWPitch
+    // (Setup.designer.cs CW pitch up-down: 100..2000 Hz).
+    //
+    // From Thetis display.cs:1023 [v2.10.3.13] — cw_pitch default 600.
+    auto& s = AppSettings::instance();
+    int cwPitch = s.value(QStringLiteral("CWPitch"), 600).toInt();
+    if (cwPitch < 100)  { cwPitch = 100;  }
+    if (cwPitch > 2000) { cwPitch = 2000; }
+    const int kCwPitch = cwPitch;
     // From Thetis console.cs:14636
     static constexpr int kDiguOffset = 1500;
     // From Thetis console.cs:14671
@@ -894,20 +1388,49 @@ std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
         // From Thetis console.cs:5459 — F5: -5000 to 5000
         return {-5000, 5000};
     case DSPMode::DIGU:
-        // From Thetis console.cs:5333 — F5: (offset-500) to (offset+500)
-        return {kDiguOffset - 500, kDiguOffset + 500};
+        // Phase 3J-1 closeout Item 4 (2026-05-12): reverted to Thetis F5
+        // default (kDiguOffset ± 600 = 900..2100 Hz).  The Phase 3J-1
+        // bench fix (commit 624b51c6) widened this to F1 (3 kHz) because
+        // setDspMode slammed the default on EVERY mode change, which
+        // chopped FT8/FT4 audio when WSJT-X drove band switches via
+        // TCI.  With Item 4's per-(band, mode) LastFilter persistence
+        // in place, the operator's first widening sticks -- F5 (1 kHz)
+        // is now the right Thetis-faithful first-touch default, matching
+        // upstream behavior.
+        //
+        // From Thetis console.cs:5328 [v2.10.3.13] — DIGU F5 preset:
+        //   preset[m].SetFilter(Filter.F5, digu_click_tune_offset - 600,
+        //                       digu_click_tune_offset + 600, "1.2k");
+        return {kDiguOffset - 600, kDiguOffset + 600};
     case DSPMode::SPEC:
         // SPEC mode: passthrough, wide filter
         return {-5000, 5000};
     case DSPMode::DIGL:
-        // From Thetis console.cs:5291 — F5: -(offset+500) to -(offset-500)
-        return {-(kDiglOffset + 500), -(kDiglOffset - 500)};
+        // Phase 3J-1 closeout Item 4 (2026-05-12): reverted to Thetis F5
+        // default -- see DIGU case above for the full rationale.
+        //
+        // From Thetis console.cs:5286 [v2.10.3.13] — DIGL F5 preset:
+        //   preset[m].SetFilter(Filter.F5, -(digl_click_tune_offset + 600),
+        //                       -(digl_click_tune_offset - 600), "1.2k");
+        return {-(kDiglOffset + 600), -(kDiglOffset - 600)};
     case DSPMode::SAM:
         // From Thetis console.cs:5501 — F5: -5000 to 5000
         return {-5000, 5000};
     case DSPMode::DRM:
         // DRM: wide filter similar to AM
         return {-5000, 5000};
+    case DSPMode::RADE_U:
+        // Phase 3R Task J1.  RADE Upper sideband: the modem occupies
+        // ~650..2350 Hz (1700 Hz wide, centered at +1500 Hz).  This is
+        // the SSB-style passband that the panadapter filter window
+        // displays and that the TX I/Q routing confines the RADE
+        // baseband energy to.  The earlier +/-5000 Hz AM-class window
+        // was a placeholder; the filter IS visible on the panadapter
+        // AND defines the IF/baseband passband for the modem energy.
+        return {650, 2350};
+    case DSPMode::RADE_L:
+        // Phase 3R Task J1.  RADE Lower sideband: mirror of RADE-U.
+        return {-2350, -650};
     }
     // Fallback
     return {100, 3000};
@@ -922,11 +1445,18 @@ std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
 // RxApplet's 10-button filter grid; VfoWidget uses commonPresetsForMode() (a subset).
 QList<std::pair<int, int>> SliceModel::presetsForMode(DSPMode mode)
 {
-    // From Thetis display.cs:1023 [v2.10.3.13]
-    static constexpr int kCwPitch    = 600;
+    // Phase 3J-1 closeout Item 6 (2026-05-12): read CW pitch from
+    // AppSettings — see defaultFilterForMode() above for the full
+    // rationale.  Default 600 Hz from Thetis display.cs:1023.
+    auto& s = AppSettings::instance();
+    int cwPitch = s.value(QStringLiteral("CWPitch"), 600).toInt();
+    if (cwPitch < 100)  { cwPitch = 100;  }
+    if (cwPitch > 2000) { cwPitch = 2000; }
+    const int kCwPitch = cwPitch;
     // From Thetis console.cs:14636 [v2.10.3.13]
     static constexpr int kDiguOffset = 1500;
     // From Thetis console.cs:14671 [v2.10.3.13]
+    // Upstream tags preserved: //W4TME (from cited console.cs:14669) [v2.10.3.15]
     static constexpr int kDiglOffset = 2210;
 
     switch (mode) {
@@ -992,6 +1522,14 @@ QList<std::pair<int, int>> SliceModel::presetsForMode(DSPMode mode)
     case DSPMode::DRM:
         // DRM: wide digital AM-like filters
         return { {-10000,10000}, {-5000,5000} };
+    case DSPMode::RADE_U:
+        // Phase 3R Task J1.  RADE Upper sideband: single fixed-bandwidth
+        // preset matching the 1700 Hz modem passband.  No F1-F10
+        // variants; RADE has a fixed bandwidth per sideband.
+        return { {650, 2350} };
+    case DSPMode::RADE_L:
+        // Phase 3R Task J1.  RADE Lower sideband: mirror of RADE-U.
+        return { {-2350, -650} };
     }
     // Fallback
     return { {100, 3000} };
@@ -1012,8 +1550,14 @@ QList<std::pair<int, int>> SliceModel::commonPresetsForMode(DSPMode mode)
         return {{-2400,-100}, {-2700,-100}, {-2900,-100}, {-3000,-100}, {-3200,-100}};
     case DSPMode::CWU:
     case DSPMode::CWL: {
-        // From Thetis display.cs:1023 [v2.10.3.13]
-        static constexpr int kCwPitch = 600;
+        // Phase 3J-1 closeout Item 6 (2026-05-12): read CW pitch from
+        // AppSettings.  See defaultFilterForMode() for the full rationale.
+        // From Thetis display.cs:1023 [v2.10.3.13] — default 600.
+        auto& s = AppSettings::instance();
+        int cwPitch = s.value(QStringLiteral("CWPitch"), 600).toInt();
+        if (cwPitch < 100)  { cwPitch = 100;  }
+        if (cwPitch > 2000) { cwPitch = 2000; }
+        const int kCwPitch = cwPitch;
         const int sign = (mode == DSPMode::CWL) ? -1 : 1;
         return { {sign*(kCwPitch-50),  sign*(kCwPitch+50)},
                  {sign*(kCwPitch-100), sign*(kCwPitch+100)},
@@ -1066,6 +1610,10 @@ QString SliceModel::modeName(DSPMode mode)
     case DSPMode::DIGL: return QStringLiteral("DIGL");
     case DSPMode::SAM:  return QStringLiteral("SAM");
     case DSPMode::DRM:  return QStringLiteral("DRM");
+    // Phase 3R Task J1.  NereusSDR-native; not WDSP modes.  Split
+    // into upper/lower sidebands like USB/LSB.
+    case DSPMode::RADE_U: return QStringLiteral("RADE-U");
+    case DSPMode::RADE_L: return QStringLiteral("RADE-L");
     }
     return QStringLiteral("USB");
 }
@@ -1084,6 +1632,13 @@ DSPMode SliceModel::modeFromName(const QString& name)
     if (name == QLatin1String("DIGL")) return DSPMode::DIGL;
     if (name == QLatin1String("SAM"))  return DSPMode::SAM;
     if (name == QLatin1String("DRM"))  return DSPMode::DRM;
+    // Phase 3R Task J1.  NereusSDR-native; not WDSP modes.
+    if (name == QLatin1String("RADE-U")) return DSPMode::RADE_U;
+    if (name == QLatin1String("RADE-L")) return DSPMode::RADE_L;
+    // Legacy migration: pre-fix builds persisted the singular "RADE"
+    // string before the sideband split landed.  Map it to RADE_U so
+    // existing per-MAC persisted slice modes keep working on upgrade.
+    if (name == QLatin1String("RADE")) return DSPMode::RADE_U;
     return DSPMode::USB;
 }
 
@@ -1105,6 +1660,24 @@ QString bandPrefix(int sliceIndex, Band band)
     return QStringLiteral("Slice%1/Band%2/")
                .arg(sliceIndex)
                .arg(bandKeyName(band));
+}
+
+// Phase 3J-1 closeout Item 4 (2026-05-12): build the per-(band, mode)
+// prefix, e.g. "Slice0/Band20m/ModeUSB/".  Used by setDspMode + saveTo
+// Settings + restoreFromSettings to persist the filter cutoffs under
+// (slice, band, mode) instead of the legacy (slice, band) tuple, so a
+// mode change inside a band restores the operator's previously-set
+// filter for THAT mode rather than slamming to defaultFilterForMode.
+//
+// Mirrors Thetis's preset[m].LastFilter machinery (console.cs:14653-
+// 14671 [v2.10.3.13]) where each (band, mode) pair has its own remembered
+// filter slot.
+QString bandModePrefix(int sliceIndex, Band band, DSPMode mode)
+{
+    return QStringLiteral("Slice%1/Band%2/Mode%3/")
+               .arg(sliceIndex)
+               .arg(bandKeyName(band))
+               .arg(SliceModel::modeName(mode));
 }
 
 // Build the session-state prefix string, e.g. "Slice0/".
@@ -1151,6 +1724,15 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(bp + QStringLiteral("AgcMaxGain"),   m_agcMaxGain);
     s.setValue(bp + QStringLiteral("FilterLow"),    m_filterLow);
     s.setValue(bp + QStringLiteral("FilterHigh"),   m_filterHigh);
+    // Phase 3J-1 closeout Item 4 (2026-05-12): ALSO persist filter under
+    // (band, currentMode) so a future mode change can restore it.  Legacy
+    // (band)/FilterLow stays for backward compat with code that reads it
+    // directly without going through restoreFromSettings.
+    {
+        const QString bmp = bandModePrefix(m_sliceIndex, band, m_dspMode);
+        s.setValue(bmp + QStringLiteral("FilterLow"),  m_filterLow);
+        s.setValue(bmp + QStringLiteral("FilterHigh"), m_filterHigh);
+    }
     s.setValue(bp + QStringLiteral("DspMode"),      static_cast<int>(m_dspMode));
     s.setValue(bp + QStringLiteral("AgcMode"),      static_cast<int>(m_agcMode));
     s.setValue(bp + QStringLiteral("StepHz"),       m_stepHz);
@@ -1160,6 +1742,21 @@ void SliceModel::saveToSettings(Band band)
     // NOT per-band in Thetis and lives globally inside NbFamily — see
     // SliceModel.h for the 2026-04-22 removal note.
     s.setValue(bp + QStringLiteral("NbMode"), static_cast<int>(m_nbMode));
+
+    // Phase 3F: per-slice DDC sample rate, persisted per-band so each band
+    // can independently remember its preferred rate (e.g. 192 kHz on 40m,
+    // 1536 kHz on 10m for a wider pan). NereusSDR-original (no Thetis cite).
+    s.setValue(bp + QStringLiteral("SampleRate"), m_sampleRateHz);
+
+    // Phase 3F Sub-Epic G Task 2: per-band diversity tuning. The 8-memory
+    // slots (T3) + direction-finding fields (T11) join this block when they
+    // ship. NereusSDR-original schema (Thetis persists diversity globally
+    // in DSP.console.dsp / Diversity.cs; we scope per-band per-slice so
+    // operators can keep distinct DF setups across bands).
+    s.setValue(bp + QStringLiteral("DiversityPhaseDeg"), m_diversityPhaseDeg);
+    s.setValue(bp + QStringLiteral("DiversityGainDb"), m_diversityGainDb);
+    s.setValue(bp + QStringLiteral("DiversityFineNullEnabled"),
+               boolStr(m_diversityFineNullEnabled));
 
     // ── Session state (band-agnostic) ─────────────────────────────────────────
     // NR active slot + tuning — session-level only, no per-band suffix.
@@ -1206,6 +1803,20 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(sp + QStringLiteral("MnrGsmooth"),      m_mnrGsmooth);
 
     s.setValue(sp + QStringLiteral("SnbEnabled"), boolStr(m_snbEnabled));
+    s.setValue(sp + QStringLiteral("AnfEnabled"), boolStr(m_anfEnabled));
+    // NB1 / NB2 / SNB detailed tuning. Per slice per band like everything
+    // else here, even though NB1 and NB2 behave as stream-shared while two
+    // slices are co-hosted: the mirror lives in RadioModel and only applies
+    // while they share a DDC, so slices that later separate must still have
+    // their own stored values to go back to.
+    s.setValue(sp + QStringLiteral("Nb1Threshold"),    m_nb1Threshold);
+    s.setValue(sp + QStringLiteral("Nb1TransitionMs"), m_nb1TransitionMs);
+    s.setValue(sp + QStringLiteral("Nb1LeadMs"),       m_nb1LeadMs);
+    s.setValue(sp + QStringLiteral("Nb1LagMs"),        m_nb1LagMs);
+    s.setValue(sp + QStringLiteral("Nb2Mode"),         m_nb2Mode);
+    s.setValue(sp + QStringLiteral("SnbK1"),           m_snbK1);
+    s.setValue(sp + QStringLiteral("SnbK2"),           m_snbK2);
+    s.setValue(sp + QStringLiteral("SnbOutputBandwidthHz"), m_snbOutputBandwidthHz);
     s.setValue(sp + QStringLiteral("Locked"),     boolStr(m_locked));
     s.setValue(sp + QStringLiteral("Muted"),      boolStr(m_muted));
     s.setValue(sp + QStringLiteral("RitEnabled"), boolStr(m_ritEnabled));
@@ -1280,10 +1891,22 @@ void SliceModel::restoreFromSettings(Band band)
             emit dspModeChanged(mode);
         }
     }
-    if (s.contains(bp + QStringLiteral("FilterLow")) &&
-        s.contains(bp + QStringLiteral("FilterHigh"))) {
-        setFilter(s.value(bp + QStringLiteral("FilterLow")).toInt(),
-                  s.value(bp + QStringLiteral("FilterHigh")).toInt());
+    // Phase 3J-1 closeout Item 4 (2026-05-12): prefer (band, currentMode)
+    // filter when persisted; fall back to legacy (band)/FilterLow/High
+    // for pre-Item-4 settings files.  m_dspMode was set above (line ~1491)
+    // before reaching this restore block, so it reflects the destination
+    // mode for the band restore.
+    {
+        const QString bmp = bandModePrefix(m_sliceIndex, band, m_dspMode);
+        if (s.contains(bmp + QStringLiteral("FilterLow")) &&
+            s.contains(bmp + QStringLiteral("FilterHigh"))) {
+            setFilter(s.value(bmp + QStringLiteral("FilterLow")).toInt(),
+                      s.value(bmp + QStringLiteral("FilterHigh")).toInt());
+        } else if (s.contains(bp + QStringLiteral("FilterLow")) &&
+                   s.contains(bp + QStringLiteral("FilterHigh"))) {
+            setFilter(s.value(bp + QStringLiteral("FilterLow")).toInt(),
+                      s.value(bp + QStringLiteral("FilterHigh")).toInt());
+        }
     }
     if (s.contains(bp + QStringLiteral("AgcMode"))) {
         setAgcMode(static_cast<AGCMode>(
@@ -1300,6 +1923,29 @@ void SliceModel::restoreFromSettings(Band band)
     if (s.contains(bp + QStringLiteral("NbMode"))) {
         setNbMode(static_cast<NereusSDR::NbMode>(
             s.value(bp + QStringLiteral("NbMode")).toInt()));
+    }
+
+    // Phase 3F: per-slice DDC sample rate (per-band). Default 192000 when key
+    // absent (new install or pre-3F settings file).
+    if (s.contains(bp + QStringLiteral("SampleRate"))) {
+        setSampleRateHz(s.value(bp + QStringLiteral("SampleRate")).toInt());
+    }
+
+    // Phase 3F Sub-Epic G Task 2: per-band diversity tuning. Defaults match
+    // the SliceModel member-init values (0.0 deg, 0.0 dB, fine-null off) so
+    // absent keys leave the slice in the passive reference-receiver state.
+    if (s.contains(bp + QStringLiteral("DiversityPhaseDeg"))) {
+        setDiversityPhaseDeg(
+            s.value(bp + QStringLiteral("DiversityPhaseDeg")).toDouble());
+    }
+    if (s.contains(bp + QStringLiteral("DiversityGainDb"))) {
+        setDiversityGainDb(
+            s.value(bp + QStringLiteral("DiversityGainDb")).toDouble());
+    }
+    if (s.contains(bp + QStringLiteral("DiversityFineNullEnabled"))) {
+        setDiversityFineNullEnabled(
+            s.value(bp + QStringLiteral("DiversityFineNullEnabled")).toString()
+            == QLatin1String("True"));
     }
 
     // ── Session state (band-agnostic) ─────────────────────────────────────────
@@ -1416,6 +2062,61 @@ void SliceModel::restoreFromSettings(Band band)
     if (s.contains(sp + QStringLiteral("SnbEnabled"))) {
         setSnbEnabled(s.value(sp + QStringLiteral("SnbEnabled")).toString() == QLatin1String("True"));
     }
+    if (s.contains(sp + QStringLiteral("AnfEnabled"))) {
+        setAnfEnabled(s.value(sp + QStringLiteral("AnfEnabled")).toString() == QLatin1String("True"));
+    }
+
+    // NB1 / NB2 / SNB detailed tuning, with a one-way migration off the old
+    // radio-global keys. Before these became per-slice properties the NB/SNB
+    // setup page wrote one global value per knob and pushed it to channel 0;
+    // an operator who had tuned the blanker would otherwise silently lose
+    // that tuning on upgrade. So when a slice has no stored value of its own,
+    // fall back to the legacy global before falling back to the default.
+    // Nothing writes the legacy keys any more, so this decays naturally: once
+    // a slice has been saved, its own key wins for good.
+    auto restoreInt = [&](const char* perSlice, const char* legacyGlobal,
+                          int fallback, auto&& setter) {
+        const QString key = sp + QLatin1String(perSlice);
+        if (s.contains(key)) {
+            setter(s.value(key).toInt());
+        } else if (s.contains(QLatin1String(legacyGlobal))) {
+            setter(s.value(QLatin1String(legacyGlobal)).toInt());
+        } else {
+            setter(fallback);
+        }
+    };
+    auto restoreDouble = [&](const char* perSlice, const char* legacyGlobal,
+                             double legacyScale, double fallback, auto&& setter) {
+        const QString key = sp + QLatin1String(perSlice);
+        if (s.contains(key)) {
+            setter(s.value(key).toDouble());
+        } else if (s.contains(QLatin1String(legacyGlobal))) {
+            setter(s.value(QLatin1String(legacyGlobal)).toDouble() * legacyScale);
+        } else {
+            setter(fallback);
+        }
+    };
+
+    restoreInt("Nb1Threshold", "NbDefaultThresholdSlider", 30,
+               [this](int v) { setNb1Threshold(v); });
+    // The legacy transition / lead / lag keys stored the SLIDER integer at
+    // x100 scale (1 == 0.01 ms), so migrating them needs the divide the
+    // setup page used to apply on the way to WDSP.
+    restoreDouble("Nb1TransitionMs", "NbDefaultTransition", 0.01, 0.01,
+                  [this](double v) { setNb1TransitionMs(v); });
+    restoreDouble("Nb1LeadMs", "NbDefaultLead", 0.01, 0.01,
+                  [this](double v) { setNb1LeadMs(v); });
+    restoreDouble("Nb1LagMs", "NbDefaultLag", 0.01, 0.01,
+                  [this](double v) { setNb1LagMs(v); });
+    restoreInt("Nb2Mode", "Nb2DefaultMode", 0,
+               [this](int v) { setNb2Mode(v); });
+    // The legacy SNB keys already stored real units, so scale is 1.0.
+    restoreDouble("SnbK1", "SnbDefaultK1", 1.0, 8.0,
+                  [this](double v) { setSnbK1(v); });
+    restoreDouble("SnbK2", "SnbDefaultK2", 1.0, 20.0,
+                  [this](double v) { setSnbK2(v); });
+    restoreInt("SnbOutputBandwidthHz", "SnbDefaultOutputBW", 6000,
+               [this](int v) { setSnbOutputBandwidthHz(v); });
     if (s.contains(sp + QStringLiteral("Locked"))) {
         setLocked(s.value(sp + QStringLiteral("Locked")).toString() == QLatin1String("True"));
     }
@@ -1564,6 +2265,62 @@ void SliceModel::setVaxChannel(int ch)
         QString::number(ch));
 
     emit vaxChannelChanged(ch);
+}
+
+// ── Phase 3J-2 Task D5: per-slice live SNR (NereusSDR-native) ──
+//
+// Emits snrDbChanged only on actual value change:
+//   NaN    -> NaN              : no emission (signal stays absent)
+//   x      -> identical x      : no emission (no change)
+//   NaN    -> numeric          : emission (signal-acquired event)
+//   numeric -> NaN             : emission (signal-lost event)
+//   x      -> y (x != y)       : emission (normal update)
+//
+// NaN-aware comparison is required because IEEE NaN != NaN at the
+// hardware level, so a naive equality check would treat NaN -> NaN as
+// a change and spam emissions on every block when no signal is present.
+void SliceModel::setSnrDb(double db)
+{
+    const bool dbNan   = qIsNaN(db);
+    const bool prevNan = qIsNaN(m_snrDb);
+
+    if (dbNan && prevNan) { return; }                                // both NaN: no change
+    if (!dbNan && !prevNan && qFuzzyCompare(db, m_snrDb)) { return; }// both numeric and equal
+
+    m_snrDb = db;
+    emit snrDbChanged(db);
+
+    // 2026-05-12 bench: heard fresh activity -> restart the idle
+    // timer.  Only counts when the new SNR is numeric (NaN -> NaN was
+    // already filtered above; numeric -> NaN means "we just cleared",
+    // which shouldn't extend the activity window).
+    if (!dbNan) {
+        restartRadeIdleClearTimer();
+    }
+}
+
+// ── 2026-05-11 bench: last RADE-decoded speaker callsign ────────────────────
+//
+// Sticky-while-in-RADE / clears-on-mode-off-RADE semantics per the
+// bench design discussion (option A + D).  setDspMode in this file
+// also clears the field when transitioning out of RADE_U/RADE_L; this
+// setter is the write side for incoming decodes.
+void SliceModel::setLastRadeRxCallsign(const QString& callsign)
+{
+    if (m_lastRadeRxCallsign == callsign) {
+        return;
+    }
+    m_lastRadeRxCallsign = callsign;
+    emit lastRadeRxCallsignChanged(callsign);
+
+    // 2026-05-12 bench: heard fresh EOO callsign decode -> restart
+    // the idle timer.  Empty -> non-empty is real activity; clears
+    // back to empty (from timer expiry or mode-off-RADE) don't
+    // restart -- letting the timer keep counting from the last
+    // genuine activity.
+    if (!callsign.isEmpty()) {
+        restartRadeIdleClearTimer();
+    }
 }
 
 void SliceModel::loadFromSettings()

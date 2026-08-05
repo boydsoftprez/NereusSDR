@@ -115,21 +115,39 @@
 #include "SpectrumWidget.h"
 #include "SpectrumOverlayMenu.h"
 #include "ImdOverlay.h"
+#include "spectrum/WaterfallTicker.h"
 #include "widgets/VfoWidget.h"
 #include "ColorSwatchButton.h"
 #include "widgets/GradientPickerWidget.h"
 #include "core/AppSettings.h"
+#include "core/audio/RealtimeAudioPriority.h"
 #include "core/LogCategories.h"   // Phase 3M-4 bench-fix Round 2: lcSpectrum
 #include "dbm_strip_math.h"
+#include "popup_placement.h"
 #include "models/BandPlanManager.h"
+#include "models/NotchModel.h"
 #include "spectrum/SpectrumDetector.h"
 
+#include <QApplication>
+#include <QClipboard>
+#include <QDesktopServices>
+#include <QGuiApplication>
 #include <QHoverEvent>
 #include <QLabel>
 #include <QPropertyAnimation>
+#include <QScreen>
+#include <QToolTip>
+#include <QUrl>
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QTimeZone>
+
+#include "core/MemoryLock.h"
+#include "core/MemoryPressure.h"
+#include "core/PerfMonitor.h"
+#include <QMap>
+#include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
 #include <QResizeEvent>
@@ -147,6 +165,40 @@
 #include <utility>
 
 namespace NereusSDR {
+
+// Visual-equality helper for the spot-marker repaint guard.  Drops a
+// redundant overlay repaint whenever a spot-client poll lands on an
+// unchanged set (frequent in steady state — DX cluster + WSJT-X +
+// FreeDV Reporter all repeat the same active station entries every
+// few seconds, and the drawSpotMarkers path is the most expensive
+// item on the overlay canvas).
+//
+// From AetherSDR src/gui/SpectrumWidget.cpp [@a173272d] PR #2474
+// ("Avoid unchanged spot overlay repaints").  Same comparison fields
+// (callsign / freqMhz / color / dxccColor / source) — non-visual
+// fields like spotterCallsign / comment / timestampMs intentionally
+// excluded so a comment-only update does not force a repaint.
+static bool spotMarkersVisuallyEqual(const QVector<SpectrumWidget::SpotMarker>& lhs,
+                                     const QVector<SpectrumWidget::SpotMarker>& rhs)
+{
+    constexpr double kFrequencyEpsilonMhz = 1.0e-6;
+
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (qsizetype i = 0; i < lhs.size(); ++i) {
+        const SpectrumWidget::SpotMarker& a = lhs.at(i);
+        const SpectrumWidget::SpotMarker& b = rhs.at(i);
+        if (a.callsign != b.callsign
+            || std::abs(a.freqMhz - b.freqMhz) > kFrequencyEpsilonMhz
+            || a.color != b.color
+            || a.dxccColor != b.dxccColor
+            || a.source != b.source) {
+            return false;
+        }
+    }
+    return true;
+}
 
 // ---- Default waterfall gradient stops (AetherSDR style) ----
 // From AetherSDR SpectrumWidget.cpp:43-51
@@ -305,6 +357,13 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     setApi(QRhiWidget::Api::Direct3D11);
     setAttribute(Qt::WA_NativeWindow);
 #endif
+    // 2026-05-26 KG4VCF perf polish: SpectrumWidget paints every pixel
+    // of its rect every frame (GPU clears + draws spectrum + waterfall
+    // + overlay + dynamic overlay; CPU fallback also paints full area).
+    // Tell Qt to skip its default pre-paint alpha-channel clear --
+    // small per-paint win, no visual difference.
+    setAttribute(Qt::WA_OpaquePaintEvent);
+    setAttribute(Qt::WA_NoSystemBackground);
 #else
     // CPU fallback: dark background
     setAutoFillBackground(true);
@@ -325,17 +384,96 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // the frequency scale bar inside the QRhiWidget's own mouse press/drag events
     // (which DO work when a button is pressed).
 
-    // Timer-driven display repaint — decouples repaint rate from FFT data arrival
-    // so updates are evenly spaced regardless of IQ buffer fill timing.
-    m_displayTimer.setInterval(33); // 30 fps default
+    // Timer-driven display repaint decouples paint rate from FFT data
+    // arrival, so the displayed frames are evenly spaced regardless of
+    // I/Q buffer fill timing.  Default 30 fps matches the FFT engine's
+    // default output rate (FFTEngine::setOutputFps(30) in MainWindow),
+    // so each paint pulls exactly one fresh waterfall row in steady
+    // state.  setDisplayFps() lets Setup -> Display drive this to
+    // anything in [1, 60] and the persisted DisplaySpectrumFps key
+    // restores it across launches.
+    static constexpr int kDefaultDisplayFps = 30;
+    m_displayTimer.setInterval(1000 / kDefaultDisplayFps); // 33 ms
+    m_displayTimer.setTimerType(Qt::PreciseTimer);  // sub-ms accuracy
     m_displayTimer.setSingleShot(false);
     connect(&m_displayTimer, &QTimer::timeout, this, [this]() {
+        // 2026-05-25 KG4VCF Option B revisit: the original Option B drop
+        // of this gate ("always repaint at display cadence") looked great
+        // on a healthy system but pegged a CPU core under macOS low-power
+        // mode + high system load (load average ~8, 99% on one core)
+        // because every display tick unconditionally pumped the GPU
+        // pipeline.  Restore the gate; the sub-row interpolation still
+        // helps because paint timing within a push period varies, so
+        // effectiveRow varies sample-to-sample even with the gate in.
+        // Trade-off: animation cadence is tied to FFT-arrival cadence
+        // (not display cadence), but FFT arrival drives push too, so the
+        // two stay locked in steady state.
         if (m_hasNewSpectrum) {
             m_hasNewSpectrum = false;
             update();
         }
     });
     m_displayTimer.start();
+
+    // 2026-05-25 KG4VCF bench fix: timer-driven waterfall row push.
+    // Bench symptom: "waterfall scroll still appears to jitter,
+    // occasional stutter".  Root cause: pushWaterfallRow was called
+    // directly from updateSpectrumLinear at FFT-arrival timing.
+    // Network-burst UDP delivery clusters multiple FFTs into a few ms
+    // followed by a gap; the previous rate-limit-by-drop in
+    // pushWaterfallRow coalesced the burst into one push, then left
+    // a visible gap until the next FFT arrived.  Move the push to a
+    // dedicated QTimer so the texture write happens at strictly
+    // m_wfUpdatePeriodMs cadence regardless of FFT arrival pattern.
+    // 2026-05-25 KG4VCF bench fix #3: PreciseTimer (vs Qt's default
+    // CoarseTimer with 5% drift) keeps the push cadence within ~1 ms
+    // of nominal.  CoarseTimer's ~5% slop on a 33 ms interval
+    // accumulates ~50 ms = one missed frame per second, which matches
+    // the operator's report of a ~1 Hz scroll hitch.
+    // 2026-05-25 KG4VCF bench fix #4 (Option A): WaterfallTicker on a
+    // dedicated worker thread.  The QTimer used to live here on the
+    // main thread (PreciseTimer + always-push + correctly-synced cadence
+    // were already in place from fixes #1-#3), but any momentary main-
+    // thread block (focus event, layout pass, system notification)
+    // could still delay the tick firing.  Move the timer onto its own
+    // QThread so the tick fires regardless of main-thread state; the
+    // queued signal then lands in the main thread's event loop and the
+    // pushWaterfallRow callback runs ASAP -- if main is busy, the queued
+    // ticks accumulate and drain in a burst, which the eye reads as
+    // continuous scroll instead of the long-pause-then-jump pattern.
+    m_waterfallTickerThread = new QThread(this);
+    m_waterfallTickerThread->setObjectName(QStringLiteral("WaterfallTickerThread"));
+    m_waterfallTicker = new WaterfallTicker();  // no parent -- moved to thread
+    // moveToWorkerThread() moves m_timer (a value member, hence not a
+    // QObject child) along with *this. moveToThread() alone strands
+    // m_timer on main, which then refuses start() from the worker.
+    m_waterfallTicker->moveToWorkerThread(m_waterfallTickerThread);
+    connect(m_waterfallTickerThread, &QThread::finished,
+            m_waterfallTicker, &QObject::deleteLater);
+    // Elevate the ticker thread to USER_INTERACTIVE QoS so its event
+    // loop (which carries the PreciseTimer) sits in the same scheduling
+    // class as the GUI + DSP threads and is consistently preferred over
+    // compile workers (DEFAULT QoS) under heavy build load.  Earlier
+    // revisions used USER_INITIATED here; 2026-05-26 KG4VCF bench
+    // showed that tier still let the ticker get preempted by ninja
+    // workers, producing visible waterfall stutter on build kickoff.
+    connect(m_waterfallTickerThread, &QThread::started,
+            m_waterfallTicker,
+            []() { NereusSDR::elevateLatencyCriticalThreadPriority(); });
+    // Queued connection (default for cross-thread): tick fires on the
+    // ticker thread, slot runs on the main thread when the event loop
+    // is free.  See WaterfallTicker.h for the cadence-isolation rationale.
+    connect(m_waterfallTicker, &WaterfallTicker::tick, this, [this]() {
+        // ALWAYS push on tick.  Empty-cache guard so we do nothing
+        // before the very first FFT.
+        m_pendingWfPixelsDbmDirty = false;
+        if (!m_pendingWfPixelsDbm.isEmpty()) {
+            pushWaterfallRow(m_pendingWfPixelsDbm);
+        }
+    }, Qt::QueuedConnection);
+    m_waterfallTickerThread->start();
+    m_waterfallTicker->setUpdatePeriodMs(m_wfUpdatePeriodMs);
+    m_waterfallTicker->start();
 
     // Sub-epic E: debounce timer for waterfall history re-allocation
     // From AetherSDR SpectrumWidget.cpp:158-168 [@2bb3b5c]
@@ -349,6 +487,60 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
             rebuildWaterfallViewport();
         }
     });
+
+    // 2026-05-26 KG4VCF perf instrumentation: 1 Hz poll that updates
+    // PerfMonitor's memory-pressure sample and forces the overlay
+    // texture to rebuild so the perf overlay (drawn into m_overlayStatic)
+    // refreshes with the current stats.  Started only when the perf
+    // overlay is toggled on (setShowPerfOverlay).
+    m_perfPollTimer = new QTimer(this);
+    m_perfPollTimer->setInterval(1000);
+    connect(m_perfPollTimer, &QTimer::timeout, this, [this]() {
+        const auto sample = pollMemoryPressure();
+        PerfMonitor::instance().setMemoryStats(
+            sample.compressing, sample.footprintMb);
+        // 2026-05-26 KG4VCF: snapshot + cache + log a single line per
+        // second so the operator (and anyone reading the launch log)
+        // can grep "perf:" for ground-truth numbers without staring at
+        // the overlay.  snapshotAndClearDeltas consumes the deltas
+        // here; the overlay paint reads via lastSnapshot() to avoid
+        // double-clearing.
+        const auto s = PerfMonitor::instance().snapshotAndClearDeltas();
+        const auto ml = memoryLockStats();
+        qInfo().noquote() << QString(
+            "perf: paint %1/%2 ms gap %3/%4 ms fft %5/%6 ms ovly %7/%8 ms"
+            " audio_fill %9/%10 ms underruns %11 (+%12/s) udp %13 (+%14/s)"
+            " tx_iq_under %15 (+%16/s)"
+            " mem %17 MB%18 mlock %19 regions / %20 MB")
+            .arg(s.paintMsAvg, 0, 'f', 1).arg(s.paintMsMax, 0, 'f', 1)
+            .arg(s.gapMsAvg,   0, 'f', 1).arg(s.gapMsMax,   0, 'f', 1)
+            .arg(s.fftMsAvg,   0, 'f', 1).arg(s.fftMsMax,   0, 'f', 1)
+            .arg(s.ovlyMsAvg,  0, 'f', 1).arg(s.ovlyMsMax,  0, 'f', 1)
+            .arg(s.audioFillAvgMs, 0, 'f', 1)
+            .arg(s.audioFillMinMs, 0, 'f', 1)
+            .arg(s.audioUnderrunsTotal).arg(s.audioUnderrunsDelta)
+            .arg(s.udpDropsTotal).arg(s.udpDropsDelta)
+            .arg(s.txIqUnderrunsTotal).arg(s.txIqUnderrunsDelta)
+            .arg(s.memFootprintMb, 0, 'f', 0)
+            .arg(s.memCompressing ? QStringLiteral(" COMPRESSING")
+                                  : QString{})
+            .arg(ml.regionsLocked)
+            .arg(ml.bytesLocked / (1024.0 * 1024.0), 0, 'f', 1);
+        markOverlayDirty();
+        update();
+    });
+    // Restore persisted toggle (default off).  setShowPerfOverlay
+    // handles the timer-start side effect.
+    {
+        const bool persisted =
+            AppSettings::instance()
+                .value(QStringLiteral("ShowPerfOverlay"),
+                       QStringLiteral("False")).toString()
+            == QStringLiteral("True");
+        if (persisted) {
+            setShowPerfOverlay(true);
+        }
+    }
 
     // Phase 3Q-8: child label for the disconnect overlay. Composites in both
     // CPU and GPU paint paths (QRhi early-returns from paintEvent so a QPainter
@@ -367,7 +559,20 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     m_imdOverlay = new ImdOverlay(this);
 }
 
-SpectrumWidget::~SpectrumWidget() = default;
+SpectrumWidget::~SpectrumWidget()
+{
+    // 2026-05-25 KG4VCF bench fix #4: shut down the waterfall ticker
+    // thread cleanly so its QTimer + event loop are torn down before
+    // m_waterfallTicker is deleted (which happens via the finished ->
+    // deleteLater wire).
+    if (m_waterfallTicker) {
+        m_waterfallTicker->stop();
+    }
+    if (m_waterfallTickerThread != nullptr) {
+        m_waterfallTickerThread->quit();
+        m_waterfallTickerThread->wait(2000);
+    }
+}
 
 // ---- Settings persistence ----
 // Per-pan keys use AetherSDR pattern: "DisplayFftSize" for pan 0, "DisplayFftSize_1" for pan 1
@@ -383,20 +588,61 @@ void SpectrumWidget::loadSettings()
 {
     auto& s = AppSettings::instance();
 
+    // A pan that has never been configured looks like pan 0.
+    //
+    // Bench report 2026-07-30 (JJ, KG4VCF): the second and later pans did
+    // not honour the display settings. Two separate causes; this is the
+    // second. Setup was pushing to one widget (fixed in MainWindow), and
+    // separately a pan opening for the first time had no keys of its own, so
+    // every read fell through to the hardcoded ship defaults and the new pan
+    // came up looking nothing like the one beside it.
+    //
+    // Inheriting is done at read time rather than by copying pan 0's keys
+    // into the new pan's namespace. Copying would make the new pan's
+    // settings independent immediately, freezing whatever pan 0 happened to
+    // look like at that instant; the fallback instead means an untouched pan
+    // keeps following pan 0, and stops the moment the operator gives it a
+    // value of its own, because that write creates the per-pan key which
+    // then wins. "Follow pan 1 until you say otherwise", which is the model
+    // chosen on 2026-07-30, expressed in one place.
+    //
+    // Pan 0 has no fallback to take, and must not: settingsKey(base, 0)
+    // returns `base` itself, so recursing would just re-read the same key.
+    auto rawValue = [&](const QString& key) -> QString {
+        const QString own = s.value(settingsKey(key, m_panIndex)).toString();
+        if (!own.isEmpty() || m_panIndex == 0) { return own; }
+        return s.value(settingsKey(key, 0)).toString();
+    };
+
     auto readFloat = [&](const QString& key, float def) -> float {
-        QString val = s.value(settingsKey(key, m_panIndex)).toString();
+        QString val = rawValue(key);
         if (val.isEmpty()) { return def; }
         bool ok = false;
         float v = val.toFloat(&ok);
         return ok ? v : def;
     };
     auto readInt = [&](const QString& key, int def) -> int {
-        QString val = s.value(settingsKey(key, m_panIndex)).toString();
+        QString val = rawValue(key);
         if (val.isEmpty()) { return def; }
         bool ok = false;
         int v = val.toInt(&ok);
         return ok ? v : def;
     };
+    auto readBool = [&](const QString& key, bool def) -> bool {
+        const QString val = rawValue(key);
+        if (val.isEmpty()) { return def; }
+        return val == QStringLiteral("True");
+    };
+
+    // Note for anyone adding a setting here: keys wrapped in settingsKey()
+    // are per pan and inherit pan 0 through rawValue above. Keys read
+    // straight off AppSettings (Active Peak Hold, Peak Blobs) are global and
+    // every pan already sees the same value, which is deliberate and matches
+    // Thetis keeping some display settings global while splitting others
+    // per receiver (SpectrumGridMax vs RX2SpectrumGridMax, display.cs:1750
+    // and :1855 [v2.10.3.15]). Pick which one a new setting is; do not read
+    // a per-pan key without going through rawValue, or that setting will
+    // silently stop inheriting.
 
     // Ship defaults — calibrated 2026-04-30 against a live ANAN-G2 with
     // a typical residential noise floor (-115 to -120 dBm in the
@@ -421,12 +667,17 @@ void SpectrumWidget::loadSettings()
     m_wfBlackLevel   = readInt(QStringLiteral("DisplayWfBlackLevel"), 104);
     m_wfHighThreshold = readFloat(QStringLiteral("DisplayWfHighLevel"), -62.0f);
     m_wfLowThreshold = readFloat(QStringLiteral("DisplayWfLowLevel"), -122.0f);
+    // Seed render-active mirror from persistent user values — matches
+    // Thetis's per-render local seed at display.cs:6575/6590
+    // [v2.10.3.13]. AGC / NF-AGC / Clarity will override these at
+    // composeWaterfallActiveThresholds() time; the persistent fields
+    // above stay untouched (issue #230 fix).
+    m_wfActiveHighThreshold = m_wfHighThreshold;
+    m_wfActiveLowThreshold  = m_wfLowThreshold;
     m_fillAlpha      = readFloat(QStringLiteral("DisplayFftFillAlpha"), 0.70f);
-    m_panFill        = s.value(settingsKey(QStringLiteral("DisplayPanFill"), m_panIndex),
-                               QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_panFill        = readBool(QStringLiteral("DisplayPanFill"), true);
 
-    m_ctunEnabled    = s.value(settingsKey(QStringLiteral("DisplayCtunEnabled"), m_panIndex),
-                               QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_ctunEnabled    = readBool(QStringLiteral("DisplayCtunEnabled"), true);
 
     int scheme = readInt(QStringLiteral("DisplayWfColorScheme"), 0);
     m_wfColorScheme = static_cast<WfColorScheme>(qBound(0, scheme,
@@ -482,10 +733,8 @@ void SpectrumWidget::loadSettings()
     m_peakHoldDelayMs  = readInt(QStringLiteral("DisplayPeakHoldResetMs"), 2000);
     m_lineWidth        = readFloat(QStringLiteral("DisplayLineWidth"), 1.5f);
     m_dbmCalOffset     = readFloat(QStringLiteral("DisplayCalOffset"), 0.0f);
-    const bool peakOn = s.value(settingsKey(QStringLiteral("DisplayPeakHoldEnabled"), m_panIndex),
-                                QStringLiteral("False")).toString() == QStringLiteral("True");
-    const bool gradOn = s.value(settingsKey(QStringLiteral("DisplayGradientEnabled"), m_panIndex),
-                                QStringLiteral("False")).toString() == QStringLiteral("True");
+    const bool peakOn = readBool(QStringLiteral("DisplayPeakHoldEnabled"), false);
+    const bool gradOn = readBool(QStringLiteral("DisplayGradientEnabled"), false);
     m_gradientEnabled = gradOn;
     // Delay the peak hold enable path until the timer infra is ready.
     if (peakOn) {
@@ -560,15 +809,12 @@ void SpectrumWidget::loadSettings()
     }
 
     // Phase 3G-8 commit 4: waterfall renderer state.
-    m_wfAgcEnabled = s.value(settingsKey(QStringLiteral("DisplayWfAgc"), m_panIndex),
-                             QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_wfAgcEnabled = readBool(QStringLiteral("DisplayWfAgc"), true);
     // Task 2.8: NF-AGC settings (DisplayWfReverseScroll key intentionally not
     // read here — W5 removed; key migration handled in Task 5.1).
-    m_wfNfAgcEnabled = s.value(settingsKey(QStringLiteral("WaterfallNFAGCEnabled"), m_panIndex),
-                               QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_wfNfAgcEnabled = readBool(QStringLiteral("WaterfallNFAGCEnabled"), false);
     m_wfNfAgcOffsetDb = readInt(QStringLiteral("WaterfallAGCOffsetDb"), 0);
-    m_wfStopOnTx = s.value(settingsKey(QStringLiteral("WaterfallStopOnTx"), m_panIndex),
-                           QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_wfStopOnTx = readBool(QStringLiteral("WaterfallStopOnTx"), false);
     m_wfOpacity          = readInt(QStringLiteral("DisplayWfOpacity"), 100);
     m_wfUpdatePeriodMs   = readInt(QStringLiteral("DisplayWfUpdatePeriodMs"), 30);
 
@@ -617,8 +863,7 @@ void SpectrumWidget::loadSettings()
         settingsKey(QStringLiteral("DisplayWaterfallHistoryMs"), m_panIndex),
         QString::number(static_cast<qint64>(kDefaultWaterfallHistoryMs))
     ).toLongLong();
-    m_wfUseSpectrumMinMax = s.value(settingsKey(QStringLiteral("DisplayWfUseSpectrumMinMax"), m_panIndex),
-                                    QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_wfUseSpectrumMinMax = readBool(QStringLiteral("DisplayWfUseSpectrumMinMax"), false);
     const int wfAvgRaw = readInt(QStringLiteral("DisplayWfAverageMode"),
                                  static_cast<int>(AverageMode::None));
     m_wfAverageMode = static_cast<AverageMode>(qBound(0, wfAvgRaw,
@@ -631,13 +876,11 @@ void SpectrumWidget::loadSettings()
                                   static_cast<int>(TimestampMode::UTC));
     m_wfTimestampMode = static_cast<TimestampMode>(qBound(0, tsModeRaw,
                             static_cast<int>(TimestampMode::Count) - 1));
-    m_showRxFilterOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowRxFilterOnWaterfall"), m_panIndex),
-                                        QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_showRxFilterOnWaterfall = readBool(QStringLiteral("DisplayShowRxFilterOnWaterfall"), false);
     // Default True — same rationale as DisplayDrawTxFilter above: the TX
     // overlay should be visible during MOX out of the box.  The waterfall
     // column is independently MOX-gated at the call site.
-    m_showTxFilterOnRxWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowTxFilterOnRxWaterfall"), m_panIndex),
-                                          QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_showTxFilterOnRxWaterfall = readBool(QStringLiteral("DisplayShowTxFilterOnRxWaterfall"), true);
     // Plan 4 D9 (Cluster E): persist DrawTXFilter flag.
     // From Thetis display.cs:2481 [v2.10.3.13]: DrawTXFilter property.
     // Until the Setup → Display TX Display page has a wired checkbox,
@@ -646,25 +889,17 @@ void SpectrumWidget::loadSettings()
     // sites (m_txFilterVisible && m_moxOverlay).  Without this, MOX flips
     // m_moxOverlay true, the RX cyan correctly hides, but the TX orange
     // never paints — the panadapter goes "clear" during TX/TUNE.
-    m_txFilterVisible = s.value(settingsKey(QStringLiteral("DisplayDrawTxFilter"), m_panIndex),
-                                QStringLiteral("True")).toString() == QStringLiteral("True");
-    m_showRxZeroLineOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowRxZeroLine"), m_panIndex),
-                                          QStringLiteral("False")).toString() == QStringLiteral("True");
-    m_showTxZeroLineOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowTxZeroLine"), m_panIndex),
-                                          QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_txFilterVisible = readBool(QStringLiteral("DisplayDrawTxFilter"), true);
+    m_showRxZeroLineOnWaterfall = readBool(QStringLiteral("DisplayShowRxZeroLine"), false);
+    m_showTxZeroLineOnWaterfall = readBool(QStringLiteral("DisplayShowTxZeroLine"), false);
 
     // Phase 3G-8 commit 5: grid / scales state.
-    m_gridEnabled = s.value(settingsKey(QStringLiteral("DisplayGridEnabled"), m_panIndex),
-                            QStringLiteral("True")).toString() == QStringLiteral("True");
-    m_showZeroLine = s.value(settingsKey(QStringLiteral("DisplayShowZeroLine"), m_panIndex),
-                             QStringLiteral("False")).toString() == QStringLiteral("True");
-    m_showFps = s.value(settingsKey(QStringLiteral("DisplayShowFps"), m_panIndex),
-                        QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_gridEnabled = readBool(QStringLiteral("DisplayGridEnabled"), true);
+    m_showZeroLine = readBool(QStringLiteral("DisplayShowZeroLine"), false);
+    m_showFps = readBool(QStringLiteral("DisplayShowFps"), false);
     // B8 Task 21: cursor frequency readout persists across restarts.
-    m_showCursorFreq = s.value(settingsKey(QStringLiteral("DisplayShowCursorFreq"), m_panIndex),
-                               QStringLiteral("True")).toString() == QStringLiteral("True");
-    m_dbmScaleVisible = s.value(settingsKey(QStringLiteral("DisplayDbmScaleVisible"), m_panIndex),
-                                QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_showCursorFreq = readBool(QStringLiteral("DisplayShowCursorFreq"), true);
+    m_dbmScaleVisible = readBool(QStringLiteral("DisplayDbmScaleVisible"), true);
     m_bandPlanFontSize = s.value(QStringLiteral("BandPlanFontSize"),
                                  QStringLiteral("6")).toInt();
     const int alignRaw = readInt(QStringLiteral("DisplayFreqLabelAlign"),
@@ -748,6 +983,7 @@ void SpectrumWidget::loadSettings()
     m_dispNormalize = s.value(QStringLiteral("DisplayDispNormalize"),
                               QStringLiteral("False")).toString() == QStringLiteral("True");
     // From Thetis console.cs:20073 [v2.10.3.13] peak_text_delay=500.
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     m_showPeakValueOverlay = s.value(QStringLiteral("DisplayShowPeakValueOverlay"),
                                      QStringLiteral("False")).toString() == QStringLiteral("True");
     {
@@ -783,6 +1019,7 @@ void SpectrumWidget::loadSettings()
     m_nfOffsetGridFollow = qBound(-60, m_nfOffsetGridFollow, 60);
     m_maintainNFAdjustDelta = s.value(QStringLiteral("DisplayMaintainNFAdjustDelta"),
                                       QStringLiteral("False")).toString() == QStringLiteral("True");
+    recomputeExtendedMode();
 }
 
 void SpectrumWidget::saveSettings()
@@ -936,6 +1173,7 @@ void SpectrumWidget::saveSettings()
     s.setValue(QStringLiteral("DisplayDispNormalize"),
                m_dispNormalize ? QStringLiteral("True") : QStringLiteral("False"));
     // From Thetis console.cs:20073 [v2.10.3.13] peak_text_delay=500.
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     s.setValue(QStringLiteral("DisplayShowPeakValueOverlay"),
                m_showPeakValueOverlay ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(QStringLiteral("DisplayPeakValuePosition"),
@@ -1018,6 +1256,14 @@ void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
     if (bwChanged) {
         scheduleSettingsSave();
     }
+
+    // Phase 3F Sub-Epic F Tasks 7-10: auto-derive extendedMode from zoom.
+    // When the visible bandwidth exceeds the DDC sample rate (operator
+    // zoomed a 192 kHz DDC out to e.g. 5 MHz visible), set extended mode
+    // so the wideband ADC stream can fill the wings via the Task 11
+    // chain. The "off" direction also fires here when the operator
+    // zooms back inside the listenable island.
+    recomputeExtendedMode();
 }
 
 void SpectrumWidget::setCenterFrequency(double centerHz)
@@ -1035,6 +1281,10 @@ void SpectrumWidget::setDdcCenterFrequency(double hz)
     if (!qFuzzyCompare(m_ddcCenterHz, hz)) {
         m_ddcCenterHz = hz;
         update();
+        // Notify listeners (MainWindow wires this to refresh MaxBin's
+        // slice-offset so its scan window follows the slice when the
+        // DDC NCO moves without a slice retune).
+        emit ddcCenterFrequencyChanged(hz);
     }
 }
 
@@ -1043,6 +1293,10 @@ void SpectrumWidget::setSampleRate(double hz)
     if (!qFuzzyCompare(m_sampleRateHz, hz)) {
         m_sampleRateHz = hz;
         update();
+        // Phase 3F Sub-Epic F Tasks 7-10: sample-rate change rebases the
+        // extended-mode derivation (operator may have e.g. switched a
+        // radio from 192 kHz to 384 kHz, shrinking the wing).
+        recomputeExtendedMode();
     }
 }
 
@@ -1089,6 +1343,20 @@ void SpectrumWidget::setDbmRange(float minDbm, float maxDbm)
     // Note: callers that invoke setDbmRange deliberately (Copy button, user drag)
     // schedule their own save. The NF-aware grid onNoiseFloorChanged() avoids
     // scheduling saves because it fires at 500ms cadence.
+
+    // Issue #230 fix: when "Use spectrum min/max" is on, the spectrum
+    // grid drives the persistent waterfall thresholds — once per
+    // grid change, not per render frame.  Mirrors Thetis
+    // setWaterfallGainsIfLinkedToSpectrum at console.cs:9098-9101
+    // [v2.10.3.13]:
+    //     if (m_bWaterfallUseRX1SpectrumMinMax && rx == 1) {
+    //         Display.WaterfallLowThreshold  = SetupForm.DisplayGridMin;
+    //         Display.WaterfallHighThreshold = SetupForm.DisplayGridMax;
+    //     }
+    if (m_wfUseSpectrumMinMax) {
+        setWfLowThreshold(minDbm);
+        setWfHighThreshold(maxDbm);
+    }
 }
 
 void SpectrumWidget::setWfColorScheme(WfColorScheme scheme)
@@ -1446,7 +1714,41 @@ void SpectrumWidget::setPeakBlobsFallDbPerSec(double r)
 void SpectrumWidget::setPeakBlobColor(const QColor& c)
 {
     m_peakBlobColor = c;
+    rebuildBlobMarkerPixmap();
     update();
+}
+
+void SpectrumWidget::rebuildBlobMarkerPixmap()
+{
+    // 2026-05-26 KG4VCF perf polish: bake the blob marker (a small
+    // unfilled ellipse, 1 px stroke, radius 3 in logical pixels)
+    // into a QPixmap once.  paintPeakBlobs drawPixmap()'s this at
+    // each blob position instead of calling QPainter::drawEllipse.
+    //
+    // Why: drawEllipse routes through QRasterPaintEnginePrivate::
+    // rasterize -> blend_color_generic -> QLatch::waitInternal, which
+    // dispatches span-blend work to QThreadPool::globalInstance()
+    // and waits.  Under build-load contention those pool workers
+    // (DEFAULT QoS) get starved and the main thread sits in
+    // __ulock_wait2.  Profile showed 88 samples / 8 s of main-thread
+    // time stuck there from just our blob ellipses.  A pixmap blit
+    // is a tight memcpy + alpha-blend that doesn't enter the parallel
+    // raster path at all.
+    //
+    // Size: 8x8 logical pixels (radius 3 + 1 px stroke margin + 1 px
+    // safety).  Drawn with the current device pixel ratio so we get
+    // crisp rendering on Retina without aliasing.
+    const qreal dpr = devicePixelRatioF();
+    const int side = 8;  // logical pixels
+    m_blobMarkerPixmap = QPixmap(side * dpr, side * dpr);
+    m_blobMarkerPixmap.setDevicePixelRatio(dpr);
+    m_blobMarkerPixmap.fill(Qt::transparent);
+    QPainter pm(&m_blobMarkerPixmap);
+    pm.setRenderHint(QPainter::Antialiasing, true);
+    pm.setPen(QPen(m_peakBlobColor, 1));
+    pm.setBrush(Qt::NoBrush);
+    // Center at (side/2, side/2), radius 3.
+    pm.drawEllipse(QPointF(side / 2.0, side / 2.0), 3.0, 3.0);
 }
 
 void SpectrumWidget::setPeakBlobTextColor(const QColor& c)
@@ -1508,6 +1810,12 @@ void SpectrumWidget::setDbmCalOffset(float db)
     m_dbmCalOffset = db;
     scheduleSettingsSave();
     markOverlayDirty();  // dBm scale strip labels shift
+    // 2026-05-22 calibration fix: ensure FFT vertex VBO re-runs so the
+    // updated m_dbmCalOffset reaches the rendered trace position, not just
+    // the axis labels.  FFT data delivery normally triggers update() on its
+    // own, but this guards against the case where the cal pushes before any
+    // FFT frame has arrived (e.g. controller attaches before connection).
+    update();
 }
 
 void SpectrumWidget::setFillColor(const QColor& c)
@@ -1645,7 +1953,12 @@ void SpectrumWidget::setNoiseFloorFastAttack(bool on)
 // because NereusSDR's renderer doesn't share the averaging loop.
 void SpectrumWidget::processNoiseFloor()
 {
-    const int width = m_renderedPixels.size();
+    // The noise floor is a MEASUREMENT, so it reads the undented pixels
+    // (design section 8.3).  Upstream does the same: its accumulator takes
+    // max_copy from the pristine array while everything else in that loop
+    // takes the dented max - display.cs:5256-5259 [v2.10.3.15].
+    const QVector<float>& src = measurementPixels();
+    const int width = src.size();
     if (width <= 0) { return; }
 
     // Per-pixel accumulator — Thetis display.cs:5253-5258 [v2.10.3.13]:
@@ -1659,7 +1972,7 @@ void SpectrumWidget::processNoiseFloor()
     double averageSum = 0.0;
     int    averageCount = 0;
     for (int i = 0; i < width; ++i) {
-        const float dB = m_renderedPixels[i];
+        const float dB = src[i];
         if (dB < currentAverage) {
             averageSum += std::pow(10.0, static_cast<double>(dB) / 10.0);
             averageCount++;
@@ -1803,6 +2116,7 @@ void SpectrumWidget::setDispNormalize(bool on)
 }
 
 // From Thetis console.cs:20073-20080 [v2.10.3.13] PeakTextDelay / timer_peak_text.
+// Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
 // ShowPeakValueOverlay creates or destroys the throttle timer as needed.
 void SpectrumWidget::setShowPeakValueOverlay(bool on)
 {
@@ -1866,6 +2180,7 @@ void SpectrumWidget::setPeakValuePosition(OverlayPosition pos)
 }
 
 // From Thetis console.cs:20073-20080 [v2.10.3.13] PeakTextDelay default=500.
+// Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
 void SpectrumWidget::setPeakTextDelayMs(int ms)
 {
     ms = qBound(50, ms, 10000);
@@ -1936,6 +2251,12 @@ void SpectrumWidget::setWfHighThreshold(float dbm)
 {
     if (qFuzzyCompare(m_wfHighThreshold, dbm)) { return; }
     m_wfHighThreshold = dbm;
+    // Mirror into render-active so the next paint reflects the new
+    // user value even before composeWaterfallActiveThresholds() runs.
+    // AGC / NF-AGC / Clarity will re-override active on their next
+    // tick — they are the runtime layer per Thetis display.cs:6575-6594
+    // [v2.10.3.13].
+    m_wfActiveHighThreshold = dbm;
     scheduleSettingsSave();
     update();
 }
@@ -1944,6 +2265,7 @@ void SpectrumWidget::setWfLowThreshold(float dbm)
 {
     if (qFuzzyCompare(m_wfLowThreshold, dbm)) { return; }
     m_wfLowThreshold = dbm;
+    m_wfActiveLowThreshold = dbm;
     scheduleSettingsSave();
     update();
 }
@@ -2096,6 +2418,26 @@ void SpectrumWidget::pushTxWaterfallRow(int receiverId,
     pushWaterfallRow(visible);
 }
 
+// Issue #230 fix: Clarity is a NereusSDR-only override modeled on
+// Thetis's AGC pattern at display.cs:6584 [v2.10.3.13], where the AGC
+// running-min is a runtime field (_RX1waterfallPreviousMinValue) that
+// flows into per-render locals — never the persisted user fields.
+// Previously the Clarity controller called setWfLow/HighThreshold,
+// which scheduled a settings save on every tick and silently
+// overwrote the user's saved thresholds.
+void SpectrumWidget::setClarityWaterfallThresholds(float low, float high)
+{
+    if (qFuzzyCompare(m_wfActiveLowThreshold, low) &&
+        qFuzzyCompare(m_wfActiveHighThreshold, high)) {
+        return;
+    }
+    m_wfActiveLowThreshold  = low;
+    m_wfActiveHighThreshold = high;
+    update();
+    // No scheduleSettingsSave() — Clarity output is runtime state, not
+    // a user preference.
+}
+
 void SpectrumWidget::setWfOpacity(int percent)
 {
     percent = qBound(0, percent, 100);
@@ -2111,6 +2453,13 @@ void SpectrumWidget::setWfUpdatePeriodMs(int ms)
     if (m_wfUpdatePeriodMs == ms) { return; }
     m_wfUpdatePeriodMs = ms;
     scheduleSettingsSave();
+
+    // 2026-05-25 KG4VCF bench fix: retune the timer-driven waterfall
+    // push to the new period so a slider drag actually changes scroll
+    // rate immediately (rather than waiting for the next ctor).
+    if (m_waterfallTicker) {
+        m_waterfallTicker->setUpdatePeriodMs(m_wfUpdatePeriodMs);
+    }
 
     // Sub-epic E: capacity may have changed — debounce history rebuild
     // so slider drag doesn't trash history mid-drag.
@@ -2143,6 +2492,17 @@ void SpectrumWidget::setWfUseSpectrumMinMax(bool on)
     if (m_wfUseSpectrumMinMax == on) { return; }
     m_wfUseSpectrumMinMax = on;
     scheduleSettingsSave();
+
+    // Issue #230 fix: enabling the flag immediately syncs the
+    // persistent waterfall thresholds from the current spectrum
+    // range — same effect as Thetis's checkbox handler at
+    // setup.cs:19221-19243 [v2.10.3.13], which routes through the
+    // WaterfallUseRX1SpectrumMinMax property setter and triggers
+    // setWaterfallGainsIfLinkedToSpectrum (console.cs:9098).
+    if (on) {
+        setWfLowThreshold(m_refLevel - m_dynamicRange);
+        setWfHighThreshold(m_refLevel);
+    }
     update();
 }
 
@@ -2242,6 +2602,28 @@ void SpectrumWidget::setShowFps(bool on)
     m_fpsLastUpdateMs = 0;
     m_fpsDisplayValue = 0.0f;
     scheduleSettingsSave();
+    markOverlayDirty();
+}
+
+void SpectrumWidget::setShowPerfOverlay(bool on)
+{
+    if (m_showPerfOverlay == on) { return; }
+    m_showPerfOverlay = on;
+    // Reset the perf counters when toggled on so stats reflect the
+    // operator's current question, not stale residue from before.
+    if (on) {
+        PerfMonitor::instance().resetAll();
+    }
+    if (m_perfPollTimer) {
+        if (on) {
+            m_perfPollTimer->start();
+        } else {
+            m_perfPollTimer->stop();
+        }
+    }
+    AppSettings::instance().setValue(
+        QStringLiteral("ShowPerfOverlay"),
+        on ? QStringLiteral("True") : QStringLiteral("False"));
     markOverlayDirty();
 }
 
@@ -2569,6 +2951,21 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
         }
     }
 
+    // Visual notch, spectrum plane.  Thetis dents in place right after the
+    // analyzer hands the frame over and before its per-pixel render loop
+    // (display.cs:5234-5238 [v2.10.3.15]), keeping one pristine copy that
+    // only the noise-floor accumulator reads (display.cs:5259 [v2.10.3.15]).
+    // Peak hold, the blob / IMD detector and the max readout deliberately see
+    // the dent (display.cs:5269, :5280, :5337 [v2.10.3.15]) and so are still
+    // fed from m_renderedPixels below.  Do NOT "protect" them: that would be
+    // a divergence, not a fix.
+    if (visualNotchWillDent()) {
+        m_undentedPixels = m_renderedPixels;
+        applyVisualNotchDent(m_renderedPixels);
+    } else if (!m_undentedPixels.isEmpty()) {
+        m_undentedPixels.clear();
+    }
+
     // --- Waterfall plane: own detector + avenger -> m_wfRenderedPixels ---
     // Thetis runs separate analyzer planes for spectrum and waterfall (see
     // ANALYZER_INFO[] in analyzer.c).  DetType + AvMode are independent.
@@ -2597,6 +2994,23 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
                              false,
                              0.0,
                              m_wfRenderedPixels);
+
+    // Visual notch, waterfall plane.  Thetis re-runs modifyDataForNotches on
+    // the waterfall array after `data = current_waterfall_data` (:6567), under
+    // the same MOX gate - display.cs:6579-6586 [v2.10.3.15].  A second
+    // explicit call here because NereusSDR keeps the waterfall pixels in
+    // their own array, so denting the spectrum plane above does not reach
+    // them.
+    //
+    // No undented waterfall copy: upstream needs one for its per-frame
+    // waterfall minimum (dataCopy at display.cs:6741, :6833, :6915, :6954,
+    // :7163, :7369, each carrying //[2.10.3]MW0LGE use non notched data), and
+    // NereusSDR has no such tracker - m_wfLowThreshold is a persisted user
+    // setting, and pushWaterfallRow is the only consumer of
+    // m_wfRenderedPixels.
+    if (visualNotchWillDent()) {
+        applyVisualNotchDent(m_wfRenderedPixels);
+    }
 
     // Legacy per-pixel peak hold -- track running max in display-pixel
     // space.  Replaces the old per-bin m_peakHoldBins.
@@ -2668,14 +3082,40 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // overlay is toggled off — saves a cold-start visual jump on toggle on.
     processNoiseFloor();
 
-    // Per-frame force-dirty for any overlay that updates every spectrum
-    // frame (APH trace decay, peak blobs, NF lerp position).  GPU-only
-    // optimization — CPU paint path repaints the overlay every frame
-    // anyway, so the dirty flag has no analogue.
+    // 2026-05-25 perf fix: this block USED to force the ENTIRE GPU
+    // overlay texture (freq scale, dBm strip, bandplan, time scale,
+    // VFO marker, spots, waterfall chrome, peak hold trace, peak blobs,
+    // NF text/line — ~16 paint ops + a full window-size QImage fill
+    // and GPU texture upload) to rebuild on EVERY spectrum frame
+    // whenever any of three features were enabled.  Rate-limited to
+    // 10 Hz to keep CPU sane, which made blob decay / peak-hold drop
+    // look chunky.
+    //
+    // 2026-05-26 KG4VCF first attempt: bumped 10 Hz -> 30 Hz to fix
+    // chunky blob decay.  Bench: under heavy build load (parallel
+    // ninja) the system became unusable -- the 30 Hz full-overlay
+    // rebuild saturated the raster pool exactly as the earlier
+    // measurement warned.  Reverted to 10 Hz here; the next commit
+    // does the proper fix (static/dynamic layer split: chrome cached
+    // on state change, dynamic overlays in a smaller spectrum-area
+    // texture rebuilt every frame).
 #ifdef NEREUS_GPU_SPECTRUM
     if (m_activePeakHold.enabled() || m_peakBlobs.enabled()
         || m_showNoiseFloor) {
-        m_overlayStaticDirty = true;
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        // 2026-05-26 KG4VCF dual-layer overlay split: peak-hold trace
+        // + peak blobs + noise-floor line/text live in their own GPU
+        // texture (m_overlayDynamic).  We only mark *that* layer
+        // dirty here -- chrome stays cached in m_overlayStatic and is
+        // invalidated separately by setters that actually change
+        // chrome state (band change, zoom, theme, etc.).  Rate-limit
+        // raised to 30 Hz because the dynamic layer is dramatically
+        // cheaper than the previous full-overlay rebuild (no chrome
+        // paint ops, smaller GPU upload bandwidth).
+        if (nowMs - m_overlayDynamicDirtyMs >= 33) {  // 30 Hz cap
+            m_overlayDynamicDirty = true;
+            m_overlayDynamicDirtyMs = nowMs;
+        }
     }
 #endif
 
@@ -2684,15 +3124,192 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // Display.cs:6713-6738 [v2.10.3.13] (waterfall_data[i] indexed by
     // pixel).
     //
+    // 2026-05-25 KG4VCF bench fix: cache the latest row instead of
+    // pushing immediately.  m_wfPushTimer (started in the ctor) drains
+    // the cache at strictly m_wfUpdatePeriodMs cadence so network-burst
+    // FFT delivery does not produce visible scroll stutter.
+    //
     // 3M-5d: skip when the waterfall is being driven externally by
     // TxAnalyzer's pixout=1 stream (set by MainWindow on MOX-up).  This
     // prevents the WDSP's DetTypeWF + AverageModeWF pixels from being
     // overwritten by NereusSDR's own avenger output, and avoids a
     // double-push race.  RX path stays at false, no behaviour change.
+    //
+    // Revive merge: 3M-5d gated the direct pushWaterfallRow that used to
+    // sit here; the gate now wraps the CACHE WRITE instead, which is the
+    // same seam one step earlier. Gating the timer drain rather than the
+    // write would have been wrong: the cache would keep the last RX row
+    // and the drain would replay it under the TX rows.
     if (!m_txExternalWaterfall) {
-        pushWaterfallRow(m_wfRenderedPixels);
+        m_pendingWfPixelsDbm = m_wfRenderedPixels;
+        m_pendingWfPixelsDbmDirty = true;
     }
     m_hasNewSpectrum = true;
+
+    // 2026-05-22 bench fix: signal that a fresh m_renderedPixels frame is
+    // available so MainWindow can push the slice's passband peak into the
+    // MaxBin detector. See peakDbmInSlicePassband for the rationale.
+    emit spectrumFrameRendered();
+}
+
+// 2026-05-22 bench fix: maxBin meter accuracy.
+//
+// Returns the strongest dBm pixel inside the active slice's IF passband,
+// using m_renderedPixels (the post detector + avenger pipeline that the
+// operator sees on the spectrum trace). MainWindow consumes this each
+// render and pushes the value into WdspEngine's MaxBin detector so the
+// analog S-meter reads what's visible on the spectrum.
+//
+// Hz range: [m_vfoHz + m_filterLowHz, m_vfoHz + m_filterHighHz]. For LSB
+// the filter range is negative so the passband is below the VFO; for USB
+// positive so the passband is above. Either way the absolute Hz bounds
+// land inside the visible window when the operator is parked on a signal
+// they can see.
+//
+// Pixel-to-Hz mapping: m_renderedPixels has displayWidth entries spanning
+// [m_centerHz - m_bandwidthHz/2, m_centerHz + m_bandwidthHz/2]. Out-of-
+// window pixel indices are clamped to the array bounds; if the passband
+// is entirely outside the visible window the clamp degenerates and we
+// return -400 sentinel.
+double SpectrumWidget::peakDbmInSlicePassband() const
+{
+    // Deliberate NereusSDR-specific divergence from the dent-in-place rule
+    // (design section 8.3, decision recorded 2026-07-28): this feeds
+    // WdspEngine's MaxBin detector and therefore the analog S-Meter. Thetis
+    // reads MaxBin from WDSP upstream of its display code (console.cs:46959,
+    // dsp.cs:849-850 [v2.10.3.15]), so its visual notch structurally cannot
+    // move its meter; ours would if this scanned the dented array. A display
+    // preference must not change a measurement.
+    const QVector<float>& src = measurementPixels();
+    const int n = src.size();
+    if (n < 2 || m_bandwidthHz <= 0.0) { return -400.0; }
+
+    const double loHz = m_vfoHz + static_cast<double>(m_filterLowHz);
+    const double hiHz = m_vfoHz + static_cast<double>(m_filterHighHz);
+    if (hiHz <= loHz) { return -400.0; }
+
+    const double leftHz  = m_centerHz - m_bandwidthHz / 2.0;
+    const double rightHz = m_centerHz + m_bandwidthHz / 2.0;
+    if (hiHz < leftHz || loHz > rightHz) { return -400.0; }
+
+    const double hzPerPx = m_bandwidthHz / static_cast<double>(n - 1);
+    if (hzPerPx <= 0.0) { return -400.0; }
+
+    auto hzToPx = [&](double hz) -> int {
+        const double idx = (hz - leftHz) / hzPerPx;
+        return qBound(0, static_cast<int>(std::round(idx)), n - 1);
+    };
+    const int firstPx = hzToPx(loHz);
+    const int lastPx  = hzToPx(hiHz);
+    if (lastPx < firstPx) { return -400.0; }
+
+    float peak = -400.0f;
+    for (int i = firstPx; i <= lastPx; ++i) {
+        if (src[i] > peak) { peak = src[i]; }
+    }
+    return static_cast<double>(peak);
+}
+
+// ---------------------------------------------------------------------------
+// Visual notch (trace dent) - design section 8.3
+// ---------------------------------------------------------------------------
+//
+// Port of Thetis modifyDataForNotches (display.cs:4733-4817 [v2.10.3.15], the
+// dent maths itself at :4790-4816) and the non-drawing arm of its
+// handleNotches helper (display.cs:8677-8687 [v2.10.3.15]).  Thetis works in
+// Hz-from-the-VFO and divides every pixel index by its display decimation;
+// our pixel array is absolute-RF and undecimated (the m_nDecimation == 1 case,
+// see updateSpectrumLinear), so a pixel index here IS Thetis's xPos and hzToX
+// is the whole coordinate map.
+//
+// Two terms of the upstream maths are deliberately NOT ported, per section 8.3:
+//
+//   * handleNotches' localRit / CTUN offset (display.cs:8648-8652
+//     [v2.10.3.15]).  It compensates for Thetis's VFO-label-anchored pixel
+//     maths combined with its RIT-driven DDS retune.  Our x axis is absolute
+//     RF, RIT never retunes the hardware, and WDSP applies shift to the
+//     passband rather than to the notch, so adding it would displace every
+//     dent by rit_hz.  Recorded so nobody re-adds it.
+//   * cwSideToneShift (display.cs:8654 [v2.10.3.15]), dropped entirely rather
+//     than threaded as a constant zero: a notch added at F in CW stores at
+//     exactly F here (design section 1.2).
+
+void SpectrumWidget::setVisualNotchEnabled(bool on)
+{
+    if (m_visualNotchEnabled == on) { return; }
+    m_visualNotchEnabled = on;
+    markOverlayDirty();
+}
+
+// From Thetis display.cs:5235 [v2.10.3.15]:
+//   if (bDoVisualNotch && m_bShowVisualNotch && !local_mox)
+// plus the _tnf_active half of the per-notch _Use flag at display.cs:8686
+// [v2.10.3.15].  The per-notch Active half is applied inside the loop below,
+// exactly as upstream skips on !nc._Use.
+bool SpectrumWidget::visualNotchWillDent() const
+{
+    return m_visualNotchEnabled
+        && !m_moxOverlay
+        && m_notchGlobalEnabled
+        && !m_notchMarkers.isEmpty();
+}
+
+void SpectrumWidget::applyVisualNotchDent(QVector<float>& pixels) const
+{
+    const int n = pixels.size();
+    if (n <= 0 || m_bandwidthHz <= 0.0) { return; }
+
+    const float fAttenuation = kNotchDentAttenuationDb;
+
+    // A rect the width of the array, so hzToX maps onto the same columns the
+    // trace is drawn from regardless of the widget's live geometry.
+    const QRect r(0, 0, n, 1);
+
+    for (const NotchMarker& nc : m_notchMarkers) {
+        if (!nc.active) { continue; } // skip inactive
+
+        // From Thetis display.cs:8679-8680 [v2.10.3.15]:
+        //   double dNewWidth = n.FWidth < min_notch_wdith ? min_notch_wdith : n.FWidth; // use the min width of filter from WDSP
+        //   dNewWidth += 20; // fudge factor to align better with spectrum notch
+        const double dNewWidth =
+            ((nc.widthHz < m_notchMinWidthHz) ? m_notchMinWidthHz : nc.widthHz)
+            + kNotchDentFudgeHz;
+
+        const double centreHz = nc.freqMhz * 1e6;
+        const int cX     = hzToX(centreHz, r);
+        const int leftX  = hzToX(centreHz - dNewWidth / 2.0, r);
+        const int rightX = hzToX(centreHz + dNewWidth / 2.0, r);
+
+        // do left
+        int wL = cX - leftX;
+        wL = qMax(1, wL);
+        for (int i = cX; i > cX - wL; --i) {
+            if (i < 0 || i > n - 1) { continue; }
+            const int x = cX - i;
+            const float fTmp = 1.0f / static_cast<float>(std::pow(
+                static_cast<double>(wL) / static_cast<double>(wL - x),
+                1.5)); // pow2 quite sharp
+            pixels[i] -= (fAttenuation * fTmp);
+        }
+        // do right
+        int wR = rightX - cX;
+        wR = qMax(1, wR);
+        for (int i = cX; i < cX + wR; ++i) {
+            if (i < 0 || i > n - 1) { continue; }
+            const int x = i - cX;
+            const float fTmp = 1.0f / static_cast<float>(std::pow(
+                static_cast<double>(wR) / static_cast<double>(wR - x),
+                1.5)); // pow2 quite sharp
+            pixels[i] -= (fAttenuation * fTmp);
+        }
+    }
+}
+
+const QVector<float>& SpectrumWidget::measurementPixels() const
+{
+    return (m_undentedPixels.size() == m_renderedPixels.size())
+               ? m_undentedPixels
+               : m_renderedPixels;
 }
 
 void SpectrumWidget::resizeEvent(QResizeEvent* event)
@@ -2726,8 +3343,22 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
     int wfH = static_cast<int>(h * (1.0f - m_spectrumFrac)) - kFreqScaleH - kDividerH;
     if (wfW > 0 && wfH > 0 && (m_waterfall.isNull() ||
         m_waterfall.width() != wfW || m_waterfall.height() != wfH)) {
+        // 2026-05-26 KG4VCF: unlock the previous waterfall before
+        // QImage replacement frees it.  Aligned no-op when m_waterfall
+        // was null.
+        if (!m_waterfall.isNull()) {
+            unlockMemory(m_waterfall.constBits(),
+                         m_waterfall.sizeInBytes());
+        }
         m_waterfall = QImage(wfW, wfH, QImage::Format_RGB32);
         m_waterfall.fill(QColor(0x0f, 0x0f, 0x1a));
+        // Pin the new waterfall buffer.  Touched every push (write
+        // one row's worth of pixels) and every paint (full incremental
+        // texture upload to GPU); compression stalls here cause the
+        // visible waterfall stutter under build load.
+        lockMemory(m_waterfall.constBits(),
+                   m_waterfall.sizeInBytes(),
+                   "SpectrumWidget::m_waterfall");
         m_wfWriteRow = 0;
 #ifdef NEREUS_GPU_SPECTRUM
         m_wfTexFullUpload = true;
@@ -2779,6 +3410,25 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     drawGrid(p, specRect);
     drawSpectrum(p, specRect);
     drawWaterfall(p, wfRect);
+    // TNF notch overlay immediately before the spots, matching upstream's
+    // paint order: AetherSDR src/gui/SpectrumWidget.cpp:12903-12904
+    // [@c6481cbf] draws drawTnfMarkers then drawSpotMarkers.  No visibility
+    // gate: an empty marker list IS the off state, and the master TNF flag
+    // recolours the markers rather than hiding them (Thetis
+    // display.cs:8704-8707 [v2.10.3.15]).
+    //
+    // notchSpecRect() rather than the local specRect above: it is the
+    // single notch geometry source the hit test also builds from, and the
+    // two agree by construction on this path.
+    drawNotchMarkers(p, notchSpecRect());
+    // Phase 3J-2 Task E1: spot overlay between spectrum/waterfall and the
+    // VFO marker so the spot label tick + pill sit on top of the trace
+    // but below the slice/VFO marker chrome. Mirrors AetherSDR
+    // SpectrumWidget.cpp:3787 [@0cd4559] paint ordering
+    // (drawSpotMarkers between drawTnfMarkers and drawSliceMarkers).
+    if (m_showSpots) {
+        drawSpotMarkers(p, specRect);
+    }
     drawVfoMarker(p, specRect, wfRect);
     drawOffScreenIndicator(p, specRect, wfRect);
 
@@ -2866,6 +3516,7 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
 
     // ShowPeakValueOverlay — render cached peak text (refreshed by timer).
     // From Thetis console.cs:20073 PeakTextDelay=500ms [v2.10.3.13].
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     if (m_showPeakValueOverlay && !m_peakTextCache.isEmpty()) {
         drawTextOverlay(p, specRect, m_peakValuePosition,
                         m_peakTextCache, m_peakValueColor);
@@ -2968,7 +3619,13 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
                       / static_cast<float>(n - 1);
 
     // Build polyline across display pixels.
-    QVector<QPointF> points(n);
+    // 2026-05-26 KG4VCF perf polish: use member scratch vectors
+    // (m_specPointsScratch / m_specPeakPointsScratch / m_specFillPathScratch
+    // / m_specPeakPathScratch) so the per-paint allocations don't
+    // churn the heap.  QVector::resize is a no-op when n hasn't
+    // changed; QPainterPath::clear keeps the internal element buffer.
+    QVector<QPointF>& points = m_specPointsScratch;
+    points.resize(n);
     for (int j = 0; j < n; ++j) {
         const float x = specRect.left() + static_cast<float>(j) * xStep;
         const float y = dbmToYf(m_renderedPixels[j], specRect);
@@ -2978,7 +3635,8 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
     // Fill under the trace (if enabled).
     // From AetherSDR: fill alpha 0.70, cyan color.
     if (m_panFill) {
-        QPainterPath fillPath;
+        QPainterPath& fillPath = m_specFillPathScratch;
+        fillPath.clear();
         fillPath.moveTo(points.first().x(), specRect.bottom());
         for (const QPointF& pt : points) {
             fillPath.lineTo(pt);
@@ -3005,7 +3663,8 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
 
     // Legacy per-pixel peak hold trace, drawn underneath the live trace.
     if (m_peakHoldEnabled && m_pxPeakHold.size() == n) {
-        QVector<QPointF> peakPoints(n);
+        QVector<QPointF>& peakPoints = m_specPeakPointsScratch;
+        peakPoints.resize(n);
         for (int j = 0; j < n; ++j) {
             const float x = specRect.left() + static_cast<float>(j) * xStep;
             const float y = dbmToYf(m_pxPeakHold[j], specRect);
@@ -3081,7 +3740,9 @@ void SpectrumWidget::paintActivePeakHoldTrace(QPainter& p, const QRect& specRect
                       / static_cast<float>(n - 1);
 
     // Build polyline for the peak trace (same x mapping as main trace).
-    QVector<QPointF> peakPoints(n);
+    // 2026-05-26 KG4VCF perf polish: reuse member-cached scratch.
+    QVector<QPointF>& peakPoints = m_specPeakPointsScratch;
+    peakPoints.resize(n);
     for (int j = 0; j < n; ++j) {
         const float x = specRect.left() + static_cast<float>(j) * xStep;
         float peakDbm = m_activePeakHold.peak(j);
@@ -3095,7 +3756,8 @@ void SpectrumWidget::paintActivePeakHoldTrace(QPainter& p, const QRect& specRect
 
     // Optional fill between peak trace and current live trace.
     if (m_activePeakHold.fill()) {
-        QPainterPath fillPath;
+        QPainterPath& fillPath = m_specPeakPathScratch;
+        fillPath.clear();
         fillPath.moveTo(peakPoints.first());
         for (int j = 1; j < n; ++j) {
             fillPath.lineTo(peakPoints[j]);
@@ -3139,6 +3801,18 @@ void SpectrumWidget::paintPeakBlobs(QPainter& p, const QRect& specRect)
 
     p.setRenderHint(QPainter::Antialiasing, true);
 
+    // 2026-05-25 KG4VCF bench fix: PR #286's QStaticText cache for the
+    // dBm and frequency scale labels stopped calling QPainter::setFont
+    // (drawStaticText carries its own font); the painter is left at
+    // whatever the previous section set, which under the old code was
+    // 11 px from paintDbmScale's drawText calls.  Post-cache the
+    // painter inherits Qt's default ~9 pt fallback, so the blob dBm
+    // labels rendered visibly smaller than they used to.  Set the
+    // canonical 11 px explicitly here.
+    QFont blobFont = p.font();
+    blobFont.setPixelSize(11);
+    p.setFont(blobFont);
+
     for (const auto& blob : m_peakBlobs.blobs()) {
         // Skip disabled slots in the persistent blob array (post-Phase 2
         // PeakBlobDetector rewrite mirrors Thetis's fixed-size m_RX1Maximums
@@ -3169,9 +3843,19 @@ void SpectrumWidget::paintPeakBlobs(QPainter& p, const QRect& specRect)
         // on Thetis's typical Windows 1x-DPI display does not. Radius 3 in
         // logical pixels yields a visual size matching Thetis's 5-radius
         // physical-pixel render on a 1x display.
-        p.setPen(QPen(m_peakBlobColor, 1));
-        p.setBrush(Qt::NoBrush);
-        p.drawEllipse(QPoint(x, y), 3, 3);
+        //
+        // 2026-05-26 KG4VCF perf polish: drawEllipse replaced with
+        // drawPixmap(pre-rendered blob marker) to skip Qt's parallel
+        // raster span-blend path.  Lazy first-build: rebuild the
+        // pixmap if it's null (e.g. when peakBlobs gets enabled
+        // before any color setter fires).  Subsequent calls hit the
+        // cached pixmap.
+        if (m_blobMarkerPixmap.isNull()) {
+            rebuildBlobMarkerPixmap();
+        }
+        // Pixmap is 8x8 logical; center is (4,4).  Draw at top-left so
+        // the center lands at (x, y).
+        p.drawPixmap(x - 4, y - 4, m_blobMarkerPixmap);
 
         // Draw dBm text label — From Thetis display.cs:5508 [v2.10.3.13]
         //   _d2dRenderTarget.DrawText(..., new RectangleF(
@@ -3446,8 +4130,30 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
             label = QString::number(mhz, 'f', 3);
         }
 
-        QRect textRect(x - 30, r.top() + 2, 60, r.height() - 2);
-        p.drawText(textRect, baseFlags, label);
+        // Cached QStaticText render — see m_freqLabelCache comment in
+        // SpectrumWidget.h.  Working set grows as the user pans but
+        // converges quickly because the format strings repeat.
+        auto cit = m_freqLabelCache.find(label);
+        if (cit == m_freqLabelCache.end()) {
+            QStaticText st(label);
+            st.setPerformanceHint(QStaticText::AggressiveCaching);
+            cit = m_freqLabelCache.insert(label, std::move(st));
+        }
+        cit.value().prepare(p.transform(), font);
+
+        // Position the cached text inside the same 60-wide rect that
+        // drawText was using, honoring the configured alignment.  The
+        // rect itself isn't drawn; it's only used to anchor the label.
+        const QRectF textRect(x - 30, r.top() + 2, 60, r.height() - 2);
+        const QSizeF labelSize = cit.value().size();
+        qreal lx = textRect.left();   // AlignLeft default
+        if (baseFlags & Qt::AlignHCenter) {
+            lx = textRect.center().x() - labelSize.width() / 2.0;
+        } else if (baseFlags & Qt::AlignRight) {
+            lx = textRect.right() - labelSize.width();
+        }
+        const qreal ly = textRect.center().y() - labelSize.height() / 2.0;
+        p.drawStaticText(QPointF(lx, ly), cit.value());
     }
 }
 
@@ -3500,6 +4206,12 @@ void SpectrumWidget::drawDbmScale(QPainter& p, const QRect& specRect)
     const float bottomDbm  = m_refLevel - m_dynamicRange;
     const float firstLabel = std::ceil(bottomDbm / stepDb) * stepDb;
 
+    // drawStaticText anchors at the top-left of the glyph run; drawText
+    // anchors at the baseline.  The original baseline-y was
+    // (y + ascent/2); to keep visual-identical placement, drawStaticText
+    // takes y = (y + ascent/2) - ascent = y - ascent/2.
+    const qreal staticAscent = fm.ascent();
+
     for (float dbm = firstLabel; dbm <= m_refLevel; dbm += stepDb) {
         // Route through dbmToY() so m_dbmCalOffset is applied consistently with
         // the grid/trace/peak-hold paths — otherwise a non-zero cal offset would
@@ -3511,10 +4223,24 @@ void SpectrumWidget::drawDbmScale(QPainter& p, const QRect& specRect)
         p.setPen(QColor(0x50, 0x70, 0x80));
         p.drawLine(strip.left(), y, strip.left() + 4, y);
 
-        // Label
+        // Label — QStaticText cache: HarfBuzz shapes each unique string
+        // exactly once over the widget lifetime.  See m_dbmLabelCache
+        // comment in SpectrumWidget.h for rationale + AetherSDR cite.
         const QString label = QString::number(static_cast<int>(dbm));
+        auto cit = m_dbmLabelCache.find(label);
+        if (cit == m_dbmLabelCache.end()) {
+            QStaticText st(label);
+            st.setPerformanceHint(QStaticText::AggressiveCaching);
+            cit = m_dbmLabelCache.insert(label, std::move(st));
+        }
+        // prepare() with the painter's actual transform avoids a
+        // first-paint rebuild on HiDPI displays.
+        cit.value().prepare(p.transform(), f);
+
         p.setPen(QColor(0x80, 0xa0, 0xb0));
-        p.drawText(strip.left() + 6, y + fm.ascent() / 2, label);
+        p.drawStaticText(
+            QPointF(strip.left() + 6, y - staticAscent / 2.0),
+            cit.value());
     }
 }
 
@@ -4012,6 +4738,58 @@ void SpectrumWidget::clearWaterfallHistory()
     markOverlayDirty();
 }
 
+// Phase 3F Sub-Epic F Task 6: store the latest per-ADC wideband bins.
+// Sub-Epic F polish (T7-T10) will paint these as a background layer when
+// m_extendedMode is true and the pan's visible frequency range exceeds
+// the active DDC bandwidth.  For now this is silent storage so the
+// FFT pipeline stays warm and bench operators can confirm data is
+// flowing without UI churn.
+void SpectrumWidget::setWidebandBins(int adcIndex, const QVector<float>& dbmBins)
+{
+    if (adcIndex == 0) {
+        m_widebandBinsAdc0 = dbmBins;
+    } else if (adcIndex == 1) {
+        m_widebandBinsAdc1 = dbmBins;
+    }
+    // No update() call: paint is gated behind m_extendedMode (wired in
+    // F polish).  Triggering a repaint here would cost a GPU pass per
+    // wideband frame on hardware that isn't yet rendering the bins.
+}
+
+// Phase 3F Sub-Epic F Tasks 7-10: extended-view policy + derived state.
+// The operator toggle controls permission; zoom and DDC rate decide whether
+// wideband wings are actually needed. State changes notify consumers so they
+// can flip SliceModel::widebandExtensionRequested, which triggers the Task 11
+// chain (Alex BPF bypass + P2 CmdGeneral byte 23 wideband-enable +
+// radio starts streaming wideband packets). The actual paint hook
+// for rendering the stored wideband bins as a background fill is
+// deferred to a post-bench polish iteration; for now the flag drives
+// the data-flow side only.
+void SpectrumWidget::setExtendedViewAllowed(bool allowed)
+{
+    if (m_extendedViewAllowed == allowed) {
+        recomputeExtendedMode();
+        return;
+    }
+    m_extendedViewAllowed = allowed;
+    recomputeExtendedMode();
+}
+
+void SpectrumWidget::recomputeExtendedMode()
+{
+    const bool actual =
+        m_extendedViewAllowed
+        && m_sampleRateHz > 0.0
+        && m_bandwidthHz > m_sampleRateHz;
+    if (m_extendedMode == actual) { return; }
+    m_extendedMode = actual;
+    emit widebandExtensionStateChanged(actual);
+    // Schedule a repaint so the future paint impl picks up the state
+    // change. Today this is a no-op in the visual pipeline beyond the
+    // stored bool — cheap.
+    update();
+}
+
 // From AetherSDR SpectrumWidget.cpp:951-1000 [@0cd4559]
 //   adapter: NereusSDR uses Hz throughout (upstream uses MHz). Both the
 //   live waterfall ring buffer and the long-history ring buffer are
@@ -4073,6 +4851,98 @@ void SpectrumWidget::reprojectWaterfall(double oldCenterHz, double oldBandwidthH
 #endif
 }
 
+// ---- Waterfall threshold composition ----
+// Mirrors Thetis display.cs:6575-6594 [v2.10.3.13]: persistent user
+// fields (waterfall_low/high_threshold) are seeded into per-render
+// locals, then AGC / NF-AGC / Clarity override only the locals.  The
+// persistent user fields stay untouched — exactly the bug that
+// caused issue #230 before this split landed.
+//
+// In NereusSDR, "locals" become member fields (m_wfActiveLow/High) so
+// external runtime layers (Clarity, between-row signal updates) can
+// stick a value that survives until the next row push.  AGC's
+// running-envelope state (m_wfAgcRunMin/Max) is the equivalent of
+// Thetis's _RX1waterfallPreviousMinValue field.
+void SpectrumWidget::composeWaterfallActiveThresholds(const QVector<float>& wfPixelsDbm)
+{
+    if (wfPixelsDbm.isEmpty()) { return; }
+
+    // 3M-5b: AGC, NF-AGC and Clarity are RX-only. TX uses the static pair
+    // from Setup -> Display -> TX; per Thetis display.cs:6506-6595
+    // [v2.10.3.13+501e3f51] the TX path has no per-frame tracking at all.
+    //
+    // Revive merge: 3M-5b expressed this as `!isTx` on each block back when
+    // the composition was inline in pushWaterfallRow. Issue #230 moved the
+    // composition here, so the gate becomes one early return -- and gains
+    // something the inline version did not have. Returning before the AGC
+    // follower runs leaves m_wfAgcRunMin/Max holding their last RX values,
+    // so unkeying resumes the RX waterfall where it left off. The inline
+    // gates skipped the THRESHOLD writes but the follower state lived in
+    // the same block, so this is strictly the safer shape.
+    //
+    // dbmToRgb does not read the active mirror while m_moxOverlay is set,
+    // so nothing downstream needs the values this would have written.
+    if (m_moxOverlay) { return; }
+
+    const int n = wfPixelsDbm.size();
+
+    // Seed from persistent user values unless Clarity is the live
+    // driver — Clarity writes m_wfActive* directly via
+    // setClarityWaterfallThresholds() and must survive between rows.
+    // Matches the Thetis "high_threshold = waterfall_high_threshold"
+    // seed at display.cs:6575 [v2.10.3.13].
+    if (!m_clarityActive) {
+        m_wfActiveLowThreshold  = m_wfLowThreshold;
+        m_wfActiveHighThreshold = m_wfHighThreshold;
+    }
+
+    // AGC: one-pole follower on display-pixel min/max biases the
+    // effective thresholds.  Skipped while Clarity is the driver.
+    // Phase 3G-9c.
+    if (m_wfAgcEnabled && !m_clarityActive) {
+        float mn = wfPixelsDbm[0];
+        float mx = mn;
+        for (int i = 1; i < n; ++i) {
+            const float v = wfPixelsDbm[i];
+            if (v < mn) { mn = v; }
+            if (v > mx) { mx = v; }
+        }
+        if (!m_wfAgcPrimed) {
+            m_wfAgcRunMin = mn;
+            m_wfAgcRunMax = mx;
+            m_wfAgcPrimed = true;
+        } else {
+            constexpr float kAgcAlpha = 0.05f;
+            m_wfAgcRunMin = kAgcAlpha * mn + (1.0f - kAgcAlpha) * m_wfAgcRunMin;
+            m_wfAgcRunMax = kAgcAlpha * mx + (1.0f - kAgcAlpha) * m_wfAgcRunMax;
+        }
+        // Phase 3G-9b: 12 dB margin for palette breathing room.
+        const float margin = 12.0f;
+        m_wfActiveLowThreshold  = m_wfAgcRunMin - margin;
+        m_wfActiveHighThreshold = m_wfAgcRunMax + margin;
+    }
+
+    // Note: "Use spectrum min/max" no longer mutates here.  Thetis
+    // wires that flag via setWaterfallGainsIfLinkedToSpectrum
+    // (console.cs:9094-9108 [v2.10.3.13]) — the grid-change handler
+    // calls the persistent property setter once per grid change, not
+    // per render frame.  NereusSDR's port lives in setDbmRange() +
+    // setWfUseSpectrumMinMax().  Per-frame mutation here was the
+    // issue #230 source.
+
+    // Task 2.8: NF-AGC -- override thresholds from 10th-percentile
+    // noise floor + configured offset.  Runs after AGC so it wins on
+    // tie; defers to Clarity.
+    if (m_wfNfAgcEnabled && !m_clarityActive) {
+        QVector<float> sorted = wfPixelsDbm;
+        std::sort(sorted.begin(), sorted.end());
+        const float nf = sorted[qBound(0, sorted.size() / 10, sorted.size() - 1)];
+        const float offsetF = static_cast<float>(m_wfNfAgcOffsetDb);
+        m_wfActiveLowThreshold  = nf + offsetF;
+        m_wfActiveHighThreshold = m_wfActiveLowThreshold + 60.0f;
+    }
+}
+
 // ---- Waterfall row push ----
 // From Thetis Display.cs:7719 -- new row at top, old content shifts down.
 // Ring buffer equivalent: decrement write pointer so newest row is always
@@ -4094,66 +4964,23 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
         return;
     }
 
-    // Rate-limit per configured update period.
+    // 2026-05-25 KG4VCF bench fix: cadence is now driven by
+    // m_wfPushTimer (set up in the ctor) at strictly m_wfUpdatePeriodMs
+    // intervals, decoupled from FFT arrival.  The legacy inline rate-
+    // limit ("drop if too soon since last push") is removed because it
+    // could clip an occasional timer tick due to QTimer / wall-clock
+    // drift, leaving a visible gap in the waterfall scroll.  m_wfLastPushMs
+    // is still updated for any observability (paint debug, telemetry).
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (m_wfUpdatePeriodMs > 0 && m_wfLastPushMs != 0 &&
-        now - m_wfLastPushMs < m_wfUpdatePeriodMs) {
-        return;
-    }
     m_wfLastPushMs = now;
 
+    // Issue #230 fix: threshold composition moved out — writes go to
+    // the render-active mirror (m_wfActiveLow/High), never the
+    // persisted user fields. Thetis-faithful per Thetis
+    // display.cs:6575-6594 [v2.10.3.13].
+    composeWaterfallActiveThresholds(wfPixelsDbm);
+
     const int n = wfPixelsDbm.size();
-
-    // 3M-5b: AGC + NF-AGC are RX-only.  TX uses static thresholds from
-    // m_txWfLowLevel / m_txWfHighLevel set in Setup -> Display -> TX.  Per
-    // Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51], TX path is purely
-    // static thresholds with no per-frame AGC tracking.
-    // Note: setClarityActive(false) is still called on MOX-rise in MainWindow
-    // as defense-in-depth; this !isTx gate is the primary mechanism.
-    const bool isTx = m_moxOverlay;
-
-    // AGC: track a slow envelope of display-pixel min/max and bias the
-    // effective thresholds toward it. Simple one-pole follower.
-    // Phase 3G-9c: skipped when Clarity is actively driving thresholds.
-    if (!isTx && m_wfAgcEnabled && !m_clarityActive) {
-        float mn = wfPixelsDbm[0];
-        float mx = mn;
-        for (int i = 1; i < n; ++i) {
-            const float v = wfPixelsDbm[i];
-            if (v < mn) { mn = v; }
-            if (v > mx) { mx = v; }
-        }
-        if (!m_wfAgcPrimed) {
-            m_wfAgcRunMin = mn;
-            m_wfAgcRunMax = mx;
-            m_wfAgcPrimed = true;
-        } else {
-            constexpr float kAgcAlpha = 0.05f;
-            m_wfAgcRunMin = kAgcAlpha * mn + (1.0f - kAgcAlpha) * m_wfAgcRunMin;
-            m_wfAgcRunMax = kAgcAlpha * mx + (1.0f - kAgcAlpha) * m_wfAgcRunMax;
-        }
-        // Phase 3G-9b: 12 dB margin for palette breathing room.
-        const float margin = 12.0f;
-        m_wfLowThreshold  = m_wfAgcRunMin - margin;
-        m_wfHighThreshold = m_wfAgcRunMax + margin;
-    } else if (!isTx && m_wfUseSpectrumMinMax) {
-        m_wfHighThreshold = m_refLevel;
-        m_wfLowThreshold  = m_refLevel - m_dynamicRange;
-    }
-
-    // Task 2.8: NF-AGC -- override thresholds from 10th-percentile noise
-    // floor + configured offset.  Takes priority over spectrum-min-max
-    // but yields to the existing legacy AGC (which is a different
-    // feature).  Sort over the full pixel array for the percentile.
-    if (!isTx && m_wfNfAgcEnabled && !m_clarityActive) {
-        QVector<float> sorted = wfPixelsDbm;
-        std::sort(sorted.begin(), sorted.end());
-        const float nf = sorted[qBound(0, sorted.size() / 10, sorted.size() - 1)];
-        const float offsetF = static_cast<float>(m_wfNfAgcOffsetDb);
-        m_wfLowThreshold  = nf + offsetF;
-        m_wfHighThreshold = m_wfLowThreshold + 60.0f;
-    }
-
     int h = m_waterfall.height();
     // Decrement write pointer so newest row is always at m_wfWriteRow.
     m_wfWriteRow = (m_wfWriteRow - 1 + h) % h;
@@ -4211,15 +5038,30 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
         // From Thetis display.cs:6536-6539 [v2.10.3.13+501e3f51]:
         //   low_threshold  = (float)TXWFAmpMin;
         //   high_threshold = (float)TXWFAmpMax;
+        //
+        // Deliberately NOT the active mirror. The mirror carries AGC /
+        // NF-AGC / Clarity output, all of which are RX noise-floor
+        // trackers; Thetis's TX path is static thresholds with no
+        // per-frame tracking at all. Reading the mirror here would let an
+        // RX-derived level set the TX palette.
         effectiveLow  = static_cast<float>(m_txWfLowLevel);
         effectiveHigh = static_cast<float>(m_txWfHighLevel);
     } else {
-        // RX: existing black-level / color-gain adjustment math unchanged.
+        // RX: black-level / color-gain adjustment math.
         // Black level slider (0-125): lower = more black, higher = less black.
         // Color gain slider (0-100): shifts high threshold DOWN (more color).
         // From Thetis display.cs:2522-2536 defaults: high=-80, low=-130.
-        effectiveLow  = m_wfLowThreshold  + static_cast<float>(125 - m_wfBlackLevel) * 0.4f;
-        effectiveHigh = m_wfHighThreshold - static_cast<float>(m_wfColorGain) * 0.3f;
+        // Issue #230 fix: read the render-active mirror, not the
+        // persistent user fields — AGC / NF-AGC / Clarity drive the
+        // active mirror via composeWaterfallActiveThresholds() and
+        // setClarityWaterfallThresholds().  Persistent values stay clean.
+        //
+        // Revive merge: 3M-5b wrote this branch against m_wfLow/HighThreshold,
+        // which #230 later split into persisted-vs-active. The RX branch
+        // follows #230 onto the mirror; the TX branch above stays on its own
+        // static pair, so the two fixes compose rather than collide.
+        effectiveLow  = m_wfActiveLowThreshold  + static_cast<float>(125 - m_wfBlackLevel) * 0.4f;
+        effectiveHigh = m_wfActiveHighThreshold - static_cast<float>(m_wfColorGain) * 0.3f;
     }
     if (effectiveHigh <= effectiveLow) {
         effectiveHigh = effectiveLow + 1.0f;
@@ -4264,23 +5106,89 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
 }
 
 // ---- VFO marker + filter passband overlay ----
-// Ported from AetherSDR SpectrumWidget.cpp:3211-3294
-// Uses per-slice colors with exact alpha values from AetherSDR.
-void SpectrumWidget::drawVfoMarker(QPainter& p, const QRect& specRect, const QRect& wfRect)
+//
+// One marker per hosted slice, each from ITS OWN centre and ITS OWN filter
+// edges.
+//
+// This used to be one marker per pan, derived from m_vfoHz plus the pan's
+// single m_filterLowHz/m_filterHighHz pair. Both of those track whichever
+// slice most recently reached the pan -- MainWindow pushes setVfoFrequency on
+// every slice's frequencyChanged and setFilterOffset on every slice's
+// filterChanged, and activating a slice re-pushes both -- so a pan hosting two
+// slices shaded exactly one passband and it belonged to the last slice
+// touched. Bench-reported 2026-07-28: "The pass band of the second flag
+// disappears when not active. Let's keep it."
+//
+// Filter edges come from the flag, not the pan, because filter width is per
+// slice: reusing the pan's pair would draw a 2.7 kHz SSB band around a 500 Hz
+// CW slice. VfoWidget already receives both values from its SliceModel
+// (MainWindow::createSliceFlag seeds setFilter and re-pushes it on
+// filterChanged); it just discarded them before.
+//
+// Two behaviours are deliberately preserved:
+//   - A pan with no flag yet still marks its own VFO. wireSliceToSpectrum
+//     seeds setVfoFrequency BEFORE it builds the flag, and a paint can land in
+//     that window; dropping the fallback would blank the marker there.
+//   - A single-slice pan is unchanged. Its one flag carries the same frequency
+//     and the same filter the pan does, so the marker is identical to the
+//     pre-split one.
+//
+// Overlap between two slices' bands is left to whatever QPainter's default
+// compositing does with the translucent fill, exactly as a single band is
+// composited today. No blend rule, colour or opacity is introduced here.
+QVector<SpectrumWidget::SliceMarkerGeometry>
+SpectrumWidget::sliceMarkerGeometry() const
 {
-    if (m_vfoHz <= 0.0) {
-        return;
+    QVector<SliceMarkerGeometry> out;
+
+    if (m_vfoWidgets.isEmpty()) {
+        if (m_vfoHz > 0.0) {
+            out.append(SliceMarkerGeometry{m_vfoHz, m_filterLowHz,
+                                           m_filterHighHz, nullptr});
+        }
+        return out;
     }
 
-    int vfoX = hzToX(m_vfoHz, specRect);
+    // QMap, so this walks slices in index order and the paint order is stable
+    // frame to frame rather than hash-dependent.
+    out.reserve(m_vfoWidgets.size());
+    for (auto it = m_vfoWidgets.constBegin(); it != m_vfoWidgets.constEnd(); ++it) {
+        const VfoWidget* flag = it.value();
+        if (!flag || flag->frequency() <= 0.0) {
+            continue;
+        }
+        out.append(SliceMarkerGeometry{flag->frequency(), flag->filterLow(),
+                                       flag->filterHigh(), flag});
+    }
+    return out;
+}
+
+void SpectrumWidget::drawVfoMarker(QPainter& p, const QRect& specRect, const QRect& wfRect)
+{
+    for (const SliceMarkerGeometry& g : sliceMarkerGeometry()) {
+        drawSliceMarker(p, specRect, wfRect, g);
+    }
+}
+
+// Ported from AetherSDR SpectrumWidget.cpp:3211-3294
+// Uses per-slice colors with exact alpha values from AetherSDR.
+//
+// Body unchanged by the Phase 3F split; it reads its centre and filter edges
+// off the passed-in marker instead of the pan's m_vfoHz / m_filterLowHz /
+// m_filterHighHz, so the same paint runs once per hosted slice.
+void SpectrumWidget::drawSliceMarker(QPainter& p, const QRect& specRect,
+                                     const QRect& wfRect,
+                                     const SliceMarkerGeometry& g)
+{
+    int vfoX = hzToX(g.centreHz, specRect);
 
     // Per-slice color — from AetherSDR SliceColors.h:15-20
     // Slice 0 (A) = cyan, active
     static constexpr int kSliceR = 0x00, kSliceG = 0xd4, kSliceB = 0xff;
 
     // Filter passband rectangle
-    double loHz = m_vfoHz + m_filterLowHz;
-    double hiHz = m_vfoHz + m_filterHighHz;
+    double loHz = g.centreHz + g.filterLowHz;
+    double hiHz = g.centreHz + g.filterHighHz;
     int xLo = hzToX(loHz, specRect);
     int xHi = hzToX(hiHz, specRect);
     if (xLo > xHi) {
@@ -4337,10 +5245,14 @@ void SpectrumWidget::drawVfoMarker(QPainter& p, const QRect& specRect, const QRe
         static constexpr int kTriH = 10;
 
         int triTop = specRect.top();
-        // If VFO flag is present, position triangle below it
-        auto it = m_vfoWidgets.constFind(0);
-        if (it != m_vfoWidgets.constEnd() && it.value()->isVisible()) {
-            triTop = it.value()->y() + it.value()->height();
+        // If VFO flag is present, position triangle below it.
+        //
+        // THIS marker's flag, not m_vfoWidgets[0]. The slice-0 lookup was
+        // harmless while one marker was drawn per pan; with one per slice it
+        // would hang every triangle off slice A's flag height, which is only
+        // ever right by coincidence.
+        if (g.flag && g.flag->isVisible()) {
+            triTop = g.flag->y() + g.flag->height();
         }
         // Clamp to spectrum area
         triTop = std::max(triTop, specRect.top());
@@ -4495,7 +5407,24 @@ void SpectrumWidget::setHighSwrOverlay(bool active, bool foldback) noexcept
 void SpectrumWidget::setDisplayFps(int fps)
 {
     const int clamped = qBound(1, fps, 60);
-    m_displayTimer.setInterval(1000 / clamped);
+    const int periodMs = 1000 / clamped;
+    m_displayTimer.setInterval(periodMs);
+    // 2026-05-26 KG4VCF bench fix: DO NOT overwrite m_wfUpdatePeriodMs
+    // here.  Earlier revisions tried to "lock the waterfall throttle to
+    // the same period as paint" by force-writing m_wfUpdatePeriodMs =
+    // periodMs on every setDisplayFps call.  Problem: setDisplayFps
+    // runs once at startup from MainWindow's persistence-restore (with
+    // the persisted DisplaySpectrumFps), so the loaded
+    // DisplayWfUpdatePeriodMs got clobbered to 1000/fps every launch.
+    // Operator's saved waterfall period (e.g. 33 ms when FPS=20 forces
+    // 50 ms) was silently lost.
+    //
+    // Waterfall update period now lives independently in AppSettings
+    // under DisplayWfUpdatePeriodMs and is mutated only by an explicit
+    // setWfUpdatePeriodMs() call (Setup -> Display slider).  If the
+    // operator wants them locked, both controls expose the value and
+    // either can be set to match the other.
+    //
     // Averaging alphas depend on fps via Thetis α = exp(-1/(fps×τ)).
     // Recompute so the smoothing time constants stay correct after a rate change.
     recomputeAverageAlphas();
@@ -4590,6 +5519,7 @@ void SpectrumWidget::setDisplayDuplex(bool on)
 }
 
 // From Thetis display.cs:4840 [v2.10.3.13]:
+// Upstream tags preserved: //MW0LGE (from cited upstream lines) [v2.10.3.15]
 //   if (!local_mox) fOffset += rx1_preamp_offset;
 // The RX cal offset is only added in RX mode; during TX, the TX path uses
 // its own calibration. NereusSDR models this by storing the TX ATT offset
@@ -4760,8 +5690,505 @@ std::pair<int,int> SpectrumWidget::txAudioToIq(int audioLow, int audioHigh,
 }
 
 // ---------------------------------------------------------------------------
+// TNF / notch overlay: setters, colour resolution, render
+// (design sections 8.1 and 8.2).
+//
+// Geometry is AetherSDR's drawTnfMarkers ported unchanged
+// (src/gui/SpectrumWidget.cpp:13503-13554 [@c6481cbf]).  The only two
+// divergences are the ones the missing depth axis forces: the hatch spacing
+// is fixed instead of depth-derived (upstream :13535) and the handle height
+// is fixed instead of 8 + depthDb * 2 (upstream :13545).
+//
+// Colours are Thetis's, not AetherSDR's: upstream encodes permanent versus
+// temporary in green/yellow and we have no permanence, while Thetis encodes
+// exactly the four states we do have (display.cs:386-390 [v2.10.3.15]).
+// ---------------------------------------------------------------------------
+
+// From Thetis display.cs:389 [v2.10.3.15]: notch_active_colour = Color.Yellow.
+static constexpr QRgb kNotchActiveColour = qRgb(0xFF, 0xFF, 0x00);
+// From Thetis display.cs:390 [v2.10.3.15]: notch_inactive_colour = Color.Gray.
+// System.Drawing.Color.Gray is #808080 while Qt::gray is #A0A0A4, so the
+// literal is spelled out rather than reaching for the Qt global colour.
+static constexpr QRgb kNotchInactiveColour = qRgb(0x80, 0x80, 0x80);
+// From Thetis display.cs:387 [v2.10.3.15]: notch_tnf_off_colour = Color.Olive.
+static constexpr QRgb kNotchTnfOffColour = qRgb(0x80, 0x80, 0x00);
+// From Thetis display.cs:386 [v2.10.3.15]:
+// notch_highlight_color = Color.Chartreuse.
+static constexpr QRgb kNotchHighlightColour = qRgb(0x7F, 0xFF, 0x00);
+
+// From Thetis display.cs:400-408 [v2.10.3.15]: every notch fill brush is
+// changeAlpha(colour, 92); changeAlpha itself is display.cs:2939-2942.
+static constexpr int kNotchFillAlpha = 92;
+
+// Fixed, replacing AetherSDR's depth-derived
+// (depthDb <= 1) ? 12 : (depthDb == 2 ? 8 : 5) at
+// src/gui/SpectrumWidget.cpp:13535 [@c6481cbf].
+static constexpr int kNotchHatchSpacingPx = 8;
+
+// Fixed, replacing AetherSDR's 8 + depthDb * 2 at
+// src/gui/SpectrumWidget.cpp:13545 [@c6481cbf].
+static constexpr int kNotchHandleHeightPx = 10;
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13547-13548 [@c6481cbf]:
+// tri << QPoint(cx - 5, ...) << QPoint(cx + 5, ...).
+static constexpr int kNotchHandleHalfWidthPx = 5;
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13523 [@c6481cbf]:
+// std::max(2, ...), so a sub-2-pixel notch stays grabbable.
+static constexpr int kNotchMinHalfWidthPx = 2;
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13551 [@c6481cbf]: the grab
+// handle dims with the master flag as well as changing colour.
+static constexpr int kNotchHandleAlphaOn  = 200;
+static constexpr int kNotchHandleAlphaOff = 80;
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13436-13440 [@c6481cbf]
+void SpectrumWidget::setNotchMarkers(const QVector<NotchMarker>& markers)
+{
+    m_notchMarkers = markers;
+    markOverlayDirty();
+}
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13497-13501 [@c6481cbf]
+void SpectrumWidget::setNotchGlobalEnabled(bool on)
+{
+    m_notchGlobalEnabled = on;
+    markOverlayDirty();
+}
+
+void SpectrumWidget::setNotchMinWidthHz(double hz)
+{
+    m_notchMinWidthHz = hz;
+    markOverlayDirty();
+}
+
+// From Thetis display.cs:8691-8722 [v2.10.3.15]: handleNotches' brush
+// selection, flattened to a colour because our pen and fill derive from one
+// base (upstream keeps a Pen and a Brush per state and they never disagree).
+QColor SpectrumWidget::notchColor(const NotchMarker& n) const
+{
+    // From Thetis display.cs:8710-8722 [v2.10.3.15]:
+    //   //overide if highlighed  [original inline comment from display.cs:8710]
+    // The highlight is applied AFTER the master-off branch upstream, so it
+    // wins over every other state.  Guarded on a real id because both
+    // selection members and a default-constructed marker share -1.
+    if (n.id >= 0 && (n.id == m_selectedNotchId || n.id == m_hoveredNotchId)) {
+        return QColor::fromRgb(kNotchHighlightColour);
+    }
+
+    // From Thetis display.cs:8704-8707 [v2.10.3.15]: master TNF off repaints
+    // every marker olive rather than hiding it.
+    if (!m_notchGlobalEnabled) {
+        return QColor::fromRgb(kNotchTnfOffColour);
+    }
+
+    // From Thetis display.cs:8693-8702 [v2.10.3.15]
+    return n.active ? QColor::fromRgb(kNotchActiveColour)
+                    : QColor::fromRgb(kNotchInactiveColour);
+}
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:13503-13554 [@c6481cbf]
+void SpectrumWidget::drawNotchMarkers(QPainter& p, const QRect& specRect)
+{
+    if (m_notchMarkers.isEmpty()) {
+        return;
+    }
+
+    // From AetherSDR src/gui/SpectrumWidget.cpp:13507-13519 [@c6481cbf]:
+    // the drawDepthHatch lambda, renamed because the depth argument is gone.
+    const auto drawHatch = [&](const QRect& rect, const QColor& colour,
+                               int left, int right, int spacing) {
+        if (rect.isEmpty()) {
+            return;
+        }
+        p.save();
+        p.setClipRect(rect);
+        p.setPen(QPen(colour, 1));
+        const int height = rect.height();
+        for (int x = left - height; x < right; x += spacing) {
+            p.drawLine(x, rect.bottom(), x + height, rect.top());
+        }
+        p.restore();
+    };
+
+    for (const NotchMarker& n : m_notchMarkers) {
+        // NereusSDR coordinate mapping: hzToX(double hz, QRect) takes Hz.
+        // AetherSDR upstream uses mhzToX(freqMhz) at :13522-13523; multiply
+        // by 1e6, exactly as drawSpotMarkers already does.
+        const double centreHz = n.freqMhz * 1.0e6;
+        const int cx    = hzToX(centreHz, specRect);
+        const int halfW = std::max(kNotchMinHalfWidthPx,
+                                   hzToX(centreHz + n.widthHz / 2.0, specRect) - cx);
+        const int left  = cx - halfW;
+        const int right = cx + halfW;
+
+        // From AetherSDR src/gui/SpectrumWidget.cpp:13527-13528 [@c6481cbf]
+        // Skip if fully off-screen
+        if (right < 0 || left > width()) {
+            continue;
+        }
+
+        const QColor base = notchColor(n);
+        QColor fill(base);
+        fill.setAlpha(kNotchFillAlpha);
+
+        const QRect notchRect(left, specRect.top(), right - left, specRect.height());
+        p.fillRect(notchRect, fill);
+        drawHatch(notchRect, base, left, right, kNotchHatchSpacingPx);
+
+        // From AetherSDR src/gui/SpectrumWidget.cpp:13538-13542 [@c6481cbf]
+        // Edge lines
+        p.setPen(QPen(base, 1, Qt::SolidLine));
+        p.drawLine(left,  specRect.top(), left,  specRect.bottom());
+        p.drawLine(right, specRect.top(), right, specRect.bottom());
+
+        // From AetherSDR src/gui/SpectrumWidget.cpp:13544-13552 [@c6481cbf]
+        // Center triangle (grab handle) at top of spectrum
+        QPolygon tri;
+        tri << QPoint(cx - kNotchHandleHalfWidthPx, specRect.top())
+            << QPoint(cx + kNotchHandleHalfWidthPx, specRect.top())
+            << QPoint(cx, specRect.top() + kNotchHandleHeightPx);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(base.red(), base.green(), base.blue(),
+                          m_notchGlobalEnabled ? kNotchHandleAlphaOn
+                                               : kNotchHandleAlphaOff));
+        p.drawPolygon(tri);
+    }
+
+    p.setBrush(Qt::NoBrush);
+    p.setPen(Qt::NoPen);
+}
+
+// ---------------------------------------------------------------------------
 // drawTxFilterOverlay()
 //
+// ---------------------------------------------------------------------------
+// Spot overlay setter + render + cluster popup (Phase 3J-2 Task E1).
+// Port of AetherSDR src/gui/SpectrumWidget.cpp:4303-4672 [@0cd4559].
+// Algorithm preserved verbatim. NereusSDR divergences are local to the
+// coordinate helpers (NereusSDR uses hzToX(double hz, QRect) over Hz-units
+// and m_centerHz / m_bandwidthHz; AetherSDR's mhzToX(mhz) uses MHz units
+// and m_centerMhz / m_bandwidthMhz). Visibility test and tick / label /
+// cluster geometry mirror upstream byte-for-byte.
+// ---------------------------------------------------------------------------
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:4303-4307 [@0cd4559]
+// Repaint guard added per AetherSDR [@a173272d] PR #2474.
+void SpectrumWidget::setSpotMarkers(const QVector<SpotMarker>& markers)
+{
+    const bool visualChange = !spotMarkersVisuallyEqual(m_spotMarkers, markers);
+    m_spotMarkers = markers;
+    if (!visualChange) {
+        return;
+    }
+    update();
+}
+
+// Phase 3J-2 + 3R M2: refresh every Spot Display knob from AppSettings.
+// The producer side lives on SpotHubDialog F4 (buildDisplayTab,
+// SpotHubDialog.cpp:1619-2010); every knob change writes to AppSettings
+// and emits settingsChanged. MainWindow::openSpotHub wires that signal
+// to this method so the live overlay tracks the dialog. Defaults
+// duplicate the F4 read-side at SpotHubDialog.cpp:1714-1730.
+//
+// NereusSDR-original. AetherSDR splits these reads across a freestanding
+// SpotSettingsDialog and a refreshSpots() lambda on MainWindow; the
+// NereusSDR shape collapses both into a single helper on the consumer
+// widget, called once on construction (when MainWindow wires the panel)
+// and again whenever the dialog raises settingsChanged.
+void SpectrumWidget::loadSpotDisplaySettings()
+{
+    auto& s = AppSettings::instance();
+    setShowSpots(
+        s.value(QStringLiteral("IsSpotsEnabled"),
+                QStringLiteral("True")).toString() == QStringLiteral("True"));
+    setSpotFontSize(s.value(QStringLiteral("SpotFontSize"), 16).toInt());
+    setSpotMaxLevels(s.value(QStringLiteral("SpotsMaxLevel"), 3).toInt());
+    setSpotStartPct(
+        s.value(QStringLiteral("SpotsStartingHeightPercentage"), 50).toInt());
+    setSpotOverrideColors(
+        s.value(QStringLiteral("IsSpotsOverrideColorsEnabled"),
+                QStringLiteral("False")).toString()
+            == QStringLiteral("True"));
+    setSpotOverrideBg(
+        s.value(QStringLiteral("IsSpotsOverrideBackgroundColorsEnabled"),
+                QStringLiteral("True")).toString()
+            == QStringLiteral("True"));
+    setSpotColor(QColor(
+        s.value(QStringLiteral("SpotsOverrideColor"),
+                QStringLiteral("#FFFF00")).toString()));
+    setSpotBgColor(QColor(
+        s.value(QStringLiteral("SpotsOverrideBgColor"),
+                QStringLiteral("#000000")).toString()));
+    setSpotBgOpacity(
+        s.value(QStringLiteral("SpotsBackgroundOpacity"), 48).toInt());
+
+    // 2026-05-12 bench fix (Gap #7).  Pull per-source panadapter
+    // visibility from AppSettings.  Default True (visible) so a fresh
+    // install or pre-Phase-3J-2 settings file keeps showing all
+    // sources.  Keys match the source strings the per-source spot
+    // adapters in RadioModel stamp into SpotData::source.
+    static const QStringList kSpotSources = {
+        QStringLiteral("Cluster"),       QStringLiteral("RBN"),
+        QStringLiteral("WSJT-X"),        QStringLiteral("SpotCollector"),
+        QStringLiteral("POTA"),          QStringLiteral("FreeDV"),
+        QStringLiteral("PSK"),
+    };
+    for (const QString& source : kSpotSources) {
+        const QString key = QStringLiteral("SpotSourceVisible/") + source;
+        const bool visible =
+            s.value(key, QStringLiteral("True")).toString()
+            == QStringLiteral("True");
+        setSpotSourceVisible(source, visible);
+    }
+    update();
+}
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:4497-4633 [@0cd4559]
+void SpectrumWidget::drawSpotMarkers(QPainter& p, const QRect& specRect)
+{
+    if (m_spotMarkers.isEmpty()) {
+        m_spotClickRects.clear();
+        m_spotClusters.clear();
+        return;
+    }
+
+    QFont spotFont = p.font();
+    spotFont.setPixelSize(m_spotFontSize);
+    spotFont.setBold(true);
+    p.setFont(spotFont);
+    const QFontMetrics fm(spotFont);
+
+    // Starting Y position based on percentage setting
+    const int startY = specRect.top() + specRect.height() * m_spotStartPct / 100;
+    const int th = fm.height() + 2;
+    const int maxBottom = startY + th * m_spotMaxLevels;
+
+    // Track label positions to avoid overlap and for click detection
+    QVector<QRect> placed;
+    m_spotClickRects.clear();
+    m_spotClusters.clear();
+
+    // Track which spots overflow (can't be placed within max levels)
+    // Key: x pixel position (quantized to label width), Value: list of overflowed spots
+    QMap<int, QVector<SpotMarker>> overflowGroups;
+    constexpr int ClusterBinWidth = 40;  // pixels — spots within this range cluster together
+
+    // Phase 3J-1 closeout follow-up (2026-05-12): one-shot diagnostic
+    // log so the bench operator can verify the per-source mask state
+    // matches the spots being rendered.  Logs once per second of
+    // unique state to avoid spamming the log file.  The mask check
+    // is otherwise unchanged: missing key in m_spotSourceVisible
+    // defaults to visible (true); explicit `false` value hides.
+    static qint64 s_lastSpotMaskLogMs = 0;
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (!m_spotMarkers.isEmpty() && nowMs - s_lastSpotMaskLogMs > 1000) {
+        QStringList parts;
+        for (auto it = m_spotSourceVisible.constBegin();
+             it != m_spotSourceVisible.constEnd(); ++it) {
+            parts << QString("%1=%2").arg(it.key())
+                                     .arg(it.value() ? "T" : "F");
+        }
+        QStringList sources;
+        for (const auto& s : m_spotMarkers) {
+            if (!s.source.isEmpty() && !sources.contains(s.source)) {
+                sources << s.source;
+            }
+        }
+        // qCInfo so the bench log captures it (lcSpectrum defaults to
+        // QtInfoMsg; qCDebug would be suppressed).  Throttled to once
+        // per second of unique state so it doesn't spam mid-tune.
+        qCInfo(lcSpectrum) << "drawSpotMarkers: mask=" << parts
+                           << "spot.sources=" << sources
+                           << "total=" << m_spotMarkers.size();
+        s_lastSpotMaskLogMs = nowMs;
+    }
+
+    for (const auto& spot : m_spotMarkers) {
+        // 2026-05-12 bench fix (Gap #7).  Per-source panadapter
+        // visibility mask.  Missing key in m_spotSourceVisible defaults
+        // to visible, so untouched sources keep the prior behaviour;
+        // an explicit `false` value hides this marker entirely (no
+        // label, no tick line, no hit-rect).  SpotHubDialog Display
+        // tab drives this.
+        if (!m_spotSourceVisible.value(spot.source, true)) {
+            continue;
+        }
+
+        // NereusSDR coordinate mapping: hzToX(double hz, QRect) takes Hz.
+        // AetherSDR upstream uses mhzToX(spot.freqMhz). Multiply by 1e6.
+        const int x = hzToX(spot.freqMhz * 1.0e6, specRect);
+        if (x < 0 || x > width()) continue;
+
+        // Color priority: override → DXCC → spot-provided → default cyan
+        QColor col(0x00, 0xb4, 0xd8);  // default cyan
+        if (m_spotOverrideColors) {
+            col = m_spotColor;
+        } else if (spot.dxccColor.isValid()) {
+            col = spot.dxccColor;
+        } else if (!spot.color.isEmpty() && spot.color.startsWith('#')) {
+            QColor parsed(spot.color);
+            if (parsed.isValid()) col = parsed;
+        }
+
+        // Draw callsign label
+        const QString label = spot.callsign;
+        const int tw = fm.horizontalAdvance(label) + 6;
+
+        // Start at configured position, nudge down to avoid overlap.
+        // Re-scan from the start after each nudge to handle cases where
+        // nudging past label A lands on top of label B.
+        QRect labelRect(x - tw / 2, startY, tw, th);
+        bool collision = true;
+        while (collision) {
+            collision = false;
+            for (const auto& r : placed) {
+                if (labelRect.intersects(r)) {
+                    labelRect.moveTop(r.bottom() + 1);
+                    collision = true;
+                    break;
+                }
+            }
+        }
+        // Overflow — collect for cluster badge
+        if (labelRect.bottom() > maxBottom) {
+            int bin = x / ClusterBinWidth;
+            overflowGroups[bin].append(spot);
+            continue;
+        }
+
+        // Draw vertical tick line from bottom of spectrum up to the label
+        p.setPen(QPen(QColor(col.red(), col.green(), col.blue(), 120), 1, Qt::DotLine));
+        p.drawLine(x, specRect.bottom(), x, labelRect.bottom());
+
+        placed.append(labelRect);
+        int mIdx = static_cast<int>(&spot - &m_spotMarkers[0]);
+        m_spotClickRects.append({labelRect, spot.freqMhz, mIdx});
+
+        // Background pill — only draw when override background is enabled (#768)
+        if (m_spotOverrideBg) {
+            int bgAlpha = m_spotBgOpacity * 255 / 100;
+            QColor bgCol = m_spotBgColor;
+            bgCol.setAlpha(bgAlpha);
+            p.setPen(Qt::NoPen);
+            p.setBrush(bgCol);
+            p.drawRoundedRect(labelRect, 3, 3);
+        }
+
+        // 2026-05-12 bench fix (Gap #6 follow-on — Spot List hover halo).
+        // When the user is hovering the matching row in the Spot List
+        // table, SpotHubDialog calls setHoverSpotIndexExternal(idx) on
+        // this widget.  Draw a bright outline so the user can map the
+        // table row to the spectrum overlay at a glance.  The halo is
+        // intentionally drawn AFTER the bg pill but BEFORE the text so
+        // the callsign stays on top.
+        if (spot.index >= 0 && spot.index == m_hoverSpotIndexExternal) {
+            QColor halo(0xff, 0xff, 0x00, 220);  // bright yellow
+            p.setPen(QPen(halo, 2));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(labelRect.adjusted(-2, -2, 2, 2), 4, 4);
+        }
+
+        // Text
+        p.setPen(col);
+        p.drawText(labelRect, Qt::AlignCenter, label);
+    }
+
+    // Draw cluster badges for overflow groups
+    if (!overflowGroups.isEmpty()) {
+        QFont badgeFont = spotFont;
+        badgeFont.setPixelSize(m_spotFontSize - 2);
+        p.setFont(badgeFont);
+        const QFontMetrics bfm(badgeFont);
+
+        for (auto it = overflowGroups.constBegin(); it != overflowGroups.constEnd(); ++it) {
+            const auto& spots = it.value();
+            if (spots.isEmpty()) continue;
+
+            // Position badge at average x of the group, at maxBottom
+            int avgX = 0;
+            for (const auto& s : spots) {
+                avgX += hzToX(s.freqMhz * 1.0e6, specRect);
+            }
+            avgX /= spots.size();
+
+            const QString badgeText = QString("+%1").arg(spots.size());
+            const int bw = bfm.horizontalAdvance(badgeText) + 10;
+            QRect badgeRect(avgX - bw / 2, maxBottom + 2, bw, th);
+
+            // Nudge horizontally to avoid overlapping other badges/labels
+            for (const auto& r : placed) {
+                if (badgeRect.intersects(r)) {
+                    badgeRect.moveLeft(r.right() + 3);
+                }
+            }
+            placed.append(badgeRect);
+
+            // Draw badge with distinct style
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0x30, 0x50, 0x70, 200));
+            p.drawRoundedRect(badgeRect, 3, 3);
+
+            p.setPen(QColor(0xff, 0xc0, 0x40));  // amber text
+            p.drawText(badgeRect, Qt::AlignCenter, badgeText);
+
+            // Store for click detection
+            SpotCluster cluster;
+            cluster.rect = badgeRect;
+            cluster.spots = spots;
+            m_spotClusters.append(cluster);
+        }
+
+        p.setFont(spotFont);  // restore spot font
+    }
+
+    p.setFont(QFont());  // restore default
+}
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:4635-4672 [@0cd4559]
+void SpectrumWidget::showSpotClusterPopup(const SpotCluster& cluster, const QPoint& globalPos)
+{
+    auto* menu = new QMenu(this);
+    menu->setStyleSheet(
+        "QMenu {"
+        "  background: #0f0f1a;"
+        "  border: 1px solid #305070;"
+        "  padding: 4px;"
+        "}"
+        "QMenu::item {"
+        "  color: #c8d8e8;"
+        "  padding: 4px 12px;"
+        "  font-size: 12px;"
+        "}"
+        "QMenu::item:selected {"
+        "  background: #1a3a5a;"
+        "  color: #00b4d8;"
+        "}");
+
+    for (const auto& spot : cluster.spots) {
+        QString text = QString("%1  %2 kHz")
+            .arg(spot.callsign, -10)
+            .arg(spot.freqMhz * 1000.0, 0, 'f', 1);
+        if (!spot.mode.isEmpty()) {
+            text += "  " + spot.mode;
+        }
+        auto* action = menu->addAction(text);
+        connect(action, &QAction::triggered, this, [this, spot] {
+            // NereusSDR signal contract: frequencyClicked(double hz).
+            // AetherSDR emits MHz; multiply by 1e6 to match the Hz signature.
+            const double freqHz = spot.freqMhz * 1.0e6;
+            emit frequencyClicked(freqHz);
+            if (spot.source == "Memory") {
+                emit spotTriggered(spot.index);
+            }
+        });
+    }
+
+    menu->popup(globalPos);
+    // QMenu self-deletes on close with WA_DeleteOnClose
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+}
+
 // Plan 4 D9 (Cluster E).  Panadapter TX filter band fill + border lines +
 // inline label.  Always drawn when m_txFilterVisible is set (called from the
 // main paint sequence regardless of MOX state — Thetis shows the TX filter
@@ -5171,6 +6598,261 @@ static int specHFromHeight(int widgetH, float spectrumFrac, int chromeH)
 #endif
 }
 
+// ===========================================================================
+// Notch (TNF) geometry -- design sections 8.1 and 8.2
+// ===========================================================================
+//
+// The single geometry source for the notch overlay.  Reproduces the rect
+// each paint site builds for itself, through the same specHFromHeight helper
+// so the GPU/CPU layout split is honoured without restating it: the QPainter
+// path puts the frequency bar at the bottom of the widget and takes
+// h * spectrumFrac, the QRhi path puts it between spectrum and waterfall and
+// takes (h - chrome) * spectrumFrac.
+//
+// Defined here rather than beside drawNotchMarkers because specHFromHeight is
+// a file-local static defined immediately above.
+QRect SpectrumWidget::notchSpecRect() const
+{
+    const int specH = specHFromHeight(height(), m_spectrumFrac,
+                                      kFreqScaleH + kDividerH);
+    return QRect(0, 0, width() - effectiveStripW(), specH);
+}
+
+// ===========================================================================
+// Notch (TNF) interaction -- design section 7
+// ===========================================================================
+
+// From Thetis console.cs:49039 [v2.10.3.15]: if (nHpx - nLpx > 8)
+static constexpr int kNotchEdgeZoneMinPx = 8;
+// From Thetis console.cs:49042 [v2.10.3.15]: if (Math.Abs(e.X - nLpx) < 4)
+// and console.cs:49047 [v2.10.3.15]: else if (Math.Abs(e.X - nHpx) < 4)
+static constexpr int kNotchEdgeGrabPx = 4;
+
+const SpectrumWidget::NotchMarker* SpectrumWidget::notchMarkerById(int id) const
+{
+    for (const NotchMarker& n : m_notchMarkers) {
+        if (n.id == id) {
+            return &n;
+        }
+    }
+    return nullptr;
+}
+
+// Pixel-space port of Thetis MNotchDB.NotchThatSurroundsFrequencyInBW:
+// first-found in list order, with the pad applied only when the notch is
+// narrower than twice the pad.  AetherSDR's nearest-centre tnfAtPixel
+// (src/gui/SpectrumWidget.cpp:13648-13681 [@c6481cbf]) is deliberately NOT
+// what governs here; design section 7.3.
+//
+// From Thetis radio.cs:4296-4325 [v2.10.3.15]
+//MW0LGE return first notch found that surrounds a given frequency in the given bandwidth
+//   [original inline comment from radio.cs:4296]
+//MW0LGE return list of notches in given bandwidth
+//notch is included if filter width is enough to be within the BW
+//   [original inline comments from radio.cs:4274-4275, the NotchesInBW
+//   prefilter this folds in]
+//
+// The call site supplies the arguments: Thetis passes HzInNPixels(1) as the
+// pad ("we pad it with 1pixel worth of hz to make it selectable at low
+// zoom", console.cs:49920 [v2.10.3.15]) and widens the bandwidth window by
+// _max_filter_width on both sides (console.cs:49921 [v2.10.3.15]).
+int SpectrumWidget::notchAtPixel(int x, const QRect& specRect) const
+{
+    if (m_notchMarkers.isEmpty() || specRect.width() <= 0) {
+        return -1;
+    }
+    // Off-screen rejection: neither hzToX nor xToHz clamps, so a pixel
+    // outside the plot maps to a frequency outside the displayed span.
+    if (x < specRect.left() || x > specRect.right()) {
+        return -1;
+    }
+
+    const double freqHz = xToHz(x, specRect);
+    const double padHz  = m_bandwidthHz / static_cast<double>(specRect.width());
+    const double windowLowHz  = m_centerHz - m_bandwidthHz / 2.0
+                                - NotchModel::kMaxNotchWidthHz;
+    const double windowHighHz = m_centerHz + m_bandwidthHz / 2.0
+                                + NotchModel::kMaxNotchWidthHz;
+
+    for (const NotchMarker& n : m_notchMarkers) {
+        const double centreHz = n.freqMhz * 1.0e6;
+        const double halfHz   = n.widthHz / 2.0;
+
+        // NotchesInBW inclusive edge overlap.
+        // From Thetis radio.cs:4286 [v2.10.3.15]
+        if (centreHz + halfHz < windowLowHz) {
+            continue;
+        }
+        if (centreHz - halfHz > windowHighHz) {
+            continue;
+        }
+
+        double lowHz  = centreHz - halfHz;
+        double highHz = centreHz + halfHz;
+        // From Thetis radio.cs:4310 [v2.10.3.15]:
+        //   if (n.FWidth < (nPadWidth * 2))
+        if (n.widthHz < padHz * 2.0) {
+            lowHz  -= padHz;
+            highHz += padHz;
+        }
+        if (freqHz >= lowHz && freqHz <= highHz) {
+            return n.id;
+        }
+    }
+    return -1;
+}
+
+int SpectrumWidget::notchAtPixelForTest(int x) const
+{
+    return notchAtPixel(x, notchSpecRect());
+}
+
+// Edge-vs-centre discrimination for a press on a notch.
+// From Thetis console.cs:49024-49067 [v2.10.3.15]
+//NOTCH MW0LGE  [original section marker from console.cs:48981]
+SpectrumWidget::NotchGrab SpectrumWidget::notchGrabAt(
+    int id, int x, bool shiftHeld, const QRect& specRect) const
+{
+    const NotchMarker* n = notchMarkerById(id);
+    if (!n || specRect.width() <= 0) {
+        return NotchGrab::None;
+    }
+
+    const double centreHz = n->freqMhz * 1.0e6;
+
+    // upper and lower sides of the notch
+    //   [original comment from console.cs:49024]
+    const double dL = centreHz - (n->widthHz / 2.0);
+    const double dH = centreHz + (n->widthHz / 2.0);
+
+    // convert the upper and lower sides into pixels from left edge of pnlDisplay
+    //   [original comment from console.cs:49028]
+    const int nLpx = hzToX(dL, specRect);
+    const int nHpx = hzToX(dH, specRect);
+
+    bool bNearEdge = false;
+
+    // default this based on which side of middle the mouse is
+    // so that we get inuative feeling when using shift modifier to resize
+    // ie we are not draggin an edge
+    //   [original comments from console.cs:49034-49036]
+    NotchGrab grab = (xToHz(x, specRect) >= centreHz) ? NotchGrab::HighEdge
+                                                      : NotchGrab::LowEdge;
+
+    if (nHpx - nLpx > kNotchEdgeZoneMinPx) {
+        // ok, the edges are far enough appart in pixels to actually check to see if we are over low or high side
+        //   [original comment from console.cs:49041]
+        if (std::abs(x - nLpx) < kNotchEdgeGrabPx) {
+            grab = NotchGrab::LowEdge;
+            bNearEdge = true;
+        } else if (std::abs(x - nHpx) < kNotchEdgeGrabPx) {
+            grab = NotchGrab::HighEdge;
+            bNearEdge = true;
+        }
+    }
+
+    // can also hold shift drag to resize the notch
+    //   [original comment from console.cs:49056]
+    // near edge of notch, let us drag the width
+    //   [original comment from console.cs:49058]
+    // drag whole notch, as we are not near the edge
+    //   [original comment from console.cs:49064]
+    return (bNearEdge || shiftHeld) ? grab : NotchGrab::Centre;
+}
+
+SpectrumWidget::NotchGrab SpectrumWidget::notchGrabAtForTest(
+    int id, int x, bool shiftHeld) const
+{
+    return notchGrabAt(id, x, shiftHeld, notchSpecRect());
+}
+
+// Notch right-click menu.  Contents from AetherSDR
+// src/gui/SpectrumWidget.cpp:8517-8572 [@c6481cbf], minus the Depth
+// submenu and the Permanent toggle: WDSP's NBP notch database carries
+// neither, so per design section 1.2 the per-notch Active flag takes the
+// Permanent slot.  Thetis has no notch menu at all: it suppresses every
+// right-click action while a notch is highlighted (console.cs:49615-49616
+// [v2.10.3.15]), so the whole surface is AetherSDR's.
+void SpectrumWidget::buildNotchContextMenu(int id, QMenu& menu)
+{
+    const NotchMarker* n = notchMarkerById(id);
+    if (!n) {
+        return;
+    }
+    const double freqMhz = n->freqMhz;
+    const int    widthHz = qRound(n->widthHz);
+    const bool   active  = n->active;
+
+    // Info header.  AetherSDR renders it as a disabled QWidgetAction with
+    // a two-line styled label (src/gui/SpectrumWidget.cpp:8521-8545
+    // [@c6481cbf]); a disabled QAction carries the same text with no
+    // styling to maintain.
+    QAction* info = menu.addAction(QString("%1 MHz    %2 Hz")
+                                       .arg(freqMhz, 0, 'f', 6)
+                                       .arg(widthHz));
+    info->setEnabled(false);
+    menu.addSeparator();
+
+    // From AetherSDR src/gui/SpectrumWidget.cpp:8548-8554 [@c6481cbf]
+    //
+    // Presets below the filter's achievable minimum are disabled, not hidden,
+    // so the floor is visible rather than mysterious.
+    //
+    // 2026-08-02 bench (JJ): the list was offered unconditionally, and 50 Hz
+    // is below the minimum at our default nc of 4096
+    // (min_width = 1600 / (nc / 256) * (rate / 48000) = 100 Hz,
+    // third_party/wdsp/src/nbp.c:88). WDSP's autoincr defaults on
+    // (RXA.c:105; Thetis ships chkMNFAutoIncrease.Checked = true,
+    // setup.designer.cs:44197) and silently widens a sub-minimum notch back
+    // to the minimum (nbp.c:122-125). So picking 50 Hz stored 50, drew a
+    // 50 Hz marker and notched 100 Hz: the menu, the marker, the settings
+    // table and the DSP all disagreed with no indication.
+    //
+    // Thetis has no preset list at all (it uses the udMNFWidth spinner) and
+    // its own widths are 200 and 100, both at or above the floor, so this
+    // list is a NereusSDR addition and this clamp is what makes it honest.
+    // To go genuinely narrower, raise nc: 8192 gives 50 Hz, 16384 gives 25,
+    // at proportional filter cost on every channel.
+    const int minWidthHz = static_cast<int>(std::ceil(m_notchMinWidthHz));
+    QMenu* widthMenu = menu.addMenu(QStringLiteral("Width"));
+    for (int presetHz : {50, 100, 200, 500}) {
+        const bool realisable = (presetHz >= minWidthHz);
+        QAction* a = widthMenu->addAction(
+            realisable ? QString("%1 Hz").arg(presetHz)
+                       : QString("%1 Hz  (min %2 Hz)").arg(presetHz).arg(minWidthHz),
+            this,
+            [this, id, presetHz]() {
+                emit notchWidthRequested(id, presetHz);
+            });
+        a->setCheckable(true);
+        a->setChecked(widthHz == presetHz);
+        a->setEnabled(realisable);
+        if (!realisable) {
+            a->setToolTip(
+                QStringLiteral("Below the narrowest notch this filter can "
+                               "realise (%1 Hz). Raise the DSP filter size to "
+                               "go narrower.").arg(minWidthHz));
+        }
+    }
+
+    menu.addSeparator();
+    // Replaces AetherSDR's Make Permanent / Make Temporary pair
+    // (src/gui/SpectrumWidget.cpp:8565-8571 [@c6481cbf]) with the WDSP
+    // notch's own active flag (third_party/wdsp/src/nbp.c:362,
+    // RXANBPAddNotch takes fcenter / fwidth / active only).
+    menu.addAction(active ? QStringLiteral("Bypass Notch")
+                          : QStringLiteral("Activate Notch"),
+                   this, [this, id, active]() {
+                       emit notchActiveRequested(id, !active);
+                   });
+
+    menu.addSeparator();
+    // From AetherSDR src/gui/SpectrumWidget.cpp:8547 [@c6481cbf]
+    // ("Remove TNF").
+    menu.addAction(QStringLiteral("Remove Notch"), this,
+                   [this, id]() { emit notchRemoveRequested(id); });
+}
+
 void SpectrumWidget::mousePressEvent(QMouseEvent* event)
 {
     // Phase 3Q-8: while disconnected, swallow all left-clicks and signal
@@ -5201,7 +6883,117 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
     }
 
     if (event->button() == Qt::RightButton) {
-        // Show overlay menu on right-click
+        // Ctrl + right-click adds a notch at the clicked frequency; Shift
+        // makes it narrow.  Checked before the spot menu and the overlay
+        // menu, so plain right-click behaviour is unchanged when Ctrl is
+        // not held (design section 7.3).
+        //
+        // From Thetis console.cs:49614-49646 [v2.10.3.15]:
+        //   case MouseButtons.Right: -> if (Common.CtrlKeyDown) ->
+        //   AddNotch(dFreq, rx).  The "add notch from cross hair mode with
+        //   middle mouse" comment at console.cs:49633 is stale: the only
+        //   MouseButtons.Middle branch (console.cs:49725) toggles active or
+        //   removes on Shift, and never adds (design section 7.1).
+        //
+        // Both Control and Meta count: macOS swaps them, so the physical
+        // Ctrl key arrives as Qt::MetaModifier.  The zoom wheel below
+        // already accepts either.
+        const bool notchCtrlHeld =
+            (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)) != 0;
+        if (notchCtrlHeld && my < specH && mx <= specRect.right()) {
+            const bool narrow = (event->modifiers() & Qt::ShiftModifier) != 0;
+            emit notchCreateRequested(xToHz(mx, specRect), narrow);
+            event->accept();
+            return;
+        }
+
+        // Right-click on a notch marker opens the notch menu.  Thetis
+        // suppresses every other right-click action while a notch is
+        // highlighted:
+        // if we have a notch highlighted, then all other right click is ignored
+        //   [original comment from console.cs:49615, guarding the return at
+        //   console.cs:49616 [v2.10.3.15]].  NereusSDR fills that suppressed
+        //   slot with AetherSDR's notch menu rather than doing nothing.
+        if (my < specH && mx <= specRect.right()) {
+            const int hitNotch = notchAtPixel(mx, specRect);
+            if (hitNotch >= 0) {
+                QMenu menu(this);
+                buildNotchContextMenu(hitNotch, menu);
+                menu.exec(event->globalPosition().toPoint());
+                event->accept();
+                return;
+            }
+        }
+
+        // 2026-05-12 bench fix (Gaps #3 + #5 — right-click context menu
+        // on spot labels + memory-spot variant).  Ported from
+        // AetherSDR SpectrumWidget.cpp:1779-1822 [@0cd4559].  Without
+        // this the right-click always falls through to the overlay
+        // menu (waterfall colors / ref level / etc.) even when the
+        // user is clearly targeting a spot label.
+        //
+        // Menu actions (non-Memory source):
+        //   - Tune to <call>         -> frequencyClicked(hz)
+        //   - Copy Callsign          -> clipboard
+        //   - Lookup on QRZ          -> https://www.qrz.com/db/<call>
+        //   - Remove Spot            -> spotRemoveRequested(index)
+        // Memory source replaces the menu with a single action that
+        // applies the memory (different verb: "Apply <call>"), matching
+        // upstream behaviour.
+        if (m_showSpots) {
+            const QPoint hitPos(mx, my);
+            int hitMarkerIdx = -1;
+            for (int i = 0; i < m_spotClickRects.size(); ++i) {
+                if (m_spotClickRects[i].rect.contains(hitPos)) {
+                    hitMarkerIdx = m_spotClickRects[i].markerIndex;
+                    break;
+                }
+            }
+            if (hitMarkerIdx >= 0 && hitMarkerIdx < m_spotMarkers.size()) {
+                const auto& sm = m_spotMarkers[hitMarkerIdx];
+                const int   spotIndex = sm.index;
+                const QString call    = sm.callsign;
+                const double freqHz   = sm.freqMhz * 1.0e6;
+                const QString source  = sm.source;
+
+                QMenu menu(this);
+                if (source == QStringLiteral("Memory")) {
+                    const QString title = call.isEmpty()
+                        ? QStringLiteral("Apply Memory")
+                        : QString("Apply %1").arg(call);
+                    menu.addAction(title, this,
+                        [this, freqHz, spotIndex]() {
+                            emit frequencyClicked(freqHz);
+                            emit spotTriggered(spotIndex);
+                        });
+                } else {
+                    menu.addAction(QString("Tune to %1").arg(call), this,
+                        [this, freqHz]() {
+                            emit frequencyClicked(freqHz);
+                        });
+                    menu.addAction(QStringLiteral("Copy Callsign"), this,
+                        [call]() {
+                            QApplication::clipboard()->setText(call);
+                        });
+                    menu.addAction(QStringLiteral("Lookup on QRZ"), this,
+                        [call]() {
+                            QDesktopServices::openUrl(
+                                QUrl(QStringLiteral("https://www.qrz.com/db/")
+                                     + call));
+                        });
+                    menu.addSeparator();
+                    menu.addAction(QStringLiteral("Remove Spot"), this,
+                        [this, spotIndex]() {
+                            emit spotRemoveRequested(spotIndex);
+                        });
+                }
+                menu.exec(event->globalPosition().toPoint());
+                event->accept();
+                return;
+            }
+        }
+
+        // Show overlay menu on right-click (default — not on a spot).
         if (!m_overlayMenu) {
             m_overlayMenu = new SpectrumOverlayMenu(this);
             connect(m_overlayMenu, &SpectrumOverlayMenu::wfColorGainChanged,
@@ -5220,12 +7012,47 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                     this, [this](float v) { m_dynamicRange = v; update(); scheduleSettingsSave(); });
             connect(m_overlayMenu, &SpectrumOverlayMenu::ctunChanged,
                     this, [this](bool v) { setCtunEnabled(v); });
+            // Plan decision D-e: the empty-pan "add a notch here" row.
+            // The overlay-menu route always places the default width, so
+            // narrow is false; Ctrl + Shift + right-click on the pan is
+            // the narrow variant.
+            connect(m_overlayMenu, &SpectrumOverlayMenu::notchAddRequested,
+                    this, [this](double freqHz) {
+                        emit notchCreateRequested(freqHz, false);
+                    });
         }
         m_overlayMenu->setValues(m_wfColorGain, m_wfBlackLevel, false,
                                   static_cast<int>(m_wfColorScheme),
                                   m_fillAlpha, m_panFill, false,
                                   m_refLevel, m_dynamicRange, m_ctunEnabled);
-        m_overlayMenu->move(event->globalPosition().toPoint());
+        // The frequency under the cursor, captured at popup time: the
+        // popup outlives the press, and by the time the button is clicked
+        // the pointer has moved onto the popup itself.
+        m_overlayMenu->setNotchAddFrequency(xToHz(mx, specRect));
+
+        // Clamp onto the screen before showing.
+        //
+        // Qt constrains a QMenu to the screen on its own but does NOT do the
+        // same for a plain QWidget carrying Qt::Popup, which is what
+        // SpectrumOverlayMenu is: asked for a y near the bottom edge it is
+        // placed there verbatim and its body hangs off the screen. That never
+        // showed while there was one full-height pan whose top sat high on the
+        // display; on the LOWER pan of a 2v layout -- right-clicking its
+        // waterfall, which is exactly what an operator does when they want the
+        // waterfall controls -- the panel opened below the visible area.
+        // Bench-reported 2026-07-28: "I have now lost the ability to adjust the
+        // second RX waterfall via the right click menu."
+        //
+        // adjustSize() first: on the very first right-click the popup has never
+        // been laid out, so size() would still be the default and the clamp
+        // would be computed against the wrong height.
+        const QPoint desired = event->globalPosition().toPoint();
+        m_overlayMenu->adjustSize();
+        const QScreen* screen = QGuiApplication::screenAt(desired);
+        if (!screen) { screen = QGuiApplication::primaryScreen(); }
+        m_overlayMenu->move(PopupPlacement::clampToAvailable(
+            desired, m_overlayMenu->size(),
+            screen ? screen->availableGeometry() : QRect()));
         m_overlayMenu->show();
         return;
     }
@@ -5233,6 +7060,36 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
     if (event->button() != Qt::LeftButton) {
         QWidget::mousePressEvent(event);
         return;
+    }
+
+    // Phase 3J-2 Task E1: spot label / cluster badge hit-test.
+    // Click on a spot label → tune to that frequency and notify spot
+    // sources via spotTriggered(index). Click on a cluster badge (+N)
+    // → show popup menu of the collapsed spots.
+    // From AetherSDR src/gui/SpectrumWidget.cpp:1623-1644 [@0cd4559]
+    if (m_showSpots) {
+        const QPoint pos(mx, my);
+        for (const auto& hr : m_spotClickRects) {
+            if (hr.rect.contains(pos)) {
+                // NereusSDR signal contract: frequencyClicked(double hz).
+                // AetherSDR emits MHz; multiply by 1e6 to match Hz signature.
+                emit frequencyClicked(hr.freqMhz * 1.0e6);
+                // Notify the radio that a spot was clicked (#341)
+                if (hr.markerIndex >= 0 && hr.markerIndex < m_spotMarkers.size()) {
+                    emit spotTriggered(m_spotMarkers[hr.markerIndex].index);
+                }
+                event->accept();
+                return;
+            }
+        }
+        // Click on a cluster badge → show popup with collapsed spots
+        for (const auto& cluster : m_spotClusters) {
+            if (cluster.rect.contains(pos)) {
+                showSpotClusterPopup(cluster, mapToGlobal(pos));
+                event->accept();
+                return;
+            }
+        }
     }
 
     // 1. dBm scale strip — right edge. Arrow row adjusts ref level,
@@ -5307,6 +7164,46 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         m_bwDragStartBw = m_bandwidthHz;
         setCursor(Qt::SizeHorCursor);
         return;
+    }
+
+    // 3b. Notch (TNF) grab.  Thetis runs its notch block first inside
+    // case MouseButtons.Left:, ahead of every filter drag, so a notch
+    // marker sitting on a filter edge still drags as a notch.  The dBm
+    // strip / divider / freq-scale rows above are NereusSDR chrome outside
+    // the spectrum plot and keep their existing precedence, so the notch
+    // test is guarded on my < specH.
+    //
+    // The press also writes m_selectedNotchId, so a press is
+    // self-contained rather than relying on a prior hover, and the grab
+    // latches the notch for the whole gesture: hover stops writing until
+    // release, so an overlapping neighbour cannot steal the drag
+    // (design section 7.3).
+    //
+    // From Thetis console.cs:48981-48998 [v2.10.3.15]
+    //NOTCH MW0LGE  [original section marker from console.cs:48981]
+    if (my < specH) {
+        const int hitNotch = notchAtPixel(mx, specRect);
+        if (m_selectedNotchId != hitNotch) {
+            m_selectedNotchId = hitNotch;
+            markOverlayDirty();
+        }
+        if (hitNotch >= 0) {
+            const bool shiftHeld =
+                (event->modifiers() & Qt::ShiftModifier) != 0;
+            m_notchGrab = notchGrabAt(hitNotch, mx, shiftHeld, specRect);
+            const NotchMarker* n = notchMarkerById(hitNotch);
+            // the inital click point, delta is worked in mouse_move
+            //   [original comment from console.cs:48997]
+            m_notchDragStartX = mx;
+            // From Thetis console.cs:49059 [v2.10.3.15] (width, edge drag)
+            // and console.cs:49065 [v2.10.3.15] (centre, whole-notch drag).
+            m_notchDragStartData = (m_notchGrab == NotchGrab::Centre)
+                ? (n ? n->freqMhz * 1.0e6 : 0.0)
+                : (n ? n->widthHz : 0.0);
+            setCursor(Qt::SizeHorCursor);
+            event->accept();
+            return;
+        }
     }
 
     // Compute filter edge pixel positions for hit-testing
@@ -5422,6 +7319,45 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         }
 
         setCursor(Qt::SizeVerCursor);
+        event->accept();
+        return;
+    }
+
+    // Notch drag: whole-notch move, or width from the latched edge.  The
+    // pixel delta is worked here from the press point recorded above; the
+    // NotchModel owns every clamp (min/max centre, 0..10000 width), so
+    // this layer emits the raw request.  AetherSDR's y-axis width gesture
+    // (src/gui/SpectrumWidget.cpp:9051-9070 [@c6481cbf]) is deliberately
+    // declined, so vertical movement during a centre drag cannot silently
+    // change the width (design section 7.2).
+    //
+    // From Thetis console.cs:49928-49968 [v2.10.3.15] (centre)
+    //MW0LGE [2.9.0.7] update on drag
+    //   [original inline comment from console.cs:49967 — Thetis pushes on
+    //   every mouse-move by named design; design section 6.2 says do not
+    //   add throttling here.]
+    // From Thetis console.cs:49971-49987 [v2.10.3.15] (width)
+    if (m_notchGrab != NotchGrab::None && m_selectedNotchId >= 0
+        && specRect.width() > 0) {
+        const double hzPerPx = m_bandwidthHz / specRect.width();
+        if (m_notchGrab == NotchGrab::Centre) {
+            // drag the whole notch  [original comment from console.cs:49930]
+            const double diff = (mx - m_notchDragStartX) * hzPerPx;
+            emit notchMoveRequested(m_selectedNotchId,
+                                    m_notchDragStartData + diff);
+        } else {
+            // drag the bw edges of the notch
+            //   [original comment from console.cs:49973]
+            const double diff = (m_notchGrab == NotchGrab::HighEdge)
+                ? (mx - m_notchDragStartX) * hzPerPx
+                : (m_notchDragStartX - mx) * hzPerPx;
+            // we want double the diff, as we are doing 'both sides'
+            //   [original comment from console.cs:49984]
+            emit notchWidthRequested(m_selectedNotchId,
+                                     m_notchDragStartData + (diff * 2.0));
+        }
+        setCursor(Qt::SizeHorCursor);
+        markOverlayDirty();
         event->accept();
         return;
     }
@@ -5547,6 +7483,145 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         }
     }
 
+    // 2026-05-12 bench fix (Gaps #1 + #2 + #6 from the spot-overlay
+    // adversarial audit): hover-cursor + tooltip + hover-index emit for
+    // spot labels and cluster badges.  Ported from AetherSDR
+    // SpectrumWidget.cpp:2282-2318 [@0cd4559].  Without this:
+    //   - the cursor stays as a crosshair when over a spot, hiding the
+    //     fact that the label is clickable;
+    //   - hovering yields no information about the spot (callsign,
+    //     spotter, source, comment, age);
+    //   - the Spot List tab cannot highlight the row the user is
+    //     pointing at on the spectrum.
+    //
+    // Two hit-test loops in priority order: per-spot labels first (so
+    // the tooltip wins over a cluster badge that visually overlaps a
+    // label edge), then cluster badges.  Both early-return after
+    // setting cursor + emitting hover signal so we don't fall through
+    // to the filter-edge / passband / crosshair logic below.
+    if (m_showSpots && my < specH) {
+        const QPoint pos(mx, my);
+        for (int i = 0; i < m_spotClickRects.size(); ++i) {
+            const auto& hr = m_spotClickRects[i];
+            if (!hr.rect.contains(pos)) continue;
+            setCursor(Qt::PointingHandCursor);
+            if (hr.markerIndex >= 0 && hr.markerIndex < m_spotMarkers.size()) {
+                const auto& sm = m_spotMarkers[hr.markerIndex];
+                QString tip = QString("<b>%1</b>&nbsp;&nbsp;%2 MHz")
+                    .arg(sm.callsign)
+                    .arg(sm.freqMhz, 0, 'f', 4);
+                if (!sm.mode.isEmpty()) {
+                    tip += QString("<br>Mode: %1").arg(sm.mode);
+                }
+                if (!sm.source.isEmpty()) {
+                    tip += QString("<br>Source: %1").arg(sm.source);
+                }
+                if (!sm.spotterCallsign.isEmpty()) {
+                    tip += QString("<br>Spotter: %1").arg(sm.spotterCallsign);
+                }
+                if (!sm.comment.isEmpty()) {
+                    tip += QString("<br>%1").arg(sm.comment.toHtmlEscaped());
+                }
+                if (sm.timestampMs > 0) {
+                    tip += QString("<br>Spotted: %1 UTC").arg(
+                        QDateTime::fromMSecsSinceEpoch(sm.timestampMs, QTimeZone::utc())
+                            .toString("yyyy-MM-dd HH:mm:ss"));
+                }
+                QToolTip::showText(event->globalPosition().toPoint(), tip, this);
+                // Gap #6 — let the Spot List tab know which row to
+                // highlight.  -1 sentinel via leaveEvent / non-spot
+                // hover clears the highlight.
+                if (m_hoverSpotIndex != sm.index) {
+                    m_hoverSpotIndex = sm.index;
+                    emit spotHoverIndexChanged(sm.index);
+                }
+            }
+            event->accept();
+            return;
+        }
+        // No label hit — try cluster badges.
+        for (const auto& cluster : m_spotClusters) {
+            if (!cluster.rect.contains(pos)) continue;
+            setCursor(Qt::PointingHandCursor);
+            QString tip = QString("<b>%1 spot%2 at this freq</b>")
+                .arg(cluster.spots.size())
+                .arg(cluster.spots.size() == 1 ? "" : "s");
+            const int previewN = std::min(8, static_cast<int>(cluster.spots.size()));
+            for (int k = 0; k < previewN; ++k) {
+                const auto& sp = cluster.spots[k];
+                tip += QString("<br>%1 %2 %3")
+                    .arg(sp.callsign,
+                         QString::number(sp.freqMhz, 'f', 4),
+                         sp.mode);
+            }
+            if (cluster.spots.size() > previewN) {
+                tip += QString("<br>... %1 more").arg(
+                    cluster.spots.size() - previewN);
+            }
+            QToolTip::showText(event->globalPosition().toPoint(), tip, this);
+            // Clear any per-spot hover highlight when we're hovering
+            // a cluster (not a specific spot).
+            if (m_hoverSpotIndex != -1) {
+                m_hoverSpotIndex = -1;
+                emit spotHoverIndexChanged(-1);
+            }
+            event->accept();
+            return;
+        }
+        // Moved off any spot/cluster -> hide tooltip and clear hover.
+        if (m_hoverSpotIndex != -1) {
+            m_hoverSpotIndex = -1;
+            emit spotHoverIndexChanged(-1);
+            QToolTip::hideText();
+        }
+    }
+
+    // Notch hover: highlight, frequency/width readout, and the selection
+    // the wheel resize is gated on.  Thetis re-evaluates the selected notch
+    // on every non-dragging move and clears it when the cursor is not over
+    // one, which is what keeps a plain scroll tuning the VFO.
+    //
+    // ok are we over the top of a notch?
+    //   [original comment from console.cs:49919]
+    // From Thetis console.cs:49917-49926 [v2.10.3.15]
+    if (my < specH) {
+        const int hoverNotch = notchAtPixel(mx, specRect);
+        if (hoverNotch != m_hoveredNotchId) {
+            m_hoveredNotchId = hoverNotch;
+            if (hoverNotch < 0) {
+                QToolTip::hideText();
+            }
+            markOverlayDirty();
+        }
+        if (hoverNotch != m_selectedNotchId) {
+            m_selectedNotchId = hoverNotch;
+            markOverlayDirty();
+        }
+        if (hoverNotch >= 0) {
+            const NotchMarker* n = notchMarkerById(hoverNotch);
+            if (n) {
+                // AetherSDR renders this in a styled QLabel popup
+                // (m_tnfHoverPopup, src/gui/SpectrumWidget.cpp:13591-13646
+                // [@c6481cbf]); NereusSDR routes the same frequency +
+                // width readout through QToolTip, the path the spot
+                // overlay above already uses.
+                QToolTip::showText(event->globalPosition().toPoint(),
+                    QString("<b>%1 MHz</b><br>Width: %2 Hz")
+                        .arg(n->freqMhz, 0, 'f', 6)
+                        .arg(qRound(n->widthHz)),
+                    this);
+            }
+            setCursor(Qt::SizeHorCursor);
+            // Unconditional, not just when the hovered id changes: the
+            // cursor-frequency readout is painted into the same cached
+            // static overlay (drawCursorInfo), so skipping this would
+            // freeze it for as long as the pointer stayed over a marker.
+            markOverlayDirty();
+            event->accept();
+            return;
+        }
+    }
+
     // Sub-epic E: hit-test against the actual dBm-strip width, not the
     // effectiveStripW() layout reservation (which widens to 72px when paused
     // to make room for the time-scale strip's UTC labels — but the dBm strip
@@ -5619,7 +7694,29 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
                 QRect specRect(0, 0, w - effectiveStripW(), specH);
                 double hz = xToHz(static_cast<int>(event->position().x()), specRect);
                 hz = std::round(hz / m_stepHz) * m_stepHz;
-                emit frequencyClicked(hz);
+
+                // Phase 3F Sub-Epic F Task 12: click-in-wing vs click-in-island
+                // disambiguation. Only engages when extended-mode is on
+                // (operator zoomed past the DDC's listenable range). When
+                // off, this falls through to the existing single-path
+                // frequencyClicked behavior — no regression to non-extended
+                // pan tuning.
+                if (m_extendedMode && m_sampleRateHz > 0.0) {
+                    const double halfBwHz = m_sampleRateHz * 0.5;
+                    if (std::abs(hz - m_ddcCenterHz) <= halfBwHz) {
+                        // Click landed inside the listenable island —
+                        // standard slice retune.
+                        emit frequencyClicked(hz);
+                    } else {
+                        // Click landed in a wing — operator wants the
+                        // clicked Hz to become the new DDC center.
+                        // MainWindow forwards this to slice frequency,
+                        // which propagates to the codec / DDC NCO retune.
+                        emit ddcRetuneRequested(hz);
+                    }
+                } else {
+                    emit frequencyClicked(hz);
+                }
             }
         }
 
@@ -5644,13 +7741,78 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         m_draggingDivider = false;
         m_draggingPan = false;
         m_draggingBandwidth = false;
+        // Ends the notch gesture; hover resumes writing the selection.
+        if (m_notchGrab != NotchGrab::None) {
+            m_notchGrab = NotchGrab::None;
+            emit notchDragFinished();
+        }
         setCursor(Qt::CrossCursor);
     }
     QWidget::mouseReleaseEvent(event);
 }
 
+// 2026-05-12 bench fix (Gap #8 — tooltip cleanup on mouse leave).
+// Ported from AetherSDR SpectrumWidget.cpp:2556-2560 [@0cd4559].  When
+// the mouse exits the widget rect entirely the cursor never crosses a
+// "not over a spot" boundary inside mouseMoveEvent (the move events
+// stop firing), so we explicitly hide any in-flight tooltip and clear
+// the hover index here.  Without this the tooltip can linger after the
+// pointer has moved off the panadapter into another widget.
+void SpectrumWidget::leaveEvent(QEvent* event)
+{
+    m_mouseInWidget = false;
+    QToolTip::hideText();
+    if (m_hoverSpotIndex != -1) {
+        m_hoverSpotIndex = -1;
+        emit spotHoverIndexChanged(-1);
+    }
+    // Same reasoning for the notch overlay: the cursor never crosses a
+    // "not over a notch" boundary inside mouseMoveEvent when it leaves the
+    // widget outright, so the Chartreuse highlight would stay lit and the
+    // wheel would keep resizing a notch the operator is no longer near.
+    if (m_hoveredNotchId != -1 || m_selectedNotchId != -1) {
+        m_hoveredNotchId = -1;
+        m_selectedNotchId = -1;
+        markOverlayDirty();
+    }
+    QWidget::leaveEvent(event);
+}
+
 void SpectrumWidget::wheelEvent(QWheelEvent* event)
 {
+    // MW0LGE before all, handle the notch size change
+    //   [original inline comment from console.cs:31140]
+    // From Thetis console.cs:31133-31145 [v2.10.3.15] — the wheel resizes
+    // the selected notch and returns before any other wheel handling.  The
+    // gate is mandatory: without a selected notch a plain scroll over the
+    // panadapter tunes the VFO, so an ungated resize would steal every
+    // scroll (design section 7.4).  num_steps is 1 per click upstream, not
+    // a raw delta, which is what makes the step constants below Hz.
+    const int notchDelta = event->angleDelta().y();
+    const int notchSteps = (notchDelta == 0) ? 0 : (notchDelta > 0 ? 1 : -1);
+    if (m_selectedNotchId >= 0 && notchSteps != 0) {
+        const NotchMarker* n = notchMarkerById(m_selectedNotchId);
+        if (n) {
+            // From Thetis console.cs:33299-33321 [v2.10.3.15],
+            // notchMouseWheel: Shift adds the raw detent count
+            // (console.cs:33306), no modifier multiplies it by 10
+            // (console.cs:33309).
+            //
+            // Upstream's own clamps (0..._max_filter_width at
+            // console.cs:33312-33313, and the "check to see if outside
+            // frequency limits" pair at console.cs:33315-33318) are NOT
+            // repeated here: NotchModel::setWidth carries both, so the
+            // bound has one owner.
+            const double step = (event->modifiers() & Qt::ShiftModifier)
+                ? NotchModel::kWheelWidthStepFineHz
+                : NotchModel::kWheelWidthStepHz;
+            emit notchWidthRequested(m_selectedNotchId,
+                                     n->widthHz + notchSteps * step);
+        }
+        event->accept();
+        return;
+    }
+
     // Wheel over dBm strip: adjust dynamic range in ±5 dB steps.
     // From AetherSDR SpectrumWidget.cpp:2630-2636 [@0cd4559]
     const int mx = static_cast<int>(event->position().x());
@@ -5855,6 +8017,42 @@ void SpectrumWidget::initOverlayPipeline()
 
     m_overlayStatic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);
     m_overlayStatic.setDevicePixelRatio(dpr);
+    // 2026-05-26 KG4VCF: pin the overlay texture so the per-paint
+    // QImage::fill + 16 paint ops + GPU upload don't touch a
+    // compressed page when the system is under memory pressure.
+    // This is the biggest single buffer in the render path (~1.6 MB
+    // at default window size) and is hit on every overlay-rebuild
+    // tick (10 Hz when blob / peak-hold / NF are enabled).
+    lockMemory(m_overlayStatic.constBits(),
+               m_overlayStatic.sizeInBytes(),
+               "SpectrumWidget::m_overlayStatic (init)");
+
+    // 2026-05-26 KG4VCF dual-layer split: dynamic overlay texture.
+    // Same dimensions, format, sampler, pipeline as the static
+    // layer -- only the texture handle + SRB binding differ.  This
+    // is the layer that carries peak-hold trace / peak blobs /
+    // noise-floor overlays.  Chrome stays in the static layer.
+    m_ovDynGpuTex = r->newTexture(QRhiTexture::RGBA8, QSize(pw, ph));
+    m_ovDynGpuTex->create();
+    m_ovDynSrb = r->newShaderResourceBindings();
+    m_ovDynSrb->setBindings({
+        QRhiShaderResourceBinding::sampledTexture(1,
+            QRhiShaderResourceBinding::FragmentStage,
+            m_ovDynGpuTex, m_ovSampler),
+    });
+    m_ovDynSrb->create();
+    m_overlayDynamic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);
+    m_overlayDynamic.setDevicePixelRatio(dpr);
+    // QImage's buffer is uninitialized, and the dynamic quad is composited
+    // across the WHOLE widget while the rebuild below only clears and
+    // uploads the spectrum-height band.  The waterfall region therefore
+    // sampled whatever the allocator handed us and could show opaque
+    // garbage, most visibly right after init or a resize.  Codex review,
+    // PR #291.
+    m_overlayDynamic.fill(Qt::transparent);
+    lockMemory(m_overlayDynamic.constBits(),
+               m_overlayDynamic.sizeInBytes(),
+               "SpectrumWidget::m_overlayDynamic (init)");
 }
 
 void SpectrumWidget::initSpectrumPipeline()
@@ -5953,6 +8151,22 @@ void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
 
 void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
 {
+    // 2026-05-26 KG4VCF perf instrumentation: time the whole GPU
+    // render path (texture uploads + draw-call submission) so the
+    // in-spectrum overlay can show avg/max paint cost and the gap
+    // between consecutive paints (proxy for main-thread starvation).
+    // ns/1e6 -> ms; perf snapshot averages over the last ~1 s.
+    QElapsedTimer paintTimer;
+    paintTimer.start();
+    {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (m_lastPaintWallMs > 0) {
+            PerfMonitor::instance().recordInterFrameGap(
+                static_cast<double>(nowMs - m_lastPaintWallMs));
+        }
+        m_lastPaintWallMs = nowMs;
+    }
+
     QRhi* r = rhi();
     const int w = width();
     const int h = height();
@@ -6019,8 +8233,42 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     }
 
     // ---- Waterfall UBO (ring buffer offset) ----
+    //
+    // 2026-05-25 KG4VCF Option B: GPU sub-row scroll interpolation.
+    //
+    // The waterfall is a ring-buffer texture: each row push decrements
+    // m_wfWriteRow and writes new dBm data at that index.  Sampling the
+    // texture at v_uv.y = 0 with rowOffset = m_wfWriteRow/H places the
+    // newest row at the top of the viewport.
+    //
+    // Before Option B, rowOffset jumped by 1/H on every push.  Even with
+    // PreciseTimer + WaterfallTicker on its own thread, small drift
+    // between the push cadence and the display cadence let the eye see a
+    // ~1 Hz hitch in the scroll.
+    //
+    // Option B turns rowOffset into a CONTINUOUS function of time by
+    // having the displayed top row LAG the most recent push by exactly
+    // one push period.  At each display frame between push N and push
+    // N+1, we blend texel m_wfWriteRow (newest, just pushed at N) with
+    // texel (m_wfWriteRow + 1) mod H (the previously-newest, pushed at
+    // N-1).  Both texels hold valid data, so the bilinear sampler
+    // produces a clean gradient with no garbage-row artifacts.  At the
+    // push moment, frac saturates to 1.0 and effectiveRow reaches
+    // m_wfWriteRow exactly; immediately after the push m_wfWriteRow has
+    // decremented by one and frac has reset to 0, so the formula
+    // effectiveRow = m_wfWriteRow + (1 - frac) holds continuous across
+    // the boundary (no visible step on push).
+    //
+    // The visual lag is one push period (~33 ms at the default 30 Hz
+    // cadence) -- imperceptible to the operator and the price for not
+    // having to invent data that doesn't exist yet.
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const float pushPeriodMs = static_cast<float>(qMax(1, m_wfUpdatePeriodMs));
+    const float elapsedMs = static_cast<float>(qMax<qint64>(0, nowMs - m_wfLastPushMs));
+    const float pushFrac = qBound(0.0f, elapsedMs / pushPeriodMs, 1.0f);
+    const float effectiveRow = static_cast<float>(m_wfWriteRow) + (1.0f - pushFrac);
     float rowOffset = (m_wfGpuTexH > 0)
-        ? static_cast<float>(m_wfWriteRow) / m_wfGpuTexH : 0.0f;
+        ? effectiveRow / static_cast<float>(m_wfGpuTexH) : 0.0f;
     float uniforms[] = {rowOffset, 0.0f, 0.0f, 0.0f};
     batch->updateDynamicBuffer(m_wfUbo, 0, sizeof(uniforms), uniforms);
 
@@ -6030,8 +8278,19 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         const int pw = static_cast<int>(w * dpr);
         const int ph = static_cast<int>(h * dpr);
         if (m_overlayStatic.size() != QSize(pw, ph)) {
+            // 2026-05-26 KG4VCF: unlock the previous overlay before
+            // replacement frees it.  Aligned no-op when null.
+            if (!m_overlayStatic.isNull()) {
+                unlockMemory(m_overlayStatic.constBits(),
+                             m_overlayStatic.sizeInBytes());
+            }
             m_overlayStatic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);
             m_overlayStatic.setDevicePixelRatio(dpr);
+            // Pin the resized overlay (resize trigger fires on
+            // window-size change; tag for log clarity).
+            lockMemory(m_overlayStatic.constBits(),
+                       m_overlayStatic.sizeInBytes(),
+                       "SpectrumWidget::m_overlayStatic (resize)");
             m_ovGpuTex->setPixelSize(QSize(pw, ph));
             m_ovGpuTex->create();
             m_ovSrb->setBindings({
@@ -6051,6 +8310,15 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             m_overlayStaticDirty = true;
         }
 
+        // 2026-05-26 KG4VCF perf instrumentation: time the overlay-
+        // rebuild block (QImage fill + ~16 paint ops + GPU texture
+        // upload) so the perf overlay can show avg/max cost and
+        // confirm whether this is the dominant per-paint expense.
+        QElapsedTimer ovlyTimer;
+        const bool needsOverlayRebuild = m_overlayStaticDirty;
+        if (needsOverlayRebuild) {
+            ovlyTimer.start();
+        }
         if (m_overlayStaticDirty) {
             m_overlayStatic.fill(Qt::transparent);
             QPainter p(&m_overlayStatic);
@@ -6093,6 +8361,21 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             p.fillRect(0, specH, w, kDividerH, QColor(0x30, 0x40, 0x50));
             drawFreqScale(p, QRect(0, specH + kDividerH, w - effectiveStripW(), kFreqScaleH));
             drawTimeScale(p, wfRectFull);
+            // TNF notch overlay, GPU static-overlay path.  Same relative
+            // ordering as the CPU paintEvent above and as AetherSDR
+            // src/gui/SpectrumWidget.cpp:12013-12016 [@c6481cbf], where
+            // drawTnfMarkers likewise precedes drawSpotMarkers in the
+            // frequency-plane painter.  Missing THIS call site while
+            // having the CPU one is a silent GPU-only regression, since
+            // NEREUS_GPU_SPECTRUM is the shipping path.
+            drawNotchMarkers(p, notchSpecRect());
+            // Phase 3J-2 Task E1: spot overlay before VFO marker so labels
+            // sit below the slice marker chrome. Mirrors the CPU paintEvent
+            // ordering and AetherSDR SpectrumWidget.cpp:3787 [@0cd4559]
+            // (drawSpotMarkers between trace and drawSliceMarkers).
+            if (m_showSpots) {
+                drawSpotMarkers(p, specRect);
+            }
             drawVfoMarker(p, specRect, wfRect);
             drawOffScreenIndicator(p, specRect, wfRect);
 
@@ -6103,22 +8386,14 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             // VFO/filter changes via setVfoFrequency/setFilterOffset.
             drawWaterfallChrome(p, wfRect);
 
-            // Per-frame dynamic overlays — Active Peak Hold trace + Peak
-            // Blobs (Tasks 2.5/2.6) + Noise-floor line/text. The CPU
-            // paintEvent path calls these from drawSpectrum() every frame;
-            // the GPU path needs them baked into the overlay texture.
-            // updateSpectrumLinear() forces m_overlayStaticDirty=true when
-            // any of them is enabled so this block runs every frame.
-            if ((m_activePeakHold.enabled() || m_peakBlobs.enabled()) &&
-                !m_renderedPixels.isEmpty()) {
-                if (m_activePeakHold.enabled() && m_activePeakHold.size() > 0) {
-                    paintActivePeakHoldTrace(p, specRect);
-                }
-                if (m_peakBlobs.enabled() && !m_peakBlobs.blobs().isEmpty()) {
-                    paintPeakBlobs(p, specRect);
-                }
-            }
-            paintNoiseFloorOverlay(p, specRect);
+            // 2026-05-26 KG4VCF dual-layer overlay split: peak-hold
+            // trace + peak blobs + noise floor are NO LONGER painted
+            // here.  They live in m_overlayDynamic which rebuilds at
+            // 30 Hz (cheap) -- this static texture only rebuilds on
+            // state change, so the expensive chrome work (grid,
+            // scales, bandplan, freq/time scale, VFO marker, spot
+            // markers, waterfall chrome) amortises to ~zero per
+            // frame.
 
             // Bin width corner readout — Thetis lblDisplayBinWidth
             // (setup.cs:7061 [v2.10.3.13]).  Mirrors the CPU drawSpectrum
@@ -6175,6 +8450,122 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                 drawCursorInfo(p, specRect);
             }
 
+            // 2026-05-26 KG4VCF perf instrumentation overlay.  Painted
+            // into the static cache so the cost is only paid when the
+            // 1 Hz perf-poll timer invalidates the overlay (see
+            // SpectrumWidget ctor).  Operator toggles via View ->
+            // Performance Overlay; persisted under "ShowPerfOverlay".
+            if (m_showPerfOverlay) {
+                // Read the cached snapshot (the 1 Hz poll timer is the
+                // sole snapshotAndClearDeltas() consumer; reading
+                // here non-destructively avoids double-clearing the
+                // delta counters).
+                const auto stats =
+                    PerfMonitor::instance().lastSnapshot();
+                QStringList lines;
+                lines << QStringLiteral("paint  avg %1 max %2 ms")
+                            .arg(stats.paintMsAvg, 0, 'f', 1)
+                            .arg(stats.paintMsMax, 0, 'f', 1)
+                      << QStringLiteral("gap    avg %1 max %2 ms")
+                            .arg(stats.gapMsAvg, 0, 'f', 1)
+                            .arg(stats.gapMsMax, 0, 'f', 1)
+                      << QStringLiteral("fft    avg %1 max %2 ms")
+                            .arg(stats.fftMsAvg, 0, 'f', 1)
+                            .arg(stats.fftMsMax, 0, 'f', 1)
+                      << QStringLiteral("ovly   avg %1 max %2 ms")
+                            .arg(stats.ovlyMsAvg, 0, 'f', 1)
+                            .arg(stats.ovlyMsMax, 0, 'f', 1)
+                      << QStringLiteral("audio  fill avg %1 min %2 ms (%3 samp)")
+                            .arg(stats.audioFillAvgMs, 0, 'f', 1)
+                            .arg(stats.audioFillMinMs, 0, 'f', 1)
+                            .arg(stats.audioFillSamples)
+                      << QStringLiteral("audio  underruns %1 (+%2/s)")
+                            .arg(stats.audioUnderrunsTotal)
+                            .arg(stats.audioUnderrunsDelta)
+                      << QStringLiteral("udp    drops %1 (+%2/s)")
+                            .arg(stats.udpDropsTotal)
+                            .arg(stats.udpDropsDelta)
+                      << QStringLiteral("tx iq  underruns %1 (+%2/s)")
+                            .arg(stats.txIqUnderrunsTotal)
+                            .arg(stats.txIqUnderrunsDelta)
+                      << QStringLiteral("tx iq  produced  %1 (+%2/s)")
+                            .arg(stats.txIqProducedTotal)
+                            .arg(stats.txIqProducedDelta)
+                      << QStringLiteral("mem    %1 MB%2")
+                            .arg(stats.memFootprintMb, 0, 'f', 0)
+                            .arg(stats.memCompressing
+                                 ? QStringLiteral(" COMPRESSING")
+                                 : QString{})
+                      << QStringLiteral("mlock  %1 regions / %2 MB pinned")
+                            .arg(memoryLockStats().regionsLocked)
+                            .arg(memoryLockStats().bytesLocked
+                                 / (1024.0 * 1024.0), 0, 'f', 1);
+                QFont pf = p.font();
+                pf.setPixelSize(11);
+                pf.setFamily(QStringLiteral("Menlo"));
+                p.setFont(pf);
+                const QFontMetrics fm(pf);
+                const int lineH = fm.height();
+                int maxW = 0;
+                for (const QString& s : lines) {
+                    maxW = qMax(maxW, fm.horizontalAdvance(s));
+                }
+                const int padX = 8;
+                const int padY = 4;
+                const int boxW = maxW + 2 * padX;
+                const int boxH = lines.size() * lineH + 2 * padY;
+                // 2026-05-26 KG4VCF: top-right of the spectrum region.
+                // The SpectrumOverlayPanel (10-button panel) lives in
+                // the top-left of the spectrum, so a left-anchored
+                // box slips behind those controls.  Top-right is
+                // shared with the FPS counter (single line); push the
+                // perf overlay down by ~22 px when FPS is on so they
+                // do not collide.  specRect already excludes the
+                // dBm strip column so we do not need to subtract
+                // effectiveStripW() again.
+                const int boxX = specRect.right() - boxW - 8;
+                const int fpsOffset = m_showFps ? 22 : 0;
+                const int boxY = specRect.top() + 8 + fpsOffset;
+                // Health-coloured background: red if underruns/drops/
+                // compressing OR paint/gap exceeds 33 ms; amber if any
+                // metric is hot but functional; green when clean.
+                // 2026-05-26 KG4VCF: factor audio ring-fill into the
+                // health colour.  audioFillMinMs < 5 ms means the
+                // plugin only had 5 ms of audio left at the worst
+                // point in the last window -- a hair away from
+                // underrun even if the underrun counter is still 0.
+                const bool audioTight = stats.audioFillSamples > 0
+                                     && stats.audioFillMinMs < 5.0;
+                const bool audioWarn  = stats.audioFillSamples > 0
+                                     && stats.audioFillMinMs < 15.0;
+                bool red   = stats.audioUnderrunsDelta > 0
+                          || stats.udpDropsDelta > 0
+                          || stats.txIqUnderrunsDelta > 0
+                          || stats.memCompressing
+                          || stats.paintMsMax > 33.0
+                          || stats.gapMsMax   > 50.0
+                          || audioTight;
+                bool amber = !red && (stats.paintMsMax > 20.0
+                                   || stats.gapMsMax   > 40.0
+                                   || stats.ovlyMsMax  > 15.0
+                                   || audioWarn);
+                const QColor bg = red   ? QColor(80, 20, 20, 220)
+                                : amber ? QColor(80, 60, 20, 220)
+                                        : QColor(20, 40, 20, 220);
+                const QColor border = red   ? QColor(200, 80, 80)
+                                    : amber ? QColor(200, 160, 60)
+                                            : QColor(80, 200, 80);
+                p.setPen(QPen(border, 1));
+                p.setBrush(bg);
+                p.drawRect(boxX, boxY, boxW, boxH);
+                p.setPen(QColor(220, 220, 220));
+                for (int i = 0; i < lines.size(); ++i) {
+                    p.drawText(boxX + padX,
+                               boxY + padY + fm.ascent() + i * lineH,
+                               lines.at(i));
+                }
+            }
+
             // HIGH SWR / PA safety overlay — painted last so it sits on top
             // of all other chrome. From Thetis display.cs:4183-4201 [v2.10.3.13].
             paintHighSwrOverlay(p);
@@ -6182,11 +8573,117 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             m_overlayStaticDirty = false;
             m_overlayNeedsUpload = true;
         }
+        if (needsOverlayRebuild) {
+            PerfMonitor::instance().recordOverlayRebuild(
+                static_cast<double>(ovlyTimer.nsecsElapsed()) / 1e6);
+        }
 
         if (m_overlayNeedsUpload) {
             batch->uploadTexture(m_ovGpuTex, QRhiTextureUploadEntry(0, 0,
                 QRhiTextureSubresourceUploadDescription(m_overlayStatic)));
             m_overlayNeedsUpload = false;
+        }
+
+        // ---- Dynamic overlay (peak-hold trace + peak blobs + NF) ----
+        // 2026-05-26 KG4VCF dual-layer split: rebuild ONLY this small
+        // set of per-frame features.  Chrome stays cached in
+        // m_overlayStatic.  No chrome paint ops here = cheap rebuild
+        // even under heavy system load.
+        //
+        // Sizing follows the static layer (full window) so the GPU
+        // composite can use the same quad geometry + UBO.  Bytes
+        // touched per rebuild are dominated by the QImage::fill -- a
+        // memset over ~1.6 MB pinned memory, which under our mlock
+        // pass is deterministic-latency regardless of system memory
+        // pressure.  The per-frame paint ops themselves (3 ellipses
+        // + 3 small text labels + 1 polyline + 1 dashed line) are
+        // < 1 ms even under contention.
+        if (m_overlayDynamic.size() != QSize(pw, ph)) {
+            if (!m_overlayDynamic.isNull()) {
+                unlockMemory(m_overlayDynamic.constBits(),
+                             m_overlayDynamic.sizeInBytes());
+            }
+            m_overlayDynamic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);
+            m_overlayDynamic.setDevicePixelRatio(dpr);
+            // Same uninitialized-buffer hazard as the init path above: the
+            // rebuild below only touches the spectrum-height band, while the
+            // quad samples the full texture.  Codex review, PR #291.
+            m_overlayDynamic.fill(Qt::transparent);
+            lockMemory(m_overlayDynamic.constBits(),
+                       m_overlayDynamic.sizeInBytes(),
+                       "SpectrumWidget::m_overlayDynamic (resize)");
+            m_ovDynGpuTex->setPixelSize(QSize(pw, ph));
+            m_ovDynGpuTex->create();
+            m_ovDynSrb->setBindings({
+                QRhiShaderResourceBinding::sampledTexture(1,
+                    QRhiShaderResourceBinding::FragmentStage,
+                    m_ovDynGpuTex, m_ovSampler),
+            });
+            m_ovDynSrb->create();
+            m_overlayDynamicDirty = true;
+        }
+
+        if (m_overlayDynamicDirty) {
+            QElapsedTimer dynTimer;
+            dynTimer.start();
+
+            // 2026-05-26 KG4VCF perf polish: partial-region rebuild.
+            // The dynamic-overlay features (peak hold trace, peak blobs,
+            // noise floor) ONLY paint into the spectrum portion of the
+            // widget; the waterfall portion below is always transparent.
+            // Bench under load 279 showed 75 / 82 samples of paint cost
+            // were stuck in QRhiMetal::enqueueResourceUpdates -- the
+            // Metal command queue was contended.  Halving the texture
+            // upload bandwidth (only spectrum area, not full window)
+            // proportionally reduces Metal queue pressure.
+            //
+            // Clear + upload only the spectrum region in device pixels.
+            // CompositionMode_Source replaces the existing pixels with
+            // transparent (vs Alpha-blend which would leave them).
+            // The waterfall portion of the texture stays transparent
+            // from the first full-window init -- the partial upload
+            // never touches it.
+            const QRect dynRectDevPx(0, 0, pw,
+                qMax(1, static_cast<int>(specH * dpr)));
+
+            {
+                QPainter clearP(&m_overlayDynamic);
+                clearP.setCompositionMode(QPainter::CompositionMode_Source);
+                clearP.fillRect(dynRectDevPx, Qt::transparent);
+            }
+
+            QPainter pd(&m_overlayDynamic);
+            pd.setRenderHint(QPainter::Antialiasing, false);
+
+            if ((m_activePeakHold.enabled() || m_peakBlobs.enabled()) &&
+                !m_renderedPixels.isEmpty()) {
+                if (m_activePeakHold.enabled() && m_activePeakHold.size() > 0) {
+                    paintActivePeakHoldTrace(pd, specRect);
+                }
+                if (m_peakBlobs.enabled() && !m_peakBlobs.blobs().isEmpty()) {
+                    paintPeakBlobs(pd, specRect);
+                }
+            }
+            paintNoiseFloorOverlay(pd, specRect);
+
+            // Reuse PerfMonitor's ovly metric for the *dynamic* rebuild
+            // cost since that's now the per-frame variable; chrome
+            // rebuilds are rare and their cost amortises out of the
+            // 1 s perf window.
+            PerfMonitor::instance().recordOverlayRebuild(
+                static_cast<double>(dynTimer.nsecsElapsed()) / 1e6);
+
+            // Partial-region upload.  setSourceTopLeft / setSourceSize
+            // tell QRhi to copy only the spectrum portion of the QImage
+            // into the matching region of the texture; the rest of the
+            // texture is untouched.  Cuts Metal command-buffer payload
+            // by 30-50% depending on spectrum / waterfall split.
+            QRhiTextureSubresourceUploadDescription desc(m_overlayDynamic);
+            desc.setSourceTopLeft(QPoint(0, 0));
+            desc.setSourceSize(dynRectDevPx.size());
+            desc.setDestinationTopLeft(QPoint(0, 0));
+            batch->uploadTexture(m_ovDynGpuTex, QRhiTextureUploadEntry(0, 0, desc));
+            m_overlayDynamicDirty = false;
         }
     }
 
@@ -6362,19 +8859,39 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         cb->draw(m_visibleBinCount);
     }
 
-    // Draw overlay
+    // Draw overlay -- static chrome layer first, then dynamic
+    // overlays on top.  Same pipeline + VBO; only the SRB / texture
+    // binding differs.  Order matters: chrome includes the
+    // freq/dBm/time scales which need to read clean from the
+    // spectrum; dynamic overlays (peak blobs / peak hold / NF) sit
+    // on top of chrome.
     if (m_ovPipeline) {
         cb->setGraphicsPipeline(m_ovPipeline);
-        cb->setShaderResources(m_ovSrb);
         cb->setViewport({0, 0,
             static_cast<float>(outputSize.width()),
             static_cast<float>(outputSize.height())});
         const QRhiCommandBuffer::VertexInput vbuf(m_ovVbo, 0);
         cb->setVertexInput(0, 1, &vbuf);
+        // Chrome layer.
+        cb->setShaderResources(m_ovSrb);
         cb->draw(4);
+        // Dynamic layer (peak hold / peak blobs / noise floor).
+        // 2026-05-26 KG4VCF dual-layer overlay split.
+        if (m_ovDynSrb) {
+            cb->setShaderResources(m_ovDynSrb);
+            cb->draw(4);
+        }
     }
 
     cb->endPass();
+
+    // 2026-05-26 KG4VCF perf instrumentation: record total render
+    // cost (texture uploads + draw-call submission, both main-thread).
+    // Excludes GPU-side execution because that completes asynchronously
+    // after this function returns -- this is purely the CPU-side
+    // command-build cost the main thread paid.
+    PerfMonitor::instance().recordPaintFrame(
+        static_cast<double>(paintTimer.nsecsElapsed()) / 1e6);
 }
 
 void SpectrumWidget::render(QRhiCommandBuffer* cb)
@@ -6397,6 +8914,31 @@ void SpectrumWidget::releaseResources()
     delete m_ovVbo;           m_ovVbo = nullptr;
     delete m_ovGpuTex;        m_ovGpuTex = nullptr;
     delete m_ovSampler;       m_ovSampler = nullptr;
+    // Release the static overlay's lock too.  initOverlayPipeline() locks
+    // it and, on device/surface recreation, runs again and replaces the
+    // QImage with a freshly locked one -- so skipping it here leaked one
+    // MemoryLock registration per recreate, inflating the locked-byte
+    // count and potentially pinning allocator pages for buffers that no
+    // longer exist.  Codex review, PR #291.
+    //
+    // Deliberately NOT m_waterfall: that buffer is locked where it is
+    // reallocated on a size change, not in initOverlayPipeline(), so it
+    // survives this call still locked and still in use.  Unlocking it here
+    // would drop a live pin that nothing re-establishes.
+    if (!m_overlayStatic.isNull()) {
+        unlockMemory(m_overlayStatic.constBits(),
+                     m_overlayStatic.sizeInBytes());
+    }
+    // 2026-05-26 KG4VCF dual-layer overlay split: tear down the
+    // dynamic-overlay resources.  Pipeline + VBO + sampler are
+    // shared with the static layer; only SRB + texture are
+    // separate.
+    delete m_ovDynSrb;        m_ovDynSrb = nullptr;
+    delete m_ovDynGpuTex;     m_ovDynGpuTex = nullptr;
+    if (!m_overlayDynamic.isNull()) {
+        unlockMemory(m_overlayDynamic.constBits(),
+                     m_overlayDynamic.sizeInBytes());
+    }
 
     delete m_fftLinePipeline;  m_fftLinePipeline = nullptr;
     delete m_fftFillPipeline;  m_fftFillPipeline = nullptr;
@@ -6508,13 +9050,43 @@ VfoWidget* SpectrumWidget::addVfoWidget(int sliceIndex)
 void SpectrumWidget::removeVfoWidget(int sliceIndex)
 {
     if (auto* w = m_vfoWidgets.take(sliceIndex)) {
+        // The flag's close / lock / record / play buttons are parented to THIS
+        // widget, not to the flag, so deleting the flag alone orphans them and
+        // they stay painted on the pan. Bench-caught 2026-07-26: creating and
+        // removing slices left a stack of dead button columns behind. Cleared
+        // here rather than in ~VfoWidget because doing it while both objects
+        // are alive keeps the destruction order ours (issue #113).
+        w->destroyFloatingButtons();
         delete w;
+        update();
     }
 }
 
 VfoWidget* SpectrumWidget::vfoWidget(int sliceIndex) const
 {
     return m_vfoWidgets.value(sliceIndex, nullptr);
+}
+
+// See the header for the bench defect this closes (Sub-Epic J,
+// 2026-07-28). Immediate effect here is only half the fix -- see
+// raiseFrontVfoWidget(), which updateVfoPositions() also calls every frame
+// so the pin survives past the next position pass.
+void SpectrumWidget::setFrontSliceIndex(int sliceIndex)
+{
+    m_frontSliceIndex = sliceIndex;
+    raiseFrontVfoWidget();
+}
+
+void SpectrumWidget::raiseFrontVfoWidget()
+{
+    VfoWidget* w = m_vfoWidgets.value(m_frontSliceIndex, nullptr);
+    if (!w) {
+        // No pin, or the pinned slice has no flag on THIS pan (a different
+        // pan hosts it, or this pan's flag has not been built yet) -- leave
+        // this pan's own order alone.
+        return;
+    }
+    w->raiseAboveSiblings();
 }
 
 void SpectrumWidget::updateVfoPositions()
@@ -6536,24 +9108,56 @@ void SpectrumWidget::updateVfoPositions()
 
     int specH = static_cast<int>(height() * m_spectrumFrac);
     QRect specRect(0, 0, width() - effectiveStripW(), specH);
-    int vfoX = hzToX(m_vfoHz, specRect);
 
+    // Each flag is placed from ITS OWN slice frequency, not from the pan's
+    // m_vfoHz.
+    //
+    // m_vfoHz is a single per-pan value that tracks whichever slice most
+    // recently called setVfoFrequency, so deriving one vfoX from it and moving
+    // every flag there stacked all the co-hosted flags on one x and made them
+    // move together. The models were never wrong -- tst_radio_model_slice_
+    // lifecycle pins that two slices sharing a DDC window hold independent
+    // frequencies and independent shift offsets -- this was placement alone.
+    // Bench-reported 2026-07-28: "If I add B flag to panadapter 1, A and B are
+    // still overlaid and stuck on top of each other."
+    //
+    // A single-slice pan is unchanged: its one flag carries the same frequency
+    // the pan does, so the x it lands on is identical to the pre-fix one.
     for (auto it = m_vfoWidgets.begin(); it != m_vfoWidgets.end(); ++it) {
         VfoWidget* vfo = it.value();
         if (vfo->width() <= 0) {
             vfo->adjustSize();
         }
-        // Hide VFO flag when off-screen (SmartSDR pattern)
-        if (m_vfoOffScreen != VfoOffScreen::None) {
+        // Hide VFO flag when off-screen (SmartSDR pattern).
+        //
+        // Per flag, for the same reason as the placement above: the pan-level
+        // m_vfoOffScreen answers "is the PAN's VFO outside the window", which
+        // hid a perfectly on-window flag whenever some other slice on the same
+        // pan was tuned away. m_vfoOffScreen still drives the pan's own
+        // off-screen chevron (drawOffScreenIndicator) and is left alone.
+        const double flagHz = vfo->frequency();
+        if (flagHz < leftEdge || flagHz > rightEdge) {
             vfo->hide();
         } else {
-            if (!vfo->isVisible()) {
+            // isHidden(), not isVisible(): a flag on a pan that has not been
+            // shown yet reads !isVisible() forever, which turned this into an
+            // unconditional show() on every pass.
+            if (vfo->isHidden()) {
                 vfo->show();
             }
-            vfo->updatePosition(vfoX, 0);
+            vfo->updatePosition(hzToX(flagHz, specRect), 0);
             vfo->raise();
         }
     }
+
+    // The loop above just raised every visible flag once, in m_vfoWidgets'
+    // ascending slice-index order -- so without this, whichever slice has
+    // the HIGHEST index would land on top after every single frame,
+    // regardless of which one is active. Bench-reported 2026-07-28
+    // (Sub-Epic J): "slice A selected, slice B's flag covered A's, clipping
+    // A's frequency readout." Re-asserting the pin here, after the loop, is
+    // what makes it survive this pass instead of only the one it was set on.
+    raiseFrontVfoWidget();
 }
 
 // ---- Phase 3Q-8: disconnect overlay ----------------------------------------

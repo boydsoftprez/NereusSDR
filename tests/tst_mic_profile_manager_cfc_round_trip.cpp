@@ -212,8 +212,12 @@ private slots:
             {QStringLiteral("SSB 3.0k CFC"),     QStringLiteral("1")},  // database.cs:8707
             {QStringLiteral("SSB 3.3k CFC"),     QStringLiteral("1")},  // database.cs:8936
             {QStringLiteral("AM 10k CFC"),       QStringLiteral("1")},  // database.cs:9165
+            // Phase 3R K1 NereusSDR-native "RADE" preset inherits the
+            // default CompanderLevel=2 (defaultProfileValues at
+            // MicProfileManager.cpp:1141 — database.cs:4580 baseline).
+            {QStringLiteral("RADE"),             QStringLiteral("2")},
         };
-        QCOMPARE(kExpected.size(), 21);
+        QCOMPARE(kExpected.size(), 22);
         for (auto it = kExpected.constBegin(); it != kExpected.constEnd(); ++it) {
             const QString got = s.value(profileKey(kMacA, it.key(), "CompanderLevel")).toString();
             QCOMPARE(QString(it.key() + QStringLiteral("=") + got),
@@ -223,7 +227,8 @@ private slots:
 
     // CESSB_On is false for every factory profile.  database.cs:4689 +
     // 4919/5150/5380/5609/5838/6067/6296/6525/6754/6983/7212/7441/7670/7899/8128/8357/8586/8815/9044/9273.
-    void factory_cessbOn_isFalseForAll21()
+    // RADE preset (Phase 3R K1) also inherits the default CESSB_On=false.
+    void factory_cessbOn_isFalseForAll22()
     {
         MicProfileManager mgr;
         mgr.setMacAddress(kMacA);
@@ -236,8 +241,10 @@ private slots:
             "ESSB", "HC4-5", "HC4-5+CPDR", "PR40+W2IHY", "PR40+W2IHY+CPDR",
             "PR781+EQ", "PR781+EQ+CPDR", "SSB 2.8k CFC", "SSB 3.0k CFC",
             "SSB 3.3k CFC", "AM 10k CFC",
+            // Phase 3R K1 NereusSDR-native RADE preset.
+            "RADE",
         };
-        QCOMPARE(kProfiles.size(), 21);
+        QCOMPARE(kProfiles.size(), 22);
         for (const QString& p : kProfiles) {
             QCOMPARE(s.value(profileKey(kMacA, p, "CESSB_On")).toString(),
                      QStringLiteral("False"));
@@ -248,8 +255,9 @@ private slots:
     // (CFCEnabled=false, CFCPostEqEnabled=false, CFCPreComp=0, CFCPostEqGain=0)
     // — see database.cs:4724/4725/4732/4733 baseline + per-profile mirror
     // rows at 4954/4955/4962/4963 (Default DX), 5185/.../5193/5194 (Digi
-    // 1K@1500), and so on for the 17 non-CFC profile blocks.
-    void factory_cfcScalars_inheritDefaultsFor17NonCfcProfiles()
+    // 1K@1500), and so on for the 17 non-CFC profile blocks.  Phase 3R K1
+    // adds the NereusSDR-native RADE preset (also CFC-off by design).
+    void factory_cfcScalars_inheritDefaultsFor18NonCfcProfiles()
     {
         MicProfileManager mgr;
         mgr.setMacAddress(kMacA);
@@ -261,8 +269,10 @@ private slots:
             "Conventional", "D-104", "D-104+CPDR", "D-104+EQ", "DX / Contest",
             "ESSB", "HC4-5", "HC4-5+CPDR", "PR40+W2IHY", "PR40+W2IHY+CPDR",
             "PR781+EQ", "PR781+EQ+CPDR",
+            // Phase 3R K1 NereusSDR-native RADE preset (CFC bypassed).
+            "RADE",
         };
-        QCOMPARE(kNonCfc.size(), 17);
+        QCOMPARE(kNonCfc.size(), 18);
         for (const QString& p : kNonCfc) {
             QCOMPARE(s.value(profileKey(kMacA, p, "CFCEnabled")).toString(),
                      QStringLiteral("False"));

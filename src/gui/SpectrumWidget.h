@@ -153,9 +153,13 @@ mw0lge@grange-lane.co.uk
 #include <QWidget>
 #include <QVector>
 #include <QImage>
+#include <QPainterPath>
+#include <QPixmap>
 #include <QColor>
 #include <QPoint>
 #include <QMap>
+#include <QHash>
+#include <QStaticText>
 #include <QTimer>
 #include <QPropertyAnimation>
 
@@ -171,6 +175,7 @@ mw0lge@grange-lane.co.uk
 
 QT_BEGIN_NAMESPACE
 class QLabel;
+class QMenu;
 QT_END_NAMESPACE
 
 // GPU spectrum: QRhiWidget base class for Metal/Vulkan/D3D12 rendering.
@@ -190,6 +195,7 @@ class BandPlanManager;
 class SpectrumOverlayMenu;
 class VfoWidget;
 class ImdOverlay;  // Phase 3M-4 Task 12 — two-tone IMD overlay analytical core
+class WaterfallTicker;  // src/gui/spectrum/WaterfallTicker.h
 
 // Waterfall color scheme presets.
 // Default matches AetherSDR/SmartSDR style.
@@ -317,6 +323,14 @@ public:
     double centerFrequency() const { return m_centerHz; }
     double bandwidth() const { return m_bandwidthHz; }
 
+    /// Width the dBm scale strip reserves along the right edge, 0 when hidden.
+    ///
+    /// Public so a parent laying widgets over this one can keep clear of it.
+    /// PanadapterApplet's status strip is pinned to the top-right and was
+    /// landing on top of the strip's range up/down arrows, which made them
+    /// hard to see and hard to hit.
+    int reservedRightEdgeWidth() const { return effectiveStripW(); }
+
     // Re-fire the auto-zoom replan with the current bandwidth.  Used by
     // setup pages (e.g. when the user changes the Hz/bin target) to kick
     // the FFTEngine into recomputing targetSize without a zoom action.
@@ -396,6 +410,24 @@ public:
     // shape for the waterfall plane.
     const QVector<float>& renderedPixels()   const { return m_renderedPixels;   }
     const QVector<float>& wfRenderedPixels() const { return m_wfRenderedPixels; }
+
+    // 2026-05-22 bench fix for MaxBin meter accuracy.
+    // Returns the strongest dBm pixel inside the active slice's IF
+    // passband, computed from the undented spectrum pixels
+    // (measurementPixels(), post detector + avenger pipeline -- see the
+    // visual-notch note in the definition). Falls back to -400 sentinel
+    // when those pixels are empty (cold start) or when the slice passband
+    // falls entirely outside the visible spectrum window.
+    //
+    // The raw per-bin FFT power that MaxBin previously scanned (via
+    // WdspEngine::onSpectrumBinsForMaxBin reading FFTEngine::fftReady)
+    // can be ~12-17 dB below the spectrum's displayed pixel value
+    // because the spectrum's detector + invEnb window-normalization +
+    // avenger time-smoothing reconstructs the integrated signal power
+    // that a single FFT bin can't show on its own. Sourcing MaxBin
+    // from the display pipeline makes the meter read what the operator
+    // visually sees on the trace.
+    double peakDbmInSlicePassband() const;
 
     // Static helper for detector math. Exposed for unit tests.
     // Note: legacy bin-reduction helper, kept for tst_detector_modes;
@@ -537,6 +569,32 @@ public:
 
     void setClarityActive(bool on);
     bool clarityActive() const { return m_clarityActive; }
+
+    // Issue #230 fix — Thetis-faithful split between persistent user
+    // thresholds (above) and runtime render-active thresholds (below).
+    // From Thetis display.cs:6575-6594 [v2.10.3.13]: the render path
+    // Upstream tags preserved: //MW0LGE (from cited display.cs:6588) [v2.10.3.15]
+    // seeds per-draw locals from the persistent fields then lets AGC /
+    // NF-AGC / "Use spectrum min/max" / Clarity override the locals.
+    // Active getters are exposed for the regression test; no public
+    // setter — runtime layers set these via the dedicated paths below
+    // and composeWaterfallActiveThresholds().
+    float wfActiveLowThreshold()  const { return m_wfActiveLowThreshold;  }
+    float wfActiveHighThreshold() const { return m_wfActiveHighThreshold; }
+
+    // Clarity controller writes the render-active mirror only — never
+    // the persisted user field. Modeled on the AGC path in
+    // Thetis display.cs:6584 [v2.10.3.13] where the AGC running min
+    // (_RX1waterfallPreviousMinValue) is a runtime field separate from
+    // waterfall_low_threshold.
+    void setClarityWaterfallThresholds(float low, float high);
+
+    // Threshold composition pulled out of pushWaterfallRow() so the
+    // regression test can drive it headlessly. Mutates the active
+    // mirror and the AGC running-envelope state; never the persistent
+    // user fields. Mirrors the Thetis local-variable composition at
+    // display.cs:6575-6594 [v2.10.3.13].
+    void composeWaterfallActiveThresholds(const QVector<float>& wfPixelsDbm);
     // NF-AGC: auto-track waterfall thresholds to noise floor + offset.
     void setWaterfallNFAGCEnabled(bool on);
     bool waterfallNFAGCEnabled() const { return m_wfNfAgcEnabled; }
@@ -603,6 +661,13 @@ public:
 
     void setShowFps(bool on);
     bool showFps() const { return m_showFps; }
+
+    // 2026-05-26 KG4VCF perf instrumentation: toggle the in-spectrum
+    // perf overlay (paint/gap/fft/overlay timings + audio underruns
+    // + UDP drops + memory pressure).  Persisted via AppSettings
+    // "ShowPerfOverlay"; View -> Performance Overlay wires here.
+    void setShowPerfOverlay(bool on);
+    bool showPerfOverlay() const { return m_showPerfOverlay; }
 
     // B8 Task 21: cursor frequency readout visibility.
     // Default true (matches the previously always-on behavior).
@@ -767,6 +832,7 @@ public:
     // ShowPeakValueOverlay — scan visible bins, render "Peak: X.X dBm @ Y.YYYY MHz"
     // as corner text. Refreshed on a timer throttled by m_peakTextDelayMs.
     // From Thetis console.cs:20073 PeakTextDelay default=500ms [v2.10.3.13].
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     // PeakTextColor default DodgerBlue from console.cs:20278 [v2.10.3.13].
     void setShowPeakValueOverlay(bool on);
     bool showPeakValueOverlay() const { return m_showPeakValueOverlay; }
@@ -822,6 +888,7 @@ public slots:
     // Slot fed from StepAttenuatorController::txAttenuatorOffsetDbChanged.
     // Shifts the dBm calibration display during TX-active ATT-on-TX.
     // From Thetis display.cs:4840 [v2.10.3.13].
+    // Upstream tags preserved: //MW0LGE (from cited upstream lines) [v2.10.3.15]
     void setTxAttenuatorOffsetDb(float offsetDb);
 
     // Slot driven from DisplayPage DrawTXFilter checkbox.
@@ -967,6 +1034,54 @@ public:
     VfoWidget* vfoWidget(int sliceIndex) const;
     void updateVfoPositions();
 
+    /// Pin sliceIndex's flag to the front of this pan's stacking order.
+    ///
+    /// Bench-reported 2026-07-28 (Sub-Epic J): with Slice A selected, Slice
+    /// B's flag still covered A's, clipping A's frequency readout to
+    /// ".955.300". z-order was creation order -- addVfoWidget's one-shot
+    /// raise() -- crossed with updateVfoPositions()'s own per-frame raise()
+    /// over m_vfoWidgets (a QMap sorted by slice index), which puts whichever
+    /// slice has the HIGHER index on top after every single position pass,
+    /// with no regard for which one the operator selected.
+    ///
+    /// A one-shot raise() here would not survive that: updateVfoPositions()
+    /// runs every render frame (see its own comment) and would re-apply the
+    /// raw ascending order on the very next pass. m_frontSliceIndex is the
+    /// pin updateVfoPositions() re-asserts at the end of its own loop so the
+    /// front flag survives the next frame too, and every one after it, until
+    /// this is called again.
+    ///
+    /// A sliceIndex this pan does not host (not yet built, or hosted by a
+    /// different pan) leaves the pin set but is a harmless no-op here: only
+    /// the pan that actually hosts the active slice re-orders, exactly as
+    /// PanadapterStack::setActiveSliceOnHostingPan already scopes the rest of
+    /// the active-slice machinery to the hosting pan alone.
+    void setFrontSliceIndex(int sliceIndex);
+
+// Plain public, not public slots: the enclosing section above is a slots
+// block and moc rejects a nested struct inside one.
+public:
+    // ---- RX marker geometry (Phase 3F) ----
+
+    /// One RX marker's inputs: a slice centre, that slice's own signed filter
+    /// edges, and the flag whose bottom edge its triangle hangs from (null
+    /// when the pan is drawing its own VFO with no flag created yet).
+    struct SliceMarkerGeometry {
+        double centreHz{0.0};
+        int    filterLowHz{0};
+        int    filterHighHz{0};
+        const VfoWidget* flag{nullptr};
+    };
+
+    /// Every RX marker this pan must paint, one per hosted slice, in slice
+    /// order.
+    ///
+    /// This is drawVfoMarker()'s whole decision, split out so it is reachable
+    /// without a live QPainter or a shown QRhiWidget: the harness cannot
+    /// render this widget, so the geometry is what gets pinned and the pixel
+    /// emission is what does not. See tests/tst_pan_flag_positions.cpp.
+    QVector<SliceMarkerGeometry> sliceMarkerGeometry() const;
+
 public slots:
     // Phase 3Q-8: update connection state for the disconnect overlay.
     void setConnectionState(NereusSDR::ConnectionState s);
@@ -1005,10 +1120,264 @@ public slots:
     // From AetherSDR SpectrumWidget.cpp:740-756 [@0cd4559]
     void clearWaterfallHistory();
 
+    /// Phase 3F Sub-Epic F Task 6: receive wideband bins for the active-ADC
+    /// extended pan. Bins are stored per-ADC; actual painting wires in F
+    /// polish (T7-T10). Setter alone enables Sub-Epic H bench operators to
+    /// confirm the wideband data path is flowing without UI rendering.
+    void setWidebandBins(int adcIndex, const QVector<float>& dbmBins);
+    QVector<float> widebandBinsForTest(int adcIndex) const
+    {
+        return adcIndex == 0 ? m_widebandBinsAdc0 : m_widebandBinsAdc1;
+    }
+
+    /// Phase 3F Sub-Epic F Tasks 7-10: allow extended-pan rendering.
+    /// The actual state is on only when allowed AND the visible bandwidth
+    /// exceeds a known positive DDC sample rate. paintEvent
+    /// will render wideband bins as a background fill behind the
+    /// listenable DDC island. Full visual polish (dashed boundary lines,
+    /// palette-aware bin draw) lands in a post-bench iteration; for now
+    /// extendedMode is the derived actual state that drives the signal.
+    void setExtendedViewAllowed(bool allowed);
+    bool extendedViewAllowed() const { return m_extendedViewAllowed; }
+    bool extendedMode() const { return m_extendedMode; }
+
+public:
+    // ── Spot overlay (Phase 3J-2 Task E1) ─────────────────────────────────
+    // Public structs + setters re-declared under a fresh `public:` access
+    // specifier so MOC doesn't try to interpret the nested struct as a
+    // slot declaration (the enclosing block above is `public slots:`).
+    //
+    // Spot marker descriptor pushed into the panadapter overlay. Mirrors
+    // AetherSDR's SpotMarker struct (SpectrumWidget.h:283-294 [@0cd4559])
+    // verbatim so the upstream drawSpotMarkers() algorithm ports unchanged.
+    // From AetherSDR src/gui/SpectrumWidget.h:283-294 [@0cd4559]
+    struct SpotMarker {
+        int    index{-1};
+        QString callsign;
+        double freqMhz{0.0};
+        QString color;       // #AARRGGBB or empty for default
+        QString mode;
+        QColor  dxccColor;   // DXCC-aware color from DxccColorProvider (#330)
+        QString source;
+        QString spotterCallsign;
+        QString comment;
+        qint64  timestampMs{0};
+    };
+
+    // Cluster badge descriptor for spots that overflowed the level cap.
+    // From AetherSDR src/gui/SpectrumWidget.h:297-300 [@0cd4559]
+    struct SpotCluster {
+        QRect rect;
+        QVector<SpotMarker> spots;
+    };
+
+    // Click hit-test rectangle bound to a single SpotMarker. The rect is
+    // the label box drawn by drawSpotMarkers; freqMhz is the click-to-tune
+    // target; markerIndex points back into m_spotMarkers for tooltip data.
+    // From AetherSDR src/gui/SpectrumWidget.h:635-639 [@0cd4559]
+    struct SpotHitRect {
+        QRect  rect;
+        double freqMhz{0.0};
+        int    markerIndex{-1};
+    };
+
+    void setSpotMarkers(const QVector<SpotMarker>& markers);
+    // 2026-05-12 bench fix (Gap #6 — Spot List hover sync).  Driven
+    // by SpotHubDialog when the user mouses over a row so the
+    // matching marker on the panadapter highlights.  -1 clears.
+    void setHoverSpotIndexExternal(int idx) {
+        if (m_hoverSpotIndexExternal != idx) {
+            m_hoverSpotIndexExternal = idx;
+            update();
+        }
+    }
+    // 2026-05-12 bench fix (Gap #7).  Per-source panadapter overlay
+    // visibility.  Missing key == visible (default).  Source strings
+    // match SpotMarker::source: "Cluster", "RBN", "WSJT-X",
+    // "SpotCollector", "POTA", "FreeDV", "PSK", "Memory".
+    void setSpotSourceVisible(const QString& source, bool visible) {
+        const bool current = m_spotSourceVisible.value(source, true);
+        // Phase 3J-1 closeout follow-up (2026-05-12): always INSERT the
+        // mask state, even when current==visible.  Previously we'd skip
+        // the insert if the new value matched the default, leaving the
+        // hash empty.  That's fine until a spot arrives later whose
+        // source somehow doesn't match the key string format -- the
+        // mask check m_spotSourceVisible.value(...) falls back to the
+        // default 'true' and shows it.  Always inserting guarantees
+        // the key is present for predictable mask behaviour and avoids
+        // a class of "default-true silently shows" bugs the bench
+        // operator hit with FreeDV spots on 2026-05-12.
+        m_spotSourceVisible.insert(source, visible);
+        if (current != visible) { update(); }
+    }
+    bool isSpotSourceVisible(const QString& source) const {
+        return m_spotSourceVisible.value(source, true);
+    }
+    void setShowSpots(bool on) { m_showSpots = on; update(); }
+    bool showSpots() const { return m_showSpots; }
+    void setSpotFontSize(int px) { m_spotFontSize = px; update(); }
+    void setSpotMaxLevels(int n) { m_spotMaxLevels = n; update(); }
+    void setSpotStartPct(int pct) { m_spotStartPct = pct; update(); }
+    void setSpotOverrideColors(bool on) { m_spotOverrideColors = on; update(); }
+    void setSpotOverrideBg(bool on) { m_spotOverrideBg = on; update(); }
+    void setSpotColor(const QColor& c) { m_spotColor = c; update(); }
+    void setSpotBgColor(const QColor& c) { m_spotBgColor = c; update(); }
+    void setSpotBgOpacity(int pct) { m_spotBgOpacity = pct; update(); }
+
+    // Phase 3J-2 + 3R M2: refresh every Display tab knob from AppSettings.
+    // Wired to SpotHubDialog::settingsChanged in MainWindow::openSpotHub
+    // so the live spectrum overlay tracks the dialog. Defaults match the
+    // F4 buildDisplayTab read-side at SpotHubDialog.cpp:1714-1730.
+    void loadSpotDisplaySettings();
+
+    // Test seams (Phase 3J-2 Task E1). Public read-only views into the
+    // private state drawSpotMarkers() rebuilds each frame; the test
+    // suite asserts contract by inspecting these vectors after a
+    // synthetic render pass.
+    const QVector<SpotMarker>&   spotMarkersForTest()   const { return m_spotMarkers; }
+    const QVector<SpotHitRect>&  spotClickRectsForTest() const { return m_spotClickRects; }
+    const QVector<SpotCluster>&  spotClustersForTest()  const { return m_spotClusters; }
+    void  drawSpotMarkersForTest(QPainter& p, const QRect& specRect) {
+        drawSpotMarkers(p, specRect);
+    }
+
+    // Phase 3J-2 + 3R M2 test seams. Read-only views into the Spot
+    // Display knob state so the M2 round-trip test can pin the
+    // loadSpotDisplaySettings push-path without driving a paint cycle.
+    int    spotFontSizeForTest()        const { return m_spotFontSize; }
+    int    spotMaxLevelsForTest()       const { return m_spotMaxLevels; }
+    int    spotStartPctForTest()        const { return m_spotStartPct; }
+    int    spotBgOpacityForTest()       const { return m_spotBgOpacity; }
+    bool   spotOverrideColorsForTest()  const { return m_spotOverrideColors; }
+    bool   spotOverrideBgForTest()      const { return m_spotOverrideBg; }
+    QColor spotColorForTest()           const { return m_spotColor; }
+    QColor spotBgColorForTest()         const { return m_spotBgColor; }
+
+    // ---- TNF / notch overlay (design section 8.1) ----
+    // Ported from AetherSDR's TnfMarker (src/gui/SpectrumWidget.h:575-581
+    // [@c6481cbf]) with depthDb + permanent replaced by `active`: WDSP's
+    // notch DB carries neither depth nor permanence, its add entry point
+    // taking fcenter / fwidth / active only
+    // (third_party/wdsp/src/nbp.c:362, RXANBPAddNotch).
+    //
+    // UNIT BOUNDARY: freqMhz is the ONLY MHz quantity in the TNF stack.
+    // NotchModel::centerHz, all five notch*Requested signals,
+    // setNotchMinWidthHz and the visual-notch dent maths are Hz.
+    // MainWindow::refreshPanNotchMarkers is the only conversion site.
+    struct NotchMarker {
+        int    id{-1};
+        double freqMhz{0.0};
+        double widthHz{200.0};
+        bool   active{true};
+    };
+
+    // From AetherSDR src/gui/SpectrumWidget.cpp:13436-13440 [@c6481cbf].
+    // markOverlayDirty(), not the bare update() the spot push uses: notch
+    // chrome is cached in the GPU static-overlay texture, so a dragged
+    // marker would otherwise not move on the shipping path.
+    void setNotchMarkers(const QVector<NotchMarker>& markers);
+
+    // From AetherSDR src/gui/SpectrumWidget.cpp:13497-13501 [@c6481cbf].
+    // Master TNF flag.  Repaints every marker in the TNF-off colour rather
+    // than hiding it (Thetis display.cs:8704-8707 [v2.10.3.15]).
+    void setNotchGlobalEnabled(bool on);
+
+    // WDSP's minimum notch width for the channel feeding this pan
+    // (third_party/wdsp/src/nbp.c:594, RXANBPGetMinNotchWidth).  Pushed
+    // rather than pulled because it varies with nc and sample rate; Thetis
+    // caches it the same way (display.cs:1082 [v2.10.3.15]) and refreshes
+    // it on filter-size change (console.cs:39052-39054 [v2.10.3.15],
+    // UpdateMinimumNotchWidthRX).  Consumed by the visual-notch dent.
+    void setNotchMinWidthHz(double hz);
+
+    // ---- Visual notch (trace dent), design section 8.3 ----
+    // Owner of the persisted state is NotchModel (key NotchVisualEnabled);
+    // MainWindow::refreshPanVisualNotch pushes the same value at every pan.
+    // From Thetis display.cs:1070 [v2.10.3.15]:
+    //   private static bool m_bShowVisualNotch = false;
+    void setVisualNotchEnabled(bool on);
+    bool visualNotchEnabled() const { return m_visualNotchEnabled; }
+
+    // Test seams, following the spotMarkersForTest convention above.
+    const QVector<NotchMarker>& notchMarkersForTest() const { return m_notchMarkers; }
+    bool   notchGlobalEnabledForTest() const { return m_notchGlobalEnabled; }
+    double notchMinWidthHzForTest()    const { return m_notchMinWidthHz; }
+    void drawNotchMarkersForTest(QPainter& p, const QRect& specRect) {
+        drawNotchMarkers(p, specRect);
+    }
+    QRect notchSpecRectForTest() const { return notchSpecRect(); }
+
+    // Visual-notch test seams (design section 8.3). Read-only views into the
+    // state updateSpectrumLinear rebuilds each frame, so the section 11 test
+    // can pin the measurement-routing contract without a paint cycle.
+    float nfFftBinAverageForTest() const { return m_nfFftBinAverage; }
+    const QVector<float>& undentedPixelsForTest() const {
+        return measurementPixels();
+    }
+    const QVector<float>& activePeakHoldPeaksForTest() const {
+        return m_activePeakHold.peaks();
+    }
+    const QVector<PeakBlob>& peakBlobsForTest() const {
+        return m_peakBlobs.blobs();
+    }
+    // Selection and hover are written by the interaction layer (design
+    // section 7.4); these also give the render tests a writer for the
+    // Chartreuse highlight branch.
+    void setSelectedNotchIdForTest(int id) { m_selectedNotchId = id; }
+    void setHoveredNotchIdForTest(int id)  { m_hoveredNotchId = id; }
+
+    // ---- TNF / notch interaction (design section 7) ----
+    // Which part of a notch a press at a given pixel would grab.
+    // From Thetis console.cs:49032-49067 [v2.10.3.15]: a side-of-centre
+    // default, an 8 px minimum on-screen width before edge zones exist at
+    // all, a +/- 4 px edge zone, and Shift as an explicit alternative to
+    // being near an edge.  Centre is upstream's m_bDraggingNotch; LowEdge
+    // and HighEdge are m_bDraggingNotchBW plus the side flag
+    // m_BDragginNotchBWRightSide, folded into one value because they are
+    // never independently meaningful.
+    enum class NotchGrab { None, Centre, LowEdge, HighEdge };
+
+    // Test seams, following the spotMarkersForTest convention above.
+    // Public read-only views onto the private pixel-space logic so
+    // tst_notch_hit_test can pin the Thetis rules without a real mouse.
+    int       notchAtPixelForTest(int x) const;
+    NotchGrab notchGrabAtForTest(int id, int x, bool shiftHeld) const;
+    int       selectedNotchIdForTest() const { return m_selectedNotchId; }
+    int       hoveredNotchIdForTest()  const { return m_hoveredNotchId; }
+    // Populate a caller-owned QMenu with the notch actions.  Exists as a
+    // seam because QMenu::exec() blocks, so the menu contents cannot be
+    // asserted through a synthetic right-click.
+    void buildNotchContextMenuForTest(int id, QMenu& menu) {
+        buildNotchContextMenu(id, menu);
+    }
+
+    // Overlay-cache seam.  Returns false on a CPU-only build, where there
+    // is no cached texture to invalidate.
+    bool overlayStaticDirtyForTest() const {
+#ifdef NEREUS_GPU_SPECTRUM
+        return m_overlayStaticDirty;
+#else
+        return false;
+#endif
+    }
+    void clearOverlayStaticDirtyForTest() {
+#ifdef NEREUS_GPU_SPECTRUM
+        m_overlayStaticDirty = false;
+#endif
+    }
+
 signals:
     // 3M-5b: emitted when any TX waterfall colormap property changes.
     // Setup page wires this to update the preview / UI state.
     void txWfSettingsChanged();
+    // 2026-05-22 bench fix: emitted after each updateSpectrumLinear
+    // completes (m_renderedPixels populated). MainWindow consumes this
+    // to push peakDbmInSlicePassband() into WdspEngine's MaxBin detector
+    // so the analog S-meter reads what the operator visually sees on
+    // the spectrum instead of the raw per-bin FFT value (which can be
+    // ~12-17 dB lower due to window-spread power and missing detector
+    // pipeline). See peakDbmInSlicePassband doc.
+    void spectrumFrameRendered();
 
     // Phase 3Q-8: emitted on a left-click while not Connected.
     // MainWindow wires this to showConnectionPanel().
@@ -1016,12 +1385,66 @@ signals:
 
     // Emitted when user clicks on spectrum/waterfall to tune
     void frequencyClicked(double hz);
+    // Phase 3J-2 Task E1: emitted when the user clicks a spot label
+    // (or selects a spot from a cluster badge popup). spotIndex is the
+    // SpotMarker::index that was bound to the clicked label so spot
+    // sources (Memory, DX cluster, RBN, etc.) can react.
+    // From AetherSDR src/gui/SpectrumWidget.h:327 [@0cd4559]
+    void spotTriggered(int spotIndex);
+
+    // 2026-05-12 bench fix (Gap #3 from adversarial audit).  Emitted
+    // from the right-click context menu's "Remove Spot" action so the
+    // SpotModel can purge the spot.  Mirrors AetherSDR
+    // SpectrumWidget.h:357 [@0cd4559].
+    void spotRemoveRequested(int spotIndex);
+
+    // 2026-05-12 bench fix (Gap #6).  Fires when the mouse enters or
+    // leaves a spot label hit-rect.  -1 indicates "no spot under
+    // cursor" (use to clear the Spot List highlight).  Drives the
+    // panadapter <-> Spot List hover sync.
+    void spotHoverIndexChanged(int spotIndex);
+
+    // ---- TNF / notch overlay (design section 8.1) ----
+    // Wired per pan by MainWindow::wirePanNotchHandlers, so a marker drawn
+    // on a pan acts through that pan's own frequency mapping while the
+    // NotchModel the handlers mutate stays global (design D1).  `narrow` is
+    // the Shift-held 100 Hz add (Thetis console.cs:40269 [v2.10.3.15]).
+    //
+    // UNIT BOUNDARY: every frequency here is absolute RF in Hz.  The only
+    // MHz quantity in the TNF stack is NotchMarker::freqMhz, converted once
+    // in MainWindow::refreshPanNotchMarkers.  Emitters land with the
+    // interaction layer (design sections 7.1 through 7.4).
+    void notchCreateRequested(double freqHz, bool narrow);
+    void notchMoveRequested(int id, double newFreqHz);
+    void notchWidthRequested(int id, double widthHz);
+    /// Emitted when a notch drag ends, so the coalesced DSP push can flush
+    /// immediately and the final position is exact rather than up to one
+    /// coalescing window stale.
+    void notchDragFinished();
+    void notchActiveRequested(int id, bool active);
+    void notchRemoveRequested(int id);
+
     // Emitted when user drags a filter edge
     void filterEdgeDragged(int lowHz, int highHz);
     // Emitted when pan center changes (drag, auto-scroll)
     void centerChanged(double centerHz);
     // Emitted when user scrolls to change bandwidth
     void bandwidthChangeRequested(double newBandwidthHz);
+
+    /// Phase 3F Sub-Epic F Task 10: emitted when zoom-state or operator
+    /// toggle changes extended-mode. Consumers (RadioModel via MainWindow)
+    /// flip the active slice's widebandExtensionRequested property,
+    /// which in turn auto-bypasses Alex BPF + enables the wideband
+    /// stream (Task 11 wiring already in place).
+    void widebandExtensionStateChanged(bool extensionRequested);
+
+    /// Phase 3F Sub-Epic F Task 12: emitted when the operator clicks
+    /// in the extended-pan "wing" (outside the DDC listenable island).
+    /// Consumer (MainWindow) retunes the active slice's frequency so
+    /// the clicked Hz becomes the new DDC center. Only ever fires when
+    /// m_extendedMode is true; click-inside-island routes through the
+    /// existing frequencyClicked signal (slice retune in place).
+    void ddcRetuneRequested(double frequencyHz);
 
     // Emitted when user-visible dBm range changes via the scale strip
     // (arrow click, drag-pan on strip body, wheel zoom). Args are the
@@ -1031,6 +1454,13 @@ signals:
 
     // Emitted when CTUN mode changes
     void ctunEnabledChanged(bool enabled);
+
+    // Emitted when m_ddcCenterHz changes (panadapter pan, band jump, etc.).
+    // Used by MainWindow to re-push the CTUN slice offset into MaxBin's
+    // detector so its scan window tracks the slice even when only the DDC
+    // moves.  Without this, panning the spectrum leaves MaxBin scanning
+    // bins at the OLD DDC-relative position until the next slice tune.
+    void ddcCenterFrequencyChanged(double hz);
 
     // Plan 4 D9 test seam: fires from drawTxFilterOverlay() after pixel
     // coordinates are computed.  Production code ignores this signal;
@@ -1051,8 +1481,20 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    void leaveEvent(QEvent* event) override;
 
 private:
+    // Phase 3F Sub-Epic F Task 6: latest wideband bins per ADC.  Each entry
+    // is sized 8192 (kOutputBins from WidebandFftEngine) when populated;
+    // empty until the first widebandSpectrumReady arrives.  m_extendedMode
+    // gates whether the bins are actually painted; the storage is silent
+    // until F polish (T7-T10) wires the paint path.
+    QVector<float> m_widebandBinsAdc0;
+    QVector<float> m_widebandBinsAdc1;
+    bool           m_extendedViewAllowed{true};
+    bool           m_extendedMode{false};
+    void recomputeExtendedMode();
+
     // ---- Phase 3Q-8: disconnect overlay state ----
     // The CPU paintEvent path can paint a QPainter overlay, but the GPU
     // (QRhi) path early-returns and refuses QPainter. To work in both modes
@@ -1092,7 +1534,8 @@ private:
     // Source-first port of Thetis processNoiseFloor — display.cs:5866-5912
     // [v2.10.3.13].  Called once per spectrum frame from
     // updateSpectrumLinear after m_renderedPixels is finalised; iterates
-    // those pixels to accumulate (count, linear-sum) of bins below the
+    // measurementPixels() (the UNDENTED copy, design section 8.3) to
+    // accumulate (count, linear-sum) of bins below the
     // previous-frame estimate (averageCount/averageSum), then updates
     // m_nfFftBinAverage (per-frame) and m_nfLerpAverage (smoothed).
     // Also runs the fast-attack convergence-gated auto-clear from
@@ -1132,8 +1575,72 @@ private:
                              double newCenterHz, double newBandwidthHz);
     // (clearWaterfallHistory moved to public slots: in sub-epic E task 4 review.)
 
+    // drawVfoMarker walks sliceMarkerGeometry() and hands each entry to
+    // drawSliceMarker, which paints one slice's passband fill, filter edges,
+    // VFO centre line and triangle. Split in Phase 3F so a pan hosting several
+    // slices paints one marker per slice instead of one per pan.
     void drawVfoMarker(QPainter& p, const QRect& specRect, const QRect& wfRect);
+    void drawSliceMarker(QPainter& p, const QRect& specRect, const QRect& wfRect,
+                         const SliceMarkerGeometry& g);
     void drawCursorInfo(QPainter& p, const QRect& specRect);
+
+    // ---- Spot overlay (Phase 3J-2 Task E1) ----
+    // From AetherSDR src/gui/SpectrumWidget.cpp:4497-4633 [@0cd4559]
+    // Algorithm preserved verbatim:
+    //  - Color priority: override -> DXCC -> spot color -> default cyan.
+    //  - Multi-level vertical stacking with collision-induced nudge-down.
+    //  - Re-scan from top after each nudge (handles cascade overlaps).
+    //  - Overflow into +N cluster badges at maxBottom + 2; cluster bin
+    //    width = 40 px.
+    //  - Vertical dotted tick from spectrum bottom to label.
+    //  - Optional background pill with configurable opacity.
+    //  - Click-to-tune via frequencyClicked(hz) signal (NereusSDR Hz units;
+    //    AetherSDR emits MHz, the call site multiplies by 1e6).
+    //  - Cluster badge popup menu with formatted spot lines.
+    void drawSpotMarkers(QPainter& p, const QRect& specRect);
+    void showSpotClusterPopup(const SpotCluster& cluster, const QPoint& globalPos);
+
+    // ---- TNF / notch overlay (design section 8.2) ----
+    // Geometry ported unchanged from AetherSDR drawTnfMarkers
+    // (src/gui/SpectrumWidget.cpp:13503-13554 [@c6481cbf]): translucent
+    // fill over the full spectrum height, diagonal hatch clipped to the
+    // notch rect, 1 px edge lines at both boundaries, downward triangle
+    // grab handle at the top.  Colours come from Thetis instead
+    // (display.cs:386-390, 8691-8722 [v2.10.3.15]).
+    void drawNotchMarkers(QPainter& p, const QRect& specRect);
+    QColor notchColor(const NotchMarker& n) const;
+
+    // The SINGLE notch geometry source.  Both paint call sites pass this
+    // rect, and the interaction layer's pixel hit test builds from it, so
+    // hit boxes cannot drift away from the drawn markers.  Reproduces the
+    // paint sites' own specRect construction on both render paths through
+    // specHFromHeight, which already encodes the GPU/CPU layout split.
+    QRect notchSpecRect() const;
+
+    // ---- TNF / notch interaction (design section 7) ----
+    // notchMarkerById: linear id lookup over the render-side mirror.
+    // notchAtPixel:    pixel-space port of Thetis
+    //                  MNotchDB.NotchThatSurroundsFrequencyInBW.
+    // notchGrabAt:     edge-vs-centre discrimination for a press.
+    // buildNotchContextMenu: right-click menu over a notch marker.
+    const NotchMarker* notchMarkerById(int id) const;
+    int       notchAtPixel(int x, const QRect& specRect) const;
+    NotchGrab notchGrabAt(int id, int x, bool shiftHeld,
+                          const QRect& specRect) const;
+    void      buildNotchContextMenu(int id, QMenu& menu);
+
+    // ---- Visual notch (design section 8.3) ----
+    /// True when this frame's pixels are to be dented: the toggle is on, we
+    /// are not transmitting, the master TNF enable is on, and at least one
+    /// marker exists. Mirrors the Thetis gate plus the _tnf_active half of
+    /// its per-notch _Use flag.
+    bool visualNotchWillDent() const;
+    /// Subtract the notch skirts from `pixels` in place. Safe on either
+    /// plane's array; the caller decides which.
+    void applyVisualNotchDent(QVector<float>& pixels) const;
+    /// The pristine (undented) spectrum pixels. Consumers that MEASURE
+    /// rather than draw read this, never m_renderedPixels.
+    const QVector<float>& measurementPixels() const;
 
     // ---- TX filter overlay (Plan 4 D9, Cluster E) ----
     // drawTxFilterOverlay: panadapter band fill + border lines + label.
@@ -1283,10 +1790,21 @@ private:
     int    m_wfColorGain{45};         // 0-100
     int    m_wfBlackLevel{104};       // 0-125 — keep in sync with loadSettings ship default
     // Waterfall uses its own dBm range (narrower than spectrum for better contrast).
-    // Seed values; WfAgc (default on) continuously recomputes these at runtime.
+    // Persistent user-configured thresholds (saved/loaded as DisplayWfHigh/LowLevel).
     // Ship defaults — keep in sync with loadSettings (SpectrumWidget.cpp)
+    // From Thetis display.cs:2522 + 2536 [v2.10.3.13] waterfall_high_threshold /
+    // waterfall_low_threshold (the persisted user values, distinct from
+    // _RX1waterfallPreviousMinValue runtime AGC tracking state).
     float  m_wfHighThreshold{-62.0f};
     float  m_wfLowThreshold{-122.0f};
+
+    // Render-active mirror, equivalent to Thetis's per-render
+    // local high_threshold / low_threshold at display.cs:6575/6584/6590
+    // [v2.10.3.13]. AGC / NF-AGC / Clarity override these; the
+    // persistent fields above are never touched by runtime overrides.
+    // Issue #230 fix.
+    float  m_wfActiveHighThreshold{-62.0f};
+    float  m_wfActiveLowThreshold{-122.0f};
 
     // ---- Smoothing constant ----
     // From AetherSDR SpectrumWidget.h:417 — SMOOTH_ALPHA = 0.35f
@@ -1356,6 +1874,30 @@ private:
     QColor m_peakBlobColor{0xFF, 0x45, 0x00, 0xFF};
     // From Thetis display.cs:8435 [v2.10.3.13] m_bDX2_PeakBlobText = Color.Chartreuse
     QColor m_peakBlobTextColor{0x7F, 0xFF, 0x00, 0xFF};
+    // 2026-05-26 KG4VCF perf polish: pre-rendered blob marker pixmap.
+    // paintPeakBlobs blits this instead of calling QPainter::drawEllipse
+    // each blob; drawEllipse went through Qt's parallel raster span
+    // path and the main thread blocked in QLatch::waitInternal waiting
+    // for QThreadPool workers (starved under build load).  Pixmap blit
+    // is a memcpy-style operation that skips the raster engine.
+    // Rebuilt when m_peakBlobColor changes.
+    QPixmap m_blobMarkerPixmap;
+    void rebuildBlobMarkerPixmap();
+
+    // 2026-05-26 KG4VCF perf polish: pre-allocated scratch vectors
+    // for the CPU spectrum / peak-hold paint paths.  Previously
+    // drawSpectrum() allocated `QVector<QPointF> points(n)` (~16 KB)
+    // and `QVector<QPointF> peakPoints(n)` (~16 KB) per paint.  GPU
+    // path is hot on macOS so these don't run there, but on CPU
+    // fallback they are the dominant per-paint allocation source.
+    // Hoisted to members; drawSpectrum resizes (no-op when same n).
+    QVector<QPointF> m_specPointsScratch;
+    QVector<QPointF> m_specPeakPointsScratch;
+    // QPainterPath is also re-constructed per paint in the fill +
+    // peak-hold blocks; caching as a member + clear()-and-reuse
+    // amortises its internal QVector allocation.
+    QPainterPath m_specFillPathScratch;
+    QPainterPath m_specPeakPathScratch;
 
     float       m_lineWidth{1.5f};
     bool        m_gradientEnabled{false};
@@ -1418,6 +1960,25 @@ private:
     // Rate-limit waterfall pushes per m_wfUpdatePeriodMs.
     qint64 m_wfLastPushMs{0};
 
+    // 2026-05-25 KG4VCF bench fix: timer-driven waterfall row push.
+    // Decouples row push cadence from FFT arrival cadence so network-
+    // burst FFT delivery (multiple FFTs in 10 ms then nothing for
+    // 50 ms) does not produce visible scroll stutter.  FFT arrivals
+    // overwrite m_pendingWfPixelsDbm; the ticker fires at
+    // m_wfUpdatePeriodMs and the consumer slot consumes the latest
+    // cached value.
+    //
+    // The ticker lives on its own thread (m_waterfallTickerThread) so
+    // any main-thread delay (focus event, layout pass, system
+    // notification) cannot delay the tick firing -- only the
+    // queued-slot delivery into the main thread's event queue.  This
+    // is the "first-class waterfall" option-A fix from the 2026-05-25
+    // bench session.
+    QVector<float>     m_pendingWfPixelsDbm;
+    bool               m_pendingWfPixelsDbmDirty{false};
+    QThread*           m_waterfallTickerThread{nullptr};
+    WaterfallTicker*   m_waterfallTicker{nullptr};
+
     // 1 Hz overlay repaint tick for the waterfall timestamp; started on
     // demand when the user selects a non-None timestamp position.
     QTimer* m_wfTimestampTicker{nullptr};
@@ -1463,6 +2024,17 @@ private:
     // ---- VFO flag widgets ----
     QMap<int, VfoWidget*> m_vfoWidgets;
 
+    // Which slice's flag stays on top -- see setFrontSliceIndex(). -1 = no
+    // pin; updateVfoPositions() falls back to its own ascending-index order.
+    int m_frontSliceIndex{-1};
+
+    // Re-applies the m_frontSliceIndex pin. Called by setFrontSliceIndex()
+    // for an immediate effect, and again at the end of every
+    // updateVfoPositions() pass, because that loop unconditionally raises
+    // every visible flag once per frame and would otherwise undo the pin on
+    // the very next frame.
+    void raiseFrontVfoWidget();
+
     // ---- CTUN mode ----
     bool   m_ctunEnabled{true};  // true = SmartSDR-style (pan independent of VFO)
     enum class VfoOffScreen { None, Left, Right };
@@ -1474,6 +2046,123 @@ private:
 
     // ---- Overlay menu ----
     SpectrumOverlayMenu* m_overlayMenu{nullptr};
+
+    // ---- Spot overlay state (Phase 3J-2 Task E1) ----
+    // Backing store + per-frame click-rect / cluster vectors. Defaults
+    // match AetherSDR src/gui/SpectrumWidget.h:634-651 [@0cd4559].
+    QVector<SpotMarker>  m_spotMarkers;
+    QVector<SpotHitRect> m_spotClickRects;
+    QVector<SpotCluster> m_spotClusters;
+    bool   m_showSpots{true};
+    int    m_spotFontSize{16};
+    int    m_spotMaxLevels{3};
+    int    m_spotStartPct{50};       // % down from top of spectrum
+    bool   m_spotOverrideColors{false};
+    bool   m_spotOverrideBg{true};
+    QColor m_spotColor{Qt::yellow};
+    QColor m_spotBgColor{Qt::black};
+    int    m_spotBgOpacity{48};
+
+    // 2026-05-12 bench fix (Gap #6).  m_hoverSpotIndex: which spot
+    // label the mouse is currently over (SpotMarker::index, -1 if
+    // none).  Emitted via spotHoverIndexChanged so the Spot List can
+    // highlight the matching row.  m_hoverSpotIndexExternal: opposite
+    // direction — set by setHoverSpotIndexExternal() when the user
+    // hovers a row in the Spot List, drives a halo around the label
+    // in drawSpotMarkers.
+    int    m_hoverSpotIndex{-1};
+    int    m_hoverSpotIndexExternal{-1};
+
+    // 2026-05-12 bench fix (Gap #7).  Per-source visibility mask for
+    // the panadapter overlay.  Keys are SpotMarker::source strings
+    // ("Cluster", "RBN", "WSJT-X", "SpotCollector", "POTA", "FreeDV",
+    // "PSK", "Memory"); missing keys default to visible.  Used by
+    // drawSpotMarkers to skip the per-marker draw when the source's
+    // panadapter visibility toggle is off.  SpotHubDialog Display tab
+    // drives this via setSpotSourceVisible.
+    QHash<QString, bool> m_spotSourceVisible;
+
+    // ---- TNF / notch overlay state (design section 8.1) ----
+    // Main-thread only.  Both the paint path and the interaction layer run
+    // there, so plain members rather than atomics; NotchModel is the
+    // authoritative store and this is a render-side mirror of it.
+    // Shape mirrors AetherSDR src/gui/SpectrumWidget.h:1608-1609 and
+    // :1648 [@c6481cbf].
+    QVector<NotchMarker> m_notchMarkers;
+    // Master TNF enable, default OFF.  Matches NotchModel::globalEnabled()
+    // (also false) and both upstreams: Thetis ships chkTNF unchecked, and
+    // WDSP creates the notch database with master run 0
+    // (third_party/wdsp/src/RXA.c:87).  A widget default of true would
+    // paint every marker in the active colour for the one frame between
+    // construction and the first MainWindow::refreshPanNotchMarkers push.
+    bool   m_notchGlobalEnabled{false};
+    // 100 Hz on this tree: nc = 4096 at a 48 kHz dsp rate through the
+    // wintype-0 arm of min_notch_width (third_party/wdsp/src/nbp.c:88,
+    // 1600.0 / (nc / 256) * (rate / 48000)).  Overwritten by
+    // setNotchMinWidthHz once a channel is open.
+    double m_notchMinWidthHz{100.0};
+
+    // ---- Visual notch state (design section 8.3) ----
+    // From Thetis display.cs:1070 [v2.10.3.15]: m_bShowVisualNotch = false.
+    bool m_visualNotchEnabled{false};
+
+    // Pristine mirror of m_renderedPixels, populated ONLY on the frames that
+    // actually dent so the default-off path costs nothing. Thetis keeps a
+    // permanent second array instead (current_display_data_copy, filled by
+    // the memcpy at display.cs:5046-5049 and handed to the render loop at
+    // :5055 [v2.10.3.15]) because its analyzer hands one over for free.
+    // measurementPixels() falls back to m_renderedPixels when this is empty
+    // or stale-sized.
+    QVector<float> m_undentedPixels;
+
+    // From Thetis display.cs:4778 [v2.10.3.15]: float fAttenuation = 100f;
+    static constexpr float kNotchDentAttenuationDb = 100.0f;
+
+    // From Thetis display.cs:8680 [v2.10.3.15]:
+    //   dNewWidth += 20; // fudge factor to align better with spectrum notch
+    static constexpr double kNotchDentFudgeHz = 20.0;
+
+    // Written by the interaction layer (design section 7.4); drive the
+    // Chartreuse highlight and the hover popup respectively.  Declared
+    // here rather than in the interaction layer because notchColor() reads
+    // both.
+    int    m_selectedNotchId{-1};
+    int    m_hoveredNotchId{-1};
+
+    // ---- TNF / notch drag state (design section 7.2) ----
+    // From Thetis console.cs:33284-33288 [v2.10.3.15], the drag-state
+    // block.  m_notchGrab folds upstream's m_bDraggingNotch /
+    // m_bDraggingNotchBW / m_BDragginNotchBWRightSide trio into one value;
+    // m_notchDragStartX is _drag_notch_start_point.X (the press pixel, the
+    // delta is worked in the move handler); m_notchDragStartData is
+    // drag_notch_start_data, which carries the notch WIDTH for an edge
+    // drag and the notch CENTRE for a whole-notch drag.  m_nNotchRX has no
+    // analogue: the pan the drag started on is the widget receiving the
+    // events.
+    //NOTCH MW0LGE  [original section marker from console.cs:33283]
+    NotchGrab m_notchGrab{NotchGrab::None};
+    int       m_notchDragStartX{0};
+    double    m_notchDragStartData{0.0};
+
+    // ── QStaticText label cache ──────────────────────────────────────────
+    // Pre-shaped (HarfBuzz-run-once) labels for the high-rate paint
+    // loops in drawDbmScale and drawFreqScale.  Without this, each
+    // paint reshapes every label string from scratch — AetherSDR
+    // measured ~5% main-thread CPU on a single DSP curve widget from
+    // shapeText, and our SpectrumWidget has 23+ drawText sites firing
+    // at 20 fps.  Cache keys are the formatted label strings ("-100",
+    // "14.230" etc.), values are QStaticText with AggressiveCaching.
+    // Strings repeat heavily in steady state (dBm scale labels never
+    // change between paints; freq labels cycle through a small set as
+    // the user pans), so the cache hits >99% after the first paint.
+    // mutable because drawDbm/Freq are non-const but the cache is hidden
+    // state — keeping the helper signatures clean.  Lifetime: widget
+    // lifetime; no invalidation needed at this font size since both
+    // strips set a fixed pointSize per-paint.
+    // Inspired by AetherSDR [@3503ae98] PR #2556 perf(gui): cache axis
+    // labels as QStaticText.
+    mutable QHash<QString, QStaticText> m_dbmLabelCache;
+    mutable QHash<QString, QStaticText> m_freqLabelCache;
 
     // ---- Task 2.3: Spectrum text overlay state ----
 
@@ -1660,6 +2349,7 @@ private:
     double m_txSampleRateHz{96000.0};
     // TX attenuator cal offset — applied as an additional dBm shift during TX.
     // From Thetis display.cs:4840 [v2.10.3.13]: if (!local_mox) fOffset += rx1_preamp_offset;
+    // Upstream tags preserved: //MW0LGE (from cited upstream lines) [v2.10.3.15]
     float m_txAttOffsetDb{0.0f};
     // TX filter visibility in spectrum panel.
     // From Thetis display.cs:2481 [v2.10.3.13]: DrawTXFilter flag.
@@ -1730,6 +2420,52 @@ private:
     QImage m_overlayStatic;
     bool   m_overlayStaticDirty{true};
     bool   m_overlayNeedsUpload{true};
+
+    // 2026-05-26 KG4VCF dual-layer overlay split.
+    //
+    // The static texture above carries chrome (grid, scales, bandplan,
+    // VFO marker, spot markers, freq/time scale, waterfall chrome,
+    // perf overlay, etc.) that only changes on operator interaction.
+    // The dynamic texture below carries the per-frame features --
+    // peak hold trace, peak blobs, noise-floor line + text -- so
+    // those can animate at display rate without forcing a full chrome
+    // repaint each tick.
+    //
+    // Both textures alpha-composite onto the spectrum trace.  Same
+    // pipeline + sampler + UBO + VBO as the static layer -- only the
+    // SRB and texture differ.  The dynamic image is the SAME size as
+    // the static one (full window) for code simplicity; in practice
+    // it stays mostly transparent except for the spectrum-area
+    // overlays, so the GPU sampler reads through to spectrum
+    // un-tinted for the rest of the widget.
+    QRhiShaderResourceBindings* m_ovDynSrb{nullptr};
+    QRhiTexture*                m_ovDynGpuTex{nullptr};
+    QImage m_overlayDynamic;
+    bool   m_overlayDynamicDirty{true};
+    bool   m_overlayDynamicNeedsUpload{true};
+
+    // 2026-05-25 perf fix: timestamp of the last per-frame "dynamic
+    // overlay" force-dirty in updateSpectrumLinear.  Rate-limits the
+    // overlay rebuild for Active Peak Hold / Peak Blobs / Noise Floor
+    // (all features that previously rebuilt the FULL overlay on every
+    // 30 Hz spectrum frame, defeating the cache).  See the rationale
+    // at SpectrumWidget.cpp around the "perf fix" comment block.
+    qint64 m_overlayDynamicDirtyMs{0};
+
+    // 2026-05-26 KG4VCF perf instrumentation: wall-clock timestamp
+    // of the previous renderGpuFrame entry.  Used to feed
+    // PerfMonitor::recordInterFrameGap(now - m_lastPaintWallMs) so the
+    // perf overlay can show if paint events are arriving on time.
+    // A gap > the display period == main thread was blocked.
+    qint64 m_lastPaintWallMs{0};
+    // Toggle for the in-spectrum perf overlay (drawn in a corner
+    // showing paint/gap/fft/overlay-rebuild timings + audio underruns
+    // + memory pressure).  Persisted via AppSettings key
+    // "ShowPerfOverlay"; View menu wires the setter.
+    bool m_showPerfOverlay{false};
+    // 1 Hz timer that polls memory pressure + drives perf overlay
+    // refresh.  Owned by SpectrumWidget via Qt parent ownership.
+    QTimer* m_perfPollTimer{nullptr};
 
     // ---- FFT spectrum GPU resources ----
     QRhiGraphicsPipeline*       m_fftLinePipeline{nullptr};

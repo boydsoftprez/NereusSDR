@@ -15,6 +15,7 @@
 //               From Thetis audio.cs:262-271 [v2.10.3.13]. NO SWR factor.
 //   iq_gain   = audio_volume * swrProtect
 //               From Thetis cmaster.cs:1115-1119 [v2.10.3.13]. SWR HERE.
+// Upstream tags preserved: //MW0LGE (from cited cmaster.cs:1114) [v2.10.3.15]
 //
 // Coverage:
 //   §1 K2GX regression: ANAN-8000DLE 80m TUN slider=50 -> wire byte ~= 49
@@ -380,6 +381,7 @@ private slots:
         // From Thetis NetworkIO.cs:201-211 [v2.10.3.13]:
         //   int i = (int)(255 * f * _swr_protect);   // WIRE BYTE sees SWR.
         // From Thetis cmaster.cs:1115-1119 [v2.10.3.13]:
+        // Upstream tags preserved: //MW0LGE (from cited cmaster.cs:1114) [v2.10.3.15]
         //   double level = Audio.RadioVolume * Audio.HighSWRScale;
         // where HighSWRScale is set to 1.0 once at console.cs:29194 and
         // never reassigned in baseline Thetis — IQ side is no-op.  So

@@ -159,6 +159,7 @@ SpectrumPeaksPage::SpectrumPeaksPage(RadioModel* model, QWidget* parent)
     m_blobFallDbPerSec->setValue(
         s.value(QStringLiteral("DisplayPeakBlobsFallDbPerSec"), 6).toInt());
     // From Thetis display.cs:8434 [v2.10.3.13] m_bDX2_PeakBlob = OrangeRed (#FF4500, fully opaque).
+    // Upstream tags preserved: //MW0LGE (from cited display.cs:8429) [v2.10.3.15]
     // Persisted format is "#RRGGBBAA" via ColorSwatchButton::colorToHex; use the
     // matching colorFromHex helper so alpha lands in the right channel.
     m_blobColor->setColor(ColorSwatchButton::colorFromHex(
@@ -455,6 +456,7 @@ void SpectrumPeaksPage::buildUI()
 
     // Colors
     // From Thetis display.cs:8434 [v2.10.3.13] m_bDX2_PeakBlob = Color.OrangeRed
+    // Upstream tags preserved: //MW0LGE (from cited display.cs:8429) [v2.10.3.15]
     // Placeholder color; setColor() is called in the constructor after buildUI().
     m_blobColor = new ColorSwatchButton(QColor(0xFF, 0x45, 0x00, 0xFF), m_blobGroup);
     m_blobColor->setToolTip(QStringLiteral(

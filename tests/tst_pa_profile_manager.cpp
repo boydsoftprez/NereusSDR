@@ -6,7 +6,7 @@
 // Unit tests for PaProfileManager (Phase 2 Agent 2B of issue #167).
 //
 // Covers:
-//   1. First-launch on fresh MAC seeds 16 factory + Bypass + sets active
+//   1. First-launch on fresh MAC seeds 17 factory + Bypass + sets active
 //   2. Reconnect preserves stored profiles (user edits not auto-overwritten)
 //   3. setMacAddress switches scope (per-MAC isolation)
 //   4. saveProfile overwrites + emits signals only on new membership
@@ -15,6 +15,7 @@
 //   7. Active-profile-on-connect logic (3 sub-cases)
 //   8. regenerateFactoryDefaults restores factory values, leaves customs
 //   9. activeProfile() accessor returns pointer to active profile
+//  10. factoryProfileNames includes ANAN_G2E (regression guard)
 //
 // =================================================================
 
@@ -63,7 +64,7 @@ private slots:
     }
 
     // =========================================================================
-    // Test 1: First-launch on fresh MAC seeds 16 factory + Bypass + sets active
+    // Test 1: First-launch on fresh MAC seeds 17 factory + Bypass + sets active
     // =========================================================================
     //
     // From Thetis setup.cs:23295-23316 [v2.10.3.13] initPAProfiles — seeds
@@ -78,9 +79,10 @@ private slots:
         mgr.load(HPSDRModel::ANAN8000D);
 
         const QStringList names = mgr.profileNames();
-        // 16 factory (HPSDRModel::FIRST is sentinel -1, so 16 enum entries
-        // from HPSDR=0 through REDPITAYA=15) plus 1 Bypass = 17 total.
-        QCOMPARE(names.size(), 17);
+        // 17 factory (HPSDRModel::FIRST is sentinel -1, so 17 enum entries
+        // from HPSDR=0 through ANAN_G2E=16) plus 1 Bypass = 18 total.
+        // From Thetis setup.cs:23394 [v2.10.3.15] — iterates n < HPSDRModel.LAST.
+        QCOMPARE(names.size(), 18);
 
         // Active = "Default - ANAN8000D" because connectedModel was ANAN8000D.
         QCOMPARE(mgr.activeProfileName(), QStringLiteral("Default - ANAN8000D"));
@@ -119,6 +121,11 @@ private slots:
             QStringLiteral("Default - ANVELINAPRO3"),
             QStringLiteral("Default - HERMESLITE"),
             QStringLiteral("Default - REDPITAYA"),
+            // ANAN_G2E = 16 (added in ANAN-G2E port). Regression guard:
+            // factoryProfileNames() and modelFromFactoryName() must walk to
+            // HPSDRModel::LAST, not stop at REDPITAYA.
+            // From Thetis setup.cs:23394 [v2.10.3.15] — n < (int)HPSDRModel.LAST.
+            QStringLiteral("Default - ANAN_G2E"),
             QStringLiteral("Bypass"),
         };
         for (const QString& name : expected) {
@@ -178,8 +185,8 @@ private slots:
         mgr2.setMacAddress(kMacA);
         mgr2.load(HPSDRModel::ANAN8000D);
 
-        // Manifest has all 17 factory + 1 custom = 18.
-        QCOMPARE(mgr2.profileNames().size(), 18);
+        // Manifest has all 17 factory (HPSDR..ANAN_G2E) + Bypass + 1 custom = 19.
+        QCOMPARE(mgr2.profileNames().size(), 19);
 
         // The user edit to Default - ANAN8000D is preserved (not factory-reset).
         const PaProfile* p = mgr2.profileByName(QStringLiteral("Default - ANAN8000D"));
@@ -214,8 +221,8 @@ private slots:
 
         const QStringList names = mgr.profileNames();
         QVERIFY(!names.contains(QStringLiteral("MacAOnly")));
-        // 17 (16 factory + Bypass) — same as a fresh first launch.
-        QCOMPARE(names.size(), 17);
+        // 18 (17 factory + Bypass) — same as a fresh first launch.
+        QCOMPARE(names.size(), 18);
         // Active is per-MAC and reflects MAC B's connected model.
         QCOMPARE(mgr.activeProfileName(), QStringLiteral("Default - ANAN_G2"));
     }
@@ -284,7 +291,7 @@ private slots:
 
         // Manually delete down to the last profile, then verify guard fires.
         QStringList names = mgr.profileNames();
-        // 17 entries; delete 16 of them.
+        // 18 entries; delete 17 of them.
         int target = names.size() - 1;
         for (int i = 0; i < target; ++i) {
             const QString name = names.at(i);
@@ -354,10 +361,45 @@ private slots:
     //   b) Stored active is a deleted name -> fall back to Default-<connectedModel>
     //   c) No stored active -> fall back to Default-<connectedModel>
 
-    // 7a: stored active matches manifest -> restored on reconnect.
+    // 7a: stored active is a USER-CUSTOMISED profile in manifest -> restored on
+    // reconnect even when connectedModel differs.  Stored cross-model factory
+    // defaults are NOT respected (see 2026-05-22 visibility-gate fix landed in
+    // baf931a7 to stop G2E inheriting Hermes 41 dB gains from prior testing).
     void activeOnConnect_storedActiveExists()
     {
-        // First launch with ANAN8000D, then switch to G2 profile, then reconnect.
+        // First launch with ANAN8000D, create a user profile, then activate it.
+        // User profiles (non-factory-default) are always visible to the combo
+        // filter, so they survive a connectedModel switch on reconnect.
+        {
+            PaProfileManager mgr;
+            mgr.setMacAddress(kMacA);
+            mgr.load(HPSDRModel::ANAN8000D);
+            PaProfile custom(QStringLiteral("MyUserProfile"),
+                             HPSDRModel::ANAN8000D, /*isFactoryDefault=*/false);
+            QVERIFY(mgr.saveProfile(QStringLiteral("MyUserProfile"), custom));
+            mgr.setActiveProfile(QStringLiteral("MyUserProfile"));
+        }
+
+        // Reconnect with a different connectedModel than the stored active —
+        // user-customised stored active wins.
+        PaProfileManager mgr2;
+        mgr2.setMacAddress(kMacA);
+        mgr2.load(HPSDRModel::ANAN7000D);  // different model
+        QCOMPARE(mgr2.activeProfileName(),
+                 QStringLiteral("MyUserProfile"));
+    }
+
+    // 7a': stored active is a factory default for a DIFFERENT model than the
+    // current connectedModel -> falls back to Default-<connectedModel>.
+    //
+    // 2026-05-22 bench-finding (ANAN-G2E port, commit baf931a7): G2E user
+    // connecting after Hermes test session inherited "Default - HERMES" 41 dB
+    // gain rows; 1 W slider produced 29 W out.  The visibility gate added in
+    // PaProfileManager::resolveActiveOnConnect rejects an inherited factory
+    // default that the combo filter would have hidden anyway.
+    void activeOnConnect_storedActiveIsCrossModelFactoryDefault_fallsBack()
+    {
+        // First launch with ANAN8000D, switch to G2 factory profile.
         {
             PaProfileManager mgr;
             mgr.setMacAddress(kMacA);
@@ -365,13 +407,13 @@ private slots:
             mgr.setActiveProfile(QStringLiteral("Default - ANAN_G2"));
         }
 
-        // Reconnect with a different connectedModel than the stored active —
-        // stored active wins.
+        // Reconnect with ANAN7000D — stored "Default - ANAN_G2" is a factory
+        // default for a different model; visibility gate rejects it.
         PaProfileManager mgr2;
         mgr2.setMacAddress(kMacA);
-        mgr2.load(HPSDRModel::ANAN7000D);  // different model
+        mgr2.load(HPSDRModel::ANAN7000D);
         QCOMPARE(mgr2.activeProfileName(),
-                 QStringLiteral("Default - ANAN_G2"));
+                 QStringLiteral("Default - ANAN7000D"));
     }
 
     // 7b: stored active is a deleted name -> fall back to Default-<connectedModel>.
@@ -495,6 +537,51 @@ private slots:
         mgr.setMacAddress(kMacA);
         mgr.load(HPSDRModel::ANAN8000D);
         QCOMPARE(mgr.profileByName(QStringLiteral("DoesNotExist")), nullptr);
+    }
+
+    // =========================================================================
+    // Test 10: factoryProfileNames includes ANAN_G2E (regression guard)
+    // =========================================================================
+    //
+    // From Thetis setup.cs:23394 [v2.10.3.15] — loop uses n < (int)HPSDRModel.LAST
+    // so future SKU additions auto-include without updating the loop bound.
+    // Before the fix both factoryProfileNames() and modelFromFactoryName() used
+    // `<= REDPITAYA` (== 15) as the upper bound, silently dropping ANAN_G2E (== 16).
+    void factoryProfileNames_includesAnanG2e()
+    {
+        PaProfileManager mgr;
+        mgr.setMacAddress(kMacA);
+        mgr.load(HPSDRModel::ANAN_G2E);
+
+        const QStringList names = mgr.profileNames();
+        QVERIFY2(names.contains(QStringLiteral("Default - ANAN_G2E")),
+                 "factoryProfileNames() stopped at REDPITAYA and missed ANAN_G2E");
+
+        // Active profile auto-selects to the connected model.
+        QCOMPARE(mgr.activeProfileName(), QStringLiteral("Default - ANAN_G2E"));
+    }
+
+    // Companion: modelFromFactoryName round-trips ANAN_G2E correctly.
+    void modelFromFactoryName_roundTripsAnanG2e()
+    {
+        PaProfileManager mgr;
+        mgr.setMacAddress(kMacA);
+        mgr.load(HPSDRModel::ANAN_G2E);
+
+        // setActiveProfile internally calls modelFromFactoryName() to determine
+        // the PA gain table.  If modelFromFactoryName() returned FIRST instead of
+        // ANAN_G2E the gain table would be the wrong (Hermes 41 dB) row.
+        QVERIFY(mgr.setActiveProfile(QStringLiteral("Default - ANAN_G2E")));
+        const PaProfile* p = mgr.activeProfile();
+        QVERIFY(p != nullptr);
+        // ANAN_G2E shares the ANAN7000D/ANAN_G2 PA gain row.
+        // 20m expected = defaultPaGainsForBand(ANAN_G2E, Band20m).
+        const float expectedG2e = defaultPaGainsForBand(HPSDRModel::ANAN_G2E,
+                                                         Band::Band20m);
+        QCOMPARE(p->getGainForBand(Band::Band20m), expectedG2e);
+
+        // Sanity: must NOT equal the Hermes/FIRST bypass row (40.5 dB).
+        QVERIFY(p->getGainForBand(Band::Band20m) != 40.5f);
     }
 
     // ── #202 deep-fix: userVisibleProfileNames combo filter ──────────────────

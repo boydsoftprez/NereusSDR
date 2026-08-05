@@ -306,6 +306,55 @@ void PowerPage::buildPowerGroup()
     }
     pwrForm->addRow(QString(), m_chkAttOnTx);
 
+    // udATTOnTX — "ATT on TX (dB)" 0..31 spinbox.  From Thetis setup.cs:3990-4015
+    // [v2.10.3.13] ATTOnTX property + udATTOnTX NumericUpDown.  ANAN-G2E
+    // bench-fix 2026-05-23 (JJ Boyd): the value spinbox was missing in the
+    // 3M-1c port — only the enable checkbox was wired.  Without this control
+    // the user has no way to pre-set a non-zero ATT before arming PS-A,
+    // forcing AutoAtt to start from ATT=0 every time.  On boards where the
+    // coupler+PA combination at full TX drive sends FB level > 256 to calcc
+    // (G2E observed bench fbLevel=295), the >256 path triggers the 31.1 dB
+    // AutoAtt fallback (PSForm.cs:751 [v2.10.3.13]) and slams ATT to 31,
+    // starting the divergent oscillation cascade.  Pre-setting ATT to ~10 dB
+    // brings the first reading into [0,256] so AutoAtt converges via the
+    // logarithmic formula instead of the constant fallback.
+    m_spinAttOnTxValue = new QSpinBox(pwrGroup);
+    m_spinAttOnTxValue->setObjectName(QStringLiteral("udATTOnTX"));
+    m_spinAttOnTxValue->setRange(0, 31);
+    m_spinAttOnTxValue->setSingleStep(1);
+    m_spinAttOnTxValue->setSuffix(QStringLiteral(" dB"));
+    m_spinAttOnTxValue->setToolTip(QStringLiteral(
+        "ATT on TX value in dB (0..31).  Active when the ATT on TX checkbox "
+        "is enabled.  AutoAtt (PS-A) will adjust this automatically during "
+        "PureSignal cycles; setting a sane starting value (e.g. 10 dB) before "
+        "arming PS-A avoids the 31.1 dB initial-overload slam on radios where "
+        "the coupler+PA delivers calcc FB level > 256 at ATT=0."));
+
+    if (model()) {
+        if (StepAttenuatorController* att = model()->stepAttController()) {
+            // Initialize from current value
+            {
+                QSignalBlocker b(m_spinAttOnTxValue);
+                m_spinAttOnTxValue->setValue(att->attOnTxValue());
+            }
+            // Spinbox → controller
+            connect(m_spinAttOnTxValue,
+                    QOverload<int>::of(&QSpinBox::valueChanged),
+                    att, &StepAttenuatorController::setAttOnTxValue);
+            // Controller → spinbox (mirrors AutoAtt updates from
+            // PureSignal::autoAttentionTick).  Matches Thetis udATTOnTX_Value-
+            // Changed which fires when console.TxAttenData is set.
+            connect(att, &StepAttenuatorController::attOnTxValueChanged,
+                    m_spinAttOnTxValue,
+                    [this](int dB) {
+                        if (!m_spinAttOnTxValue) { return; }
+                        QSignalBlocker b(m_spinAttOnTxValue);
+                        m_spinAttOnTxValue->setValue(dB);
+                    });
+        }
+    }
+    pwrForm->addRow(QStringLiteral("ATT on TX (dB):"), m_spinAttOnTxValue);
+
     // chkForceATTwhenPSAoff — "Force ATT on Tx to 31 when PS-A is off"
     // From Thetis setup.designer.cs:5668 [v2.10.3.13]:
     //   chkForceATTwhenPSAoff.Text = "Force ATT on Tx to 31 when PS-A is off"
@@ -394,6 +443,13 @@ void PowerPage::buildTuneGroup()
     m_comboTxTunMeter->addItem(QStringLiteral("Fwd SWR"));
     m_comboTxTunMeter->addItem(QStringLiteral("SWR"));
     m_comboTxTunMeter->addItem(QStringLiteral("Off"));
+    // DONE_WITH_CONCERNS [anan-g2e F6]: Thetis console.cs:14868-14882 [v2.10.3.15]
+    // conditionally inserts "Ref Pwr" for ANAN_G2E and OrionMKII family
+    // (//N1GP G2E added at console.cs:14873, //DH1KLM at console.cs:14876).
+    // NereusSDR instead includes "Ref Pwr" statically for all boards above
+    // (matched from mi0bot-Thetis setup.designer.cs:47933-47938). When a full
+    // comboMeterTXMode port arrives, this combo should gain per-board gating so
+    // low-power boards (no on-board PA directional coupler) hide "Ref Pwr".
     form->addRow(QStringLiteral("TX TUN Meter:"), m_comboTxTunMeter);
 
     // ── Fixed-mode tune-power spinbox ──────────────────────────────────────

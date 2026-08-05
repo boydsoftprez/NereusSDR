@@ -372,6 +372,15 @@ extern "C" {
 struct _dexp;
 typedef struct _dexp *DEXP;
 extern DEXP pdexp[];
+
+// Phase 3J-1 closeout Item 8 (2026-05-12): TCI TX-path resampler.
+// The void*-opaque FV wrappers (create_resampleFV / xresampleFV /
+// destroy_resampleFV) live in resample.c:342-360 [WDSP TAPR v1.29]
+// but are NOT declared in resample.h.  Same forward declaration pattern
+// as TciServer.cpp:44-46 for the RX path.
+void* create_resampleFV(int in_rate, int out_rate);
+void  xresampleFV(float* input, float* output, int numsamps, int* outsamps, void* ptr);
+void  destroy_resampleFV(void* ptr);
 }
 #endif
 
@@ -558,6 +567,15 @@ void TxChannel::registerVoxCallback()
     }
     s_voxKeyInstance = this;
 #ifdef HAVE_WDSP
+    // 2026-05-13 (Linux CI #238): bounds-check m_channelId against
+    // WDSP's MAX_CHANNELS (=32 in comm.h) BEFORE indexing txa[] / pdexp[].
+    // Test fixtures (e.g. tst_dsp_options_per_mode_apply tx_no_engine_*)
+    // construct TxChannel with channelId=97 for isolation; on macOS arm64
+    // the OOB read happens to land in mapped zero memory so the null-
+    // guards below evaluate true and the function returns harmlessly.
+    // On Linux x64 the same OOB landed in unmapped memory / read garbage
+    // pointers and segfaulted.
+    if (m_channelId < 0 || m_channelId >= MAX_CHANNELS) return;
     // Phase 3M-1c TX pump v3: pdexp[ch] + txa.rsmpin.p null-guards.  Test
     // builds construct TxChannel directly without going through
     // WdspEngine::createTxChannel → OpenChannel(type=1), so neither
@@ -589,11 +607,19 @@ void TxChannel::registerVoxCallback()
 void TxChannel::unregisterVoxCallback()
 {
 #ifdef HAVE_WDSP
+    // 2026-05-13 (Linux CI #238): bounds-check m_channelId against
+    // WDSP's MAX_CHANNELS BEFORE indexing txa[] / pdexp[].  Mirror of
+    // registerVoxCallback's check — same Linux OOB segfault path for
+    // test fixtures that use out-of-range channel IDs.
+    const bool channelInRange =
+        (m_channelId >= 0 && m_channelId < MAX_CHANNELS);
     // Same null-guard pair as registerVoxCallback (and all DEXP setters in
     // this file).  Test builds never drove OpenChannel(type=1) so pdexp[]
     // is null and the WDSP unregister would crash; production builds
     // always have a live DEXP at dtor time.
-    if (txa[m_channelId].rsmpin.p == nullptr) {
+    if (!channelInRange) {
+        // Skip WDSP call; still clear the lookup pointer below.
+    } else if (txa[m_channelId].rsmpin.p == nullptr) {
         // Skip WDSP call; still clear the lookup pointer below.
     } else if (pdexp[m_channelId] == nullptr) {
         // Skip WDSP call; still clear the lookup pointer below.
@@ -1398,12 +1424,40 @@ void TxChannel::setStageRunning(Stage s, bool run)
 void TxChannel::setTxMode(DSPMode mode)
 {
     m_mode = mode;  // carry — always updated regardless of WDSP state
+
+    // Phase 3R K-bench: RADE_U / RADE_L are NereusSDR-native dispatch
+    // modes (DSPMode::RADE_U = 12, RADE_L = 13). WDSP's SetTXAMode only
+    // accepts the original Thetis-derived modes (LSB=0 .. DRM=11);
+    // passing 12 or 13 leaves the WDSP modulator stage in an invalid
+    // state and produces no I/Q output. Per the source-first reframe
+    // (freedv-gui treats RADE as audio + radio's external SSB modulator
+    // handles USB/LSB), NereusSDR must map RADE_U -> USB and RADE_L ->
+    // LSB before calling SetTXAMode so the WDSP modulator runs as if
+    // for ordinary SSB voice. RadeChannel-generated audio is then fed
+    // into the same TXA mic-input path.
+    //
+    // Computed unconditionally so the test seam reflects the mapping
+    // decision regardless of whether WDSP is wired (unit-test path
+    // skips the SetTXAMode call below but still pins the contract).
+    DSPMode wdspMode = mode;
+    if (mode == DSPMode::RADE_U) {
+        wdspMode = DSPMode::USB;
+    } else if (mode == DSPMode::RADE_L) {
+        wdspMode = DSPMode::LSB;
+    }
+    m_lastWdspTxMode = wdspMode;
+
+    // BENCH DEBUG: log every setTxMode call so we can verify the
+    // RADE_U/L -> USB/LSB mapping fires and no later code reverts it.
+    qCInfo(lcDsp) << "TxChannel::setTxMode in=" << static_cast<int>(mode)
+                  << "wdspMode=" << static_cast<int>(wdspMode);
+
 #ifdef HAVE_WDSP
     // From Thetis radio.cs:2670-2696 [v2.10.3.13]
     if (txa[m_channelId].rsmpin.p == nullptr) {
         return;  // channel not yet opened (unit-test path)
     }
-    SetTXAMode(m_channelId, static_cast<int>(mode));
+    SetTXAMode(m_channelId, static_cast<int>(wdspMode));
 #else
     Q_UNUSED(mode);
 #endif
@@ -1520,7 +1574,15 @@ void TxChannel::applyTxFilterForMode(int audioLowHz, int audioHighHz, DSPMode mo
     // Per deskhpsdr/transmitter.c:2136-2186 [@120188f] — tx_set_filter per-mode
     // IQ-space sign convention.  Same mapping as setTuneTone() lines 520-528.
     auto isLsbFamily = [](DSPMode m) {
-        return m == DSPMode::LSB || m == DSPMode::DIGL || m == DSPMode::CWL;
+        // Phase 3R K-bench: RADE_L rides an LSB carrier. Its slice
+        // filterLow/High are stored as signed negatives (-2350, -650)
+        // matching the LSB / DIGL / CWL convention; without including
+        // RADE_L here, applyTxFilterForMode would skip the negate-and-
+        // swap step and hand WDSP a negative-bandpass value while the
+        // modulator is in LSB mode, putting RADE audio on the wrong
+        // sideband (user bench-reported on 40m).
+        return m == DSPMode::LSB    || m == DSPMode::DIGL
+            || m == DSPMode::CWL    || m == DSPMode::RADE_L;
     };
     auto isSymmetric = [](DSPMode m) {
         return m == DSPMode::AM  || m == DSPMode::SAM
@@ -1886,9 +1948,15 @@ void TxChannel::setAntiVoxDetectorTau(double seconds)
 // stable antivox_data buffer because cs_update inside dexp.c serialises
 // the memcpy from antivox_data into the detector path.
 //
-// In NereusSDR the equivalent of Thetis ChannelMaster aamix is the direct
-// RxDspWorker -> TxWorkerThread queued connection.  See
-// docs/architecture/phase3m-3a-iv-antivox-feed-design.md §4.2.
+// In NereusSDR the equivalent of Thetis ChannelMaster aamix is
+// AudioEngine::m_antiVoxMix, a second MasterMixer instance fed by every
+// audible slice (Phase 3F Sub-Epic J Task 9, mirroring cmaster.c:371-372
+// [v2.10.3.15]).  Its drained block reaches this method through
+// TxWorkerThread::onAntiVoxBlockReady -> onAntiVoxSamplesReady.  Before
+// Task 9 the feed was a direct RxDspWorker -> TxWorkerThread queued
+// connection carrying slice A's audio alone; see
+// docs/architecture/phase3m-3a-iv-antivox-feed-design.md §4.2 for the
+// original shape.
 // ---------------------------------------------------------------------------
 void TxChannel::sendAntiVoxData(const float* interleaved, int nsamples)
 {
@@ -1915,6 +1983,222 @@ void TxChannel::sendAntiVoxData(const float* interleaved, int nsamples)
     // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
     if (pdexp[m_channelId] == nullptr) return;
     ::SendAntiVOXData(m_channelId, nsamples, m_antiVoxScratch.data());
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// feedTxAudioFromTci()  — Phase 3J-1 Task 17.1
+//
+// Accepts an arbitrary-length block of interleaved stereo (or mono) float
+// audio from the TCI binary pipeline and dispatches it in m_inputBufferSize
+// blocks through driveOneTxBlock().
+//
+// Phase 3J-1 review P1.1: signature changed from `const float*, frames` to
+// `QByteArray, frames` so the slot can be safely invoked with
+// Qt::QueuedConnection from the main thread (where TciServer's WS handler
+// fires) to TxWorkerThread (where TxChannel runs).  The QByteArray is a
+// value-type that Qt copies into the queued event — no raw-pointer lifetime
+// hazard across the thread boundary.  The float* view is reconstructed inside
+// the slot body via reinterpret_cast<const float*>(bytes.constData()).
+//
+// Phase 3J-1 Task 17.1 — NereusSDR-original entry point.
+//
+// Thetis dequeues TCIQueuedTxAudio in a separate thread and writes to the
+// WDSP ring via TryDequeueTxAudio (TCIServer.cs:5586-5600 [v2.10.3.13]).
+// NereusSDR consolidates this into a single call that accumulates and drains
+// in the same drain tick where the data arrived.
+//
+// `interleavedStereoBytes` — raw float bytes: L0,R0,L1,R1,... (ch==2) or
+//                            L0,L1,... (ch==1); size == frames * channels * 4
+// `frames`                 — number of multi-channel frames
+// `channels`               — 1 or 2; mono frames are replicated to stereo
+// `srcRate`                — source rate from TCI header (informational; deferred)
+// ---------------------------------------------------------------------------
+void TxChannel::feedTxAudioFromTci(const QByteArray& interleavedStereoBytes,
+                                    int frames, int channels, int srcRate)
+{
+    const int expectedBytes = frames * channels * static_cast<int>(sizeof(float));
+    if (interleavedStereoBytes.size() < expectedBytes || frames <= 0
+            || channels < 1 || channels > 2) {
+        return;
+    }
+    const float* interleavedStereo =
+        reinterpret_cast<const float*>(interleavedStereoBytes.constData());
+
+    // ── Phase 3J-1 bench fix (2026-05-10): ring-buffer push instead of
+    //    synchronous dispatch.
+    //
+    // Original implementation dispatched 32 driveOneTxBlock calls back-to-back
+    // per WSJT-X 2048-frame message.  Each call ran fexchange0 + sendTxIq
+    // synchronously, pushing 2048 samples into the P1RadioConnection TX I/Q
+    // ring (4032-sample capacity) in <1 ms.  After ~7 messages the ring
+    // overflowed and on-air TX audio dropped to fragments.
+    //
+    // New implementation extracts the L channel (mono — WDSP TXA is mono-in,
+    // dual-mono stereo carries the same audio in both channels) and pushes
+    // it into m_tciInputRing.  TxWorkerThread::dispatchOneBlock pulls one
+    // 64-frame block per worker iteration via pullTciAudio, splicing it into
+    // m_in like the PC/VAX mic override paths.  The worker's natural block
+    // rate (~750/sec, matching the HL2 wire rate of 48 kHz) drains the
+    // ring without bursts, so the downstream TX I/Q ring never overflows.
+    //
+    // The ring has ~680 ms of headroom (32768 floats), easily absorbing a
+    // WSJT-X message's worth of audio (2048 frames == ~43 ms) plus several
+    // messages of producer-consumer jitter.
+    if (m_tciTxAccum.size() < static_cast<size_t>(frames)) {
+        m_tciTxAccum.resize(static_cast<size_t>(frames));
+    }
+    // Phase 3J-1 closeout Item 11 (2026-05-12): apply the TciApplet
+    // "TX gain" slider as a pre-TXA scalar.  Orthogonal to WDSP Panel
+    // gain (mic slider).  Item 13: track block peak |sample| for the
+    // TciApplet TX level meter -- replaces the fake sine-wave animation.
+    const float tciTxGain = m_tciTxGainLinear.load(std::memory_order_acquire);
+    float blockPeak = 0.0f;
+    for (int f = 0; f < frames; ++f) {
+        // Extract L channel (mono: frame[f]; stereo: frame[2f])
+        const float raw = (channels == 2)
+                          ? interleavedStereo[2 * f]
+                          : interleavedStereo[f];
+        const float l = raw * tciTxGain;
+        m_tciTxAccum[static_cast<size_t>(f)] = l;
+        const float a = std::fabs(l);
+        if (a > blockPeak) { blockPeak = a; }
+    }
+    m_tciTxPeakAbs.store(blockPeak, std::memory_order_release);
+
+    // ── Phase 3J-1 closeout Item 8 (2026-05-12): resample non-48k input.
+    //
+    // FreeDV / Quisk / JTDX-at-12k send TX_AUDIO_STREAM at non-48 kHz
+    // rates.  WDSP TXA input is always 48 kHz, so anything else must be
+    // resampled before the ring push.  From Thetis cmaster.cs:1411-1444
+    // [v2.10.3.13]:
+    //     m_tciTxResampler = WDSP.create_resampleFV(inputRate, targetRate);
+    //     xresampleFV(input, output, numIn, &numOut, m_tciTxResampler);
+    //     // ...destroy + recreate when inputRate changes...
+    //
+    // 48000 Hz input passes through unchanged (matches WDSP TXA rate, no
+    // resampler ever created — this is the WSJT-X happy path).
+    //
+    // The resampler is destroyed in clearTciAudio() on TX cycle stop, so a
+    // FreeDV mode change between cycles (8 kHz <-> 24 kHz) gets a fresh
+    // instance.  Within a cycle, mid-stream rate changes are also handled:
+    // a rate change destroys the existing instance and recreates with the
+    // new rate.
+    constexpr int kWdspTxaInputRate = 48000;
+    const float* monoSource = m_tciTxAccum.data();
+    int outFrames = frames;
+
+#ifdef HAVE_WDSP
+    if (srcRate > 0 && srcRate != kWdspTxaInputRate) {
+        // Recreate the resampler if the input rate changed (or first call).
+        if (m_tciTxResampler && m_tciTxResamplerInputRate != srcRate) {
+            destroy_resampleFV(m_tciTxResampler);
+            m_tciTxResampler = nullptr;
+            m_tciTxResamplerInputRate = 0;
+        }
+        if (!m_tciTxResampler) {
+            m_tciTxResampler = create_resampleFV(srcRate, kWdspTxaInputRate);
+            m_tciTxResamplerInputRate = srcRate;
+        }
+        if (m_tciTxResampler) {
+            // Output buffer: worst case is upsample 8 kHz -> 48 kHz (6x).
+            // Allocate 8x to leave headroom for resampler transient slop.
+            // resize() is amortized cheap because the vector grows once and
+            // sticks at the high-water mark for the rest of the TX cycle.
+            // (std::max)(...) parentheses bypass the WDSP linux_port.h `max`
+            // macro that would otherwise be substituted before name lookup.
+            const int srcRateClamped = (srcRate < 1) ? 1 : srcRate;
+            const size_t outCapacity =
+                static_cast<size_t>(frames) *
+                (static_cast<size_t>(kWdspTxaInputRate) /
+                 static_cast<size_t>(srcRateClamped) + 1) + 16;
+            if (m_tciTxResampleOut.size() < outCapacity) {
+                m_tciTxResampleOut.resize(outCapacity);
+            }
+            int producedOut = 0;
+            xresampleFV(m_tciTxAccum.data(),
+                        m_tciTxResampleOut.data(),
+                        frames,
+                        &producedOut,
+                        m_tciTxResampler);
+            monoSource = m_tciTxResampleOut.data();
+            outFrames  = producedOut;
+        }
+    }
+#else
+    (void)srcRate;
+#endif
+
+    // Push the (possibly resampled) burst into the ring.  tryPushCopy is
+    // non-blocking and refuses partial writes — if the ring is full the
+    // entire frame is dropped (audible as a brief dropout) but alignment
+    // stays correct.
+    if (outFrames > 0) {
+        m_tciInputRing.tryPushCopy(
+            reinterpret_cast<const uint8_t*>(monoSource),
+            static_cast<qint64>(outFrames) * static_cast<qint64>(sizeof(float)));
+    }
+}
+
+// ── pullTciAudio ─────────────────────────────────────────────────────────────
+//
+// Phase 3J-1 bench fix (2026-05-10): worker-side consumer for the TCI input
+// ring.  Pulls up to `frames` mono float samples into `dst`.  Returns the
+// number of samples actually pulled (0 if the ring is empty — caller should
+// zero-fill the remaining slots).
+//
+// Called from TxWorkerThread::dispatchOneBlock when isTciAudioActive() is
+// true.  Both producer (feedTxAudioFromTci, queued event on this same
+// thread) and consumer (this method, worker run loop) run on
+// TxWorkerThread, so the SPSC contract is trivially satisfied — the worker
+// run loop's sendPostedEvents drains the producer's queued events BEFORE
+// each dispatchOneBlock call.
+
+int TxChannel::pullTciAudio(float* dst, int frames)
+{
+    if (!dst || frames <= 0) { return 0; }
+    const qint64 wantBytes = static_cast<qint64>(frames) * static_cast<qint64>(sizeof(float));
+    const qint64 gotBytes  = m_tciInputRing.popInto(
+        reinterpret_cast<uint8_t*>(dst), wantBytes);
+    return static_cast<int>(gotBytes / static_cast<qint64>(sizeof(float)));
+}
+
+// ── clearTciAudio ────────────────────────────────────────────────────────────
+//
+// Phase 3J-1 bench fix (2026-05-10): drain the TCI input ring on cycle stop.
+// Without this, leftover audio from the previous WSJT-X TX cycle stays
+// queued in the ring; on the next cycle's worker pull it gets played
+// FIRST (~0.1-0.5 s of stale tail audio before the new cycle's audio
+// catches up).  For FT8's strict 15 s timing slot the stale tail can
+// throw off the entire transmission cadence.
+//
+// Implementation: use the existing popInto API to drain into a scratch
+// buffer in chunks until empty.  Called only from the main thread on
+// the TX cycle stop transition (TciServer::stopTxChrono), and the
+// worker has already stopped pulling at that point (m_tciAudioActive
+// flipped false on mutex release).  No SPSC contention.
+
+void TxChannel::clearTciAudio()
+{
+    constexpr int kDrainScratchBytes = 4096;
+    uint8_t scratch[kDrainScratchBytes];
+    while (m_tciInputRing.popInto(scratch, kDrainScratchBytes) > 0) {
+        // keep draining
+    }
+    m_tciTxAccumSize = 0;
+
+    // Phase 3J-1 closeout Item 8 (2026-05-12): tear down the TCI TX-path
+    // resampler so the next cycle starts with a fresh instance.  A client
+    // that disconnects and reconnects (or a FreeDV mode change between
+    // cycles) may bring up a different srcRate; recreating on first use
+    // keeps the state machine simple.  Matches Thetis cmaster.cs:1364-1369
+    // [v2.10.3.13] -- resetTCITxState destroys m_tciTxResampler on cycle stop.
+#ifdef HAVE_WDSP
+    if (m_tciTxResampler) {
+        destroy_resampleFV(m_tciTxResampler);
+        m_tciTxResampler = nullptr;
+        m_tciTxResamplerInputRate = 0;
+    }
 #endif
 }
 
@@ -2682,6 +2966,16 @@ void TxChannel::driveOneTxBlockFromInterleaved(const double* interleavedIn)
     // sendTxIq, which still uses the float* SPSC ring layout.
     // Without HAVE_WDSP, m_out stays all-zeros (silence stream) — keeps
     // the ring warm in stub builds.
+    //
+    // NOTE on xtxgain: Thetis cmaster.cs:1118-1122 [v2.10.3.13]
+    // CMSetTXOutputLevelRun sets `run = false` unconditionally (the
+    // commented-out original logic referenced PennyLanePresent which is
+    // legacy hardware not present on modern radios).  Therefore Thetis's
+    // xtxgain (ChannelMaster/txgain.c:66-77) takes the memcpy(out, in)
+    // branch and Igain/Qgain are NOT applied to the I/Q stream.  Only the
+    // CmdHighPriority drive_level byte (= int(255 * audio_volume * 1.02))
+    // attenuates output power.  Matching that behaviour here: pass-through
+    // double → float, no IQ scaling.
     for (int i = 0; i < outN; ++i) {
         m_outInterleavedFloat[static_cast<size_t>(2 * i + 0)] =
             static_cast<float>(m_out[static_cast<size_t>(2 * i + 0)]);
@@ -4171,6 +4465,7 @@ void TxChannel::setTxFixedGain(double level)
     m_lastFixedGain = level;
 #ifdef HAVE_WDSP
     // From Thetis cmaster.cs:1115-1119 [v2.10.3.13] CMSetTXOutputLevel —
+    // Upstream tags preserved: //MW0LGE (from cited cmaster.cs:1114) [v2.10.3.15]
     // cmaster.SetTXFixedGain(0, level, level).  cmaster.SetTXFixedGain is
     // the C# P/Invoke at cmaster.cs:273-274 [v2.10.3.13]; the native impl
     // is Thetis ChannelMaster/txgain.c:127-134 [v2.10.3.13] —

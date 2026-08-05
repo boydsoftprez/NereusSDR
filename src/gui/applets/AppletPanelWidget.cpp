@@ -26,6 +26,11 @@
 #include "AppletPanelWidget.h"
 #include "AppletWidget.h"
 #include "gui/StyleConstants.h"
+// Task 40 (Phase 3P-II): analog S-Meter replaces the composite MeterWidget
+// header.  The right-click context menu (Tasks 38/39) is the only entry
+// point for RX/TX mode selection and peak-hold settings; the inline settings
+// strip that AetherSDR renders inside the AppletPanel is intentionally absent.
+#include "gui/SMeterWidget.h"
 
 #include <QScrollArea>
 #include <QVBoxLayout>
@@ -33,6 +38,8 @@
 #include <QLabel>
 #include <QSizePolicy>
 #include <QResizeEvent>
+#include <QPushButton>
+#include <QMenu>
 
 namespace NereusSDR {
 
@@ -48,6 +55,26 @@ AppletPanelWidget::AppletPanelWidget(QWidget* parent)
     m_rootLayout = new QVBoxLayout(this);
     m_rootLayout->setContentsMargins(0, 0, 0, 0);
     m_rootLayout->setSpacing(0);
+
+    // ☰ menu button — created here as a hidden child of `this`. When
+    // setHeaderWidget runs, wrapWithTitleBar will reparent it into the
+    // S-Meter title bar (right end, after the title label). This avoids
+    // a dedicated banner row that would compete for clicks with the
+    // master-volume strip above the panel.
+    m_bannerMenuButton = new QPushButton(QStringLiteral("☰"), this);
+    m_bannerMenuButton->setObjectName(QStringLiteral("appletPanelBannerButton"));
+    m_bannerMenuButton->setFixedSize(22, 18);
+    // User-visible tooltip — plain English, no source cites.
+    m_bannerMenuButton->setToolTip(QStringLiteral("Show or hide applets"));
+    m_bannerMenuButton->setStyleSheet(QStringLiteral(
+        "QPushButton {"
+        "  background: transparent; color: %1;"
+        "  border: none; font-size: 12px;"
+        "}"
+        "QPushButton:hover { color: %2; }"
+        "QPushButton::menu-indicator { image: none; width: 0; }"
+    ).arg(Style::kTitleText, Style::kAccent));
+    m_bannerMenuButton->hide();   // hidden until setBannerMenu called
 
     // Fixed header area (above scroll) — for MeterWidget / S-Meter
     m_headerLayout = new QVBoxLayout;
@@ -87,6 +114,23 @@ AppletPanelWidget::AppletPanelWidget(QWidget* parent)
 
     m_scrollArea->setWidget(stackWidget);
     m_rootLayout->addWidget(m_scrollArea);
+
+    // Task 40 (Phase 3P-II): install the analog SMeterWidget as the fixed header.
+    // The composite ItemGroup-based S-Meter previously set here via the
+    // m_meterWidget path in MainWindow::buildUI() is no longer used for the
+    // header; the underlying MeterWidget (Container #0) stays alive for
+    // Container #1 and other targets -- this call only replaces the fixed top
+    // header of the applet panel.
+    //
+    // Right-click context menu (Tasks 38/39) is the only entry point for
+    // mode selection and peak-hold settings per design doc ss5.4.2.
+    // The inline settings strip (TX/RX combos + peak-hold checkbox + decay
+    // combo + reset button) that AetherSDR renders in AppletPanel is not
+    // present in NereusSDR.
+    m_sMeter = new SMeterWidget(this);
+    // aspectRatio 2.0f: width/height = 2.0 gives the needle arc comfortable
+    // vertical room (same ratio as AetherSDR's 280:140 default).
+    setHeaderWidget(m_sMeter, QStringLiteral("S-Meter"), 2.0f);
 }
 
 void AppletPanelWidget::setHeaderWidget(QWidget* widget, const QString& title,
@@ -101,7 +145,10 @@ void AppletPanelWidget::setHeaderWidget(QWidget* widget, const QString& title,
     // Let the widget expand to fill width; height set dynamically in resizeEvent
     widget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
-    QWidget* wrapped = wrapWithTitleBar(widget, title);
+    // Pass the ☰ menu button as the trailing widget so it lives in the
+    // S-Meter title bar (right end). See AppletPanelWidget.h comment for
+    // why we don't use a dedicated banner row.
+    QWidget* wrapped = wrapWithTitleBar(widget, title, m_bannerMenuButton);
     wrapped->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_headerWrapper = wrapped;
     m_headerLayout->addWidget(wrapped);
@@ -177,6 +224,21 @@ void AppletPanelWidget::removeApplet(AppletWidget* applet)
     m_applets.removeOne(applet);
 }
 
+void AppletPanelWidget::setAppletVisible(AppletWidget* applet, bool visible)
+{
+    if (!applet) { return; }
+    QWidget* wrapper = m_wrappers.value(applet, nullptr);
+    if (!wrapper) { return; }  // applet not in this panel
+    wrapper->setVisible(visible);
+}
+
+void AppletPanelWidget::setBannerMenu(QMenu* menu)
+{
+    if (!m_bannerMenuButton) { return; }
+    m_bannerMenuButton->setMenu(menu);
+    m_bannerMenuButton->setVisible(menu != nullptr);
+}
+
 void AppletPanelWidget::addWidget(QWidget* widget, const QString& title)
 {
     if (!widget) { return; }
@@ -188,7 +250,8 @@ void AppletPanelWidget::addWidget(QWidget* widget, const QString& title)
     m_stackLayout->insertWidget(idx, wrapped);
 }
 
-QWidget* AppletPanelWidget::wrapWithTitleBar(QWidget* child, const QString& title)
+QWidget* AppletPanelWidget::wrapWithTitleBar(QWidget* child, const QString& title,
+                                              QWidget* trailing)
 {
     // Wrapper container
     auto* wrapper = new QWidget(this);
@@ -197,9 +260,12 @@ QWidget* AppletPanelWidget::wrapWithTitleBar(QWidget* child, const QString& titl
     wrapLayout->setSpacing(0);
 
     // Title bar — from AetherSDR AppletTitleBar:
-    // 16px height, gradient, grip dots + title label
+    // 16px height, gradient, grip dots + title label.
+    // Bumped to 22px when a trailing widget is hosted (the S-Meter
+    // header gets the ☰ menu button on its right end).
     auto* titleBar = new QWidget(wrapper);
-    titleBar->setFixedHeight(Style::kTitleBarH);
+    const int titleBarHeight = trailing ? 22 : Style::kTitleBarH;
+    titleBar->setFixedHeight(titleBarHeight);
     titleBar->setStyleSheet(Style::titleBarStyle());
 
     auto* titleLayout = new QHBoxLayout(titleBar);
@@ -221,6 +287,14 @@ QWidget* AppletPanelWidget::wrapWithTitleBar(QWidget* child, const QString& titl
     ).arg(Style::kTitleText));
     titleLayout->addWidget(label);
     titleLayout->addStretch();
+
+    if (trailing) {
+        // Reparent under the title bar (Qt does this automatically on
+        // addWidget). The trailing widget keeps its current visibility
+        // state — callers manage show/hide via their own API (e.g.
+        // setBannerMenu for the ☰ button).
+        titleLayout->addWidget(trailing);
+    }
 
     wrapLayout->addWidget(titleBar);
     wrapLayout->addWidget(child);

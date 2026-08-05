@@ -1398,6 +1398,14 @@ void TransmitModel::loadFromSettings(const QString& mac)
     const bool antiVoxRun = s.value(pfx + QLatin1String("AntiVox_Enable"),
                                      QStringLiteral("False")).toString() == QLatin1String("True");
     setAntiVoxRun(antiVoxRun);
+    // paSettingsBypass: default false (D4: ANAN-G2E port).
+    // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added —
+    //   chkBypassANANPASettings.Visible = true (visibility only; no default
+    //   .Checked= in Thetis v2.10.3.15, so NereusSDR defaults to false).
+    const bool paSettingsBypass = s.value(pfx + QLatin1String("PaSettingsBypass"),
+                                           QStringLiteral("False")).toString()
+                                     == QLatin1String("True");
+    setPaSettingsBypass(paSettingsBypass);
 
     // ── MON properties (monEnabled NOT loaded — safety: always false) ─────
     // monitorVolume: default 0.5f (audio.cs:417 [v2.10.3.13] literal)
@@ -1437,6 +1445,22 @@ void TransmitModel::loadFromSettings(const QString& mac)
         micSource = MicSource::Vax;
     }
     setMicSource(micSource);
+
+    // ── Mic source previous (PhoneCwApplet VAX-toggle restore target) ─────
+    // Lookup order matches Mic_Source: per-MAC -> preconnect -> default Pc.
+    const QString perMacPreVaxStr = s.value(pfx + QLatin1String("Mic_Source_PreVax"),
+                                             QString()).toString();
+    QString preVaxStr;
+    if (perMacPreVaxStr.isEmpty()) {
+        preVaxStr = AppSettings::instance().value(
+            QStringLiteral("tx/preconnect/Mic_Source_PreVax"),
+            QStringLiteral("Pc")).toString();
+    } else {
+        preVaxStr = perMacPreVaxStr;
+    }
+    m_previousNonVaxMicSource = (preVaxStr == QLatin1String("Radio"))
+                                    ? MicSource::Radio
+                                    : MicSource::Pc;
 
     // ── Two-tone test properties (3M-1c B.2) ──────────────────────────────
     // Defaults per design spec §4.4 (option C):
@@ -1723,6 +1747,14 @@ void TransmitModel::persistToSettings(const QString& mac) const
         s.setValue(pfx + QLatin1String("Mic_Source"), micSourceStr);
     }
 
+    // Mic_Source_PreVax mirrors Mic_Source persistence; tracked by setMicSource.
+    {
+        QString preVaxStr = (m_previousNonVaxMicSource == MicSource::Radio)
+                                ? QStringLiteral("Radio")
+                                : QStringLiteral("Pc");
+        s.setValue(pfx + QLatin1String("Mic_Source_PreVax"), preVaxStr);
+    }
+
     // ── Two-tone test properties (3M-1c B.2) ──────────────────────────────
     s.setValue(pfx + QLatin1String("TwoToneFreq1"),       QString::number(m_twoToneFreq1));
     s.setValue(pfx + QLatin1String("TwoToneFreq2"),       QString::number(m_twoToneFreq2));
@@ -1915,6 +1947,22 @@ void TransmitModel::setAntiVoxRun(bool run)
     persistOne(QStringLiteral("AntiVox_Enable"),
                run ? QStringLiteral("True") : QStringLiteral("False"));  // auto-persist
     emit antiVoxRunChanged(run);
+}
+
+// ── PA settings bypass setter (D4: ANAN-G2E port) ────────────────────────────
+//
+// From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added:
+//   chkBypassANANPASettings.Visible = true;  (in ANAN_G2E case)
+// Thetis has no CheckedChanged handler in v2.10.3.15 — the checkbox is
+// UI-only, its state serialised generically.  NereusSDR persists it explicitly.
+// ─────────────────────────────────────────────────────────────────────────────
+void TransmitModel::setPaSettingsBypass(bool bypass)
+{
+    if (bypass == m_paSettingsBypass) { return; }  // idempotent guard
+    m_paSettingsBypass = bypass;
+    persistOne(QStringLiteral("PaSettingsBypass"),
+               bypass ? QStringLiteral("True") : QStringLiteral("False"));  // auto-persist
+    emit paSettingsBypassChanged(bypass);
 }
 
 // ── MON properties (3M-1b C.5) ───────────────────────────────────────────────
@@ -2340,6 +2388,24 @@ void TransmitModel::setMicSource(MicSource source)
 
     if (source == m_micSource) { return; }  // idempotent guard
     m_micSource = source;
+
+    // Capture every non-Vax write as the "previous" source so toggling
+    // VAX off restores the user's most recent explicit choice. Updates
+    // both the per-MAC and preconnect persistence keys to mirror the
+    // Mic_Source two-key pattern.
+    if (source != MicSource::Vax && source != m_previousNonVaxMicSource) {
+        m_previousNonVaxMicSource = source;
+        QString preVaxStr = (source == MicSource::Radio)
+                                ? QStringLiteral("Radio")
+                                : QStringLiteral("Pc");
+        if (m_persistMac.isEmpty()) {
+            AppSettings::instance().setValue(
+                QStringLiteral("tx/preconnect/Mic_Source_PreVax"), preVaxStr);
+        } else {
+            persistOne(QStringLiteral("Mic_Source_PreVax"), preVaxStr);
+        }
+    }
+
     QString persistStr;
     switch (source) {
         case MicSource::Radio: persistStr = QStringLiteral("Radio"); break;
@@ -2348,14 +2414,14 @@ void TransmitModel::setMicSource(MicSource source)
         default:               persistStr = QStringLiteral("Pc");    break;
     }
     if (m_persistMac.isEmpty()) {
-        // Pre-connect fallback (eager-borg-d64bed, 2026-05-06).  When the
+        // Pre-connect fallback (eager-borg-d64bed, 2026-05-06). When the
         // user clicks the radio button in Setup -> Audio -> TX Input
         // before connecting to a radio, persistOne early-returns (no MAC
         // bound yet) so the choice would normally be lost on app restart.
         // Write to a global "tx/preconnect/Mic_Source" key instead;
         // loadFromSettings reads it as a fallback when the per-MAC key is
         // absent so the choice carries forward to whatever radio they
-        // connect next.  Per-MAC values always take precedence over the
+        // connect next. Per-MAC values always take precedence over the
         // preconnect key once written.
         AppSettings::instance().setValue(
             QStringLiteral("tx/preconnect/Mic_Source"), persistStr);
@@ -2363,6 +2429,15 @@ void TransmitModel::setMicSource(MicSource source)
         persistOne(QStringLiteral("Mic_Source"), persistStr);  // L.2 auto-persist
     }
     emit micSourceChanged(source);
+}
+
+void TransmitModel::toggleVaxSource(bool on)
+{
+    if (on) {
+        setMicSource(MicSource::Vax);
+    } else {
+        setMicSource(m_previousNonVaxMicSource);
+    }
 }
 
 // ── Mic source lock guard (3M-1b L.3) ────────────────────────────────────────
@@ -2794,6 +2869,7 @@ void TransmitModel::setCpdrLevelDb(int dB)
     const int clamped = std::clamp(dB, kCpdrLevelDbMin, kCpdrLevelDbMax);
     if (clamped == m_cpdrLevelDb) { return; }
     // From Thetis setup.cs:9307 [v2.10.3.13]:
+    // Upstream tags preserved: //MW0LGE (from cited setup.cs:9309) [v2.10.3.15]
     //   console.CPDRLevel = (int)dr["CompanderLevel"];
     m_cpdrLevelDb = clamped;
     persistOne(QStringLiteral("CompanderLevel"), QString::number(clamped));

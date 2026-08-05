@@ -204,6 +204,42 @@ void MoxController::setMoxCheck(MoxCheckFn check)
 }
 
 // ---------------------------------------------------------------------------
+// Phase 3P-II Task 87: setInterlockPolicy / onAmpStateChanged / onAmpSwrUpdated
+//
+// setInterlockPolicy: wire the TxInterlockPolicy that setMox(true) consults
+// immediately after the BandPlanGuard (K.2) check and before the Codex P2
+// safety effects.  Passing nullptr removes the policy.
+//
+// onAmpStateChanged: update the cached amplifier presence + OPERATE flag
+// so that evaluateTxRequest() sees a consistent snapshot at every setMox
+// call.  Wired from RadioModel amplifierChanged / ampStateChanged lambdas.
+//
+// onAmpSwrUpdated: update the cached SWR ratio from the PGXL meter stream.
+// Wired from RadioModel ampMetersChanged(float fwd, float swr) lambda.
+// Only the swr argument is forwarded.
+// ---------------------------------------------------------------------------
+void MoxController::setInterlockPolicy(TxInterlockPolicy* policy)
+{
+    m_interlockPolicy = policy;
+}
+
+void MoxController::onAmpStateChanged(bool hasAmp, bool inOperate)
+{
+    m_ampPresent   = hasAmp;
+    m_ampInOperate = inOperate;
+    // Phase 3P-II review fix I2: forward to the interlock policy so it can
+    // track the OPERATE-on rising edge for the grace-period gate.
+    if (m_interlockPolicy) {
+        m_interlockPolicy->onAmpStateChanged(hasAmp, inOperate);
+    }
+}
+
+void MoxController::onAmpSwrUpdated(float swr)
+{
+    m_lastSwr = swr;
+}
+
+// ---------------------------------------------------------------------------
 // C.4 — setRx2Enabled / setVfobTx
 //
 // Idempotent setters that update the internal flags consumed by
@@ -216,6 +252,7 @@ void MoxController::setMoxCheck(MoxCheckFn check)
 // scheduled for Phase 3F).
 //
 // From Thetis console.cs:29324 [v2.10.3.13] (MoxPreChangeHandlers) and
+// Upstream tags preserved: //MW0LGE (from cited console.cs:29326) [v2.10.3.15]
 //                console.cs:29677 [v2.10.3.13] (MoxChangeHandlers):
 //   rx2_enabled && VFOBTX ? 2 : 1
 // ---------------------------------------------------------------------------
@@ -462,6 +499,23 @@ void MoxController::setMox(bool on)
         }
     }
 
+    // ── Phase 3P-II Task 87: TxInterlockPolicy gate ───────────────────────────
+    //
+    // Placed AFTER the BandPlanGuard check (K.2) and BEFORE the Codex P2
+    // safety effects so:
+    //   - BandPlan violations are already caught by the stricter band guard.
+    //   - Safety effects (Alex routing, ATT) only fire for accepted TX requests.
+    //
+    // evaluateTxRequest may emit warned(reason) or denied(reason) on the policy
+    // object.  The warned/denied signals are plumbed to the operator UI toast
+    // in Task 97.  For this task the signals exist but have no UI subscriber.
+    if (on && m_interlockPolicy) {
+        if (!m_interlockPolicy->evaluateTxRequest(m_ampPresent, m_ampInOperate, m_lastSwr)) {
+            // denied() signal already emitted by the policy.
+            return;
+        }
+    }
+
     // ── Step 1: Safety effects (BEFORE idempotent guard — Codex P2) ─────────
     // F.1 wires: AlexController::applyAntennaForBand(currentBand, isTx)
     //            StepAttenuatorController TX-path activation / RX restore
@@ -475,6 +529,7 @@ void MoxController::setMox(bool on)
 
     // ── C.2: Pre signal (multicast, before m_mox commit) ─────────────────────
     // From Thetis console.cs:29322-29324 [v2.10.3.13]:
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:29326) [v2.10.3.15]
     //   bool bOldMox = _mox; //MW0LGE_21b used for state change delgates at end of fn
     //   MoxPreChangeHandlers?.Invoke(rx2_enabled && VFOBTX ? 2 : 1, _mox, chkMOX.Checked); // MW0LGE_21k8
     //
@@ -671,6 +726,7 @@ void MoxController::onSpaceDelayElapsed()
 // onKeyUpDelayElapsed — fires after keyUpDelay (10ms) on TX→RX path.
 //
 // From Thetis console.cs:29617-29618 [v2.10.3.13]:
+// Upstream tags preserved: //MW0LGE (from cited upstream lines) [v2.10.3.15]
 //   if (mox_delay > 0)
 //       Thread.Sleep(mox_delay); // default 10, allows in-flight samples to clear
 //
@@ -683,6 +739,10 @@ void MoxController::onKeyUpDelayElapsed()
 {
     // TODO [3M-1a F.1]: UpdateDDCs + UpdateAAudioMixerStates + AudioMOXChanged(false)
     //                   + HdwMOXChanged(false) here.
+    // DONE_WITH_CONCERNS [anan-g2e F2/F3]: When UpdateAAudioMixerStates is ported,
+    // ANAN_G2E must join the HERMES 4-DDC (USB) group at console.cs:27653-27664
+    // [v2.10.3.15] (F2) AND the HERMES 2-DDC (ETH) group at console.cs:27669-27679
+    // [v2.10.3.15] (F3). //N1GP G2E added tags are on both cite lines in Thetis.
     emit txaFlushed();                                  // TX→RX phase 3 of 4
     advanceState(MoxState::TxToRxFlush);
     m_pttOutDelayTimer.start();
@@ -691,6 +751,7 @@ void MoxController::onKeyUpDelayElapsed()
 // onPttOutElapsed — fires after ptt_out_delay (20ms) on TX→RX path.
 //
 // From Thetis console.cs:29627-29628 [v2.10.3.13]:
+// Upstream tags preserved: //MW0LGE (from cited console.cs:29627) [v2.10.3.15]
 //   if (ptt_out_delay > 0)
 //       Thread.Sleep(ptt_out_delay);  //wcp:  added 2018-12-24, time for HW to switch
 //
@@ -1046,6 +1107,28 @@ void MoxController::setAntiVoxRun(bool run)
     emit antiVoxRunRequested(run);
 }
 
+// ---------------------------------------------------------------------------
+// primeWdspState — bench fix 2026-05-14 ("VOX needs juggling to prime").
+//
+// Resets the three NaN sentinels that guard the *Requested signals and
+// re-runs the recompute helpers so the late-wired TxChannel receives the
+// current values.  See the header comment block for the full motivation.
+//
+// Anti-VOX tau and anti-VOX run are NOT covered here because their TM ->
+// MoxController connects are deferred to wireConnectionSignals
+// (RadioModel.cpp:5025/5051) and the explicit re-push there
+// (RadioModel.cpp:5043/5070) already lands after TxWorkerThread is wired.
+// ---------------------------------------------------------------------------
+void MoxController::primeWdspState()
+{
+    m_lastVoxThresholdEmitted = std::numeric_limits<double>::quiet_NaN();
+    m_lastVoxHangTimeEmitted  = std::numeric_limits<double>::quiet_NaN();
+    m_lastAntiVoxGainEmitted  = std::numeric_limits<double>::quiet_NaN();
+    recomputeVoxThreshold();
+    recomputeVoxHangTime();
+    recomputeAntiVoxGain();
+}
+
 // ===========================================================================
 // H.4 — PTT-source dispatch slots (MIC / CAT / VOX / SPACE / X2)
 //
@@ -1140,10 +1223,12 @@ void MoxController::onMicPttFromRadio(bool pressed)
 void MoxController::onCatPtt(bool pressed)
 {
     // From Thetis console.cs:25469 [v2.10.3.13]: _current_ptt_mode = PTTMode.CAT;
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:25473) [v2.10.3.15]
     if (pressed) {
         setPttMode(PttMode::Cat);
     }
     // From Thetis console.cs:25471 [v2.10.3.13]: chkMOX.Checked = true;
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:25473) [v2.10.3.15]
     setMox(pressed);
 }
 

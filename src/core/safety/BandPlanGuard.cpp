@@ -157,8 +157,13 @@ constexpr std::array<ChannelEntry, 11> kUkChannels60m{{
     { 5'405'000,  3'000 },   // console.cs:2654 — Channel(5.4050,   3000)
 }};
 
-// US: 5 channels @ 2.8 kHz each (console.cs:2657-2661 [v2.10.3.13]).
-constexpr std::array<ChannelEntry, 5> kUsChannels60m{{
+// US: 5 channel center frequencies (console.cs:2657-2661 [v2.10.3.13]).
+// Used by Thetis only for VFO snap / band-stack display, NOT for TX gating
+// (IsOKToTX in clsBandStackManager.cs:1063-1083 [v2.10.3.13] permits TX
+// anywhere in the broad B60M 5.1-5.5 MHz range — see kUsBandRanges below).
+// Retained here for cite-trail integrity; not consulted by isValidTxFreq.
+// See channels60mFor: US falls through to the broad range case.
+[[maybe_unused]] constexpr std::array<ChannelEntry, 5> kUsChannels60m{{
     { 5'332'000, 2'800 },   // console.cs:2657 — Channel(5.3320, 2800)
     { 5'348'000, 2'800 },   // console.cs:2658 — Channel(5.3480, 2800)
     { 5'358'500, 2'800 },   // console.cs:2659 — Channel(5.3585, 2800)
@@ -295,8 +300,17 @@ static ChannelSpan channels60mFor(Region region) noexcept
         return { kUkChannels60m.data(), kUkChannels60m.size() };
     case Region::Japan:
         return { kJapanChannels60m.data(), kJapanChannels60m.size() };
-    case Region::UnitedStates:
-        return { kUsChannels60m.data(), kUsChannels60m.size() };
+    // US is intentionally NOT channelized for TX gating. Thetis allows TX
+    // anywhere in the broad B60M 5.1-5.5 MHz range with the USB/CWL/CWU/DIGU
+    // mode restriction (IsOKToTX at clsBandStackManager.cs:1063-1083
+    // [v2.10.3.13] + US mode switch at console.cs:29416-29432 [v2.10.3.13]).
+    // The FCC dial convention (47 CFR 97.303(h)) places USB suppressed-carrier
+    // at channel_center - 1.5 kHz, which sits OUTSIDE a 2.8 kHz wide channel
+    // window centred on Thetis's channel-center constants — channelizing the
+    // gate at those centers rejected the very dial frequencies operators use
+    // (issue #271, ANAN-10E on macOS, 2026-05-18). US returns {nullptr, 0}
+    // so the broad-range branch in isValidTxFreq governs.
+    //
     // TODO(3M follow-up): Add per-region 60m channel arms for regions with
     // discrete channelization (Italy, Slovakia, etc. — see Thetis source).
     // Regions with NO channelization MUST NOT fall through to US channels —
@@ -387,40 +401,49 @@ bool BandPlanGuard::isValidTxFreq(Region region, std::int64_t freqHz,
         return true;
     }
 
-    // NereusSDR safety enhancement: gates US 60m TX on the 5 discrete channel
-    // centers (±BW/2). This is more restrictive than Thetis's IsOKToTX
-    // (clsBandStackManager.cs:1063-1083 [v2.10.3.13]), which allows TX
-    // anywhere in the broad B60M range. Thetis uses the channels_60m table
-    // (console.cs:2643-2669 [v2.10.3.13]) only for VFO snap and band-stack
-    // display, NOT for TX gating. The channelized gate is intentional here per
-    // FCC Part 97.303(h), which permits US 60m operation on these 5 channels
-    // only.
-    //
-    // US 60m mode restriction (USB/CWL/CWU/DIGU only) per console.cs:29423.
+    // Channelized 60m gating (UK, Japan): per-channel allocations are the
+    // authoritative TX window. NereusSDR-native safety net for the strict
+    // per-channel allocations defined by those regulators. Thetis itself
+    // permits TX anywhere in the broad B60M range; we retain channelization
+    // for UK / Japan because the regulator-defined allocation IS the channel
+    // set, not a wider band.
     const ChannelSpan ch60m = channels60mFor(region);
     for (std::size_t i = 0; i < ch60m.size; ++i) {
         if (isInChannel(freqHz, ch60m.data[i])) {
-            if (region == Region::UnitedStates && !isUs60mModeAllowed(mode)) {
-                return false;
-            }
             return true;
         }
     }
 
-    // All other bands: check per-region band edges.
-    // Skip B60M rows only when the region has discrete channels — for those
-    // regions, channelization was the authoritative check above and the broad
-    // B60M range entry is a placeholder. For regions with NO channelization
-    // (e.g. Australia's wide 5.0-7.0 MHz allocation), the B60M range row
-    // is the authoritative source and must NOT be skipped.
+    // Per-region band edges.
+    //
+    // US 60m mode restriction — console.cs:29416-29432 [v2.10.3.13]:
+    //   _tx_band == Band.B60M && current_region == FRSRegion.US && !extended
+    //   → switch on CurrentDSPMode: allow USB / CWL / CWU / DIGU, reject all
+    //     others.
+    // Applied inline below when the matched range is Band60m for US. Thetis
+    // gates US 60m TX on the broad 5.1-5.5 MHz range (IsOKToTX at
+    // clsBandStackManager.cs:1063-1083 [v2.10.3.13]); channel centers in
+    // kUsChannels60m are dial-convention markers for band-stack snap, NOT TX
+    // gates. FCC 47 CFR 97.303(h) places the USB suppressed-carrier dial at
+    // channel_center - 1.5 kHz, which is OUTSIDE a 2.8 kHz wide window
+    // centred on Thetis's channel-center constants — channelizing the gate
+    // there rejected the standard USB dial frequency (issue #271).
+    //
+    // Skip B60M rows ONLY when channelization was authoritative above
+    // (ch60m.size > 0 — UK, Japan). For regions without channelization
+    // (US, Australia, etc.) the B60M range row IS the authoritative source.
     const RangeSpan ranges = bandRangesFor(region);
     for (std::size_t i = 0; i < ranges.size; ++i) {
         if (ranges.data[i].band == Band::Band60m && ch60m.size > 0) {
-            // B60M range placeholder — channelization was the authoritative
-            // check above. Skip to avoid false positives on the broad edge.
             continue;
         }
         if (isInBandRange(freqHz, ranges.data[i])) {
+            if (region == Region::UnitedStates &&
+                ranges.data[i].band == Band::Band60m &&
+                !isUs60mModeAllowed(mode))
+            {
+                return false;
+            }
             return true;
         }
     }
@@ -446,11 +469,18 @@ bool BandPlanGuard::isModeAllowedForTx(DSPMode mode) const noexcept
 {
     // 3M-1b ships SSB voice only. CW is 3M-2; AM/SAM/FM/DSB/DRM are 3M-3.
     // SPEC is never a TX mode.
+    //
+    // Phase 3R K-bench: RADE_U / RADE_L are digital voice modes that ride
+    // on USB/LSB carriers (TxChannel::setTxMode maps to USB/LSB before
+    // SetTXAMode per c1c1dce0). Band-plan etiquette is equivalent to
+    // DIGU/DIGL.
     switch (mode) {
         case DSPMode::LSB:
         case DSPMode::USB:
         case DSPMode::DIGL:
         case DSPMode::DIGU:
+        case DSPMode::RADE_U:
+        case DSPMode::RADE_L:
             return true;
         default:
             return false;

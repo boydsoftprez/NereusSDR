@@ -165,9 +165,10 @@ private slots:
         QApplication::processEvents();
 
         // After 3M-3a-i Batch 4 (A.2): first launch seeds Default + 20
-        // factory profiles = 21 combo entries.
+        // factory profiles. Phase 3R K1 added the "RADE" NereusSDR-native
+        // preset = 22 combo entries.
         const int initialCount = applet.profileCombo()->count();
-        QCOMPARE(initialCount, 21);
+        QCOMPARE(initialCount, 22);
 
         // Add a profile externally.
         mgr.saveProfile("Brand New", &tx);

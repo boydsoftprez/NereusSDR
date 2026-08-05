@@ -46,9 +46,13 @@
 #include <QSignalSpy>
 
 #include "core/MoxController.h"
+#include "core/AppSettings.h"
+#include "core/TxSliceArbiter.h"
 #include "core/safety/BandPlanGuard.h"
 #include "core/WdspTypes.h"
 #include "gui/applets/TxApplet.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
 
 using namespace NereusSDR;
 using namespace NereusSDR::safety;
@@ -84,6 +88,21 @@ class TestBandPlanGuardMoxRejection : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase()
+    {
+        AppSettings::instance().clear();
+        AppSettings::instance().setValue(
+            QStringLiteral("BandPlanRegion"),
+            QString::number(static_cast<int>(Region::UnitedStates)));
+    }
+
+    void cleanup()
+    {
+        AppSettings::instance().clear();
+        AppSettings::instance().setValue(
+            QStringLiteral("BandPlanRegion"),
+            QString::number(static_cast<int>(Region::UnitedStates)));
+    }
 
     // ── 1. CW mode + setMox(true) → moxRejected("CW TX coming in Phase 3M-2") ─
 
@@ -297,6 +316,51 @@ private slots:
         QCOMPARE(rejectedSpy.count(), 2);  // second attempt also rejected
 
         QVERIFY(!ctrl.isMox());
+    }
+
+    void radioModelMoxCheckUsesTheTxBoundSliceInBothLegalityDirections()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5, 192000);
+        model.moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        model.installBandPlanMoxCheckForTest();
+
+        const int aId = model.addSlice();
+        SliceModel* const a = model.sliceById(aId);
+        QVERIFY(a);
+        a->setDspMode(DSPMode::USB);
+        a->setFrequency(14'200'000.0);
+
+        model.addSlice();
+        const int cId = model.addSlice();
+        SliceModel* const c = model.sliceById(cId);
+        QVERIFY(c);
+        c->setDspMode(DSPMode::USB);
+        c->setFrequency(4'500'000.0);
+
+        QVERIFY(model.setActiveSliceById(aId));
+        QVERIFY(model.txSliceArbiter()->requestHandoff(cId));
+
+        QSignalSpy rejectedSpy(model.moxController(), &MoxController::moxRejected);
+        model.moxController()->setMox(true);
+        QCoreApplication::processEvents();
+
+        QCOMPARE(rejectedSpy.count(), 1);
+        QCOMPARE(rejectedSpy.at(0).at(0).toString(),
+                 QStringLiteral("Frequency outside TX-allowed range"));
+        QVERIFY(!model.moxController()->isMox());
+
+        a->setFrequency(4'500'000.0);
+        c->setFrequency(7'100'000.0);
+        rejectedSpy.clear();
+
+        model.moxController()->setMox(true);
+        QCoreApplication::processEvents();
+
+        QCOMPARE(rejectedSpy.count(), 0);
+        QVERIFY(model.moxController()->isMox());
+        model.moxController()->setMox(false);
+        QCoreApplication::processEvents();
     }
 
     // ── 9-20: TxApplet::tooltipForMode static helper ────────────────────────────

@@ -1,0 +1,253 @@
+// no-port-check: NereusSDR-original. AetherSDR is a thin FlexRadio API client
+// whose RadioModel::removePanadapter just sends "display pan remove" and lets
+// the radio decide what happens to the slices; NereusSDR owns slice and DDC
+// allocation locally, so the workflow shape ports but the mechanics do not.
+//
+// Codex review, PR #293, P1. Shrinking the pan layout deleted the omitted
+// PanadapterApplets, but the slice-side loop in MainWindow only ever ADDED:
+//
+//     for (int i = existing; i < target; ++i) { addSliceOnPan(...); }
+//
+// With existing > target that body never runs, so slices whose panKey named a
+// deleted pane were left pointing at nothing. Their VFO widgets went with the
+// pane, re-expanding the layout did not re-associate them because no
+// panKeyChanged was emitted, and meanwhile they still held their DDC, their
+// stream and their audio.
+//
+// Rehomed rather than removed, deliberately. A slice carries the operator's
+// frequency, mode, filter and DSP state; discarding that as a side effect of
+// choosing a smaller layout is destructive and was never asked for. Moving it
+// to a surviving pan keeps every one of those and keeps the slice on screen.
+//
+// Lives on RadioModel, not in the MainWindow lambda where the defect is,
+// because MainWindow is not constructible in this harness. Logic that cannot
+// be tested there has already shipped green and failed on the bench twice on
+// this branch (see docs/architecture/2026-07-28-phase3f-session-state.md §6).
+
+#include <QtTest/QtTest>
+
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
+
+using namespace NereusSDR;
+
+class TestSliceRehomeOnLayoutShrink : public QObject {
+    Q_OBJECT
+private slots:
+
+    // Four pans down to one: every orphan lands on the survivor.
+    void shrinking_the_layout_rehomes_orphaned_slices()
+    {
+        RadioModel model;
+        // addSlice(panId) is what addSliceOnPan delegates to once its
+        // maxSlices() gate passes. Used directly here because the gate reads
+        // BoardCapabilities, which a bare model leaves at one slice, and the
+        // cap is not what this test is about.
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        for (int i = 0; i < 4; ++i) {
+            model.addSlice(QStringLiteral("pan-%1").arg(i));
+        }
+        QCOMPARE(model.slices().size(), 4);
+
+        const int moved = model.rehomeSlicesToPans({QStringLiteral("pan-0")});
+        QCOMPARE(moved, 3);
+
+        for (SliceModel* s : model.slices()) {
+            QVERIFY(s);
+            QVERIFY2(s->panKey() == QStringLiteral("pan-0"),
+                qPrintable(QStringLiteral("slice %1 still points at %2, a pane "
+                    "that no longer exists").arg(s->sliceIndex()).arg(s->panKey())));
+        }
+    }
+
+    // Slices already on surviving pans must not be disturbed, or a layout
+    // change would silently collapse everything onto one pane.
+    void slices_on_surviving_pans_are_left_alone()
+    {
+        RadioModel model;
+        // addSlice(panId) is what addSliceOnPan delegates to once its
+        // maxSlices() gate passes. Used directly here because the gate reads
+        // BoardCapabilities, which a bare model leaves at one slice, and the
+        // cap is not what this test is about.
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        for (int i = 0; i < 4; ++i) {
+            model.addSlice(QStringLiteral("pan-%1").arg(i));
+        }
+
+        const int moved = model.rehomeSlicesToPans(
+            {QStringLiteral("pan-0"), QStringLiteral("pan-1")});
+        QCOMPARE(moved, 2);   // pan-2 and pan-3 only
+
+        QCOMPARE(model.slices().at(0)->panKey(), QStringLiteral("pan-0"));
+        QCOMPARE(model.slices().at(1)->panKey(), QStringLiteral("pan-1"));
+        QCOMPARE(model.slices().at(2)->panKey(), QStringLiteral("pan-0"));
+        QCOMPARE(model.slices().at(3)->panKey(), QStringLiteral("pan-0"));
+    }
+
+    // The signal is what MainWindow needs in order to move the VFO widget, and
+    // its absence is half of why re-expanding the layout left panes blank.
+    void rehoming_emits_pan_key_changed()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        model.addSlice(QStringLiteral("pan-0"));
+        model.addSlice(QStringLiteral("pan-1"));
+        QCOMPARE(model.slices().size(), 2);
+        SliceModel* sliceB = model.slices().at(1);
+        QVERIFY(sliceB);
+        QCOMPARE(sliceB->panKey(), QStringLiteral("pan-1"));
+
+        QSignalSpy spy(sliceB, &SliceModel::panKeyChanged);
+        QVERIFY(spy.isValid());
+
+        model.rehomeSlicesToPans({QStringLiteral("pan-0")});
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toString(), QStringLiteral("pan-0"));
+    }
+
+    // A no-op must stay a no-op: nothing moves, nothing is emitted.
+    void no_orphans_moves_nothing()
+    {
+        RadioModel model;
+        model.addSlice(QStringLiteral("pan-0"));
+        SliceModel* slice = model.slices().at(0);
+        QSignalSpy spy(slice, &SliceModel::panKeyChanged);
+
+        const int moved = model.rehomeSlicesToPans({QStringLiteral("pan-0")});
+        QCOMPARE(moved, 0);
+        QCOMPARE(spy.count(), 0);
+    }
+
+    // Codex review round 4, P2, and a regression the rehoming above created.
+    // The layout handler decided which pans to populate with
+    //     for (i = slices().size(); i < target; ++i) addSliceOnPan("pan-i")
+    // which assumes the slice COUNT is the first unoccupied pan index. After
+    // a 2x2 shrink to one pane, rehoming puts all four slices on pan-0;
+    // expanding back to 2x2 then has existing == target == 4, so the loop adds
+    // nothing and pan-1 through pan-3 come up with no VFO and no RX entry.
+    // Co-hosting slices by hand, or removing a non-final slice id, breaks the
+    // same assumption.
+    //
+    // Occupancy is the actual question, so ask it directly.
+    void empty_pans_are_identified_by_occupancy_not_by_slice_count()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        for (int i = 0; i < 4; ++i) {
+            model.addSlice(QStringLiteral("pan-%1").arg(i));
+        }
+
+        // The shrink: everything lands on pan-0.
+        model.rehomeSlicesToPans({QStringLiteral("pan-0")});
+
+        // Now expand again. Four slices exist, so a count-based loop adds
+        // nothing, yet three panes are empty.
+        const QStringList wanted{QStringLiteral("pan-0"), QStringLiteral("pan-1"),
+                                 QStringLiteral("pan-2"), QStringLiteral("pan-3")};
+        const QStringList empty = model.pansWithoutSlices(wanted);
+
+        QCOMPARE(empty, (QStringList{QStringLiteral("pan-1"),
+                                     QStringLiteral("pan-2"),
+                                     QStringLiteral("pan-3")}));
+    }
+
+    // Co-hosted slices must not make a pan look empty, and an occupied pan
+    // must never be listed however many slices share it.
+    void co_hosted_slices_still_occupy_their_pan()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        model.addSlice(QStringLiteral("pan-0"));
+        model.addSlice(QStringLiteral("pan-0"));   // co-hosted
+        model.addSlice(QStringLiteral("pan-2"));
+
+        const QStringList empty = model.pansWithoutSlices(
+            {QStringLiteral("pan-0"), QStringLiteral("pan-1"),
+             QStringLiteral("pan-2")});
+
+        QCOMPARE(empty, (QStringList{QStringLiteral("pan-1")}));
+    }
+
+    void every_pan_occupied_reports_none_empty()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        model.addSlice(QStringLiteral("pan-0"));
+        model.addSlice(QStringLiteral("pan-1"));
+
+        QVERIFY(model.pansWithoutSlices({QStringLiteral("pan-0"),
+                                         QStringLiteral("pan-1")}).isEmpty());
+    }
+
+    // Codex review round 5, P2, and a regression the occupancy fix created.
+    // After shrinking a 2x2 to one pane, all four slices sit on pan-0.
+    // Expanding back finds three empty pans and, if the caller simply creates
+    // a slice for each, spends the maxSlices budget on NEW slices while four
+    // co-hosted ones sit idle on pan-0. On a 5-slice radio that fills pan-1
+    // and then hits the cap, leaving pan-2 and pan-3 empty AND the model
+    // carrying a surplus fifth slice.
+    //
+    // The surplus is already there. Move it before making more.
+    void surplus_co_hosted_slices_are_spread_before_any_are_created()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        for (int i = 0; i < 4; ++i) {
+            model.addSlice(QStringLiteral("pan-%1").arg(i));
+        }
+
+        // Shrink: everything piles onto pan-0.
+        model.rehomeSlicesToPans({QStringLiteral("pan-0")});
+        QCOMPARE(model.pansWithoutSlices({QStringLiteral("pan-0"),
+                                          QStringLiteral("pan-1"),
+                                          QStringLiteral("pan-2"),
+                                          QStringLiteral("pan-3")}).size(), 3);
+
+        // Expand: the four slices we already have are enough to cover four
+        // pans, so nothing new should be needed.
+        const QStringList wanted{QStringLiteral("pan-0"), QStringLiteral("pan-1"),
+                                 QStringLiteral("pan-2"), QStringLiteral("pan-3")};
+        const int spread = model.spreadSlicesOntoEmptyPans(wanted);
+
+        QCOMPARE(spread, 3);
+        QCOMPARE(model.slices().size(), 4);            // none created
+        QVERIFY2(model.pansWithoutSlices(wanted).isEmpty(),
+            "every pan should now hold one of the slices that already existed");
+    }
+
+    // A pan that already has exactly one slice must not be raided to fill
+    // another, or expanding would just move the hole around.
+    void a_pan_with_one_slice_is_not_raided()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        model.addSlice(QStringLiteral("pan-0"));
+        model.addSlice(QStringLiteral("pan-1"));
+
+        // pan-2 is empty but there is no surplus anywhere to move.
+        const int spread = model.spreadSlicesOntoEmptyPans(
+            {QStringLiteral("pan-0"), QStringLiteral("pan-1"),
+             QStringLiteral("pan-2")});
+
+        QCOMPARE(spread, 0);
+        QCOMPARE(model.slices().at(0)->panKey(), QStringLiteral("pan-0"));
+        QCOMPARE(model.slices().at(1)->panKey(), QStringLiteral("pan-1"));
+    }
+
+    // Defensive: an empty survivor list means there is nowhere to move to.
+    // Leaving the slices pointing at their old panes is strictly better than
+    // pointing them at an empty string, which no pane will ever match.
+    void an_empty_pan_list_leaves_slices_untouched()
+    {
+        RadioModel model;
+        model.addSlice(QStringLiteral("pan-0"));
+
+        const int moved = model.rehomeSlicesToPans({});
+        QCOMPARE(moved, 0);
+        QCOMPARE(model.slices().at(0)->panKey(), QStringLiteral("pan-0"));
+    }
+};
+
+QTEST_MAIN(TestSliceRehomeOnLayoutShrink)
+#include "tst_slice_rehome_on_layout_shrink.moc"

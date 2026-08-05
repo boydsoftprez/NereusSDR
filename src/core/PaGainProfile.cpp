@@ -221,8 +221,9 @@ constexpr HfRow kAnan8000dRow = {
     48.5f, 48.0f, 47.5f, 46.5f, 42.0f, 43.0f
 };
 
-// ANAN7000D / ANAN_G2 / ANVELINAPRO3 / REDPITAYA shared row.
-// From Thetis clsHardwareSpecific.cs:689-699 [v2.10.3.13].
+// ANAN7000D / ANAN_G2E / ANAN_G2 / ANVELINAPRO3 / REDPITAYA shared row.
+// From Thetis clsHardwareSpecific.cs:698-713 [v2.10.3.15].
+// Upstream tags preserved: //N1GP G2E added (clsHardwareSpecific.cs:699 [v2.10.3.15])
 constexpr HfRow kAnan7000dRow = {
     47.9f, 50.5f, 50.8f, 50.8f, 50.9f,
     50.9f, 50.5f, 47.0f, 47.9f, 46.5f, 44.6f
@@ -359,9 +360,11 @@ float defaultPaGainsForBand(HPSDRModel model, Band band) noexcept {
         case HPSDRModel::ANAN8000D:
             return lookupHfBand(kAnan8000dRow, band);
 
-        // ANAN7000D / ANAN_G2 / ANVELINAPRO3 / REDPITAYA shared row.
-        // From Thetis clsHardwareSpecific.cs:685-716 [v2.10.3.13].
+        // ANAN7000D / ANAN_G2E / ANAN_G2 / ANVELINAPRO3 / REDPITAYA shared row.
+        // From Thetis clsHardwareSpecific.cs:698-713 [v2.10.3.15].
+        // Upstream tags preserved: //N1GP G2E added (clsHardwareSpecific.cs:699 [v2.10.3.15])
         case HPSDRModel::ANAN7000D:
+        case HPSDRModel::ANAN_G2E: //N1GP G2E added
         case HPSDRModel::ANAN_G2:
         case HPSDRModel::ANVELINAPRO3:
         case HPSDRModel::REDPITAYA:

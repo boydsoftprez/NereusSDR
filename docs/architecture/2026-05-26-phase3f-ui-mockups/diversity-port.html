@@ -1,0 +1,239 @@
+<style>
+.real-app-bg { background: #0f0f1a; color: #c8d8e8; font-family: -apple-system, "Segoe UI", "Helvetica Neue", sans-serif; }
+.real-pill { display: inline-flex; align-items: center; justify-content: center; height: 14px; padding: 0 5px; border-radius: 2px; font-size: 9px; font-weight: bold; letter-spacing: 0.3px; }
+.pill-div { background: #006040; color: #00ff88; border: 1px solid #00a060; }
+.real-slice-badge { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 3px; font-size: 11px; font-weight: bold; background: #00d4ff; color: #001020; }
+.nereus-btn {
+  background: #1a2a3a; border: 1px solid #205070; border-radius: 3px;
+  color: #c8d8e8; font-size: 10px; font-weight: bold; padding: 3px 10px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.nereus-btn-blue { background: #0070c0; color: #fff; border: 1px solid #0090e0; }
+.nereus-btn-green { background: #006040; color: #00ff88; border: 1px solid #00a060; }
+.nereus-groupbox {
+  border: 1px solid #304050; border-radius: 4px;
+  margin-top: 10px; padding: 12px 10px 8px 10px; position: relative;
+}
+.nereus-groupbox-title {
+  position: absolute; top: -8px; left: 10px; padding: 0 4px;
+  background: #0f0f1a; color: #8aa8c0; font-size: 12px; font-weight: bold;
+}
+.nereus-combo {
+  background: #1a2a3a; border: 1px solid #304050; border-radius: 3px;
+  color: #c8d8e8; font-size: 12px; padding: 3px 8px;
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  min-width: 80px;
+}
+.nereus-spinbox {
+  background: #1a2a3a; border: 1px solid #304050; border-radius: 3px;
+  color: #c8d8e8; font-size: 12px; padding: 3px 8px;
+  display: inline-flex; align-items: center; gap: 8px;
+  min-width: 70px;
+}
+</style>
+
+<div class="real-app-bg" style="padding:18px;border-radius:6px">
+
+<h2 style="color:#c8d8e8;margin-top:0">Diversity port from Thetis — source-first deep dive</h2>
+<p style="color:#8090a0;font-size:12px">Read DiversityForm.cs (2937 lines) + WDSP SetEXTDIV* P/Invokes. Three scope options for how much of the Thetis UI we port.</p>
+
+<h3 style="color:#8aa8c0;margin-top:20px">§1 What diversity actually is (plain English)</h3>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;padding:14px;font-size:12px;color:#c8d8e8;line-height:1.7">
+  Two ADCs both receive the same RF signal (typically: same antenna split into both ADCs, OR two different antennas pointing at the same target frequency). The DSP combines their I/Q outputs with operator-controlled <strong>phase shift</strong> and <strong>amplitude scaling</strong>. The combination can:<br><br>
+
+  &nbsp;&nbsp;• <strong>Boost signal-to-noise</strong> by ~3 dB when noise on the two ADCs is uncorrelated (basic diversity gain)<br>
+  &nbsp;&nbsp;• <strong>Null out interference</strong> — adjust phase/gain so an unwanted signal cancels between the two paths (powerful for QRM)<br>
+  &nbsp;&nbsp;• <strong>Steer a phased array</strong> — two spatially-separated antennas with phase offset = directional reception (beverage diversity, ground/sky compare)<br><br>
+
+  The 8-memory feature in Thetis stores known-good phase+gain combinations per band — operator dials in a null on a persistent QRM source once, saves to memory, recalls next time it returns.
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:20px">§2 What Thetis exposes (DiversityForm.cs, 2937 lines)</h3>
+<div class="nereus-groupbox" style="background:#0a0a18">
+  <div class="nereus-groupbox-title">Thetis DiversityForm — UI inventory</div>
+  <ul style="margin:6px 0;padding-left:24px;line-height:1.7;font-size:11px;color:#c8d8e8">
+    <li><code>chkEnableDiversity</code> — master toggle (green when on / red when off)</li>
+    <li><code>udR</code> — amplitude scaling factor (0.0 to 10.0, fine adjustment)</li>
+    <li><code>udAngle</code> — phase angle in radians (-π to +π)</li>
+    <li><code>udAngle0</code> — reference angle in degrees (0-359)</li>
+    <li><code>udFineNull</code> — fine null adjustment (separate slider for precision)</li>
+    <li><code>chkAuto</code> — auto-adjust mode</li>
+    <li><code>chkCrossFire</code> — cross-fire toggle (adds π phase shift)</li>
+    <li><code>chkLockAngle</code> — lock current angle (prevent drift)</li>
+    <li><code>chkVFOSync</code> — link RX1 + RX2 VFO frequencies together</li>
+    <li><code>chkNoAttLink</code> — don't link attenuators between RX1/RX2</li>
+    <li><code>chkAlwaysOnTop</code> — keep dialog above main window</li>
+    <li><code>btnM1</code>..<code>btnM8</code> — 8 memory slots (store/recall phase+gain)</li>
+    <li><code>btnShift180</code>, <code>btnShiftUp45</code>, <code>btnShift90</code>, <code>btnShiftUp10</code>, <code>btnShiftDown10</code> — quick phase nudge buttons</li>
+    <li><code>radioButtonMerc1</code>/<code>radioButtonMerc2</code> — pick reference Mercury ADC</li>
+    <li><code>udAntSpacing</code> — antenna spacing (meters), for direction-finding</li>
+    <li><code>udCalib</code> — calibration constant</li>
+    <li><code>picRadar</code> — animated radar-style visualization of phase + nulls</li>
+    <li><code>labelDirection</code> — derived direction-of-arrival label</li>
+    <li><strong>Per-band persistence:</strong> <code>DiversityPhase160m</code>, <code>DiversityPhase80m</code>, ..., <code>DiversityPhase6m</code>, <code>DiversityPhaseWWV</code>, <code>DiversityPhaseGEN</code> (14 bands × phase + gain = 28 stored values)</li>
+  </ul>
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:20px">§3 The WDSP API (the DSP primitive)</h3>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;padding:12px;font-family:monospace;font-size:11px;color:#c8d8e8;line-height:1.6">
+SetEXTDIVRun(channelId, run)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span style="color:#8090a0">// enable diversity on this WDSP channel</span><br>
+SetEXTDIVNr(channelId, nr)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span style="color:#8090a0">// number of inputs being combined (2 for standard diversity)</span><br>
+SetEXTDIVOutput(channelId, output)&nbsp; <span style="color:#8090a0">// 0=combined, 1=primary only, 2=secondary only</span><br>
+SetEXTDIVRotate(channelId, nr, Irotate*, Qrotate*) <span style="color:#8090a0">// complex coefficients per input</span>
+</div>
+<p style="color:#8090a0;font-size:11px;margin-top:6px">The "rotate" coefficients are <code>I = amplitude * cos(phase)</code>, <code>Q = amplitude * sin(phase)</code>. Operator's phase + gain sliders translate directly to these.</p>
+
+<h3 style="color:#8aa8c0;margin-top:20px">§4 How it fits NereusSDR's slice model</h3>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;padding:14px;font-size:12px;color:#c8d8e8;line-height:1.7">
+  <strong>Per-SKU availability:</strong> 2-ADC boards only (Angelia, Orion, OrionMkII, Saturn/G2, G2E, Andromeda, AnvelinaPro3, RedPitaya-on-P2). Hardware constraint, gated by <code>BoardCapabilities.hasDiversity</code>.<br><br>
+
+  <strong>Which slice is in diversity?</strong> Only Slice A (the primary slice). Diversity consumes DDC0 + DDC1 as a synced pair. Slice A's RxChannel reads the combined output.<br><br>
+
+  <strong>DDC topology shift</strong> (from earlier deep dive):<br>
+  &nbsp;&nbsp;• Diversity OFF: Slice A → DDC2 → ADC0 (or ADC1, per Setup routing)<br>
+  &nbsp;&nbsp;• Diversity ON: Slice A → DDC0 + DDC1 synced pair, DDC0→ADC0, DDC1→ADC1<br>
+  &nbsp;&nbsp;• DDC2 frees up — can host another slice OR sit idle<br>
+  &nbsp;&nbsp;• Slices B/C/D/E unaffected (live on DDC3/4/5/6)<br><br>
+
+  <strong>UI surface in NereusSDR:</strong><br>
+  &nbsp;&nbsp;• "DIV" badge on Slice A's flag + on Slice A's pan SpectrumStatusOverlay when active<br>
+  &nbsp;&nbsp;• Tools menu → "Diversity Dialog" (modeless, Ctrl+Shift+D)<br>
+  &nbsp;&nbsp;• Right-click Slice A's flag → "Diversity ▶ Off / On" quick toggle<br>
+  &nbsp;&nbsp;• Per-band phase + gain stored as <code>SliceA_Band_&lt;band&gt;_DiversityPhase</code> + <code>...DiversityGain</code><br><br>
+
+  <strong>PS interaction:</strong> Diversity and PureSignal both want DDC0+DDC1. <strong>PS wins during MOX</strong> (per Thetis behavior). Diversity pauses on MOX-on if PS is engaged, resumes on MOX-off. Status indicator on Slice A: "DIV paused (PS active)".
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:20px">§5 Three port-scope options</h3>
+
+<div class="nereus-groupbox" style="background:#0a0a18;margin-top:14px">
+  <div class="nereus-groupbox-title">A: Minimal — toggle + phase + gain (small, ships fast)</div>
+  <div style="font-size:11px;color:#c8d8e8;line-height:1.7;padding:6px 0">
+    Three controls: Enable checkbox, Phase slider (-180° to +180°), Gain slider (0.0 to 10.0). Per-band persistence for phase + gain. "DIV" badge on Slice A's flag. Tools → Diversity opens a small dialog.<br><br>
+    <strong style="color:#fc9">Skipped from Thetis:</strong> auto-adjust, cross-fire, lock-angle, VFO sync, attenuator link, 8 memories, quick-nudge buttons, reference Mercury picker, antenna spacing / direction finding, radar visualization.<br><br>
+    <strong>Pros:</strong> ~2 days work. Most operators only ever touch phase + gain anyway.<br>
+    <strong>Cons:</strong> Power users lose memories (operators with persistent QRM nulls will miss these). No quick-nudge buttons (have to dial the spinbox).
+  </div>
+</div>
+
+<div class="nereus-groupbox" style="background:#0a0a18;margin-top:14px">
+  <div class="nereus-groupbox-title">B: Mid — adds memories + quick-nudge + cross-fire (recommended)</div>
+  <div style="font-size:11px;color:#c8d8e8;line-height:1.7;padding:6px 0">
+    Everything from A, plus:<br>
+    &nbsp;&nbsp;• 8 memory slots (M1-M8) per band — store/recall phase+gain combinations<br>
+    &nbsp;&nbsp;• Quick-nudge buttons: -10°, -45°, ±90°, +45°, +10°, 180° flip<br>
+    &nbsp;&nbsp;• Cross-fire checkbox (adds π phase shift)<br>
+    &nbsp;&nbsp;• Auto-adjust button (one-shot find best null)<br><br>
+    <strong style="color:#fc9">Skipped from Thetis:</strong> radar visualization, antenna spacing / direction finding, reference Mercury picker (we abstract this in codec), VFO sync (different concept in our slice model).<br><br>
+    <strong>Pros:</strong> Covers the canonical SSB DXer workflow (find a null, save it to M3, recall it next time). ~5 days.<br>
+    <strong>Cons:</strong> Doesn't have the radar visualization (some operators find it aesthetic / useful for understanding geometry).
+  </div>
+</div>
+
+<div class="nereus-groupbox" style="background:#0a0a18;margin-top:14px">
+  <div class="nereus-groupbox-title">C: Full port — radar viz + direction finding + every Thetis control</div>
+  <div style="font-size:11px;color:#c8d8e8;line-height:1.7;padding:6px 0">
+    Everything Thetis has, ported 1:1. ~2 weeks.<br><br>
+    <strong>Pros:</strong> Operators see no regression from Thetis.<br>
+    <strong>Cons:</strong> Radar visualization is a custom paint widget (~500 lines). Direction-finding math is niche. Cost vs benefit poor for v1.
+  </div>
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:24px">§6 Mockup — Option B dialog</h3>
+
+<div style="background:#000a;padding:24px;border-radius:6px;display:flex;justify-content:center;min-height:480px">
+  <div style="background:#0a0a18;border:1px solid #205070;border-radius:4px;box-shadow:0 8px 32px rgba(0,0,0,0.8);width:440px">
+    <div style="background:linear-gradient(180deg,#3a4a5a 0%,#2a3a4a 50%,#1a2a38 100%);border-bottom:1px solid #0a1a28;height:22px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:bold;color:#8aa8c0">
+      <span>Diversity — Slice A</span>
+      <span style="color:#607080;font-size:14px;cursor:pointer">×</span>
+    </div>
+    <div style="padding:14px 16px;color:#c8d8e8;font-size:12px">
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" checked style="accent-color:#00b4d8;width:14px;height:14px">
+          <strong style="color:#c8d8e8;font-size:13px">Enable diversity</strong>
+        </label>
+        <span class="real-pill pill-div">DIV</span>
+      </div>
+
+      <div class="nereus-groupbox">
+        <div class="nereus-groupbox-title">Phase &amp; Gain (per band — currently 20m)</div>
+        <div style="display:grid;grid-template-columns:60px 1fr 80px;gap:10px;align-items:center;font-size:11px;margin-top:6px">
+          <span style="color:#8090a0">Phase</span>
+          <div style="height:6px;background:#203040;border-radius:3px;position:relative">
+            <div style="position:absolute;top:-3px;left:55%;width:12px;height:12px;background:#00b4d8;border-radius:50%"></div>
+          </div>
+          <div class="nereus-spinbox" style="min-width:0">+47.5°</div>
+
+          <span style="color:#8090a0">Gain</span>
+          <div style="height:6px;background:#203040;border-radius:3px;position:relative">
+            <div style="position:absolute;top:-3px;left:32%;width:12px;height:12px;background:#00b4d8;border-radius:50%"></div>
+          </div>
+          <div class="nereus-spinbox" style="min-width:0">0.85</div>
+        </div>
+        <div style="display:flex;gap:4px;margin-top:10px;justify-content:space-between">
+          <button class="nereus-btn" style="flex:1;min-width:0">−10°</button>
+          <button class="nereus-btn" style="flex:1;min-width:0">−45°</button>
+          <button class="nereus-btn" style="flex:1;min-width:0">±90°</button>
+          <button class="nereus-btn" style="flex:1;min-width:0">+45°</button>
+          <button class="nereus-btn" style="flex:1;min-width:0">+10°</button>
+          <button class="nereus-btn" style="flex:1;min-width:0">180°</button>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px">
+            <input type="checkbox" style="accent-color:#00b4d8;width:13px;height:13px">
+            Cross-fire (+180°)
+          </label>
+          <button class="nereus-btn nereus-btn-blue" style="margin-left:auto">Auto-find null</button>
+        </div>
+      </div>
+
+      <div class="nereus-groupbox" style="margin-top:18px">
+        <div class="nereus-groupbox-title">Memories (per band)</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:6px">
+          <button class="nereus-btn">M1<br><span style="color:#8090a0;font-size:9px;font-weight:normal">+12° 1.0</span></button>
+          <button class="nereus-btn">M2<br><span style="color:#8090a0;font-size:9px;font-weight:normal">+47° 0.85</span></button>
+          <button class="nereus-btn">M3<br><span style="color:#8090a0;font-size:9px;font-weight:normal">−25° 1.2</span></button>
+          <button class="nereus-btn">M4<br><span style="color:#8090a0;font-size:9px;font-weight:normal">— empty</span></button>
+          <button class="nereus-btn">M5<br><span style="color:#8090a0;font-size:9px;font-weight:normal">— empty</span></button>
+          <button class="nereus-btn">M6<br><span style="color:#8090a0;font-size:9px;font-weight:normal">— empty</span></button>
+          <button class="nereus-btn">M7<br><span style="color:#8090a0;font-size:9px;font-weight:normal">— empty</span></button>
+          <button class="nereus-btn">M8<br><span style="color:#8090a0;font-size:9px;font-weight:normal">— empty</span></button>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:8px;font-size:10px;color:#8090a0">
+          <span>Click to recall · Right-click to store current</span>
+        </div>
+      </div>
+
+    </div>
+    <div style="padding:10px 16px;background:#0f0f1a;border-top:1px solid #203040;display:flex;justify-content:space-between;align-items:center">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:#8090a0;font-size:11px">
+        <input type="checkbox" style="accent-color:#00b4d8;width:13px;height:13px"> Always on top
+      </label>
+      <button class="nereus-btn">Close</button>
+    </div>
+  </div>
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:24px">§7 What's NOT in scope even at Option B</h3>
+<div style="background:#1a2030;padding:12px;border-radius:3px;font-size:11px;color:#c8d8e8;line-height:1.7">
+  • <strong>Radar visualization</strong> — picturesque but doesn't change DSP behavior. Could add as 3F-W polish item.<br>
+  • <strong>Antenna spacing / direction-finding</strong> — niche feature, mostly used by beverage-array DXers. Defer.<br>
+  • <strong>Reference Mercury picker</strong> — Thetis radio-button choice between Merc1/Merc2 is a 1-Mercury-board concept. NereusSDR codec layer abstracts this (you pick ADC routing in Setup → DDC Routing, not in the Diversity dialog).<br>
+  • <strong>VFO Sync / NoAttLink</strong> — VFO sync is a Thetis-RX1/RX2-pair concept that doesn't map to our N-slice model. Operators who want sync set both slices to the same band by hand.<br>
+  • <strong>Auto-attenuator-link</strong> — Thetis-specific behavior, ATT plumbing differs in our codec.
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:24px">My recommendation</h3>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;padding:14px;font-size:12px;color:#c8d8e8;line-height:1.6">
+  <strong style="color:#00ff88">Option B (Mid).</strong> Covers the SSB DXer canonical workflow (find null, save to memory, recall later). ~5 days. The radar visualization + direction finding are picturesque but don't change the DSP — defer to 3F-W polish or never. The Mercury picker and VFO sync are Thetis-RX1/RX2 concepts that don't map cleanly to our N-slice model anyway, so skipping them is principled, not laziness.<br><br>
+
+  <strong>Per-band memories</strong> are the genuinely useful Thetis-original feature — operators have specific nulls for specific QRM sources. Worth porting. 8 slots × 14 bands × {phase, gain} = 224 persisted values. Cheap to store, high operator value.<br><br>
+
+  <strong>Capability gating:</strong> entire Diversity dialog menu item + slice toggle hidden on 1-ADC SKUs (HL2/Hermes/HermesII/Metis) via <code>BoardCapabilities.hasDiversity = (adcCount &gt;= 2)</code>.
+</div>
+
+</div>
+
+<p class="subtitle" style="margin-top:18px;text-align:center;color:#8090a0">Push back on the scope — if you want full Thetis parity (radar + direction finding) for the operators who use it, that's Option C. If minimal is fine for v1 and we add memories later, that's A.</p>

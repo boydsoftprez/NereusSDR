@@ -67,6 +67,32 @@ public:
     // the per-quantum budget, so the regular pushCopy yield-loop is
     // fatal there. Use this for any producer running on a thread that
     // a real-time daemon polices.
+    //
+    // ── Phase 3J-1 bench fix (2026-05-10): alignment-preserving overflow ──
+    // The original implementation truncated `want` to `free` on overflow
+    // (partial write).  Because the ring's usable capacity is `kCapacity-1`
+    // (the classic ring-buffer full-vs-empty trick), the free-space
+    // counter is congruent to (kCapacity-1) mod (whatever granularity the
+    // caller uses) — for kCapacity=131072 and a 4-byte-aligned producer,
+    // free ≡ 7 (mod 8) immediately before overflow.  A partial write of 7
+    // bytes leaves m_wr at an offset that is no longer aligned to the
+    // caller's sample/frame boundary; every subsequent producer push lands
+    // at the same misaligned offset, and the consumer reads garbage even
+    // though it pops at proper boundaries.  Concretely for TciServer's RX
+    // audio drain (4096-byte float-pair sample boundary): after the first
+    // partial write the consumer sees a 1-sample offset that turns every
+    // L,R,L,R pair into ?,L,R,L,R — WSJT-X reads ~50% of samples as
+    // arbitrary memory and pegs its level meter while producing no
+    // decodes.
+    //
+    // Fix: refuse partial writes entirely.  If the input doesn't fit in
+    // the current free space, drop the WHOLE input and return 0.  The
+    // caller's overflow counter increments by the full input size rather
+    // than a truncated remainder, but the ring's wr/rd indices stay
+    // aligned to whatever multiple-of-N boundary the caller is using
+    // (8 bytes for stereo Float32, 4 bytes for mono Float32, etc.).
+    // Realistic audio rates produce O(ms) of drop on overflow rather
+    // than the previous corrupt-stream-until-restart behaviour.
     qint64 tryPushCopy(const uint8_t* src, qint64 bytes) {
         if (bytes <= 0) { return 0; }
         size_t want = size_t(bytes);
@@ -77,8 +103,12 @@ public:
         const size_t wr = m_wr.load(std::memory_order_relaxed);
         const size_t rd = m_rd.load(std::memory_order_acquire);
         const size_t free = (kCapacity - 1) - (wr - rd);
-        if (free == 0) { return 0; }
-        if (want > free) { want = free; }   // partial write
+        if (free < want) {
+            // Refuse partial write — see alignment note above.  Caller
+            // can detect this via the returned 0 and bump an overflow
+            // counter if desired.
+            return 0;
+        }
         const size_t writeIdx = wr & kMask;
         const size_t firstChunk =
             (kCapacity - writeIdx < want) ? kCapacity - writeIdx : want;

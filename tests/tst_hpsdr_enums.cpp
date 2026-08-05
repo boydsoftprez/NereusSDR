@@ -110,7 +110,10 @@ private slots:
         QCOMPARE(static_cast<int>(HPSDRModel::ANVELINAPRO3), 13);
         QCOMPARE(static_cast<int>(HPSDRModel::HERMESLITE),   14);
         QCOMPARE(static_cast<int>(HPSDRModel::REDPITAYA),    15);
-        QCOMPARE(static_cast<int>(HPSDRModel::LAST),         16);
+        // ANAN_G2E added in Phase E of the ANAN-G2E port; bumps LAST to 17.
+        // From Thetis enums.cs: HPSDRModel.ANAN_G2E [v2.10.3.15] //N1GP G2E added
+        QCOMPARE(static_cast<int>(HPSDRModel::ANAN_G2E),    16);
+        QCOMPARE(static_cast<int>(HPSDRModel::LAST),         17);
 
         // Source: enums.cs:388 + network.h:446 — reserved gap at 7..9
         QCOMPARE(static_cast<int>(HPSDRHW::Atlas),        0);

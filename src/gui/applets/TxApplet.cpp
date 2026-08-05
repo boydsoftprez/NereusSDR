@@ -1299,13 +1299,17 @@ void TxApplet::wireControls()
 
     // ── Mic-source badge ← TransmitModel::micSourceChanged ───────────────────
     // Phase 3M-1b J.3. Read-only: updates badge text on signal, no user interaction.
-    // "PC mic" for MicSource::Pc, "Radio mic" for MicSource::Radio.
+    // "PC mic" for MicSource::Pc, "Radio mic" for MicSource::Radio, "VAX" for MicSource::Vax.
     connect(&tx, &TransmitModel::micSourceChanged,
             this, [this](MicSource source) {
-        m_micSourceBadge->setText(
-            source == MicSource::Radio
-                ? QStringLiteral("Radio mic")
-                : QStringLiteral("PC mic"));
+        QString text;
+        switch (source) {
+            case MicSource::Radio: text = QStringLiteral("Radio mic"); break;
+            case MicSource::Vax:   text = QStringLiteral("VAX");       break;
+            case MicSource::Pc:
+            default:               text = QStringLiteral("PC mic");    break;
+        }
+        m_micSourceBadge->setText(text);
     });
 
     // ── Phase 3M-1c J.1 ─ TX Profile combo wiring ────────────────────────────
@@ -1546,12 +1550,16 @@ void TxApplet::syncFromModel()
         m_txFilterStatusLabel->setText(tx.filterDisplayText(mode));
     }
 
-    // Mic-source badge (J.3 Phase 3M-1b)
+    // Mic-source badge (J.3 Phase 3M-1b; extended to 3-way in Phase 3M-VAX-toggle)
     if (m_micSourceBadge) {
-        m_micSourceBadge->setText(
-            tx.micSource() == MicSource::Radio
-                ? QStringLiteral("Radio mic")
-                : QStringLiteral("PC mic"));
+        QString text;
+        switch (tx.micSource()) {
+            case MicSource::Radio: text = QStringLiteral("Radio mic"); break;
+            case MicSource::Vax:   text = QStringLiteral("VAX");       break;
+            case MicSource::Pc:
+            default:               text = QStringLiteral("PC mic");    break;
+        }
+        m_micSourceBadge->setText(text);
     }
 
     // MOX / TUNE button state

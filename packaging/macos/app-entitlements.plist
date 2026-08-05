@@ -10,5 +10,23 @@
          in lock-step is brittle for Qt apps. -->
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+
+    <!-- Hardened runtime gates microphone access at the kernel
+         entitlement check, *before* TCC ever shows the consent dialog.
+         Without this key, [AVCaptureDevice requestAccessForMediaType:
+         AVMediaTypeAudio] returns NO immediately and silently. No
+         prompt, no error, no entry in System Settings -> Privacy &
+         Security -> Microphone. Required for SSB voice TX, live mic
+         level monitoring, and the launch-time TCC-engagement call
+         in src/core/MacMicPermission.mm.
+         NSMicrophoneUsageDescription is injected into Info.plist by
+         CMakeLists.txt POST_BUILD; that string is necessary but not
+         sufficient under hardened runtime. The kernel entitlement
+         is the third required gate. v0.4.0 shipped without this key,
+         producing a silent-failure mic on Apple Silicon distribution
+         builds; fix verified by re-signing the v0.4.0 bundle with
+         this exact entitlement on a tester's iMac. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
 </dict>
 </plist>

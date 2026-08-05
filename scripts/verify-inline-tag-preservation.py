@@ -15,10 +15,14 @@ Algorithm:
 - Scan every `.cpp/.cc/.c/.h/.hpp` under src/ and tests/ for cites
   matching `// From Thetis <file>:<line(s)> [@sha|vX.Y.Z]` or
   `// Source: mi0bot <file>:<line(s)> [@sha]`.
-- For each cite, open the cited file under ../Thetis or
-  ../mi0bot-Thetis (configurable), extract any inline contributor
-  tags in the cited line range ±5 lines, and require each tag to
-  appear within ±10 lines of the cite in the port.
+- For each cite, open the cited file under the ONE upstream that cite
+  names (../Thetis, ../mi0bot-Thetis, ../deskhpsdr or ../freedv-gui,
+  each configurable), extract any inline contributor tags in the
+  cited line range ±5 lines, and require each tag to appear within ±10
+  lines of the cite in the port.
+- Upstream clones are located by walking parent directories, so this
+  works from a plain checkout and from a linked worktree under
+  .claude/worktrees/ without either needing to know its own depth.
 - Tags recognized: developer callsigns (DH1KLM, MW0LGE, W2PA, MI0BOT,
   KD5TFD, OE3IDE, G8NJJ, NR0V, G0ORX, VK6APH) + `//-W2PA` dash form +
   `//[X.Y.Z]Author` version-prefixed form + named contributors
@@ -31,8 +35,9 @@ Usage:
 Exit code 0 iff no findings (strict) or always 0 in audit mode.
 
 Configuration:
-    NEREUS_THETIS_DIR      — override ../Thetis path
-    NEREUS_MI0BOT_DIR      — override ../mi0bot-Thetis path
+    NEREUS_THETIS_DIR:      override ../Thetis path
+    NEREUS_MI0BOT_DIR:      override ../mi0bot-Thetis path
+    NEREUS_FREEDV_DIR:      override ../freedv-gui path
 """
 from __future__ import annotations
 
@@ -46,28 +51,111 @@ REPO = Path(__file__).resolve().parent.parent
 SCAN_ROOTS = ["src", "tests"]
 SCAN_SUFFIXES = {".cpp", ".cc", ".c", ".h", ".hpp"}
 
+def discover_sibling(name: str) -> Path:
+    """Locate an upstream clone sitting beside the NereusSDR checkout.
+
+    CLAUDE.md places upstreams as siblings of the NereusSDR root
+    (../Thetis, ../mi0bot-Thetis).  Computing that from REPO is awkward
+    because REPO is the *worktree* root when this runs from inside
+    .claude/worktrees/<name>, and the repo root otherwise.  The previous
+    fixed `REPO.parent.parent.parent / name` arithmetic resolved to
+    "/Thetis" from a plain checkout and "<repo>/Thetis" from a worktree.
+    Neither path exists, so every local run hit the FATAL-and-skip branch
+    in main() and the hook has never actually verified a tag outside CI
+    (which supplies the paths by env var and was unaffected).
+
+    Walking ancestors is correct from both locations: a plain checkout
+    finds ../Thetis one level up, and a worktree finds it four levels up,
+    without either needing to know how deep it is.
+    """
+    for base in (REPO, *REPO.parents):
+        candidate = base / name
+        if candidate.is_dir():
+            return candidate
+    # Nothing found. Return the conventional location so the diagnostic
+    # in main() names the path a developer is expected to clone into.
+    return REPO.parent / name
+
+
 THETIS_DIR = Path(os.environ.get(
-    "NEREUS_THETIS_DIR",
-    REPO.parent.parent.parent / "Thetis")).expanduser()
+    "NEREUS_THETIS_DIR", discover_sibling("Thetis"))).expanduser()
 MI0BOT_DIR = Path(os.environ.get(
-    "NEREUS_MI0BOT_DIR",
-    REPO.parent.parent.parent / "mi0bot-Thetis")).expanduser()
+    "NEREUS_MI0BOT_DIR", discover_sibling("mi0bot-Thetis"))).expanduser()
+
+# ---------------------------------------------------------------------
+# Per-version ramdor checkouts
+# ---------------------------------------------------------------------
+# THETIS_DIR is pinned to ONE commit (501e3f5, tag v2.10.3.13). Cites
+# stamped against a different release must resolve against THAT release,
+# for exactly the reason resolve_upstream() refuses to cross the
+# ramdor/mi0bot fork boundary: opening a cited line number in the wrong
+# tree lands on unrelated code, harvests whatever author tags happen to
+# sit nearby, and reports our port as missing tags it never should have
+# carried. Version drift is the same bug on a different axis.
+#
+# Concretely, from the PR #293 CI failure on 2026-07-31. Upstream inserted
+# `case HPSDRModel.ANAN_G2E: //N1GP G2E added` between .13 and .15, which
+# shifted the SetupForHPSDRModel switch down by 8 lines:
+#
+#   v2.10.3.15 console.cs:14815-14817  case ANAN100D: _rx2_preamp_present
+#   v2.10.3.13 console.cs:14817        case ANAN_G2_1K: // G8NJJ: ...
+#
+# A correct `[v2.10.3.15]` port of the ANAN100D preamp case was therefore
+# told it had dropped //G8NJJ, and the mechanical remediation the message
+# invites (paste the tag in) would have credited G8NJJ's PA note to
+# unrelated code -- manufacturing a false attribution while "fixing" a
+# false one. Four such FAILs blocked that PR.
+#
+# Keyed by both the release tag and its short SHA, since either grammar is
+# legal in a stamp (`[v2.10.3.15]` or `[@3759d09]`).
+THETIS_V21015_DIR = Path(os.environ.get(
+    "NEREUS_THETIS_V21015_DIR",
+    discover_sibling("Thetis-v2.10.3.15"))).expanduser()
+
+THETIS_VERSION_DIRS = {
+    "2.10.3.15": THETIS_V21015_DIR,
+    "3759d09":   THETIS_V21015_DIR,
+}
+
+# The stamp on a cite line: `[v2.10.3.15]`, `[@3759d09]`, or the combined
+# `[v2.10.3.13 @501e3f5]` form. Captures whichever token is present so the
+# resolver can look it up in THETIS_VERSION_DIRS.
+RE_STAMP = re.compile(r"\[\s*(?:v(?P<ver>\d+(?:\.\d+)+)|@(?P<sha>[0-9a-f]{7,40}))")
 DESKHPSDR_DIR = Path(os.environ.get(
-    "NEREUS_DESKHPSDR_DIR",
-    "/Users/j.j.boyd/deskhpsdr")).expanduser()
+    "NEREUS_DESKHPSDR_DIR", discover_sibling("deskhpsdr"))).expanduser()
+FREEDV_DIR = Path(os.environ.get(
+    "NEREUS_FREEDV_DIR", discover_sibling("freedv-gui"))).expanduser()
 
 # Cite detectors. We scan for the upstream filename + line token; the
 # stamp presence is verified by the sibling verify-inline-cites.py
 # hook, so we tolerate either stamp grammar here.
+
+# Shared line-spec grammar for every cite detector below. A cite may name
+# one line (`:4821`), a range (`:25008-25072`), a comma list
+# (`:340, 344, 350`), or several disjoint locations joined with `+` in
+# either the tight or spaced form:
+#
+#   freedv_reporter.cpp:79+93-153
+#   console.cs:2304-2337 + 5400-5448 + 5763
+#
+# `+` MUST stay in the separator class. Before it was added (Codex review,
+# PR #309) the match stopped at the first location, so a cite was counted
+# as checked while every tag in the discarded locations went unverified —
+# exactly the silent-drop this whole script exists to prevent. Keeping the
+# grammar in one constant is deliberate: the bug was four copies of the
+# same regex, and fixing three of them would have looked identical to
+# fixing all four.
+LINE_SPEC = r"(?P<lines>\d+(?:[+,\s-]+\d+)*)"
+
 RE_CITE_RAMDOR = re.compile(
     r"//\s*(?:From\s+Thetis|Source:)\s+"
     r"(?P<file>[\w./-]+\.(?:cs|c|h|cpp))"
-    r":(?P<lines>\d+(?:[,\s-]+\d+)*)"
+    r":" + LINE_SPEC
 )
 RE_CITE_MI0BOT = re.compile(
     r"//\s*(?:From\s+mi0bot|Source:\s*mi0bot)\s+"
     r"(?P<file>[\w./-]+\.(?:cs|c|h|cpp))"
-    r":(?P<lines>\d+(?:[,\s-]+\d+)*)"
+    r":" + LINE_SPEC
 )
 # Note: RE_CITE_DESKHPSDR is checked BEFORE RE_CITE_RAMDOR in the scan
 # loop. The ramdor regex uses a bare "Source:" prefix which would
@@ -85,7 +173,22 @@ RE_CITE_DESKHPSDR = re.compile(
     r"|From\s+deskhpsdr\s+"        # "From deskhpsdr " followed by any path
     r")"
     r"(?P<file>(?:deskhpsdr/)?[\w./-]+\.(?:c|h))"
-    r":(?P<lines>\d+(?:[,\s-]+\d+)*)"
+    r":" + LINE_SPEC
+)
+# freedv-gui, same shape and the same ordering requirement as deskhpsdr:
+# "Source: freedv-gui/src/main.cpp:1971-1996" is matched by the bare
+# "Source:" alternative in RE_CITE_RAMDOR, which then tries to resolve a
+# freedv-gui path under the Thetis clone and reports upstream-not-found.
+# The freedv-gui corpus is already merged into the tag list by
+# load_corpus(), so before this detector existed those cites loaded
+# contributor tags that nothing was ever checked against.
+RE_CITE_FREEDV = re.compile(
+    r"//\s*(?:"
+    r"Source:\s+(?=freedv-gui/)"   # "Source: " followed by freedv-gui/ path
+    r"|From\s+freedv-gui\s+"       # "From freedv-gui " followed by any path
+    r")"
+    r"(?P<file>(?:freedv-gui/)?[\w./-]+\.(?:c|h|cpp|cc|hpp))"
+    r":" + LINE_SPEC
 )
 
 # Inline tags we insist on preserving. The corpus is DISCOVERED from
@@ -130,6 +233,23 @@ def load_corpus() -> tuple[list[str], list[str]]:
               f"Run scripts/discover-deskhpsdr-author-tags.py to populate it.",
               file=sys.stderr)
 
+    # freedv-gui corpus (optional, parallel to deskhpsdr).
+    # Populated by scripts/discover-freedv-author-tags.py once Phase 3J-2 + 3R
+    # starts porting from drowe67/freedv-gui.
+    freedv_path = REPO / "docs" / "attribution" / "freedv-gui-author-tags.json"
+    if freedv_path.is_file():
+        try:
+            fdv_data = _json.loads(freedv_path.read_text())
+            callsigns.update(fdv_data.get("callsign_tags", {}).keys())
+            named.update(fdv_data.get("named_tags", {}).keys())
+        except Exception as exc:
+            print(f"WARN: failed to load freedv-gui corpus: {exc}",
+                  file=sys.stderr)
+    else:
+        print(f"WARN: freedv-gui corpus {freedv_path} not found. "
+              f"Run scripts/discover-freedv-author-tags.py to populate it.",
+              file=sys.stderr)
+
     return (sorted(callsigns), sorted(named))
 
 
@@ -152,32 +272,75 @@ def iter_source_files():
 
 
 def parse_lines_token(tok: str):
-    """`25008-25072` → [25008, 25072]; `340, 344, 350` → [340, 344, 350]."""
-    out = []
-    for chunk in re.split(r"[,\s]+", tok.strip()):
+    """`25008-25072` → [25008, 25072]; `340, 344, 350` → [340, 344, 350].
+
+    `+` joins disjoint locations and separates exactly like a comma:
+    `79+93-153` → [79, 93, 153]. It must be split here as well as matched
+    by LINE_SPEC — left in place it would make `79+93` a single chunk,
+    and the int() below would raise ValueError and silently drop BOTH
+    locations rather than just the second.
+    """
+    return [n for span in parse_lines_spans(tok) for n in
+            (span if span[0] != span[1] else span[:1])]
+
+
+def parse_lines_spans(tok: str) -> list[tuple[int, int]]:
+    """Split a cite's line token into DISJOINT (lo, hi) spans.
+
+    `25008-25072`      → [(25008, 25072)]        one contiguous range
+    `340, 344, 350`    → [(340,340), (344,344), (350,350)]
+    `79+93-153`        → [(79,79), (93,153)]
+    `2304-2337 + 5400-5448 + 5763`
+                       → [(2304,2337), (5400,5448), (5763,5763)]
+
+    Spans matter because the caller scans upstream for author tags.
+    Collapsing a cite to a flat list and scanning min..max bridges every
+    line between disjoint locations: the DisplaySetupPages.cpp:907 cite
+    above would sweep 2299..5768 of display.cs, roughly 3,500 lines, and
+    demand that every `//MW0LGE` in that block appear in a port that only
+    ever touched three small regions. That is the "invents violations"
+    half of this script's original bug — keep the components separate.
+    """
+    spans: list[tuple[int, int]] = []
+    for chunk in re.split(r"[+,\s]+", tok.strip()):
         if not chunk:
             continue
         if "-" in chunk:
             a, b = chunk.split("-", 1)
             try:
-                out.append(int(a))
-                out.append(int(b))
+                lo, hi = int(a), int(b)
             except ValueError:
                 continue
+            spans.append((lo, hi) if lo <= hi else (hi, lo))
         else:
             try:
-                out.append(int(chunk))
+                n = int(chunk)
             except ValueError:
                 continue
-    return out
+            spans.append((n, n))
+    return spans
 
 
-def resolve_upstream(cite_file: str, which: str) -> Path | None:
-    """Find the cited file under ramdor Thetis, mi0bot Thetis, or deskhpsdr."""
-    if which == "deskhpsdr":
-        # deskhpsdr cite paths are relative to repo root (e.g. "src/new_protocol.c")
-        # or just a bare filename. Try both direct and src/ prefix.
-        for base in _deskhpsdr_search_bases():
+def resolve_upstream(cite_file: str, which: str,
+                     stamp: str | None = None) -> Path | None:
+    """Find the cited file under the ONE upstream the cite names.
+
+    `which` comes from whichever cite detector matched, and is honoured
+    exactly: a cite that says mi0bot is resolved against the mi0bot clone
+    and nowhere else. See the comment on the `bases` assignment below for
+    why falling back to a sibling upstream is actively harmful.
+
+    `stamp` is the version token from the cite (`2.10.3.15`, `3759d09`).
+    A ramdor cite carrying a stamp we have a dedicated checkout for is
+    resolved against THAT checkout and nowhere else -- same rule as the
+    fork boundary, same reason. See THETIS_VERSION_DIRS.
+    """
+    if which in ("deskhpsdr", "freedv-gui"):
+        # These cite paths are relative to the upstream repo root
+        # (e.g. "src/new_protocol.c") or just a bare filename. Try both
+        # direct and src/ prefix.
+        for base in (_deskhpsdr_search_bases() if which == "deskhpsdr"
+                     else _freedv_search_bases()):
             candidate = base / cite_file
             if candidate.is_file():
                 return candidate
@@ -191,7 +354,33 @@ def resolve_upstream(cite_file: str, which: str) -> Path | None:
                         return found
         return None
 
-    bases = [THETIS_DIR] if which == "ramdor" else [MI0BOT_DIR, THETIS_DIR]
+    # No cross-upstream fallback. mi0bot/OpenHPSDR-Thetis is a *fork* of
+    # ramdor/Thetis, so both clones carry same-named files (console.cs,
+    # clsHardwareSpecific.cs) whose contents and line numbering have
+    # diverged. Resolving an mi0bot cite against the ramdor clone opens
+    # unrelated code at the cited line number, harvests whatever author
+    # tags happen to sit near it, and then reports our port as missing
+    # tags it was never supposed to carry.
+    #
+    # That is not hypothetical: with the mi0bot clone absent this
+    # produced 5 confident FAILs on clean main (PaGainProfile.cpp,
+    # PaTelemetryScaling.{h,cpp}, tst_pa_gain_profile.cpp), each naming a
+    # real contributor (//N1GP, //DH1KLM) and each entirely spurious. A
+    # tool that fabricates GPL-attribution violations is worse than one
+    # that reports it cannot check, so an absent clone now warns.
+    if which == "ramdor":
+        versioned = THETIS_VERSION_DIRS.get(stamp) if stamp else None
+        if versioned is not None:
+            # Absent clone returns None -> "upstream-not-found" warning,
+            # NOT a silent fall-through to the default pin. Falling through
+            # is precisely the phantom-failure path this mapping exists to
+            # close, and a check that cannot verify must say so rather than
+            # verify against the wrong tree.
+            bases = [versioned] if versioned.is_dir() else []
+        else:
+            bases = [THETIS_DIR]
+    else:
+        bases = [MI0BOT_DIR]
     for base in bases:
         # Direct path
         candidate = base / cite_file
@@ -209,14 +398,24 @@ def resolve_upstream(cite_file: str, which: str) -> Path | None:
     return None
 
 
-def _deskhpsdr_search_bases() -> list[Path]:
-    """Return candidate deskhpsdr base directories, preferring env override."""
-    candidates = [DESKHPSDR_DIR]
-    for rel in ("../deskhpsdr", "../../deskhpsdr", "../../../deskhpsdr"):
-        p = (REPO / rel).resolve()
+def _sibling_search_bases(primary: Path, name: str) -> list[Path]:
+    """Candidate base directories for an upstream, env override first."""
+    candidates = [primary]
+    for base in (REPO, *REPO.parents):
+        p = (base / name).resolve()
         if p not in candidates:
             candidates.append(p)
     return [p for p in candidates if p.is_dir()]
+
+
+def _deskhpsdr_search_bases() -> list[Path]:
+    """Return candidate deskhpsdr base directories, preferring env override."""
+    return _sibling_search_bases(DESKHPSDR_DIR, "deskhpsdr")
+
+
+def _freedv_search_bases() -> list[Path]:
+    """Return candidate freedv-gui base directories, preferring env override."""
+    return _sibling_search_bases(FREEDV_DIR, "freedv-gui")
 
 
 def find_header_end(text: list[str]) -> int:
@@ -240,38 +439,45 @@ def find_header_end(text: list[str]) -> int:
     return 1  # no body found; treat whole file as body to be safe
 
 
-def extract_tags_from_region(src_path: Path, line_nums: list[int],
+def extract_tags_from_region(src_path: Path, spans: list[tuple[int, int]],
                              window: int = 5) -> set[tuple[int, str]]:
     """Pull every inline tag (callsign/named/version/dash) found within
-    ±window lines of each cited line, EXCLUDING tags that fall inside
+    ±window lines of each cited SPAN, EXCLUDING tags that fall inside
     the file's copyright/license header block (detected by
     find_header_end). File-header attribution is enforced separately
-    by verify-thetis-headers.py."""
+    by verify-thetis-headers.py.
+
+    Each span is padded and scanned on its own. Scanning min..max across
+    all spans instead would bridge the gaps between disjoint locations
+    and manufacture requirements from untouched upstream code — see
+    parse_lines_spans() for the cite that exposed this.
+    """
     try:
         text = src_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except Exception:
         return set()
     header_end = find_header_end(text)
     tags: set[tuple[int, str]] = set()
-    lo = max(1, min(line_nums) - window)
-    hi = min(len(text), max(line_nums) + window)
-    for i in range(lo - 1, hi):
-        if (i + 1) < header_end:
+    rows: set[int] = set()
+    for lo, hi in spans:
+        rows.update(range(max(1, lo - window), min(len(text), hi + window) + 1))
+    for row in sorted(rows):
+        if row < header_end:
             continue  # inside file header; not an inline tag
-        line = text[i]
+        line = text[row - 1]
         # version-prefixed tag
         for m in RE_VERSION_TAG.finditer(line):
-            tags.add((i + 1, m.group(2).upper()))
+            tags.add((row, m.group(2).upper()))
         # dash form
         for m in RE_DASH_TAG.finditer(line):
-            tags.add((i + 1, m.group(1).upper()))
+            tags.add((row, m.group(1).upper()))
         # known callsigns / named (require `//` on the line so we only
         # pick comments, not string literals)
         if "//" in line:
             tail = line.split("//", 1)[1]
             for tag in KNOWN_CALLSIGNS + KNOWN_NAMED:
                 if re.search(r"\b" + re.escape(tag) + r"\b", tail):
-                    tags.add((i + 1, tag.upper()))
+                    tags.add((row, tag.upper()))
     return tags
 
 
@@ -302,13 +508,43 @@ def main() -> int:
         print("Set NEREUS_THETIS_DIR or clone to ../Thetis", file=sys.stderr)
         return 2
 
+    # mi0bot is the authoritative upstream for HL2 ports, so a missing
+    # clone leaves every `// From mi0bot ...` cite unverified. It used to
+    # be worse than unverified: the resolver fell through to the ramdor
+    # clone and invented failures (see resolve_upstream). Say so loudly.
+    if not MI0BOT_DIR.is_dir():
+        print(f"WARN: mi0bot-Thetis not found at {MI0BOT_DIR}. Every "
+              f"`// From mi0bot ...` cite will emit upstream-not-found "
+              f"instead of being verified. Set NEREUS_MI0BOT_DIR or clone "
+              f"to a sibling directory.", file=sys.stderr)
+
+    # Per-version ramdor checkouts. Absent means the cites stamped for that
+    # release go unverified rather than being verified against the wrong
+    # tree; say which, because "unverified" and "verified" look identical
+    # in a green run.
+    for ver, path in sorted(set((v, p) for v, p in THETIS_VERSION_DIRS.items()
+                                if "." in v)):
+        if not path.is_dir():
+            print(f"WARN: Thetis v{ver} not found at {path}. Every cite "
+                  f"stamped [v{ver}] will emit upstream-not-found instead "
+                  f"of being verified. Set NEREUS_THETIS_V21015_DIR or "
+                  f"clone to a sibling directory.", file=sys.stderr)
+
     # deskhpsdr is optional for now — warn if absent so local runs without
     # the clone still pass, but CI that has it cloned will do full checks.
     if not _deskhpsdr_search_bases():
         print(f"WARN: deskhpsdr not found (searched {DESKHPSDR_DIR} and "
-              f"relative ../../../deskhpsdr). deskhpsdr cite checks will "
+              f"sibling directories). deskhpsdr cite checks will "
               f"emit upstream-not-found warnings rather than hard-failing. "
               f"Set NEREUS_DESKHPSDR_DIR or clone to a sibling directory.",
+              file=sys.stderr)
+
+    # freedv-gui, same treatment as deskhpsdr.
+    if not _freedv_search_bases():
+        print(f"WARN: freedv-gui not found (searched {FREEDV_DIR} and "
+              f"sibling directories). freedv-gui cite checks will "
+              f"emit upstream-not-found warnings rather than hard-failing. "
+              f"Set NEREUS_FREEDV_DIR or clone to a sibling directory.",
               file=sys.stderr)
 
     findings = []
@@ -328,16 +564,23 @@ def main() -> int:
             # (break at end of loop body).
             for rx, which in ((RE_CITE_MI0BOT, "mi0bot"),
                               (RE_CITE_DESKHPSDR, "deskhpsdr"),
+                              (RE_CITE_FREEDV, "freedv-gui"),
                               (RE_CITE_RAMDOR, "ramdor")):
                 m = rx.search(line)
                 if not m:
                     continue
                 cite_count += 1
                 cite_line = ln_idx + 1
-                line_nums = parse_lines_token(m.group("lines"))
-                if not line_nums:
+                spans = parse_lines_spans(m.group("lines"))
+                if not spans:
                     continue
-                upstream = resolve_upstream(m.group("file"), which)
+                line_nums = parse_lines_token(m.group("lines"))
+                # Route by the cite's own version stamp, so a
+                # `[v2.10.3.15]` cite is checked against v2.10.3.15 rather
+                # than whatever sits at that line in the default pin.
+                sm = RE_STAMP.search(line)
+                stamp = (sm.group("ver") or sm.group("sha")) if sm else None
+                upstream = resolve_upstream(m.group("file"), which, stamp)
                 if upstream is None:
                     findings.append({
                         "severity": "warn",
@@ -350,7 +593,7 @@ def main() -> int:
                         "tag": None,
                     })
                     continue
-                source_tags = extract_tags_from_region(upstream, line_nums)
+                source_tags = extract_tags_from_region(upstream, spans)
                 for src_line, tag in sorted(source_tags):
                     if not port_contains_tag(port, cite_line, tag):
                         findings.append({

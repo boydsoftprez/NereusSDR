@@ -9,6 +9,16 @@
 // priority order. Bumps StatusBadge sizing rely on the +2 px font /
 // +1 px vertical padding change in StatusBadge.cpp.
 //
+// 2026-08-02 update (bottom-banner cleanup Task A5): dropped the internal
+// 3-stage responsive ladder (reapplyDropPriority + BadgePair stacking) in
+// favor of a single dense row — ChromeBarController (Task A8) now owns
+// folding and queries badgeForRung() to register each foldable badge
+// individually. Also: RxDashboard now follows the ACTIVE slice (rebound
+// by MainWindow on activeSliceChanged/sliceAdded) instead of being bound
+// once to slice 0, and carries a slice-letter tag so a multi-pan operator
+// can tell which slice the row describes. See
+// docs/architecture/2026-08-02-bottom-banner-and-pan-menu-design.md §4.2.
+//
 // Signal mapping verified against SliceModel.h 2026-04-30:
 //   agcModeChanged(AGCMode)  nbModeChanged(NbMode)
 //   dspModeChanged(DSPMode)  activeNrChanged(NrSlot)  apfEnabledChanged(bool)
@@ -17,30 +27,32 @@
 #include "RxDashboard.h"
 
 #include "models/SliceModel.h"
-#include "BadgePair.h"
 #include "StatusBadge.h"
+#include "gui/StyleConstants.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QResizeEvent>
 
 namespace NereusSDR {
 
 RxDashboard::RxDashboard(QWidget* parent) : QWidget(parent)
 {
     buildUi();
-    // Horizontal policy is Preferred (not Minimum) so the parent
-    // QHBoxLayout can shrink the dashboard below its horizontal
-    // sizeHint when the strip is tight. Minimum would lock the
-    // dashboard at its preferred width and the
-    // reapplyDropPriority() trigger (contentWidth > budget) would
-    // never fire — see issue caught 2026-04-30.
-    //
-    // Floor is 60 px so even fully-dropped (just two stacked badges
-    // visible) the dashboard remains visible enough to read. Drop
-    // priority handles the in-between sizing.
-    setMinimumWidth(60);
-    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    // Horizontal policy is Fixed, not Preferred (final-fix-wave finding
+    // 5). Preferred plus the old setMinimumWidth(60) floor let the
+    // outer status-bar QHBoxLayout compress this row down to 60 px under
+    // width pressure, directly contradicting design doc §5.1 invariant 1
+    // ("Nothing shrinks. Every banner item is present at its natural
+    // width or absent."). Individual pills still fold the ordinary Qt
+    // way -- ChromeBarController calls setVisible() on them directly via
+    // badgeForRung(), which shrinks THIS row's own sizeHint() -- Fixed
+    // only stops the OUTER layout from squeezing the row any further
+    // below whatever that live, pill-count-dependent sizeHint currently
+    // is. The row's own non-pill residual (tag + mode + filter +
+    // margins) is registered with ChromeBarController at rung 0 via
+    // residualWidth(), so the fold budget now accounts for it honestly
+    // instead of silently absorbing pressure the ladder never saw.
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
 }
 
 namespace {
@@ -57,9 +69,18 @@ void RxDashboard::buildUi()
 {
     auto* hbox = new QHBoxLayout(this);
     hbox->setContentsMargins(10, 0, 10, 0);
-    hbox->setSpacing(6);
+    hbox->setSpacing(4);
 
-    // Build all badges first so BadgePair can take ownership.
+    // Slice tag — which slice these readings belong to. Prepended so a
+    // multi-pan operator isn't left guessing.
+    m_sliceTag = new QLabel(QString(m_sliceLetter), this);
+    m_sliceTag->setStyleSheet(QStringLiteral(
+        "QLabel { color: #0a0a14; background: %1; border-radius: 3px;"
+        " padding: 1px 5px; font-weight: bold; font-size: 11px; }")
+        .arg(Style::kAccent));
+    hbox->addWidget(m_sliceTag);
+
+    // Build all badges.
     m_modeBadge   = new StatusBadge(this);
     m_filterBadge = new StatusBadge(this);
     m_agcBadge    = new StatusBadge(this);
@@ -68,19 +89,14 @@ void RxDashboard::buildUi()
     m_apfBadge    = new StatusBadge(this);
     m_sqlBadge    = new StatusBadge(this);
 
-    // ── Slot 1: Mode + Filter (both always shown when connected) ─────────
-    m_modeFilterPair = new BadgePair(m_modeBadge, m_filterBadge, this);
-    hbox->addWidget(m_modeFilterPair);
-
-    // ── Slot 2: AGC (always) + NR (active only) ──────────────────────────
-    m_agcNrPair = new BadgePair(m_agcBadge, m_nrBadge, this);
-    hbox->addWidget(m_agcNrPair);
-
-    // ── Slot 3: NB + APF (both active only) ──────────────────────────────
-    m_nbApfPair = new BadgePair(m_nbBadge, m_apfBadge, this);
-    hbox->addWidget(m_nbApfPair);
-
-    // ── Slot 4: SQL — alone (no pair partner) ────────────────────────────
+    // Single dense row, no BadgePair wrappers:
+    // [slice tag] [mode] [filter] | [AGC] | [NR] [NB] [APF] [SQL]
+    hbox->addWidget(m_modeBadge);
+    hbox->addWidget(m_filterBadge);
+    hbox->addWidget(m_agcBadge);
+    hbox->addWidget(m_nrBadge);
+    hbox->addWidget(m_nbBadge);
+    hbox->addWidget(m_apfBadge);
     hbox->addWidget(m_sqlBadge);
 
     // Active-only badges hidden by default — "no NYI" rule.
@@ -125,89 +141,49 @@ void RxDashboard::buildUi()
     m_sqlBadge->setToolTip(tr(kSqlTooltip));
 }
 
-void RxDashboard::resizeEvent(QResizeEvent* event)
+void RxDashboard::setSliceLetter(QChar letter)
 {
-    QWidget::resizeEvent(event);
-    reapplyDropPriority();
+    if (m_sliceLetter == letter) {
+        return;
+    }
+    m_sliceLetter = letter;
+    if (m_sliceTag) {
+        m_sliceTag->setText(QString(letter));
+    }
+    emit residualWidthChanged();
 }
 
-void RxDashboard::reapplyDropPriority()
+QString RxDashboard::modeText() const
 {
-    // Re-entry guard: setVisible() / pair toggles trigger a layout
-    // update which can re-fire resizeEvent before this method unwinds.
-    if (m_inReapplyDropPriority) { return; }
-    m_inReapplyDropPriority = true;
+    return m_modeBadge ? m_modeBadge->label() : QString();
+}
 
-    const int budget = width();
-
-    // Hysteresis (deadband): if the budget hasn't moved past a 30 px
-    // window since our last decision, do not re-evaluate. The
-    // setStacked() / setVisible() calls below trigger paints + layout
-    // invalidation. Without a deadband, the parent QHBoxLayout
-    // re-allocates space based on our just-changed sizeHint, which
-    // re-fires resizeEvent at a slightly different width, which can
-    // flip us back across the wide↔medium boundary. The visible result
-    // is the two BadgePair orientations rendering on top of each other
-    // rapidly. 30 px is wider than the typical layout-jitter signal
-    // and small enough to not be felt as "sticky" during a manual drag.
-    constexpr int kDeadbandPx = 30;
-    if (m_settled && qAbs(budget - m_lastDecisionBudget) < kDeadbandPx) {
-        m_inReapplyDropPriority = false;
-        return;
+StatusBadge* RxDashboard::badgeForRung(int rung) const
+{
+    switch (rung) {
+    case 5:  return m_sqlBadge;
+    case 6:  return m_apfBadge;
+    case 7:  return m_nbBadge;
+    case 8:  return m_nrBadge;
+    case 9:  return m_agcBadge;
+    default: return nullptr;
     }
+}
 
-    // Phase 0: restore everything we previously force-dropped.
-    const QSet<StatusBadge*> dropped = m_droppedBadges;
-    m_droppedBadges.clear();
-    for (auto* b : dropped) {
-        if (b) { b->setVisible(true); }
-    }
-
-    // Phase 1: try the wide (horizontal) layout. Unstack every pair
-    // and check fit.
-    if (m_modeFilterPair) { m_modeFilterPair->setStacked(false); }
-    if (m_agcNrPair)      { m_agcNrPair->setStacked(false); }
-    if (m_nbApfPair)      { m_nbApfPair->setStacked(false); }
-
-    int contentWidth = sizeHint().width();
-    if (contentWidth <= budget) {
-        m_lastDecisionBudget = budget;
-        m_settled = true;
-        m_inReapplyDropPriority = false;
-        return;
-    }
-
-    // Phase 2: medium (stacked pairs). Trades horizontal for vertical
-    // and typically saves ~50% width.
-    if (m_modeFilterPair) { m_modeFilterPair->setStacked(true); }
-    if (m_agcNrPair)      { m_agcNrPair->setStacked(true); }
-    if (m_nbApfPair)      { m_nbApfPair->setStacked(true); }
-    contentWidth = sizeHint().width();
-    if (contentWidth <= budget) {
-        m_lastDecisionBudget = budget;
-        m_settled = true;
-        m_inReapplyDropPriority = false;
-        return;
-    }
-
-    // Phase 3: narrow — pairs stay stacked AND we drop in priority
-    // order. Drop sequence: SQL → APF → NB → NR → AGC. Mode and
-    // filter never drop — they're the always-critical RX state.
-    StatusBadge* dropOrder[] = {
-        m_sqlBadge, m_apfBadge, m_nbBadge, m_nrBadge, m_agcBadge
-    };
-    for (auto* b : dropOrder) {
-        if (contentWidth <= budget) { break; }
-        if (b && b->isVisible()) {
-            contentWidth -= (b->sizeHint().width() + 6);
-            b->setVisible(false);
-            m_droppedBadges.insert(b);
-        }
-    }
-
-    m_lastDecisionBudget = budget;
-    m_settled = true;
-    m_inReapplyDropPriority = false;
+int RxDashboard::residualWidth() const
+{
+    // Mirrors buildUi(): setContentsMargins(10, 0, 10, 0) and
+    // setSpacing(4) with exactly two internal gaps among the three
+    // never-folding widgets (tag-mode, mode-filter). AGC is deliberately
+    // excluded even though it is also always visible: it is one of the
+    // five pills and is already counted at its own rung-9 registration.
+    constexpr int kMargins = 20;
+    constexpr int kGaps    = 2 * 4;
+    int w = kMargins + kGaps;
+    if (m_sliceTag)    { w += m_sliceTag->sizeHint().width(); }
+    if (m_modeBadge)   { w += m_modeBadge->sizeHint().width(); }
+    if (m_filterBadge) { w += m_filterBadge->sizeHint().width(); }
+    return w;
 }
 
 void RxDashboard::bindSlice(SliceModel* slice)
@@ -235,7 +211,8 @@ void RxDashboard::bindSlice(SliceModel* slice)
     connect(slice, &SliceModel::ssqlEnabledChanged, this,
             &RxDashboard::onSsqlChanged);
 
-    // Prime with current values (slice may already have state before binding)
+    // Seed every badge from the new slice so the row is correct before the
+    // first signal arrives (slice may already have state before binding).
     onModeChanged(static_cast<int>(slice->dspMode()));
     onFilterChanged(slice->filterLow(), slice->filterHigh());
     onAgcChanged(static_cast<int>(slice->agcMode()));
@@ -254,6 +231,7 @@ void RxDashboard::onModeChanged(int mode)
     m_modeBadge->setToolTip(name.isEmpty()
         ? tr("Operating mode")
         : tr("Mode: %1").arg(name));
+    emit residualWidthChanged();
 }
 
 void RxDashboard::onFilterChanged(int low, int high)
@@ -277,6 +255,7 @@ void RxDashboard::onFilterChanged(int low, int high)
     m_filterBadge->setToolTip(tipDetail.isEmpty()
         ? tr("Filter passband width")
         : tr("Filter passband: %1").arg(tipDetail));
+    emit residualWidthChanged();
 }
 
 void RxDashboard::onAgcChanged(int agcMode)
@@ -298,14 +277,17 @@ void RxDashboard::onAgcChanged(int agcMode)
     m_agcBadge->setLabel(letter);
     m_agcBadge->setVariant(StatusBadge::Variant::Info);
     m_agcBadge->setToolTip(tr("AGC %1").arg(full));
+    // AGC has no "off"/hidden state (always available); reported anyway
+    // so MainWindow re-checks the badge's width, which setLabel() above
+    // just changed live (StatusBadge::setLabel).
+    emit badgeAvailabilityChanged(9, true);
 }
 
 void RxDashboard::onNrChanged(int nrSlot)
 {
     // NrSlot: Off=0, NR1=1, NR2=2, NR3=3, NR4=4, DFNR=5, BNR=6, MNR=7
     if (nrSlot <= 0) {
-        m_droppedBadges.remove(m_nrBadge);   // feature turned off — clear drop status
-        m_nrBadge->setVisible(false);
+        emit badgeAvailabilityChanged(8, false);
         return;
     }
     static const char* kNrLabels[] = {
@@ -319,17 +301,14 @@ void RxDashboard::onNrChanged(int nrSlot)
     m_nrBadge->setLabel(name);
     m_nrBadge->setVariant(StatusBadge::Variant::On);
     m_nrBadge->setToolTip(tr("Noise reduction %1 active").arg(name));
-    m_droppedBadges.remove(m_nrBadge);   // feature explicitly turned on — clear drop
-    m_nrBadge->setVisible(true);
-    reapplyDropPriority();   // budget may still be tight; drop something else if needed
+    emit badgeAvailabilityChanged(8, true);
 }
 
 void RxDashboard::onNbChanged(int nbMode)
 {
     // NbMode: Off=0, NB=1, NB2=2
     if (nbMode <= 0) {
-        m_droppedBadges.remove(m_nbBadge);   // feature turned off — clear drop status
-        m_nbBadge->setVisible(false);
+        emit badgeAvailabilityChanged(7, false);
         return;
     }
     const QString label = (nbMode == 2)
@@ -338,39 +317,31 @@ void RxDashboard::onNbChanged(int nbMode)
     m_nbBadge->setLabel(label);
     m_nbBadge->setVariant(StatusBadge::Variant::On);
     m_nbBadge->setToolTip(tr("Noise blanker %1 active").arg(label));
-    m_droppedBadges.remove(m_nbBadge);   // feature explicitly turned on — clear drop
-    m_nbBadge->setVisible(true);
-    reapplyDropPriority();   // budget may still be tight; drop something else if needed
+    emit badgeAvailabilityChanged(7, true);
 }
 
 void RxDashboard::onApfChanged(bool active)
 {
     if (!active) {
-        m_droppedBadges.remove(m_apfBadge);   // feature turned off — clear drop status
-        m_apfBadge->setVisible(false);
+        emit badgeAvailabilityChanged(6, false);
         return;
     }
     m_apfBadge->setLabel(QStringLiteral("APF"));
     m_apfBadge->setVariant(StatusBadge::Variant::On);
     m_apfBadge->setToolTip(tr(kApfTooltip));
-    m_droppedBadges.remove(m_apfBadge);   // feature explicitly turned on — clear drop
-    m_apfBadge->setVisible(true);
-    reapplyDropPriority();   // budget may still be tight; drop something else if needed
+    emit badgeAvailabilityChanged(6, true);
 }
 
 void RxDashboard::onSsqlChanged(bool active)
 {
     if (!active) {
-        m_droppedBadges.remove(m_sqlBadge);   // feature turned off — clear drop status
-        m_sqlBadge->setVisible(false);
+        emit badgeAvailabilityChanged(5, false);
         return;
     }
     m_sqlBadge->setLabel(QStringLiteral("SQL"));
     m_sqlBadge->setVariant(StatusBadge::Variant::On);
     m_sqlBadge->setToolTip(tr(kSqlTooltip));
-    m_droppedBadges.remove(m_sqlBadge);   // feature explicitly turned on — clear drop
-    m_sqlBadge->setVisible(true);
-    reapplyDropPriority();   // budget may still be tight; drop something else if needed
+    emit badgeAvailabilityChanged(5, true);
 }
 
 } // namespace NereusSDR

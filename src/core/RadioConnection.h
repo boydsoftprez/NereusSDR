@@ -60,6 +60,37 @@ struct AntennaRouting {
     bool tx        {false}; // current MOX state             (3M-1)
 };
 
+// Per-ADC RX band-pass decision — Phase 3F.
+//
+// Composed by AlexController::recomputeBpf over the set of slice bands on
+// each ADC, published by RadioModel::republishAlexAdcSlices, and consumed by
+// the connection when it composes the Alex HPF bits.
+//
+// A 2-ADC radio has two independent filter chains and Thetis writes them as
+// two independent wire words: `prbpfilter` (Alex0, ADC0) fed from
+// setAlex1HPF(_rx1_dds_freq), and `prbpfilter2` (Alex1, ADC1) fed from
+// setAlex2HPF(rx2_dds_freq_mhz).
+//   From Thetis console.cs:15401 + 15435-15443 [v2.10.3.15]
+//[2.10.3.13]MW0LGE
+//   From Thetis ChannelMaster/network.c:1040-1050 [v2.10.3.15]
+//   Upstream inline attribution preserved verbatim (console.cs:15441):
+//     HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+// Before this struct existed NereusSDR derived one HPF value from whichever
+// receiver was retuned last and put it in both words, so a second slice on a
+// different band made the first one deaf (reported by CT1IQI on PR #293).
+//
+// -1 means "no decision for this ADC": no slice sits on it, so the connection
+// keeps whatever HPF bits it already had. That mirrors Thetis, which only
+// calls setAlex2HPF when RX2 actually exists (console.cs:15435-15442) and
+// otherwise leaves prbpfilter2's HPF nibble untouched.
+//
+// Values are the Thetis HPF bit encoding (AlexFilterMap::computeHpf):
+// 0x10/0x08/0x04/0x01/0x02 band filters, 0x40 6 m preamp, 0x20 bypass.
+struct AlexRxBpf {
+    int hpfBitsAdc0 {-1};
+    int hpfBitsAdc1 {-1};
+};
+
 // Abstract base class for radio connections.
 // Subclasses implement protocol-specific behavior (P1 or P2).
 // Instances live on the Connection worker thread.
@@ -135,6 +166,33 @@ public:
     void handleSupplyRaw(quint16 raw);
     void handleUserAdc0Raw(quint16 raw);
 
+    // Last value handleSupplyRaw / handleUserAdc0Raw computed, or the
+    // -1.0f sentinel if no High-Priority status frame has been parsed yet.
+    //
+    // Exists to close a startup race: status-frame parsing begins as soon
+    // as the socket is live, which can run before RadioModel reaches
+    // Connected and before a UI listener binds supplyVoltsChanged /
+    // userAdc0Changed. handleSupplyRaw/handleUserAdc0Raw suppress
+    // re-emitting an unchanged value (identical-raw suppression above), so
+    // a listener that missed the first sample would otherwise wait forever
+    // for a steady reading that never changes again. A fresh listener
+    // should read these once right after connecting, then rely on the
+    // signal for subsequent changes.
+    /// Last cached supply / PA-drain reading, or -1 if none has arrived.
+    ///
+    /// Read from the GUI thread while the connection worker thread writes
+    /// them as status frames arrive, so both are atomic. Plain floats here
+    /// were a data race, and therefore undefined behaviour, not merely a
+    /// torn read: the Connected-state priming read can land mid-update.
+    /// Relaxed ordering is sufficient; these are independent scalars that
+    /// guard no other state. Found by Codex on PR #316. CLAUDE.md's
+    /// cross-thread rule ("main thread writes via std::atomic") applies
+    /// here in the reading direction.
+    float lastSupplyVolts() const
+    { return m_lastSupplyVolts.load(std::memory_order_relaxed); }
+    float lastUserAdc0Volts() const
+    { return m_lastUserAdc0Volts.load(std::memory_order_relaxed); }
+
 public slots:
     // Must be called on the worker thread after moveToThread().
     // Creates sockets, timers, and other thread-local resources.
@@ -160,6 +218,19 @@ public slots:
     virtual void setTxDrive(int level) = 0;
     virtual void setMox(bool enabled) = 0;
     virtual void setAntennaRouting(AntennaRouting routing) = 0;
+
+    // Apply the per-ADC RX band-pass decision to the Alex HPF wire bits.
+    //
+    // Deliberately a separate pump from setAntennaRouting rather than an
+    // extra field on AntennaRouting: that struct is composed by
+    // RadioModel::applyAlexAntennaForBand from a single (band, isTx) pair,
+    // and with N slices spread over two chains there is no single band to
+    // compose it from. The filter decision also fires on a different trigger
+    // set (slice bind / retune / removal) than antenna routing does
+    // (antennaChanged / bandChanged / Connected).
+    //
+    // Non-pure so existing test mocks compile unchanged; P1 and P2 override.
+    virtual void setAlexRxBpf(AlexRxBpf /*bpf*/) {}
 
     // Push TX-side step attenuator value to hardware.
     //
@@ -329,6 +400,21 @@ public slots:
     /// Default false = PureSignal feedback DDC NOT routing.
     virtual void setPuresignalRun(bool run) = 0;
 
+    /// HPF Bypass on PureSignal feedback flag (G2E / OrionMKII / Saturn).
+    /// When set + MOX active + PureSignal active, the host emits Alex0 bit 12
+    /// (_Bypass) so the radio bypasses the HPF chain and feeds the post-PA
+    /// coupler tap directly to the ADC.  Default true — matches Thetis
+    /// chkDisableHPFonPSb.Checked=true [v2.10.3.13].  Storage-only on the
+    /// base class; the override actually surfaces the flag in buildCodec-
+    /// Context's alexHpfBits OR-in.  P1 path also stores for symmetric API
+    /// (P1 boards may not need it but the flag persists across protocol
+    /// switches).
+    /// ANAN-G2E bench-fix 2026-05-23 (JJ Boyd).
+    virtual void setHpfBypassOnPs(bool on) {
+        m_hpfBypassOnPs = on;
+    }
+    bool hpfBypassOnPs() const noexcept { return m_hpfBypassOnPs; }
+
     /// Hardware mic-jack PTT disable flag (Orion/ANAN front-panel PTT).
     ///
     /// Parameter and wire convention match Thetis NetworkIO.SetMicPTT exactly:
@@ -462,6 +548,34 @@ signals:
     // samples: interleaved float I/Q pairs, normalized to [-1.0, 1.0].
     void iqDataReceived(int hwReceiverIndex, const QVector<float>& samples);
 
+    // Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): per-packet paired
+    // PureSignal I/Q streams.
+    //
+    // Emitted ONCE per inbound packet (P2 multi-stream UDP packet or P1
+    // EP6 frame) that carries BOTH the PS-feedback and TX-monitor DDCs.
+    // Both vectors are deinterleaved from the SAME packet, so cross-stream
+    // sample alignment is preserved by construction — no host-side ring
+    // buffering required.
+    //
+    // Mirrors Thetis ChannelMaster sync.c:53-58 [v2.10.3.15] InboundBlock
+    // (id=1), which calls pscc() with two pointers (`data[ps_tx_idx]` and
+    // `data[ps_rx_idx]`) that both reference per-stream buffers populated
+    // by the same xrouter() call (router.c:91-102 case 2 [v2.10.3.15]).
+    //
+    // PsccPump connects to this signal in place of iqDataReceived() so
+    // the calcc engine sees the streams already paired, eliminating the
+    // 189-sample / 985 us cross-stream drift that the prior
+    // independent-rings architecture allowed under Qt queued-connection
+    // scheduling (bench-measured on ANAN-G2E + HermesC10 effective
+    // board, 2026-05-23).
+    //
+    // psFbDdc / txMonDdc identify which DDC indices the buffers came
+    // from (per cmaster.cs:533-534 [v2.10.3.13] convention: ps_rx_idx=0,
+    // ps_tx_idx=1 on all current models — though per-board codecs can
+    // override via PsDdcConfig::psFbDdc / .txMonDdc).
+    void psPairedIqDataReceived(int psFbDdc, const QVector<float>& psFbSamples,
+                                int txMonDdc, const QVector<float>& txMonSamples);
+
     // Emitted when mic samples are available.
     void micDataReceived(const QVector<float>& samples);
 
@@ -566,8 +680,8 @@ private:
 
     // Last-emitted voltage values for identical-raw suppression (50 mV epsilon).
     // Initialised to -1 so the first call always emits.
-    float m_lastSupplyVolts{-1.0f};
-    float m_lastUserAdc0Volts{-1.0f};
+    std::atomic<float> m_lastSupplyVolts{-1.0f};
+    std::atomic<float> m_lastUserAdc0Volts{-1.0f};
 
 protected:
     void setState(ConnectionState newState);
@@ -649,6 +763,24 @@ protected:
     // From Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]:
     //   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
     bool m_puresignalRun{false};
+
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): HPF Bypass during MOX+PS.
+    // From Thetis console.cs:6957 setBPF1ForOrionIISaturn [v2.10.3.13]:
+    //   if (_mox && (disable_hpf_on_tx || (disable_hpf_on_ps && PureSignalEnabled)))
+    //       NetworkIO.SetAlexHPFBits(0x20);  // Bypass — bit 12 of Alex0 (_Bypass)
+    // The G2E (HermesC10) uses this branch (setAlex1HPF dispatch at
+    // console.cs:6830 N1GP G2E added).  When MOX+PS is active and this flag
+    // is set, the host OR's 0x20 into alexHpfBits so the codec emits bit 12
+    // in the Alex0 word, telling the radio to bypass the HPF chain and feed
+    // the post-PA coupler tap straight to the ADC.  Without this on a
+    // single-ADC G2E the FB DDC sees HPF-attenuated signal which calcc
+    // can't fit, leaving PureSignal oscillating instead of locking.
+    // Bench-confirmed against Thetis-locked pcap 2026-05-22 (87 MB on .247):
+    // Alex0 0x09441C00 during MOX+PS has bit 12 set; without the flag we
+    // emit 0x09240C20 (bits 10+11 yes, bit 12 no).
+    // Default true — matches Thetis chkDisableHPFonPSb.Checked=true at
+    // setup.designer.cs:23676 [v2.10.3.13].
+    bool m_hpfBypassOnPs{true};
 
     // Shared state for setMicPTTDisabled (3M-1b G.5; renamed for issue #182
     // to match Thetis MicPTTDisabled / mic_ptt_disabled storage name exactly).

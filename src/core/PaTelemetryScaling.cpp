@@ -85,7 +85,8 @@ struct PaFwdTriplet {
     int    adcCalOffset;   // adc_cal_offset — zero-offset correction
 };
 
-// From Thetis console.cs:25008 [v2.10.3.13] — computeAlexFwdPower entry,
+// From Thetis console.cs:25053-25088 [v2.10.3.15] — computeAlexFwdPower entry,
+// Upstream tags preserved: //DH1KLM //N1GP G2E added (from cited upstream lines) [v2.10.3.15]
 // per-board switch body cited per case below.  Returns
 // {bridge_volt, refvoltage, adc_cal_offset}.
 //
@@ -98,8 +99,9 @@ struct PaFwdTriplet {
 //
 // Inline upstream attribution preserved verbatim:
 //   :25007  case HPSDRModel.ANAN_G1: //N1GP G1 added   (NereusSDR has no G1 enum)
-//   :25037  case HPSDRModel.ANAN_G2_1K:             // !K will need different scaling
-//   :25038  case HPSDRModel.REDPITAYA: //DH1KLM
+//   :25081  case HPSDRModel.ANAN_G2E: //N1GP G2E added
+//   :25083  case HPSDRModel.ANAN_G2_1K:             // !K will need different scaling
+//   :25084  case HPSDRModel.REDPITAYA: //DH1KLM
 PaFwdTriplet fwdTripletFor(HPSDRModel model) noexcept
 {
     switch (model) {
@@ -111,9 +113,11 @@ PaFwdTriplet fwdTripletFor(HPSDRModel model) noexcept
     // From Thetis console.cs:25029-25033 [v2.10.3.13]
     case HPSDRModel::ANAN200D:
         return { 0.108, 5.0, 4 };
-    // From Thetis console.cs:25034-25042 [v2.10.3.13]
+    // From Thetis console.cs:25079-25088 [v2.10.3.15] computeAlexFwdPower.
+    // Upstream tags preserved: //N1GP G2E added (console.cs:25081 [v2.10.3.15]) //DH1KLM
     case HPSDRModel::ANAN7000D:
     case HPSDRModel::ANVELINAPRO3:
+    case HPSDRModel::ANAN_G2E: //N1GP G2E added
     case HPSDRModel::ANAN_G2:
     case HPSDRModel::ANAN_G2_1K:             // !K will need different scaling
     case HPSDRModel::REDPITAYA: //DH1KLM
@@ -184,6 +188,114 @@ double scaleFwdRevVoltage(HPSDRModel model, quint16 raw) noexcept
     double volts = (adc - t.adcCalOffset) / 4095.0 * t.refVoltage;
     if (volts < 0) { volts = 0; }
     return volts;
+}
+
+namespace {
+
+// From Thetis console.cs:25179-25237 [v2.10.3.15] computeOrionMkIIExciterPower()
+// Piecewise-linear ADC count → exciter milliwatts for the OrionMKII /
+// ANAN7000D / ANAN8000D / ANAN_G2E / ANAN_G2 / ANAN_G2_1K / ANVELINAPRO3 /
+// REDPITAYA family.
+// Inline attribution: //MW0LGE_[2.9.0.7]  [original inline comment from console.cs:25183]
+float computeOrionMkIIExciterPower(int adcCounts) noexcept
+{
+    const double power_f = static_cast<double>(adcCounts);
+    double result = 0.0;
+
+    if (adcCounts <= 1340) {
+        if (adcCounts <= 580) {
+            if (adcCounts <= 60) {
+                result = 0.0;
+            } else {
+                result = (power_f - 60.0) * 0.097656;
+            }
+        } else {
+            if (adcCounts <= 905) {
+                result = 50.0 + ((power_f - 580.0) * 0.153846);
+            } else {
+                result = 100.0 + ((power_f - 905.0) * 0.229885);
+            }
+        }
+    } else {
+        if (adcCounts <= 1950) {
+            if (adcCounts <= 1680) {
+                result = 200.0 + ((power_f - 1340.0) * 0.294118);
+            } else {
+                result = 300.0 + ((power_f - 1680.0) * 0.370370);
+            }
+        } else {
+            result = 400.0 + ((power_f - 1950.0) * 0.540540);
+        }
+    }
+
+    return static_cast<float>(result);
+}
+
+// From Thetis console.cs:25120-25178 [v2.10.3.15] computeExciterPower()
+// Piecewise-linear ADC count → exciter milliwatts for low-power boards
+// (HERMES / ANAN10 / ANAN100 / ANAN100D / ANAN100B / etc. — default branch).
+// Inline attribution: //MW0LGE_[2.9.0.7]  [original inline comment from console.cs:25126]
+float computeExciterPowerInternal(int adcCounts) noexcept
+{
+    const double power_f = static_cast<double>(adcCounts);
+    double result = 0.0;
+
+    if (adcCounts <= 2095) {
+        if (adcCounts <= 874) {
+            if (adcCounts <= 98) {
+                result = 0.0;
+            } else {
+                result = (power_f - 98.0) * 0.065703;
+            }
+        } else {
+            if (adcCounts <= 1380) {
+                result = 50.0 + ((power_f - 874.0) * 0.098814);
+            } else {
+                result = 100.0 + ((power_f - 1380.0) * 0.13986);
+            }
+        }
+    } else {
+        if (adcCounts <= 3038) {
+            if (adcCounts <= 2615) {
+                result = 200.0 + ((power_f - 2095.0) * 0.192308);
+            } else {
+                result = 300.0 + ((power_f - 2615.0) * 0.236407);
+            }
+        } else {
+            result = 400.0 + ((power_f - 3038.0) * 0.243902);
+        }
+    }
+
+    return static_cast<float>(result);
+}
+
+}  // namespace
+
+// From Thetis console.cs:26001-26013 [v2.10.3.15] — exciter formula dispatch.
+// Inline tag preserved: //N1GP G2E added  (console.cs:26004)
+// Inline tag preserved: //DH1KLM  (console.cs:26007)
+float scaleExciterPowerMw(HPSDRModel model, quint16 raw) noexcept
+{
+    const int adcCounts = static_cast<int>(raw);
+    switch (model) {
+    case HPSDRModel::ANAN200D:
+        // TODO [anan200d-port]: Thetis uses computeOrionExciterPower (different
+        // breakpoints) for ANAN200D (console.cs:26000 [v2.10.3.15]).
+        // NereusSDR doesn't model ANAN200D distinctly yet; fall through to
+        // computeOrionMkIIExciterPower as a conservative placeholder.
+        [[fallthrough]];
+    case HPSDRModel::ORIONMKII:
+    case HPSDRModel::ANAN7000D:
+    case HPSDRModel::ANAN8000D:
+    case HPSDRModel::ANAN_G2E:  //N1GP G2E added
+    case HPSDRModel::ANAN_G2:
+    case HPSDRModel::ANAN_G2_1K:
+    case HPSDRModel::ANVELINAPRO3:
+    case HPSDRModel::REDPITAYA:  //DH1KLM
+        return computeOrionMkIIExciterPower(adcCounts);
+    default:
+        return computeExciterPowerInternal(adcCounts);
+    }
 }
 
 // From mi0bot console.cs:25069-25083 computeMKIIPAVoltsAmps [v2.10.3.13-beta2 @c26a8a4]:

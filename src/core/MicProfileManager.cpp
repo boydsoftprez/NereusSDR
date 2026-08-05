@@ -718,6 +718,46 @@ const std::vector<FactoryProfile>& factoryProfiles()
             {QStringLiteral("CFCPostEqGain"),       QStringLiteral("-8")},    // database.cs:9317
         });
 
+    // ── Phase 3R Task K1: "RADE" NereusSDR-native preset ──────────────
+    // RADE is the NereusSDR-native digital voice mode driven by the
+    // vendored RADE neural codec (third_party/rade, wired up across
+    // Phase 3R Tasks I1-J4).  Because RADE bypasses the WDSP USB/LSB
+    // modulator, most of the TXA chain (CFC / CESSB / Phase Rotator /
+    // ALC) is inactive on the wire.  This preset encodes that bypass
+    // philosophy:
+    //   * EQ off, all 10 bands flat at 0 dB.
+    //   * Leveler ON at the same Lev_MaxGain=15 dB / Lev_Decay=100 ms
+    //     defaultProfileValues() ships (closest NereusSDR equivalent
+    //     to freedv-gui's WebRTC AGC -9 dBFS / 5 ms attack / 100 ms
+    //     release; see Phase 3R K1 plan for the rationale).
+    //   * ALC OFF (ALC_MaximumGain=0): RADE skips the USB/LSB
+    //     modulator so the ALC envelope follower has nothing to ride.
+    //   * CFC / CESSB / Phase Rotator: all off (already off by
+    //     defaultProfileValues, listed here for documentation).
+    //
+    // NereusSDR-native; no Thetis equivalent (RADE was not a Thetis
+    // mode).  Leveler / ALC bypass philosophy sourced from freedv-gui
+    // src/pipeline/RADETransmitStep.cpp [@77e793a].
+    static const QHash<QString, QVariant> kRadeOverrides = mergeOverrides(
+        eqAllZeros(),
+        {
+            {QStringLiteral("TXEQEnabled"),    QStringLiteral("False")},
+            {QStringLiteral("TXEQPreamp"),     QStringLiteral("0")},
+            {QStringLiteral("ALC_MaximumGain"), QStringLiteral("0")},
+            // Phase 3R K-bench: bench feedback — Lev_MaxGain=15 dB and
+            // Lev_Decay=100 ms (defaultProfileValues' WebRTC-AGC-derived
+            // values) cause audible AGC pumping on RADE TX. RADE's modem
+            // wants nearly-constant amplitude; aggressive AGC distorts
+            // the modem characteristics. Override to gentler defaults:
+            //   Lev_MaxGain = 6 dB   — modest boost ceiling
+            //   Lev_Decay   = 300 ms — slower release, less pumping
+            {QStringLiteral("Lev_MaxGain"),    QStringLiteral("6")},
+            {QStringLiteral("Lev_Decay"),      QStringLiteral("300")},
+            // Leveler stays on (Lev_On=True from defaults). CFC / CESSB
+            // / PhRot left at defaultProfileValues() (all false) so this
+            // override table stays compact.
+        });
+
     static const std::vector<FactoryProfile> kProfiles = {
         // Default DX always ships (Thetis seeds it unconditionally —
         // database.cs:241 calls AddTXProfileTable("TXProfileDef", true)
@@ -742,6 +782,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
         {QStringLiteral("SSB 3.0k CFC"),      kSsb30CfcOverrides},
         {QStringLiteral("SSB 3.3k CFC"),      kSsb33CfcOverrides},
         {QStringLiteral("AM 10k CFC"),        kAm10kCfcOverrides},
+        // Phase 3R Task K1: NereusSDR-native RADE preset (TXA chain bypass).
+        {QStringLiteral("RADE"),              kRadeOverrides},
     };
     return kProfiles;
 }

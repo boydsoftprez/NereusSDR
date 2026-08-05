@@ -54,8 +54,11 @@ warren@wpratt.com
 
 #include "WdspEngine.h"
 #include "RxChannel.h"
+
+#include <cmath>
 #include "TxChannel.h"
 #include "PsFeedbackChannel.h"
+#include "RadeChannel.h"
 #include "AppSettings.h"
 #include "LogCategories.h"
 #include "wdsp_api.h"
@@ -72,13 +75,23 @@ namespace NereusSDR {
 WdspEngine::WdspEngine(QObject* parent)
     : QObject(parent)
 {
+#ifdef HAVE_WDSP
+    m_extDivCreate = &create_divEXT;
+    m_extDivDestroy = &destroy_divEXT;
+    m_extDivProcess = &xdivEXT;
+    m_extDivSetRun = &SetEXTDIVRun;
+    m_extDivSetNr = &SetEXTDIVNr;
+    m_extDivSetOutput = &SetEXTDIVOutput;
+    m_extDivSetRotate = &SetEXTDIVRotate;
+#endif
 }
 
 WdspEngine::~WdspEngine()
 {
-    if (m_initialized) {
-        shutdown();
-    }
+    // shutdown() also owns the process-wide external-diversity slots and
+    // deliberately cleans them even when asynchronous wisdom initialization
+    // never completed.
+    shutdown();
 }
 
 // Check if wisdom file needs generation (first run detection).
@@ -276,6 +289,12 @@ void WdspEngine::finishInitialization(bool wisdomWasRebuilt)
 
 void WdspEngine::shutdown()
 {
+    // External diversity accepts samples outside the RXA channel map, so it
+    // must be stopped and destroyed before any channel teardown. This also
+    // runs when m_initialized is false: a test seam or a partially completed
+    // startup can own pdiv[] without owning a finished WDSP engine.
+    destroyAllExternalDiversity();
+
     if (!m_initialized) {
         return;
     }
@@ -466,6 +485,234 @@ RxChannel* WdspEngine::rxChannel(int channelId) const
     return nullptr;
 }
 
+// ---------------------------------------------------------------------------
+// External Diversity lifecycle
+// ---------------------------------------------------------------------------
+//
+// Thetis owns pdiv[0] at ChannelMaster scope, not inside an RXA channel:
+// CreateRadio -> create_sync -> create_divEXT, InboundBlock -> xdivEXT, and
+// DestroyRadio -> destroy_sync -> destroy_divEXT. From Thetis
+// ChannelMaster/cmsetup.c:89-102 and sync.c:32-51
+// [v2.10.3.15 @501e3f5].
+//
+// The WDSP C API performs no id or lifetime validation and dereferences
+// pdiv[id] directly (div.c:104-186), so every public method below validates
+// the two-slot range and the created/running state before crossing the ABI.
+
+bool WdspEngine::createExternalDiversity(int id, int inputs,
+                                         int complexSamples)
+{
+    if (!validExternalDiversityId(id) || inputs <= 0 || inputs > 8
+        || complexSamples <= 0 || !m_extDivCreate) {
+        return false;
+    }
+
+    ExternalDiversitySlot& slot =
+        m_externalDiversity[static_cast<size_t>(id)];
+    if (slot.created.load(std::memory_order_acquire)) {
+        return true;
+    }
+
+    // Upstream create_sync creates stopped, then configuration/run are
+    // applied later by the console. Preserve that ordering.
+    m_extDivCreate(id, 0, inputs, complexSamples);
+    slot.inputs = inputs;
+    slot.complexSamples = complexSamples;
+    slot.running.store(false, std::memory_order_relaxed);
+    slot.created.store(true, std::memory_order_release);
+    return true;
+}
+
+void WdspEngine::configureExternalDiversity(int id, int output,
+                                            const double* iRotate,
+                                            const double* qRotate,
+                                            int inputs)
+{
+    if (!validExternalDiversityId(id) || inputs <= 0 || inputs > 8
+        || output < 0 || output > inputs || !iRotate || !qRotate
+        || !m_extDivSetNr || !m_extDivSetOutput || !m_extDivSetRotate) {
+        return;
+    }
+
+    ExternalDiversitySlot& slot =
+        m_externalDiversity[static_cast<size_t>(id)];
+    if (!slot.created.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    // output == nr selects WDSP's mixed output (div.c:166-174). Nr must be
+    // installed first so the output selector and rotation length describe
+    // the same input set.
+    m_extDivSetNr(id, inputs);
+    m_extDivSetOutput(id, output);
+    m_extDivSetRotate(id, inputs, const_cast<double*>(iRotate),
+                      const_cast<double*>(qRotate));
+    slot.inputs = inputs;
+}
+
+bool WdspEngine::processExternalDiversity(int id, int complexSamples,
+                                          double** inputs, double* output)
+{
+    if (!validExternalDiversityId(id) || complexSamples <= 0 || !inputs
+        || !output || !m_extDivProcess) {
+        return false;
+    }
+
+    ExternalDiversitySlot& slot =
+        m_externalDiversity[static_cast<size_t>(id)];
+    if (!slot.created.load(std::memory_order_acquire)
+        || !slot.running.load(std::memory_order_acquire)) {
+        return false;
+    }
+    for (int input = 0; input < slot.inputs; ++input) {
+        if (!inputs[input]) {
+            return false;
+        }
+    }
+
+    m_extDivProcess(id, complexSamples, inputs, output);
+    return true;
+}
+
+void WdspEngine::setExternalDiversityRunning(int id, bool running)
+{
+    if (!validExternalDiversityId(id) || !m_extDivSetRun) {
+        return;
+    }
+
+    ExternalDiversitySlot& slot =
+        m_externalDiversity[static_cast<size_t>(id)];
+    if (!slot.created.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    const bool current = slot.running.load(std::memory_order_acquire);
+    if (current == running) {
+        return;
+    }
+
+    if (running) {
+        m_extDivSetRun(id, 1);
+        slot.running.store(true, std::memory_order_release);
+    } else {
+        // Close the process gate before touching the C object so no new
+        // worker call enters xdivEXT while the slot is being stopped.
+        slot.running.store(false, std::memory_order_release);
+        m_extDivSetRun(id, 0);
+    }
+}
+
+void WdspEngine::destroyExternalDiversity(int id)
+{
+    if (!validExternalDiversityId(id) || !m_extDivDestroy) {
+        return;
+    }
+
+    ExternalDiversitySlot& slot =
+        m_externalDiversity[static_cast<size_t>(id)];
+    if (!slot.created.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    if (slot.running.exchange(false, std::memory_order_acq_rel)
+        && m_extDivSetRun) {
+        m_extDivSetRun(id, 0);
+    }
+    slot.created.store(false, std::memory_order_release);
+    m_extDivDestroy(id);
+    slot.inputs = 0;
+    slot.complexSamples = 0;
+}
+
+void WdspEngine::destroyAllExternalDiversity()
+{
+    for (int id = 0; id < kExternalDiversitySlots; ++id) {
+        destroyExternalDiversity(id);
+    }
+}
+
+#ifdef NEREUS_BUILD_TESTS
+void WdspEngine::setExternalDiversityApiForTest(
+    const ExternalDiversityApiForTest& api)
+{
+    m_extDivCreate = api.create;
+    m_extDivDestroy = api.destroy;
+    m_extDivProcess = api.process;
+    m_extDivSetRun = api.setRun;
+    m_extDivSetNr = api.setNr;
+    m_extDivSetOutput = api.setOutput;
+    m_extDivSetRotate = api.setRotate;
+}
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 3R Task J2: RadeChannel lifecycle.
+// ─────────────────────────────────────────────────────────────────────────
+//
+// RadeChannel is a NereusSDR-native wrapper around third_party/rade (the
+// librade neural codec).  It is NOT a WDSP channel - no OpenChannel /
+// CloseChannel calls, no m_initialized requirement.  The methods below
+// are structurally parallel to createRxChannel / destroyRxChannel /
+// rxChannel (WdspEngine.cpp:356-468) but the WDSP-side bookkeeping is
+// absent because WDSP has no concept of RADE.
+
+RadeChannel* WdspEngine::createRadeChannel(int channelId)
+{
+    // Pre-existence guard, structural parallel to the createRxChannel
+    // guard at WdspEngine.cpp:368-371: a second create call with the
+    // same id returns the existing channel rather than leaking a fresh
+    // construction.  Callers (J3 setDspMode swap) are responsible for
+    // sequencing destroy-then-create when intentional replacement is
+    // needed.
+    auto existing = m_radeChannels.find(channelId);
+    if (existing != m_radeChannels.end()) {
+        qCWarning(lcDsp) << "RadeChannel" << channelId
+                         << "already exists; returning existing pointer";
+        return existing->second.get();
+    }
+
+    // Parent the channel to `this` so QObject ownership cleans up the
+    // wrapper if WdspEngine is destroyed without an explicit
+    // destroyRadeChannel(id) call.  unique_ptr deletes the object first;
+    // the redundant Qt parent link is harmless because Qt's destructor
+    // checks for already-deleted children.
+    auto channel = std::make_unique<RadeChannel>(this);
+    RadeChannel* ptr = channel.get();
+
+    m_radeChannels.emplace(channelId, std::move(channel));
+    qCInfo(lcDsp) << "Created RADE channel" << channelId;
+    return ptr;
+}
+
+void WdspEngine::destroyRadeChannel(int channelId)
+{
+    auto it = m_radeChannels.find(channelId);
+    if (it == m_radeChannels.end()) {
+        // Idempotent: destroy on a never-created (or already-destroyed)
+        // id is a safe no-op.  Mirrors destroyRxChannel's early-return
+        // pattern at WdspEngine.cpp:438-443.
+        return;
+    }
+
+    // Stop the channel before erasing the wrapper.  RadeChannel::stop()
+    // is idempotent (the I1 implementation checks m_active and returns
+    // early if already stopped), so this is safe whether or not start()
+    // was ever called.
+    it->second->stop();
+
+    m_radeChannels.erase(it);
+    qCInfo(lcDsp) << "Destroyed RADE channel" << channelId;
+}
+
+RadeChannel* WdspEngine::radeChannel(int channelId) const
+{
+    auto it = m_radeChannels.find(channelId);
+    if (it != m_radeChannels.end()) {
+        return it->second.get();
+    }
+    return nullptr;
+}
+
 qint64 WdspEngine::rebuildRxChannel(int channelId, const ChannelConfig& cfg)
 {
     if (!m_initialized) {
@@ -609,6 +856,73 @@ bool WdspEngine::setRxChannelRate(int channelId, int newRateHz)
     qCInfo(lcDsp) << "setRxChannelRate: channel" << channelId
                   << "->" << newRateHz << "Hz, in_size=" << newSize;
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Per-board ChannelMaster-layer WDSP calls — Phase B4'/B5'
+//
+// Both wrappers call ChannelMaster-exported symbols provided by
+// third_party/wdsp/src/netinterface_stub.c (glue stubs) until the real
+// ChannelMaster module is ported.  The forward-declarations mirror the
+// TxChannel.cpp pattern used for SetTXFixedGain (txgain_stub.c).
+// ---------------------------------------------------------------------------
+
+#ifdef HAVE_WDSP
+extern "C" {
+    // From Thetis ChannelMaster/txgain.c:164 [v2.10.3.15]
+    void SetADCSupply(int txid, int v);
+    // From Thetis ChannelMaster/netInterface.c:1409 [v2.10.3.15]
+    void LRAudioSwap(int swap);
+}
+#endif
+
+// setAdcSupply
+//
+// Registers the per-board ADC supply voltage with the ChannelMaster TXGAIN
+// DSP path so xtxgain() can apply the correct PA over-drive protection scaling
+// (txgain.c:90-100 [v2.10.3.15]: case 33 uses adc_value/2730.0, case 50 uses
+// adc_value/1802.0).
+//
+// From Thetis clsHardwareSpecific.cs:85-191 [v2.10.3.15] — called at connect
+// time per SKU (e.g. line 90: cmaster.SetADCSupply(0, 33)).
+// Upstream inline attribution preserved per CLAUDE.md §"Inline comment preservation":
+//   :129 //N1GP G2E added
+//   :171 // G8NJJ: likely to need further changes for PA
+//   :185 //DH1KLM
+//   :187 // DH1KLM: changed for compatibility reasons for OpenHPSDR compat. DIY PA/Filter boards
+// Skips the call when v == 0 (sentinel "not set").
+void WdspEngine::setAdcSupply(int txid, int v)
+{
+    if (v == 0) {
+        return;  // sentinel: not set, leave WDSP default unchanged
+    }
+#ifdef HAVE_WDSP
+    // From Thetis ChannelMaster/txgain.c:164 [v2.10.3.15] — SetADCSupply
+    SetADCSupply(txid, v);
+#endif
+    qCInfo(lcDsp) << "setAdcSupply: txid=" << txid << "voltage=" << v << "V";
+}
+
+// setLRAudioSwap
+//
+// Registers the per-board L/R audio channel swap flag with the ChannelMaster
+// network layer so the outbound P2/ETH audio path (sendOutbound() at
+// netInterface.c:1277) swaps stereo pair order for Hermes-family boards.
+//
+// From Thetis clsHardwareSpecific.cs:85-191 [v2.10.3.15] — called at connect
+// time per SKU (e.g. line 91: NetworkIO.LRAudioSwap(1) for HERMES/ANAN10/*).
+// Upstream inline attribution preserved per CLAUDE.md §"Inline comment preservation":
+//   :129 //N1GP G2E added
+//   :171 // G8NJJ: likely to need further changes for PA
+//   :185 //DH1KLM
+//   :187 // DH1KLM: changed for compatibility reasons for OpenHPSDR compat. DIY PA/Filter boards
+void WdspEngine::setLRAudioSwap(int swap)
+{
+#ifdef HAVE_WDSP
+    // From Thetis ChannelMaster/netInterface.c:1409 [v2.10.3.15] — LRAudioSwap
+    LRAudioSwap(swap);
+#endif
+    qCInfo(lcDsp) << "setLRAudioSwap: swap=" << swap;
 }
 
 // ---------------------------------------------------------------------------
@@ -1161,6 +1475,263 @@ qint64 WdspEngine::rebuildTxChannel(int channelId, const ChannelConfig& cfg)
     qCInfo(lcDsp) << "Rebuild: TX channel" << channelId << "ready in"
                   << elapsedMs << "ms";
     return elapsedMs;
+}
+
+// ---------------------------------------------------------------------------
+// Metering wrappers (Phase 3P-II Phase 2 Tasks 31-32)
+// ---------------------------------------------------------------------------
+
+// Returns the averaged S-meter reading (dBm) from the RXA pipeline.
+//
+// Porting from Thetis Console/dsp.cs:387-388 [@501e3f5] -- original C# logic:
+//   [DllImport("wdsp.dll", EntryPoint = "GetRXAMeter", ...)]
+//   public static extern double GetRXAMeter(int channel, rxaMeterType meter);
+// Selector site: Thetis Console/dsp.cs:957 [@501e3f5] (CalculateRXMeter):
+//   case MeterType.AVG_SIGNAL_STRENGTH:
+//       val = GetRXAMeter(channel, rxaMeterType.RXA_S_AV);
+// The neighbouring ADC_REAL case at dsp.cs:959 carries //MW0LGE [2.9.0.7]
+// attribution that we preserve verbatim per GPL inline-tag preservation.
+//
+// RXA_S_AV == 1 (see wdsp/RXA.h rxaMeterType enum / WdspTypes.h SignalAvg).
+// The value is lock-free at the WDSP boundary (GetRXAMeter reads the WDSP
+// meter output register directly, same as RxChannel::getMeter). Callers must
+// ensure the channel is active before reading meaningful values.
+//
+// Guard: returns -140.0 sentinel if the engine is not yet initialized (mirrors
+// RxChannel::getMeter's !m_active.load() guard at RxChannel.cpp:1537).
+double WdspEngine::getRxaSignalAverage(int channel) const
+{
+    if (!m_initialized) {
+        return -140.0;
+    }
+#ifdef HAVE_WDSP
+    // From Thetis Console/dsp.cs:387-388 [@501e3f5]
+    // From Thetis Console/dsp.cs:957 [@501e3f5] (RXA_S_AV selector; preserves
+    // //MW0LGE [2.9.0.7] attribution from adjacent ADC_REAL case at dsp.cs:959.)
+    return ::GetRXAMeter(channel, /*RXA_S_AV=*/1);
+#else
+    Q_UNUSED(channel);
+    return -140.0;
+#endif
+}
+
+// Returns the peak S-meter reading (dBm) from the RXA pipeline.
+//
+// Porting from Thetis Console/dsp.cs:387-388 [@501e3f5] -- original C# P/Invoke:
+//   [DllImport("wdsp.dll", EntryPoint = "GetRXAMeter", ...)]
+//   public static extern double GetRXAMeter(int channel, rxaMeterType meter);
+// Selector site: Thetis Console/dsp.cs:954 [@501e3f5] (CalculateRXMeter):
+//   case MeterType.SIGNAL_STRENGTH:
+//       val = GetRXAMeter(channel, rxaMeterType.RXA_S_PK);
+// The neighbouring ADC_REAL case at dsp.cs:959 carries //MW0LGE [2.9.0.7]
+// attribution that we preserve verbatim per GPL inline-tag preservation.
+//
+// RXA_S_PK == 0 (first entry in Thetis dsp.cs:889 rxaMeterType enum
+// [@501e3f5]; also matches WdspTypes.h RxMeterType::SignalPeak = 0).
+// Used by SMeterWidget RxMode::SMeter and RxMode::SMeterPeak paths in
+// MeterPoller::pollSMeter() (Task 41, Phase 3P-II).
+double WdspEngine::getRxaSignalPeak(int channel) const
+{
+    if (!m_initialized) {
+        return -140.0;
+    }
+#ifdef HAVE_WDSP
+    // From Thetis Console/dsp.cs:387-388 [@501e3f5]
+    // From Thetis Console/dsp.cs:954 [@501e3f5] (RXA_S_PK selector; preserves
+    // //MW0LGE [2.9.0.7] attribution from adjacent ADC_REAL case at dsp.cs:959.)
+    return ::GetRXAMeter(channel, /*RXA_S_PK=*/0);
+#else
+    Q_UNUSED(channel);
+    return -140.0;
+#endif
+}
+
+// Configure the strongest-bin-in-passband detector for a display channel.
+//
+// Algorithm ported from Thetis wdsp/analyzer.c:688-830 [@501e3f5]:
+//   SetupDetectMaxBin / DetectMaxBin / GetDetectMaxBin -- bin-range scan,
+//   slow-release smoothing (decay = exp(-1/(tau*fps))), peak attack.
+//
+// Originally wrapped Thetis's C ::SetupDetectMaxBin which requires a WDSP
+// analyzer display channel (CreateAnalyzer + SetAnalyzer + Spectrum buffer
+// feed).  NereusSDR's FFTEngine uses raw FFTW3 directly and does not wire
+// the WDSP analyzer subsystem.  Wiring the analyzer pipeline is a
+// follow-up epic; for now the algorithm runs against FFTEngine's existing
+// dBm bins via onSpectrumBinsForMaxBin slot.  Operator-visible behavior
+// matches the Thetis spec; the underlying DSP plumbing diverges.
+//
+// 'ss' and 'LO' Thetis arguments are accepted for API compatibility but
+// unused in NereusSDR (Thetis multi-stream / multi-LO does not apply).
+//
+// Thetis call site at Console/console.cs:51150 [@501e3f5]:
+//   WDSP.SetupDetectMaxBin(enabled ? 1 : 0, disp, 0, 0, sample_rate,
+//                          low, high, 0.5, frame_rate);
+// Default values match the developer example in wdsp/analyzer.c:1442 [@501e3f5]:
+//   // SetupDetectMaxBin(1, 0, 0, 0, 192000.0, -3000.0, -300.0, 0.5, 60);
+void WdspEngine::setupMaxBinDetector(int disp, int ss, int LO,
+                                     double rate, double fLow, double fHigh,
+                                     double tau, int frameRate)
+{
+    Q_UNUSED(ss); Q_UNUSED(LO);  // Thetis-API placeholders; not used in NereusSDR.
+
+    if (disp < 0) { return; }
+    if (m_maxBinDetectors.size() <= disp) {
+        m_maxBinDetectors.resize(disp + 1);
+    }
+    auto& d = m_maxBinDetectors[disp];
+    d.active    = true;
+    d.rate      = rate;
+    d.fLow      = fLow;
+    d.fHigh     = fHigh;
+    d.tau       = tau;
+    d.frameRate = qMax(1, frameRate);
+    d.decay     = std::exp(-1.0 / (d.tau * static_cast<double>(d.frameRate)));
+    // From Thetis wdsp/analyzer.c:703 [@501e3f5] Init_DetectMaxBin sentinel.
+    d.maxDb     = -400.0;
+}
+
+// Returns the strongest-bin dBm value from the configured detector.
+//
+// Algorithm ported from Thetis wdsp/analyzer.c:830 [@501e3f5] -- returns
+// dmb_max_dB (the slow-release smoothed max).
+// NereusSDR-native: state lives in m_maxBinDetectors[disp] rather than
+// the WDSP pdisp[] array; see setupMaxBinDetector for the full rationale.
+//
+// Returns -400.0 sentinel when disp is out of range, the detector is not
+// yet active, or no display frame has been processed yet.  Matches the
+// Thetis Init_DetectMaxBin sentinel at wdsp/analyzer.c:703 [@501e3f5].
+double WdspEngine::getMaxBinDbm(int disp) const
+{
+    if (disp < 0 || disp >= m_maxBinDetectors.size()) { return -400.0; }
+    const auto& d = m_maxBinDetectors[disp];
+    if (!d.active) { return -400.0; }
+    return d.maxDb;
+}
+
+// Set the CTUN slice-to-DDC offset for the named detector.  Stored as a
+// signed Hz value; consumed by onSpectrumBinsForMaxBin to shift the
+// bin scan window away from DDC center to the user's tuned slice.
+// Safe to call before setupMaxBinDetector (grows the vector to fit);
+// safe to call repeatedly (idempotent same-value writes elided).
+void WdspEngine::setMaxBinSliceOffsetHz(int disp, double sliceOffsetHz)
+{
+    if (disp < 0) { return; }
+    if (m_maxBinDetectors.size() <= disp) {
+        m_maxBinDetectors.resize(disp + 1);
+    }
+    auto& d = m_maxBinDetectors[disp];
+    if (d.sliceOffsetHz == sliceOffsetHz) { return; }
+    d.sliceOffsetHz = sliceOffsetHz;
+}
+
+// 2026-05-22 bench fix: direct override of the MaxBin detector value
+// from SpectrumWidget's post detector + avenger pixel peak. See header
+// doc for the rationale. Stamps active=true so the getter returns the
+// new value rather than the -400 sentinel. Skips the peak-hold-with-
+// decay smoothing the fftReady path does, because m_renderedPixels
+// already carries the avenger's time smoothing.
+void WdspEngine::setMaxBinDbmFromSpectrum(int disp, double dbm)
+{
+    if (disp < 0) { return; }
+    if (m_maxBinDetectors.size() <= disp) {
+        m_maxBinDetectors.resize(disp + 1);
+    }
+    auto& d = m_maxBinDetectors[disp];
+    d.active = true;
+    d.maxDb  = dbm;
+}
+
+// Slot: receive FFTEngine dBm bins and run the Max Bin scan + smoothing.
+//
+// Algorithm ported from Thetis wdsp/analyzer.c:800-822 [@501e3f5]
+// (DetectMaxBin inner loop + smoothing step):
+//
+//   for (i = begin; i <= end; i++) {
+//       mag = fft_out[i][0]^2 + fft_out[i][1]^2;
+//       if (mag > dmb_max) dmb_max = mag;
+//   }
+//   a->dmb_max_dB -= fabs((1.0 - a->dmb_decay) * a->dmb_max_dB);
+//   dmb_max_dB = 10.0 * mlog10(a->scale * dmb_max);
+//   if (dmb_max_dB > a->dmb_max_dB) a->dmb_max_dB = dmb_max_dB;
+//
+// NereusSDR adaptations (not guessing -- explicit divergences):
+//   1. binsDbm is already in dBm (FFTEngine applied 10*log10(scale*mag)),
+//      so the magnitude scan and 10*log10 step are replaced by a direct
+//      max-dBm scan over the window.
+//   2. FFTEngine emits FFT-shifted bins (neg freqs first, then positive),
+//      so Thetis's two-window split (begin0/end0 + begin1/end1 for
+//      wdsp/analyzer.c:723-756 calc_dmb) collapses to a single contiguous
+//      range: firstBin = N/2 + round(fLow / binSpacing).
+//   3. Multi-panadapter (Phase 3F) will need a receiverId->disp mapping;
+//      for now all data targets disp=0 (single-panadapter assumption).
+void WdspEngine::onSpectrumBinsForMaxBin(int receiverId, const QVector<float>& binsDbm)
+{
+    Q_UNUSED(receiverId);  // single-panadapter: disp=0 for all receivers.
+    const int N = binsDbm.size();
+    if (N <= 0 || m_maxBinDetectors.isEmpty()) { return; }
+
+    // Single-panadapter assumption (Phase 3F will add receiverId->disp mapping).
+    auto& d = m_maxBinDetectors[0];
+    if (!d.active) { return; }
+
+    // Bin range computation.
+    // From Thetis wdsp/analyzer.c:688-756 [@501e3f5] calc_dmb:
+    //   bin_spacing = rate / size
+    // FFT-shifted layout: bins[N/2 + k] = frequency k * binSpacing,
+    // so the single-window collapsed form is:
+    //   firstBin = clamp(N/2 + round((fLow  + sliceOffsetHz) / binSpacing), 0, N-1)
+    //   lastBin  = clamp(N/2 + round((fHigh + sliceOffsetHz) / binSpacing), 0, N-1)
+    //
+    // NereusSDR-only sliceOffsetHz term: with CTUN on (default), the
+    // user's slice does NOT match DDC center.  FFTEngine bins are in
+    // DDC baseband, so we shift the scan window by (sliceFreq - ddcCenter)
+    // to land on the user's tuned signal.  See setMaxBinSliceOffsetHz
+    // for the architectural rationale (NereusSDR taps FFTEngine ahead of
+    // the WDSP shift, where Thetis's analyzer is fed post-shift).
+    const double binSpacing  = d.rate / static_cast<double>(N);
+    const int    half        = N / 2;
+    const double scanLowHz   = d.fLow  + d.sliceOffsetHz;
+    const double scanHighHz  = d.fHigh + d.sliceOffsetHz;
+    const int    firstBin    = qBound(0, half + static_cast<int>(std::round(scanLowHz  / binSpacing)), N - 1);
+    const int    lastBin     = qBound(0, half + static_cast<int>(std::round(scanHighHz / binSpacing)), N - 1);
+    if (lastBin < firstBin) { return; }  // degenerate window
+
+    // 2026-05-22: this onSpectrumBinsForMaxBin path now serves only as
+    // the fallback source for MaxBin. Bench-confirmed that the raw FFT
+    // bin power scanned here reads ~12-17 dB below what the spectrum
+    // visually displays for the same carrier (the spectrum runs the
+    // FFT bins through a detector + windowEnb invEnb normalization +
+    // avenger time-smoothing that reconstructs window-spread integrated
+    // power a single bin can't show). SpectrumWidget::spectrumFrame-
+    // Rendered now feeds WdspEngine::setMaxBinDbmFromSpectrum each
+    // render frame which overrides d.maxDb with the post-pipeline value
+    // the operator actually sees. Keeping the per-frame raw-bin smoother
+    // here means MaxBin still has a value during early frames before
+    // SpectrumWidget has pushed its first override, but the steady
+    // state value comes from the spectrum pixel peak.
+
+    // Scan: find max raw per-frame dBm in the window.
+    //
+    // Per-frame max with output-side peak-hold-with-decay smoothing
+    // (Thetis analyzer.c:815-818 [v2.10.3.13]).  Riding peaks and
+    // slow-decaying between is the right algorithm for modulation
+    // envelopes -- voice peaks reaching -88 stay visible at -88 for
+    // ~tau seconds rather than being averaged away.
+    float newMaxDb = -400.0f;
+    for (int i = firstBin; i <= lastBin; ++i) {
+        if (binsDbm[i] > newMaxDb) {
+            newMaxDb = binsDbm[i];
+        }
+    }
+
+    // Output-side smoothing -- verbatim from wdsp/analyzer.c:815-818
+    // [v2.10.3.13].  Peak attack (replace immediately on new max),
+    // slow-release decay (drift toward more negative each frame).
+    // For voice / modulated signals this rides peak frames at the
+    // signal level and only falls between peaks, producing the
+    // expected "pumping" behavior.
+    d.maxDb -= std::abs((1.0 - d.decay) * d.maxDb);
+    if (static_cast<double>(newMaxDb) > d.maxDb) { d.maxDb = static_cast<double>(newMaxDb); }
 }
 
 } // namespace NereusSDR

@@ -27,6 +27,7 @@
 #include "CoreAudioHalBus.h"
 
 #include "core/LogCategories.h"
+#include "core/PerfMonitor.h"
 
 #include <QLoggingCategory>
 
@@ -219,6 +220,25 @@ qint64 CoreAudioHalBus::push(const char* data, qint64 bytes) {
     // the necessary dependency). The release store below is what the plugin's
     // acquire load synchronizes against.
     uint32_t wp = m_block->writePos.load(std::memory_order_relaxed);
+
+    // 2026-05-26 KG4VCF perf instrumentation: report the ring fill
+    // level BEFORE this push so the perf overlay can show how much
+    // unread audio the kernel-side plugin has queued.  Healthy
+    // steady-state is tens of ms; if the min over the window drops
+    // toward 0 we are about to underrun even before the OS reports it.
+    //
+    // Ring is 48 kHz stereo float (96 samples per ms).  When the
+    // plugin lags or our DSP thread is slow, fill grows; when our
+    // DSP is preempted, fill shrinks because the plugin keeps draining.
+    {
+        const uint32_t rp = m_block->readPos.load(std::memory_order_acquire);
+        const uint32_t fillSamples = wp - rp;  // SPSC uint wrap-safe
+        constexpr double kSamplesPerMs = 48.0 * 2.0;  // 48 kHz stereo
+        const double fillMs =
+            static_cast<double>(fillSamples) / kSamplesPerMs;
+        NereusSDR::PerfMonitor::instance().recordAudioFillMs(fillMs);
+    }
+
     for (int i = 0; i < numSamples; ++i) {
         m_block->ringBuffer[wp % VaxShmBlock::RING_SIZE] = samples[i];
         ++wp;

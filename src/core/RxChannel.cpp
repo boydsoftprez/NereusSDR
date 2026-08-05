@@ -350,6 +350,24 @@ void RxChannel::setSampleRate(int newRateHz)
 
     m_sampleRate = newRateHz;
     m_bufferSize = bufferSizeForRate(newRateHz);
+
+    // Propagate to NB1/NB2 so initBlanker()/init_nob() recompute time
+    // constants for the new rate. Mirrors cmaster.c:464-470 [v2.10.3.13]
+    // SetXcmInrate case 0 (receiver):
+    //   SetRCVRANBBuffsize/Samplerate + SetRCVRNOBBuffsize/Samplerate.
+    // Without this, NB stays configured for the original rate and the
+    // blanker's slewtime/hangtime/advtime envelope is wrong after a
+    // setSampleRateLive — manifests as metallic ringing at higher rates.
+    if (m_nb) {
+        m_nb->setSampleRate(m_sampleRate, m_bufferSize);
+    }
+
+    // min_notch_width scales with the channel rate as well as with nc
+    // (third_party/wdsp/src/nbp.c:82-96). Thetis re-reads the value on the
+    // same sample-rate path (console.cs:39052-39053 ->
+    // UpdateMinimumNotchWidthRX [v2.10.3.15]), so the readout follows a rate
+    // change here rather than going stale until the next filter-size change.
+    emit minNotchWidthChanged(minNotchWidthHz());
 }
 
 // ---------------------------------------------------------------------------
@@ -366,11 +384,33 @@ void RxChannel::setMode(DSPMode mode)
     m_mode.store(val);
 
 #ifdef HAVE_WDSP
+    // Phase 3R K-bench: RADE_U / RADE_L are NereusSDR-native modes
+    // (WdspTypes.h:159-186) that WDSP has no knowledge of. The RX
+    // pipeline keeps WDSP alive as the demod front-end in RADE
+    // modes (RxDspWorker.cpp:160-191 — "WDSP always runs ... RADE
+    // post-SSB-demod fork"), so map RADE_U -> USB and RADE_L -> LSB
+    // here before passing to SetRXAMode. The slice-facing mode()
+    // accessor and the modeChanged signal both still report the
+    // user-requested DSPMode; only the WDSP API call is mapped.
+    // Without this mapping, raw enum 12/13 lands in WDSP's mode
+    // enum and triggers undefined behavior (review finding
+    // 2026-05-12, PR #238).
     // From Thetis wdsp-integration.md section 4.2
-    SetRXAMode(m_channelId, val);
+    SetRXAMode(m_channelId, static_cast<int>(wdspModeFor(mode)));
 #endif
 
     emit modeChanged(mode);
+}
+
+DSPMode RxChannel::wdspModeFor(DSPMode mode)
+{
+    // NereusSDR-native: WdspTypes.h:181-186 reserves RADE_U / RADE_L
+    // as non-WDSP slice modes. The RX K-bench pipeline runs WDSP as
+    // the SSB demod front-end in both, so the WDSP-facing equivalent
+    // is USB for RADE_U and LSB for RADE_L.
+    if (mode == DSPMode::RADE_U) return DSPMode::USB;
+    if (mode == DSPMode::RADE_L) return DSPMode::LSB;
+    return mode;
 }
 
 // ---------------------------------------------------------------------------
@@ -628,6 +668,14 @@ void RxChannel::setNbMode(NereusSDR::NbMode mode)
 NereusSDR::NbMode RxChannel::nbMode() const
 {
     return m_nb ? m_nb->mode() : NereusSDR::NbMode::Off;
+}
+
+// Phase 3F Sub-Epic I Task 4b. Written by RxDspWorker's drain loop before
+// each slice's processIq; read inside processIq. Release/acquire matches the
+// pairing setActiveNr() uses for the other hot-path flags.
+void RxChannel::setNoiseBlankerBypassed(bool bypassed)
+{
+    m_nbBypassed.store(bypassed, std::memory_order_release);
 }
 
 // Per-slice NB tuning pass-through (setNbTuning / nbTuning / setNbThreshold
@@ -1083,6 +1131,53 @@ void RxChannel::setSnbEnabled(bool enabled)
     if (m_nb) m_nb->setSnbEnabled(enabled);
 }
 
+// ── NB1 / NB2 / SNB detailed tuning ─────────────────────────────────────────
+// Re-added per slice after the Sub-Epic J follow-up. These were removed
+// 2026-04-22 in favour of the NB/SNB setup page calling WDSP directly, but
+// that page hardcoded channel 0, so tuning the blanker always hit receiver A
+// whichever receiver the operator was working. SliceModel owns the state now
+// and RadioModel pushes it here for the addressed slice, the same route every
+// other per-slice DSP setting takes.
+void RxChannel::setNbThreshold(double threshold)
+{
+    if (m_nb) m_nb->setNbThreshold(threshold);
+}
+
+void RxChannel::setNbTransitionMs(double ms)
+{
+    if (m_nb) m_nb->setNbTauMs(ms);
+}
+
+void RxChannel::setNbLeadMs(double ms)
+{
+    if (m_nb) m_nb->setNbLeadMs(ms);
+}
+
+void RxChannel::setNbLagMs(double ms)
+{
+    if (m_nb) m_nb->setNbLagMs(ms);
+}
+
+void RxChannel::setNb2Mode(int mode)
+{
+    if (m_nb) m_nb->setNb2Mode(mode);
+}
+
+void RxChannel::setSnbK1(double k1)
+{
+    if (m_nb) m_nb->setSnbK1(k1);
+}
+
+void RxChannel::setSnbK2(double k2)
+{
+    if (m_nb) m_nb->setSnbK2(k2);
+}
+
+void RxChannel::setSnbOutputBandwidthHz(int bandwidthHz)
+{
+    if (m_nb) m_nb->setSnbOutputBandwidthHz(bandwidthHz);
+}
+
 // ---------------------------------------------------------------------------
 // APF — Audio Peak Filter
 // ---------------------------------------------------------------------------
@@ -1366,17 +1461,259 @@ void RxChannel::setShiftFrequency(double offsetHz)
     m_shiftOffsetHz = offsetHz;
 
 #ifdef HAVE_WDSP
-    if (std::abs(offsetHz) < 0.5) {
-        // No offset — disable shift for efficiency
-        SetRXAShiftRun(m_channelId, 0);
-    } else {
-        // From Thetis radio.cs:1417-1418 — both calls use the same sign
-        SetRXAShiftFreq(m_channelId, offsetHz);
-        RXANBPSetShiftFrequency(m_channelId, offsetHz);
-        SetRXAShiftRun(m_channelId, 1);
+    // From Thetis radio.cs:1419-1420 [v2.10.3.15]: both calls use the same
+    // sign, and both fire on EVERY RXOsc change, including a change back to
+    // zero. Thetis has no run gate at all: SetRXAShiftRun appears nowhere in
+    // its Console tree, so the gate below is NereusSDR-original and now
+    // covers only the run flag.
+    //
+    // The two frequency pushes used to sit inside the else of an
+    // if (std::abs(offsetHz) < 0.5) branch, so returning to zero skipped
+    // them. SetRXAShiftRun writes rxa[channel].shift.p->run (shift.c:113-118)
+    // and never touches NOTCHDB->shift, RXANBPSetShiftFrequency is that
+    // field's sole writer (nbp.c:487-496), and calc_nbp_lightweight consumes
+    // it unconditionally (nbp.c:192). The stored shift therefore went stale
+    // on every RIT-off, DIGU/DIGL exit, band jump and CTUN-off, and every
+    // notch would have been mapped off its carrier.
+    //
+    // No sign change. Thetis's -value is not a divergence: rx_osc is already
+    // the negated quantity upstream (console.cs:31916-31922,
+    // rx2_osc = RXOsc - diff), so Thetis's -rx_osc equals the offsetHz handed
+    // in here, which equals frequencyHz - centreHz at
+    // SliceStreamAllocator.cpp:70.
+    SetRXAShiftFreq(m_channelId, offsetHz);
+    RXANBPSetShiftFrequency(m_channelId, offsetHz);
+    // Written here, next to the call it mirrors, and not up beside
+    // m_shiftOffsetHz: notchShiftHz() exists to say whether the push above
+    // really happened.
+    m_notchShiftHz = offsetHz;
+    // No offset: disable shift for efficiency. The run flag is the only
+    // thing the magnitude gate still controls.
+    SetRXAShiftRun(m_channelId, std::abs(offsetHz) < 0.5 ? 0 : 1);
+#else
+    m_notchShiftHz = offsetHz;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Notch bandpass tune frequency (TNF section 4)
+// ---------------------------------------------------------------------------
+
+void RxChannel::setNotchTuneFrequency(double absoluteHz)
+{
+    // Carry set outside the WDSP guard, mirroring setShiftFrequency, so a
+    // stub build and the unit tests still see the quantity the caller
+    // resolved.
+    m_notchTuneFrequencyHz = absoluteHz;
+
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:31940-31941 [v2.10.3.15]: pushed on every
+    // retune, unconditionally, and the SAME value goes to every subrx
+    // sharing the stream. RXANBPSetTuneFrequency is internally idempotent
+    // (nbp.c:479, if (tunefreq != a->tunefreq)), so an unconditional push
+    // costs nothing.
+    RXANBPSetTuneFrequency(m_channelId, absoluteHz);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Manual notch filter (TNF): the per-channel WDSP notch database
+// ---------------------------------------------------------------------------
+
+bool RxChannel::addNotch(int index, const Notch& n)
+{
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:40271-40273 [v2.10.3.15], AddNotch pushes the
+    // same (index, centre, width, active) tuple to every RX channel. Centre
+    // and width are absolute Hz on the wire (console.cs:40271 passes fFreqHZ
+    // straight through).
+    // WDSP: third_party/wdsp/src/nbp.c:362, an INSERT guarded by
+    // `notch <= b->nn && b->nn < b->maxnotches`; returns -1 with no mutation
+    // otherwise.
+    const int rval = RXANBPAddNotch(m_channelId, index, n.centerHz, n.widthHz,
+                                    n.active ? 1 : 0);
+    if (rval < 0) {
+        qCWarning(lcDsp) << "RxChannel" << m_channelId
+                         << "RXANBPAddNotch rejected index" << index
+                         << "centreHz" << n.centerHz
+                         << "existing" << notchCount();
+        return false;
+    }
+    return true;
+#else
+    Q_UNUSED(index);
+    Q_UNUSED(n);
+    return false;
+#endif
+}
+
+bool RxChannel::editNotch(int index, const Notch& n)
+{
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:40028-40030 [v2.10.3.15] (ChangeNotchBW) and
+    // console.cs:40100-40102 [v2.10.3.15] (ChangeNotchCentreFrequency). Both
+    // Thetis edit paths read the current tuple back, change one member and
+    // push the whole tuple; NereusSDR's caller already holds the whole tuple,
+    // so the readback is unnecessary.
+    // WDSP: third_party/wdsp/src/nbp.c:444, returns -1 when notch >= nn.
+    //
+    // Not cheap: RXANBPEditNotch runs UpdateNBPFilters (nbp.c:345-359), which
+    // designs nbp0 AND recalc_bpsnba_filter (snb.c:814-828). That is one
+    // filter pair per edit, versus 2N for a full syncNotches, which is why
+    // live edits take this path.
+    const int rval = RXANBPEditNotch(m_channelId, index, n.centerHz, n.widthHz,
+                                     n.active ? 1 : 0);
+    if (rval < 0) {
+        qCWarning(lcDsp) << "RxChannel" << m_channelId
+                         << "RXANBPEditNotch rejected index" << index
+                         << "of" << notchCount();
+        return false;
+    }
+    return true;
+#else
+    Q_UNUSED(index);
+    Q_UNUSED(n);
+    return false;
+#endif
+}
+
+bool RxChannel::deleteNotch(int index)
+{
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:40207-40209 [v2.10.3.15], removeNotch.
+    // WDSP: third_party/wdsp/src/nbp.c:418, erases and shifts the array down,
+    // so the caller's list must shift the same way (design doc section 5.2).
+    const int rval = RXANBPDeleteNotch(m_channelId, index);
+    if (rval < 0) {
+        qCWarning(lcDsp) << "RxChannel" << m_channelId
+                         << "RXANBPDeleteNotch rejected index" << index
+                         << "of" << notchCount();
+        return false;
+    }
+    return true;
+#else
+    Q_UNUSED(index);
+    return false;
+#endif
+}
+
+void RxChannel::syncNotches(const QList<Notch>& notches)
+{
+#ifdef HAVE_WDSP
+    // Drop whatever the channel is currently carrying. Always erase index 0:
+    // RXANBPDeleteNotch shifts the array down (nbp.c:426-434), so repeatedly
+    // removing the head walks the whole database without index arithmetic.
+    for (int remaining = notchCount(); remaining > 0; --remaining) {
+        RXANBPDeleteNotch(m_channelId, 0);
+    }
+
+    // From Thetis setup.cs:18002-18004 [v2.10.3.15],
+    // RestoreNotchesFromDatabase: one RXANBPAddNotch per stored notch with
+    // the loop counter as the index, which is what makes list position and
+    // WDSP index the same thing (design doc section 5.2).
+    // sets max limits, and selects first notch if one exists MW0LGE
+    //   [original inline comment from setup.cs:18007]
+    for (int i = 0; i < notches.size(); ++i) {
+        const Notch& n = notches.at(i);
+        if (RXANBPAddNotch(m_channelId, i, n.centerHz, n.widthHz,
+                           n.active ? 1 : 0) < 0) {
+            qCWarning(lcDsp) << "RxChannel" << m_channelId
+                             << "notch sync truncated at index" << i
+                             << "of" << notches.size();
+            return;
+        }
     }
 #else
-    Q_UNUSED(offsetHz);
+    Q_UNUSED(notches);
+#endif
+}
+
+int RxChannel::notchCount() const
+{
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:40265 [v2.10.3.15], AddNotch reads the count
+    // back out of WDSP before it picks an insert index.
+    // WDSP: third_party/wdsp/src/nbp.c:465
+    if (!wdspChannelInRange()) {
+        return 0;
+    }
+    int n = 0;
+    RXANBPGetNumNotches(m_channelId, &n);
+    return n;
+#else
+    return 0;
+#endif
+}
+
+void RxChannel::setNotchesRun(bool run)
+{
+    // Carry set outside the WDSP guard, mirroring setNotchTuneFrequency, so
+    // a stub build and the unit tests still see what the channel was told.
+    m_notchesRun = run;
+
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:40000-40002 [v2.10.3.15], the TNFActive setter
+    // fans the same flag to all three fixed channel ids.
+    // WDSP: third_party/wdsp/src/nbp.c:499, the only writer of
+    // notchdb.master_run; it also drives nbp0.fnfrun and re-runs
+    // RXAbpsnbaCheck / RXAbpsnbaSet, so it is not a cheap toggle.
+    RXANBPSetNotchesRun(m_channelId, run ? 1 : 0);
+#endif
+}
+
+void RxChannel::setNotchAutoIncrease(bool on)
+{
+    m_notchAutoIncrease = on;
+
+#ifdef HAVE_WDSP
+    // From Thetis setup.cs:17928-17930 [v2.10.3.15],
+    // chkMNFAutoIncrease_CheckedChanged.
+    // WDSP: third_party/wdsp/src/nbp.c:604, touches both nbp0 and bpsnba.
+    RXANBPSetAutoIncrease(m_channelId, on ? 1 : 0);
+#endif
+}
+
+double RxChannel::minNotchWidthHz() const
+{
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:48804 [v2.10.3.15], the per-RX minimum notch
+    // width readback that feeds Thetis's _minimum_rx_notch_width map.
+    // WDSP: third_party/wdsp/src/nbp.c:594 -> min_notch_width (nbp.c:82-95),
+    // which scales with the filter's coefficient count and sample rate.
+    if (!wdspChannelInRange()) {
+        return 0.0;
+    }
+    double minWidth = 0.0;
+    RXANBPGetMinNotchWidth(m_channelId, &minWidth);
+    return minWidth;
+#else
+    return 0.0;
+#endif
+}
+
+bool RxChannel::notchAt(int index, Notch& out) const
+{
+#ifdef HAVE_WDSP
+    if (!wdspChannelInRange()) {
+        return false;
+    }
+    double centerHz = 0.0;
+    double widthHz  = 0.0;
+    int    active   = 0;
+    // WDSP: third_party/wdsp/src/nbp.c:393 returns 0 on success; on -1 it
+    // writes fcenter -1.0 / fwidth 0.0 / active -1 (nbp.c:406-411), which
+    // must not reach the caller as if it were a real notch.
+    if (RXANBPGetNotch(m_channelId, index, &centerHz, &widthHz, &active) != 0) {
+        return false;
+    }
+    out.centerHz = centerHz;
+    out.widthHz  = widthHz;
+    out.active   = (active != 0);
+    return true;
+#else
+    Q_UNUSED(index);
+    Q_UNUSED(out);
+    return false;
 #endif
 }
 
@@ -1439,10 +1776,19 @@ void RxChannel::processIq(float* inI, float* inQ,
     // They operate in-place on separate I and Q buffers.
     // From Thetis wdsp-integration.md section 4.3
     // From design doc §sub-epic B — mutually exclusive NB/NB2 via one atomic.
-    switch (m_nb ? m_nb->mode() : NereusSDR::NbMode::Off) {
-        case NereusSDR::NbMode::NB:  xanbEXTF(m_channelId, inI, inQ); break;
-        case NereusSDR::NbMode::NB2: xnobEXTF(m_channelId, inI, inQ); break;
-        case NereusSDR::NbMode::Off: /* no-op */                      break;
+    //
+    // Phase 3F Sub-Epic I Task 4b: skipped on co-hosted slices. Because the
+    // blanker runs IN PLACE on the caller's legs, and every slice bound to a
+    // DDC stream is handed the same chunk, only the stream-owning slice may
+    // blank it; the rest would re-blank an already-blanked buffer. Upstream
+    // holds one ANB / NOB per receiver rather than per sub-receiver
+    // (ChannelMaster cmaster.h:79-81 [v2.10.3.15]).
+    if (!m_nbBypassed.load(std::memory_order_acquire)) {
+        switch (m_nb ? m_nb->mode() : NereusSDR::NbMode::Off) {
+            case NereusSDR::NbMode::NB:  xanbEXTF(m_channelId, inI, inQ); break;
+            case NereusSDR::NbMode::NB2: xnobEXTF(m_channelId, inI, inQ); break;
+            case NereusSDR::NbMode::Off: /* no-op */                      break;
+        }
     }
 
     // Main WDSP processing: demod, AGC, NR, ANF, filter, EQ, audio panel.
@@ -1473,6 +1819,24 @@ void RxChannel::processIq(float* inI, float* inQ,
         m_mnr->process(outI, outQ, postCount);
     }
 #endif
+
+    // Phase 3J-1 Task 16.2 — TCI audio tap.
+    // Emit post-DSP stereo audio for any TCI clients subscribed via the
+    // TciServer audio binary pipeline (Phase 16 Task 16.3). This fires
+    // after fexchange2 AND all post-DSP NR stages (DFNR, MNR) so the tap
+    // captures the same enhanced audio that flows to AudioEngine.
+    //
+    // Direct-connection only: receivers must copy into their own buffer
+    // (e.g. AudioRingSpsc) before returning — outI/outQ are scratch
+    // buffers owned by RxDspWorker and may be reused on the next chunk.
+    //
+    // srcRate: WDSP RX output rate is always 48000 Hz (set in
+    // WdspEngine::createRxChannel — RadioModel.cpp:1534-1535 [v0.4.0]).
+    // Phase 16 Task 16.3 (TciServer) connects this with Qt::DirectConnection.
+    {
+        constexpr int kWdspRxOutputRate = 48000;
+        emit audioFrameReady(m_channelId, outI, outQ, postCount, kWdspRxOutputRate);
+    }
 
 #else
     // WDSP not available — output silence
@@ -1861,6 +2225,12 @@ void RxChannel::setFilterSizeSamples(int nc)
     // From Thetis radio.cs:540 [v2.10.3.13] DSPRX.FilterSize setter.
     RXASetNC(m_channelId, nc);
 #endif
+    // RXASetNC reaches nbp0 through RXANBPSetNC (third_party/wdsp/src/RXA.c:1043),
+    // and min_notch_width divides by nc (nbp.c:82-96), so the narrowest
+    // realisable notch just moved. Thetis re-reads it at exactly this point
+    // in its own DSP-options apply path (console.cs:39052-39053 ->
+    // UpdateMinimumNotchWidthRX, :48787-48818 [v2.10.3.15]).
+    emit minNotchWidthChanged(minNotchWidthHz());
 }
 
 void RxChannel::setFilterTypeLinearPhase(bool linearPhase)

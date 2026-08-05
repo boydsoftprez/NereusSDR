@@ -34,7 +34,13 @@ WDSP_SRC = REPO / "third_party" / "wdsp" / "src"
 # permission block) bumping the count from 133 to 134.
 # Used to flag drift when the census shifts without a docs update.
 EXPECTED = {
-    "gpl2-or-later": 134,
+    # Bumped 134 -> 135 for third_party/wdsp/src/netinterface_stub.c, the
+    # NereusSDR-original glue stub that exports SetADCSupply + LRAudioSwap
+    # against the bundled wdsp_static library while the broader ChannelMaster
+    # module remains un-ported.  Stub carries a GPL-2-or-later header
+    # matching the rest of the WDSP tree, so the census classification is
+    # correct; only the expected count needed adjustment.
+    "gpl2-or-later": 135,
     "copyright-no-permission-block": 0,
     "no-header": 10,
 }

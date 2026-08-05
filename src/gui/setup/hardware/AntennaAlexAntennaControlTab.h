@@ -135,6 +135,8 @@ private:
     void buildTxGrid(QBoxLayout* outerLayout);
     void buildRxGrid(QBoxLayout* outerLayout);
     void buildTxBypassStrip(QVBoxLayout* outerLayout);
+    // Phase 3F Sub-Epic E Tasks 11-13: antenna conflict policy radio group.
+    void buildConflictPolicyGroup(QVBoxLayout* outerLayout);
     void applySkuProfile();  // reads current HPSDRModel + refreshes labels/visibility
 
     // Sync a single row's TX radio buttons from the model (no signal side-effects).

@@ -71,6 +71,52 @@ class AlexController : public QObject {
 public:
     explicit AlexController(QObject* parent = nullptr);
 
+    // ── Phase 3F: per-ADC BPF state types ────────────────────────────────────
+    // NereusSDR-original; no Thetis port.
+    // Per docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §4.
+
+    /// Operator preference for BPF state on this ADC.
+    enum class BpfMode {
+        Auto,        ///< default: filter when single-band, bypass on multi-band
+        ForceBand,   ///< always filter to TX-bound slice's band (warn OOB attenuation)
+        ForceBypass  ///< always bypass BPF (operator wideband or noise hunting)
+    };
+
+    /// Effective BPF state (what's actually on the wire).
+    enum class BpfEffective {
+        Filtered,         ///< BPF engaged at currentBpfBand
+        Bypass,           ///< BPF in bypass (no per-band rejection)
+        WidebandLocked    ///< BPF bypassed due to wideband stream active on this ADC
+    };
+
+    /// Per-ADC state computed by recomputeBpf().
+    struct AlexAdcState {
+        BpfMode      mode {BpfMode::Auto};
+        BpfEffective effective {BpfEffective::Filtered};
+        Band         currentBpfBand {Band::Band20m};
+        QString      reasonText;  ///< for WIDE badge tooltip + bottom-bar status
+    };
+
+    // ── Per-ADC BPF mode mutators + recompute ────────────────────────────────
+    // NereusSDR-original; no Thetis port.
+
+    BpfMode bpfMode(int adc) const;
+    void    setBpfMode(int adc, BpfMode mode);
+    const AlexAdcState& adcState(int adc) const;
+
+    /// Recompute BPF state for the given ADC based on current slice list, wideband
+    /// state, and operator mode. Emits bpfStateChanged when effective state changes.
+    void recomputeBpf(int adc);
+
+    /// Mark that a wideband stream is active on this ADC.
+    /// Recomputes BPF (wideband forces effective=WidebandLocked).
+    void setWidebandActive(int adc, bool on);
+
+    /// Phase 3F: called by RadioModel when the slice list on this ADC changes
+    /// (slice add/remove/retune-cross-band). Drives the auto-mode recompute.
+    /// Use Band::Count as the sentinel for "no slice in this position".
+    void notifySlicesOnAdc(int adc, const std::array<Band, 5>& slicesOnAdc);
+
     // ── Per-band antenna selection (1, 2, or 3) ──────────────────────────────
     // Source: HPSDR/Alex.cs:56-58 TxAnt/RxAnt/RxOnlyAnt fields [@501e3f5]
     int  txAnt(Band band) const;
@@ -131,6 +177,7 @@ public:
     void save();   // persist current state to AppSettings
 
 signals:
+    void bpfStateChanged(int adc, const AlexController::AlexAdcState& state);
     void antennaChanged(Band band);  // fires on any per-band assignment mutation
     void blockTxChanged();           // fires when blockTxAnt2 or blockTxAnt3 changes
     void rxOutOnTxChanged(bool on);
@@ -166,6 +213,12 @@ private:
     bool m_rxOutOverride {false};
     bool m_useTxAntForRx {false};
     bool m_xvtrActive    {false};
+
+    std::array<AlexAdcState, 2> m_perAdcState{};
+    std::array<bool, 2> m_widebandActive {false, false};
+    // Phase 3F: slice band per ADC — sentinel Band::Count means "no slice in this slot".
+    // Initialized in ctor so all slots start at Band::Count (not Band::Band160m = 0).
+    std::array<std::array<Band, 5>, 2> m_slicesPerAdc;
 
     QString m_mac;
 

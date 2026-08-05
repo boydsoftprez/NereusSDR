@@ -1,6 +1,6 @@
 #pragma once
 
-#include <QSet>
+#include <QChar>
 #include <QWidget>
 
 class QHBoxLayout;
@@ -11,24 +11,30 @@ namespace NereusSDR {
 
 class SliceModel;
 class StatusBadge;
-class BadgePair;
 
-// RxDashboard — dense glance dashboard for RX1 state.
+// RxDashboard — dense glance dashboard for the ACTIVE slice's RX state.
 //
-// Renders three BadgePair slots + one lone SQL badge:
-//   Slot 1: Mode (always)   over Filter (always)
-//   Slot 2: AGC  (always)   over NR     (active only)
-//   Slot 3: NB   (active)   over APF    (active only)
-//   Slot 4: SQL — alone     (active only)
+// Renders a single dense row: slice tag, mode, filter, AGC, NR, NB, APF,
+// SQL. No per-badge borders, no BadgePair stacking.
 //
 // The frequency display lived here in earlier revisions but moved to the
 // VFO Flag (2026-04-30) — there's no need to repeat it in the chrome.
 //
-// Three-stage responsive ladder (reapplyDropPriority):
-//   1. Wide:    all pairs horizontal — every visible badge in one row.
-//   2. Medium:  pairs stack vertically — half the horizontal footprint.
-//   3. Narrow:  stacked + drop in priority order (SQL → APF → NB → NR
-//               → AGC; mode + filter never drop).
+// Layout decisions (fold/drop under width pressure) no longer live here.
+// ChromeBarController (Task A8) owns folding and calls badgeForRung() to
+// register each foldable badge individually at its rung. Mode and filter
+// never fold, so they are not on the ladder.
+//
+// Task A8 fix round 1: the on*Changed handlers below no longer call
+// setVisible() on the pills directly. ChromeBarController::addItem's
+// contract requires it to be the sole writer of a registered widget's
+// visibility; a pill also directly setVisible()'d from here would desync
+// from the controller's next relayout(), which force-asserts visibility
+// for every registered item on any rung change with no knowledge of
+// DSP-active state. Each handler instead emits badgeAvailabilityChanged,
+// which MainWindow forwards to ChromeBarController::setItemAvailable (and
+// reports the badge's new width via setNaturalWidth, since
+// StatusBadge::setLabel changes its own minimum width live).
 //
 // Signal-name notes (verified against SliceModel.h 2026-04-30):
 //   - dspModeChanged(DSPMode)         — typed enum
@@ -39,7 +45,10 @@ class BadgePair;
 //   - apfEnabledChanged(bool)         — Auto-Notch Filter (closest to ANF)
 //   - ssqlEnabled/amsqEnabled/fmsqEnabled — per-mode squelch; ssql as indicator
 //
-// Phase 3Q Sub-PR-5/6 (E.1 + F.1) + 2026-04-30 dashboard polish.
+// Phase 3Q Sub-PR-5/6 (E.1 + F.1) + 2026-04-30 dashboard polish +
+// 2026-08-02 bottom-banner cleanup (Task A5): follows the active slice
+// instead of slice 0, dense single row replaces the 3-stage responsive
+// ladder. See docs/architecture/2026-08-02-bottom-banner-and-pan-menu-design.md §4.2.
 class RxDashboard : public QWidget {
     Q_OBJECT
 
@@ -49,8 +58,49 @@ public:
     void bindSlice(SliceModel* slice);
     SliceModel* slice() const noexcept { return m_slice; }
 
-protected:
-    void resizeEvent(QResizeEvent* event) override;
+    /// Slice this dashboard is describing. Prepended to the row so a
+    /// multi-pan operator can tell which slice the readings belong to.
+    void setSliceLetter(QChar letter);
+    QChar sliceLetter() const noexcept { return m_sliceLetter; }
+
+    /// Mode badge text, for tests and for the overflow tooltip.
+    QString modeText() const;
+
+    /// Badge that folds at this rung, or nullptr if the rung is not ours.
+    /// 5 SQL, 6 APF, 7 NB, 8 NR, 9 AGC. Mode and filter never fold.
+    StatusBadge* badgeForRung(int rung) const;
+
+    /// Width NOT covered by the five individually-registered pills
+    /// (badgeForRung rungs 5-9): the slice tag plus the mode and filter
+    /// badges, plus this row's own contents margins and internal gaps.
+    /// MainWindow registers the whole row with ChromeBarController at
+    /// rung 0 (it never folds) but overrides the auto-measured width with
+    /// this number via setNaturalWidth, refreshed on every
+    /// residualWidthChanged(). Registering the row's raw sizeHint()
+    /// instead would double-count AGC -- always visible, and already
+    /// counted separately at rung 9 -- and would have to be re-measured
+    /// on every pill toggle, which is exactly the live-sizeHint feedback
+    /// path this architecture exists to remove (final-fix-wave finding 5;
+    /// design doc §5.1 invariant 2).
+    int residualWidth() const;
+
+signals:
+    /// A pill's DSP-active state (and/or its content, hence its width)
+    /// just changed. rung matches badgeForRung's mapping (5 SQL .. 9 AGC).
+    /// available is the badge's new should-show state; AGC has no "off"
+    /// state and always reports true, purely so its width is re-checked
+    /// too (StatusBadge::setLabel changes minimum width live). The
+    /// receiver (MainWindow) is expected to resolve the widget via
+    /// badgeForRung(rung) and forward both facts to
+    /// ChromeBarController::setItemAvailable / setNaturalWidth.
+    void badgeAvailabilityChanged(int rung, bool available);
+
+    /// The slice tag, mode badge or filter badge just changed content, so
+    /// residualWidth()'s return value is stale. Mode and filter never
+    /// fold (badgeForRung only covers rungs 5-9), so this is the only
+    /// width-change notice they need; the receiver is expected to call
+    /// setNaturalWidth(rxDashRowWidget, residualWidth()) and relayout().
+    void residualWidthChanged();
 
 private slots:
     void onModeChanged(int mode);
@@ -63,28 +113,10 @@ private slots:
 
 private:
     void buildUi();
-    void reapplyDropPriority();
 
-    QSet<StatusBadge*> m_droppedBadges;   // badges hidden by resize, not by feature-off
-    bool               m_inReapplyDropPriority{false};   // re-entry guard — setting badge
-                                                          // visibility triggers a layout
-                                                          // update which can re-fire
-                                                          // resizeEvent before this method
-                                                          // unwinds, invalidating the QSet
-                                                          // iterator. See I.1 crash fix.
-
-    // Hysteresis state — without these, the wide↔medium boundary
-    // oscillates: stacking shrinks our sizeHint → parent QHBoxLayout
-    // hands us a slightly different width → resize re-fires → unstack
-    // tries to fit → fails → stack again → loop. The user sees both
-    // BadgePair orientations painted alternately ("flash on top of each
-    // other"). The deadband gate makes the function a no-op until the
-    // budget moves meaningfully.
-    int   m_lastDecisionBudget{-1};
-    bool  m_settled{false};
-
+    QChar        m_sliceLetter{QLatin1Char('A')};
+    QLabel*      m_sliceTag{nullptr};
     SliceModel*  m_slice{nullptr};
-
     StatusBadge* m_modeBadge{nullptr};
     StatusBadge* m_filterBadge{nullptr};
     StatusBadge* m_agcBadge{nullptr};
@@ -92,10 +124,6 @@ private:
     StatusBadge* m_nbBadge{nullptr};
     StatusBadge* m_apfBadge{nullptr};
     StatusBadge* m_sqlBadge{nullptr};
-
-    BadgePair*   m_modeFilterPair{nullptr};   // mode + filter
-    BadgePair*   m_agcNrPair{nullptr};        // AGC + NR
-    BadgePair*   m_nbApfPair{nullptr};        // NB + APF
 };
 
 } // namespace NereusSDR

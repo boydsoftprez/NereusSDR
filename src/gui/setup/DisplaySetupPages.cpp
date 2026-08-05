@@ -131,7 +131,9 @@ SpectrumDefaultsPage::SpectrumDefaultsPage(RadioModel* model, QWidget* parent)
 }
 
 // Maps SpectrumDefaultsPage FPS slider (10-60) to FFTEngine output FPS
-// and the SpectrumWidget display timer so both stay in sync.
+// and the SpectrumWidget display timer so both stay in sync.  Persisted
+// so the value survives restart — MainWindow reads
+// DisplaySpectrumFps at startup and applies to both via the same path.
 void SpectrumDefaultsPage::pushFps(int fps)
 {
     if (!model() || !model()->fftEngine()) { return; }
@@ -139,6 +141,8 @@ void SpectrumDefaultsPage::pushFps(int fps)
     if (auto* sw = model()->spectrumWidget()) {
         sw->setDisplayFps(fps);
     }
+    AppSettings::instance().setValue(
+        QStringLiteral("DisplaySpectrumFps"), QString::number(fps));
     // Defensive: explicitly mirror to the spin readout.  makeSliderRow
     // wires a bidirectional slider<->spin connect that should already do
     // this, but JJ reported the spin readout sticking at 30 even when the
@@ -574,6 +578,13 @@ void SpectrumDefaultsPage::buildUI()
         if (fe) {
             fe->setFftSizeBaseline(newSize);
             fe->setFftSize(newSize);
+            // 2026-05-26 KG4VCF bench fix: persist the FFT size so it
+            // survives restart.  Previously the slider drove the engine
+            // but never wrote to AppSettings, so launch always reverted
+            // to the FFTEngine ctor default (typically 4096).
+            AppSettings::instance().setValue(
+                QStringLiteral("DisplayFftSize"),
+                QString::number(newSize));
         }
 
         // Bin-width readout, fresh from newSize.  Format "N3" = 3 decimal
@@ -618,6 +629,13 @@ void SpectrumDefaultsPage::buildUI()
             static_cast<int>(WindowFunction::Count) - 1);
         model()->fftEngine()->setWindowFunction(
             static_cast<WindowFunction>(clamped));
+        // 2026-05-26 KG4VCF bench fix: persist the window choice so it
+        // survives restart.  Previously the combo drove the engine but
+        // never wrote to AppSettings, so launch always reverted to the
+        // FFTEngine ctor default.
+        AppSettings::instance().setValue(
+            QStringLiteral("DisplayFftWindow"),
+            QString::number(clamped));
     });
 
     contentLayout()->addWidget(fftGroup);
@@ -1080,6 +1098,7 @@ void SpectrumDefaultsPage::buildUI()
 
     // ShowPeakValueOverlay + position + delay.
     // From Thetis console.cs:20073-20080 [v2.10.3.13] PeakTextDelay default=500ms.
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     // Color default DodgerBlue from console.cs:20278 [v2.10.3.13].
     m_showPeakValueOverlayToggle = new QCheckBox(
         QStringLiteral("Show peak value overlay"), overlayGroup);
@@ -1093,6 +1112,7 @@ void SpectrumDefaultsPage::buildUI()
     m_peakTextDelaySpin->setSingleStep(50);
     m_peakTextDelaySpin->setSuffix(QStringLiteral(" ms"));
     // From Thetis console.cs:20073 [v2.10.3.13]: peak_text_delay = 500.
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     m_peakTextDelaySpin->setValue(500);
     m_peakTextDelaySpin->setToolTip(QStringLiteral(
         "Refresh interval for the peak value overlay in milliseconds."));
@@ -1291,6 +1311,20 @@ void WaterfallDefaultsPage::loadFromRenderer()
     m_updatePeriodSlider->setValue(sw->wfUpdatePeriodMs());
     m_opacitySlider->setValue(sw->wfOpacity());
 
+    // Issue #230 fix: gate the low/high threshold + AGC controls when
+    // "Use spectrum min/max" is on — the spectrum grid is the
+    // authority for those values in that mode.  Mirrors Thetis
+    // chkWaterfallUseRX1SpectrumMinMax_CheckedChanged at
+    // setup.cs:19224-19232 [v2.10.3.13].
+    {
+        const bool useMinMax = sw->wfUseSpectrumMinMax();
+        if (m_highThresholdSlider) { m_highThresholdSlider->setEnabled(!useMinMax); }
+        if (m_lowThresholdSlider)  { m_lowThresholdSlider->setEnabled(!useMinMax);  }
+        if (m_agcToggle)           { m_agcToggle->setEnabled(!useMinMax);           }
+        if (m_wfNfAgcEnable)       { m_wfNfAgcEnable->setEnabled(!useMinMax);       }
+        if (m_wfAgcOffsetDb)       { m_wfAgcOffsetDb->setEnabled(!useMinMax);       }
+    }
+
     // Task 2.8: NF-AGC + Stop-on-TX
     if (m_wfNfAgcEnable) {
         QSignalBlocker bn(m_wfNfAgcEnable);
@@ -1442,6 +1476,16 @@ void WaterfallDefaultsPage::buildUI()
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
             w->setWfUseSpectrumMinMax(on);
         }
+        // Issue #230 fix: mirror Thetis's
+        // chkWaterfallUseRX1SpectrumMinMax_CheckedChanged at
+        // setup.cs:19224-19232 [v2.10.3.13] — disable the conflicting
+        // threshold and AGC controls so the user can't fight the
+        // grid-driven values.
+        if (m_highThresholdSlider) { m_highThresholdSlider->setEnabled(!on); }
+        if (m_lowThresholdSlider)  { m_lowThresholdSlider->setEnabled(!on);  }
+        if (m_agcToggle)           { m_agcToggle->setEnabled(!on);           }
+        if (m_wfNfAgcEnable)       { m_wfNfAgcEnable->setEnabled(!on);       }
+        if (m_wfAgcOffsetDb)       { m_wfAgcOffsetDb->setEnabled(!on);       }
     });
     levForm->addRow(QString(), m_useSpectrumMinMaxToggle);
 

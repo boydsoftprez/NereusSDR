@@ -49,6 +49,57 @@ private slots:
         QCOMPARE(reason, ConnectFailure::Timeout);
     }
 
+    // Issue #239 regression: while waiting for the first ep6 frame, state must
+    // be Connecting (not Connected). The UI uses state() == Connected to drive
+    // the green "Connected" pill, and the bug was that connectToRadio() would
+    // set Connected immediately after sending metis-start, leaving the UI
+    // claiming success even when the radio was powered off.
+    void stateStaysConnectingUntilFirstEp6() {
+        P1RadioConnection conn;
+        conn.init();
+
+        QSignalSpy stateSpy(&conn, &RadioConnection::connectionStateChanged);
+
+        conn.connectToRadio(unreachableInfo());
+
+        // Wait long enough for the worker to enter Connecting (a few event-loop
+        // ticks) but well before the 2 s connect watchdog fires.
+        QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connecting, 500);
+
+        // State must NOT have transitioned to Connected before any data
+        // arrived. Re-check after a short additional wait to be sure no
+        // delayed setState() snuck through.
+        QTest::qWait(200);
+        QCOMPARE(conn.state(), ConnectionState::Connecting);
+
+        // None of the emitted states should equal Connected.
+        for (int i = 0; i < stateSpy.count(); ++i) {
+            const auto s = stateSpy.at(i).at(0).value<ConnectionState>();
+            QVERIFY2(s != ConnectionState::Connected,
+                "Connected emitted before any ep6 frame arrived (issue #239)");
+        }
+    }
+
+    // Issue #239 regression: after the connect watchdog fires for an
+    // unreachable radio, state must end at Disconnected. Previously the
+    // watchdog only emitted connectFailed and left state at Connected,
+    // so the UI continued to show the green "Connected" pill forever.
+    void stateBecomesDisconnectedOnConnectTimeout() {
+        P1RadioConnection conn;
+        conn.init();
+
+        QSignalSpy failSpy(&conn, &RadioConnection::connectFailed);
+
+        conn.connectToRadio(unreachableInfo());
+
+        QVERIFY(failSpy.wait(3000));
+        QCOMPARE(failSpy.count(), 1);
+
+        // Watchdog teardown is queued behind the connectFailed emission;
+        // pump the event loop briefly to let the state-change land.
+        QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Disconnected, 500);
+    }
+
     // connectFailed must NOT fire when an intentional disconnect() is called —
     // that is a user-initiated state change, not a failure.
     void noFailureOnIntentionalDisconnect() {

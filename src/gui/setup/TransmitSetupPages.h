@@ -147,6 +147,15 @@ private:
     // NereusSDR places it in Power (better thematic grouping).
     QCheckBox* m_chkAttOnTx{nullptr};
 
+    // udATTOnTX — Thetis setup.cs:3990-4015 [v2.10.3.13] ATTOnTX property.
+    // 0..31 dB NumericUpDown spinbox.  ANAN-G2E bench-fix 2026-05-23 (JJ
+    // Boyd): added because the manual entry path was missing — only the
+    // enable checkbox was ported in 3M-1c.  Needed so the user can pre-set
+    // a non-zero ATT before arming PS-A on radios where the coupler+PA
+    // combination drives FB level > 256 (calcc overload) with ATT=0,
+    // triggering the 31.1 dB AutoAtt fallback slam.
+    QSpinBox*  m_spinAttOnTxValue{nullptr};
+
     // ForceATTwhenPSAoff — Thetis setup.designer.cs:5660-5671 [v2.10.3.13].
     // //MW0LGE [2.9.0.7] added  [original inline comment from console.cs:29285]
     QCheckBox* m_chkForceAttWhenPsOff{nullptr};

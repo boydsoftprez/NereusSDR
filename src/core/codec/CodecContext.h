@@ -23,7 +23,68 @@
 
 namespace NereusSDR {
 
+/// Operator-driven configuration that the codec consumes to produce a
+/// DdcAssignment. Phase 3F Sub-Epic B Task 1.
+///
+/// Phase 3F Sub-Epic I Task 7b: `applyDdcAssignment` takes an array of these
+/// indexed by DDC STREAM (up to 5 on 2-ADC boards), not by slice. A stream is
+/// one hardware DDC; slices bind to streams many-to-one, so `frequencyHz` is
+/// the stream's window CENTRE (slices sit at shift offsets inside it) and
+/// `txBound` / `diversityRequested` are the OR across the slices sharing it.
+/// The struct name predates the stream model and is kept to bound the rename's
+/// blast radius. The single-slice-per-stream case is unchanged.
+///
+/// Design: docs/architecture/2026-05-26-phase3f-sub-epic-b-codec-chain-plan.md §Task 1.
+struct SliceConfig {
+    qint64 frequencyHz {0};            ///< slice's current freq
+    int    bandIndex {-1};             ///< 0..13 for HF bands + WWV/GEN/XVTR, see Band enum
+    int    sampleRateHz {192000};      ///< per-slice DDC rate (SampleRateCatalog::kDefaultSampleRate default)
+    int    antennaIndex {1};           ///< ANT1=1, ANT2=2, ANT3=3, EXT1=4, EXT2=5, BYPS=6
+    bool   txBound {false};            ///< only one slice is txBound at any moment
+    bool   diversityRequested {false}; ///< slice-A-only on hasDiversityReceiver SKUs
+    bool   live {false};               ///< false = dormant placeholder, codec skips
+};
+
 struct CodecContext {
+    // ADC supply voltage in volts (33 or 50).
+    // From Thetis cmaster.SetADCSupply(0, N) — clsHardwareSpecific.cs:85-191 [v2.10.3.15].
+    //
+    // B3 WIRE FORMAT AUDIT (2026-05-22):
+    // SetADCSupply is a DLL P/Invoke into ChannelMaster.dll, defined at
+    // txgain.c:164 [v2.10.3.15]:
+    //   PORT void SetADCSupply(int txid, int v) { a->adc_supply = v; }
+    // It stores the value in a txgain DSP struct consumed by xtxgain() at
+    // txgain.c:90-100 for PA over-drive protection scaling:
+    //   case 33: ptn = 1/10^(adc_value/2730.0)
+    //   case 50: ptn = 1/10^(adc_value/1802.0)
+    // This is a WDSP-internal value — it does NOT encode into any P1 C&C byte
+    // or P2 command frame. No occurrence found in network.c, networkproto1.c,
+    // netInterface.c, or any frame-compose path.
+    // Hermes-family boards: 33 V. OrionMKII/Saturn-family: 50 V.
+    // 0 = sentinel "not set / use WDSP default". Populated by buildCodecContext()
+    // from HardwareProfile::adcSupplyVoltage; WDSP will be called at connect
+    // time when WdspEngine::setADCSupply() is added (planned post-B5).
+    int     adcSupplyVoltage{0};
+
+    // L/R audio channel swap flag.
+    // From Thetis NetworkIO.LRAudioSwap(N) — clsHardwareSpecific.cs:85-191 [v2.10.3.15].
+    //
+    // B3 WIRE FORMAT AUDIT (2026-05-22):
+    // LRAudioSwap is a DLL P/Invoke into ChannelMaster.dll
+    // (NetworkIOImports.cs:375 [v2.10.3.15]), defined at netInterface.c:1409:
+    //   void LRAudioSwap(int swap) { if (prn->lr_audio_swap != swap) prn->lr_audio_swap = swap; }
+    // The flag is consumed in sendOutbound() at network.c:1277 (Protocol 2 only,
+    // inside `if (RadioProtocol == ETH)` block):
+    //   if (prn->lr_audio_swap) { swap out[i+0] ↔ out[i+1] for each stereo pair }
+    // This swaps the L/R sample ORDER in the outbound audio stream — it is NOT
+    // a bit in any C&C bank byte or P2 command frame.
+    // True for Hermes-family boards (HERMES/ANAN10/ANAN10E/ANAN100/ANAN100B);
+    // false for all modern boards (Angelia/Orion/OrionMKII/Saturn/HermesC10).
+    // Populated by buildCodecContext() from HardwareProfile::lrAudioSwap;
+    // forwarded to WDSP audio path (not a frame byte — B4 as planned cannot
+    // be implemented; WDSP integration is the correct path).
+    bool    lrAudioSwap{false};
+
     // MOX (transmit) bit — OR'd into low bit of C0.
     bool    mox{false};
 
@@ -67,8 +128,57 @@ struct CodecContext {
 
     // Alex HPF / LPF bits — recomputed by P1RadioConnection on freq change
     // via AlexFilterMap. Codec only emits them.
+    //
+    // alexHpfBits is the ADC0 / Alex0 chain. Phase 3F: when a slice set is
+    // live it carries AlexController's per-ADC decision for ADC0 rather than
+    // the last-retuned receiver's frequency.
     quint8  alexHpfBits{0};
+
+    // alexLpfBits is the Alex0 word's low-pass. Alex0's LPF is a RECEIVE
+    // selection while the radio is receiving, and the TRANSMIT selection
+    // while it is transmitting, because on older hardware Alex0's LPF is
+    // the one physically in the TX path.
+    //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+    //     if (isMox || !isTX)  -> write Alex0 (AlexLPFMask)
     quint8  alexLpfBits{0};
+
+    // alexLpfBitsTx is the Alex1 word's low-pass — the TX low-pass proper.
+    // It is ALWAYS derived from the transmit frequency and must never take a
+    // receive frequency: on a multi-slice radio a receive retune onto a low
+    // band would otherwise leave the transmitter keying into a low-pass far
+    // below its own carrier.
+    //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+    //     if (isMox || isTX)   -> write Alex1 (Alex1LPFMask)
+    //   From Thetis console.cs:15464-15468 UpdateTXDDSFreq [v2.10.3.15]
+    //     setAlexLPF(tx_dds_freq_mhz, true);   // the only isTX=true caller
+    // Upstream inline attribution preserved verbatim (console.cs:15471):
+    //   if (MOX)//[2.10.3.13]MW0LGE
+    //   Upstream comment preserved verbatim (netInterface.c:676-680):
+    //     // LPF bits can be used in older radioas as part of RX filtering too.
+    //     // Change to protocol 2 from 4.3 onwards: TX settings are encoded in
+    //     // the Alex1 word to remain comparible with older hardware, the logic
+    //     // will be:
+    //     // if MOX, write settings to alex0 and alex1
+    //     // if not MOX, write to alex1 if a TX setting else write to alex0
+    quint8  alexLpfBitsTx{0};
+
+    // Alex1 / ADC1 chain HPF bits — Phase 3F.
+    //
+    // Thetis writes two independent Alex words, prbpfilter (Alex0, fed from
+    // setAlex1HPF(_rx1_dds_freq)) and prbpfilter2 (Alex1, fed from
+    // setAlex2HPF(rx2_dds_freq_mhz)).
+    //   From Thetis console.cs:15401 + 15435-15443 [v2.10.3.15]
+    //[2.10.3.13]MW0LGE
+    //   From Thetis ChannelMaster/netInterface.c:604-651 [v2.10.3.15]
+    //   Upstream inline attribution preserved verbatim (console.cs:15441):
+    //     HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    //
+    // -1 means "no decision": nothing is receiving on ADC1, so buildAlex1
+    // keeps its pre-Phase-3F encoding (Alex0's bits mirrored across with the
+    // bypass bit masked off). Thetis reaches the same place from the other
+    // direction: setAlex2HPF is only called when RX2 exists, so on a radio
+    // with one receiver prbpfilter2's HPF nibble is simply never written.
+    int     alexHpfBitsAdc1{-1};
 
     // P2 run state — prn->run. Set by P2RadioConnection on start/stop.
     bool    p2Running{false};
@@ -126,6 +236,15 @@ struct CodecContext {
     int     p2WbSampleSize{16};
     int     p2WbUpdateRate{70};
     int     p2WbPacketsPerFrame{32};
+
+    // Phase 3F Sub-Epic F Task 1: P2 wideband per-ADC enable mask.
+    // Bit N corresponds to ADCN. From Thetis network.c:879 [v2.10.3.15]:
+    //   packetbuf[23] = (char)_InterlockedAnd(&prn->wb_enable, 0xff);
+    // Populated by buildCodecContext() from
+    // P2RadioConnection::wbEnableMask(); P2CodecOrionMkII::composeCmdGeneral
+    // emits it to buf[23]. Default 0 preserves pre-Phase-3F wire behaviour
+    // (no wideband streams active).
+    quint8  p2WbEnableMask{0};
 
     // P2 watchdog timer — prn->wdt. 0 = disabled. Byte 38 of CmdGeneral.
     int     p2Wdt{0};
@@ -207,6 +326,7 @@ struct CodecContext {
     // From Thetis ChannelMaster/networkproto1.c:597-598 [v2.10.3.13+501e3f51]:
     //   C1 = ... | ((prn->mic.mic_ptt & 1) << 6);
     // From Thetis console.cs:19757-19764 [v2.10.3.13+501e3f51]:
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:19758) [v2.10.3.15]
     //   private bool mic_ptt_disabled = false;
     //   NetworkIO.SetMicPTT(Convert.ToInt32(mic_ptt_disabled));
     //
@@ -283,8 +403,48 @@ struct CodecContext {
     // OC output byte (bank 0 C2). Phase D will drive this from OcMatrix.
     quint8  ocByte{0};
 
-    // ADC-to-DDC routing (bank 4 C1+C2).
+    // ADC-to-DDC routing — historical NereusSDR field that absorbs the
+    // P2 cntrl1 + cntrl2 bytes from `UpdateDDCs` (Thetis console.cs:8531
+    // `NetworkIO.SetADC_cntrl1` / 8532 `SetADC_cntrl2` [v2.10.3.13]).
+    // On P2 it correctly drives the per-DDC ADC-assign bytes (CmdRx bytes
+    // 17/23/29/35) via composeCmdRx. NOT used by the P1 wire (see
+    // `p1AdcCntrl` below): NereusSDR P1 codecs used to read this for
+    // bank 4 C1/C2 too, which conflated UpdateDDCs's cntrl1 with the
+    // separate `P1_adc_cntrl` Thetis global — a real port-fidelity bug
+    // surfaced while diagnosing #263. The P1 codecs now read
+    // `p1AdcCntrl` for bank 4; `adcCtrl` is retained for any
+    // P2-specific code path still reading it.
+    //
+    // Seeded by RadioModel::currentCodecContext() from defaultRxAdcCtrl()
+    // below. The struct default stays 0 so a bare CodecContext{} in a unit
+    // test describes "no ADC routing asked for" rather than silently
+    // asserting a board shape the test never named.
     quint16 adcCtrl{0};
+
+    // P1-specific ADC routing (Thetis `P1_adc_cntrl` global; 14 bits,
+    // 2 bits per DDC, layout 6655...1100 per console.cs:15120 [v2.10.3.13]).
+    //
+    // Source-of-truth for P1 bank 4 C1/C2 wire bytes per Thetis
+    // networkproto1.c:519-520 [v2.10.3.13]:
+    //   C1 = P1_adc_cntrl & 0xFF;
+    //   C2 = (P1_adc_cntrl >> 8) & 0b0011111111;
+    //
+    // Thetis `P1_adc_cntrl` lives in netInterface.c as the storage
+    // target of SetADC_cntrl_P1, which is called only from
+    // console.cs:7325-7328 UpdateRXADCCtrlP1(), which fires only when
+    // the user touches `radP1DDC*ADC*` radio buttons in Setup. The
+    // cntrl1 value UpdateDDCs computes (and which we still carry through
+    // `adcCtrl` for P2) is independent — that path maps to
+    // prn->rx[i].rx_adc (P2 wire bytes) only.
+    //
+    // P1RadioConnection populates this from m_p1AdcCntrl, which defaults
+    // to 0 for 1-ADC boards (Hermes / HermesII / HL2) and 4 for 2-ADC
+    // boards (Angelia / Orion / OrionMkII / Saturn / G2). The 0 default
+    // for 1-ADC matches the wire bytes observed on a working
+    // Thetis-driven ANAN-10E on 2026-05-09; the 4 default for 2-ADC
+    // matches Thetis fresh-install (console.cs:15120 initializer). Per-MAC
+    // AppSettings override via `hardware/<mac>/p1AdcCntrl`.
+    quint16 p1AdcCntrl{0};
 
     // Antenna selection (bank 0 C4 low 2 bits).
     int     antennaIdx{0};
@@ -299,6 +459,21 @@ struct CodecContext {
     // Source: Thetis networkproto1.c:455 [v2.10.3.13 @501e3f5]
     bool    rxOut{false};
 
+    // Mk II BPF board flag — true for ORIONMKII / ANAN-7000D / ANAN-8000D /
+    // ANAN_G2 / ANAN_G2_1K / ANVELINAPRO3 (anything routed through the Mk II
+    // band-pass-filter board). Drives the rx-only relay encoding split in
+    // P2CodecOrionMkII::buildAlex0().
+    //
+    // Source: Thetis ChannelMaster/netInterface.c:461-477 [v2.10.3.13 @501e3f51]
+    // (the `if (mkiibpf)` branch in SetAntBits). When set, the wire layer
+    // routes RX-only selections to `_10_dB_Atten` (bit 14, "RX MASTER IN SEL"
+    // RL22) instead of `_Rx_1_Out` (bit 11, RL17 RX BYPASS OUT) for every
+    // RX-only path except EXT2 (rx_only_ant==1) and transmit.
+    //
+    // Populated by P2RadioConnection::buildCodecContext() from
+    // m_hardwareProfile.mkiiBpf (HardwareProfile.cpp:137-172).
+    bool    mkiiBpf{false};
+
     // Duplex / diversity (bank 0 C4 bits 2 + 7).
     bool    duplex{true};
     bool    diversity{false};
@@ -308,6 +483,42 @@ struct CodecContext {
     int     hl2TxLatency{0};     // 7-bit
     bool    hl2ResetOnDisconnect{false};
 };
+
+/// Board-gated seed for `CodecContext::adcCtrl` (the P2 per-DDC ADC routing
+/// word: `cntrl1` in the low byte, `cntrl2` in the high byte).
+///
+/// From Thetis console.cs:15099 [v2.10.3.15]:
+///   private int rx_adc_ctrl1 = 4;
+/// From Thetis console.cs:15135 [v2.10.3.15]:
+///   private int rx_adc_ctrl2 = 0;
+///
+/// The 4 is not an opaque constant. The word is two bits per DDC, and
+/// Thetis's own composer spells the encoding out one line at a time at
+/// setup.cs:16928-16942 [v2.10.3.15]:
+///   if (radDDC1ADC1.Checked) val += 1 << 2; // bits 3 & 2 set to 01 => DDC1 to ADC1
+/// so 4 means exactly "DDC1 on ADC1, every other DDC on ADC0", and
+/// console.cs:15117-15131 [v2.10.3.15] decodes it back the same way
+/// (`mask = 3 << (ddc * 2)`, with adcCtrl2 covering DDC4-7 as DDC(n-4)).
+///
+/// Why it matters: the diversity DDC0/DDC1 sync pair has to straddle both
+/// physical inputs. Left at 0 the pair sits on ADC0 twice, which is one
+/// antenna combined with itself and no diversity at all. NereusSDR shipped
+/// that way on Protocol 2 because nothing ever assigned `adcCtrl`.
+///
+/// Why this gates on ADC count when Thetis does not: upstream keeps the 4 in
+/// one global and lets each board's UpdateDDCs branch decide whether to read
+/// it. The 1-ADC branches never do, hardcoding cntrl1 instead
+/// (console.cs:8399 / 8443 / 8455 [v2.10.3.15]), so the global is harmless
+/// there. NereusSDR has more than one consumer of the seed, so gating at the
+/// source is the cheaper invariant: a 1-ADC board is never handed an ADC1
+/// selector in the first place. Same shape as the Protocol 1 seed at
+/// P1RadioConnection.cpp applyBoardQuirks().
+constexpr quint16 defaultRxAdcCtrl(int adcCount) noexcept
+{
+    // Low byte = rx_adc_ctrl1, high byte = rx_adc_ctrl2 (0 upstream, and
+    // NereusSDR has no control that would move DDC4-7 off ADC0 either).
+    return (adcCount >= 2) ? quint16(0x0004) : quint16(0x0000);
+}
 
 // PureSignal DDC config bytes/words emitted by per-board codec.
 // Consumed by ReceiverManager::updateDdcAssignment() (Phase 3M-4 Task 6)
@@ -366,11 +577,24 @@ struct PsDdcConfig {
     //   HermesII P1 PS-MOX:      psrx=0, pstx=1
     //   Saturn-class P2 PS-MOX:  rx1=2, rx2=3 (DDC0+DDC1 implicit PS pair)
     //
-    // Defaults match cmaster.cs:533-534 (Stream0/Stream1) which is correct
-    // for nddc=2 boards and Saturn-class P2.  Per-board codec overrides for
-    // the nddc=4 family (HL2 / Hermes / ANAN10 / ANAN100).
-    int      psFbDdc    = 0;     // PS feedback DDC index (Stream0 default)
-    int      txMonDdc   = 1;     // TX monitor DDC index (Stream1 default)
+    // Both default to -1, meaning "this config carries no PS pair".  Every
+    // PS-MOX branch of every codec assigns both explicitly, including the
+    // families whose real pair IS (0, 1): the nddc=2 group above, and every
+    // Saturn-class P2 branch.  0 and 1 stay fully expressible and are still
+    // what those boards emit; the sentinel only distinguishes "PS is parked
+    // on Stream0/Stream1" from "PS is not running at all".
+    //
+    // The pair used to default to (0, 1) instead, which conflated those two
+    // states: no branch outside PS-MOX assigns the fields, so a plain RX
+    // config still looked like a configured pair.
+    // P1RadioConnection::parseEp6Frame gates its paired emit on both indices
+    // being non-negative, so it materialised two QVector copies and emitted
+    // one signal per EP6 frame on the connection thread, up to roughly 5000
+    // times a second at 192 kHz, for a PsccPump that dropped every one of
+    // them on its !m_active guard.  Measured on a live HL2 at 201,400
+    // samples/sec with PureSignal switched off.
+    int      psFbDdc    = -1;    // PS feedback DDC index (-1 = no PS pair)
+    int      txMonDdc   = -1;    // TX monitor DDC index (-1 = no PS pair)
 };
 
 } // namespace NereusSDR

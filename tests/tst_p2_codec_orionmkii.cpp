@@ -2,6 +2,7 @@
 #include <QtTest/QtTest>
 #include "core/codec/P2CodecOrionMkII.h"
 #include "core/codec/CodecContext.h"
+#include "core/P2RadioConnection.h"
 
 #include <array>
 
@@ -300,6 +301,88 @@ private slots:
         }
     }
 
+    // Issue #257 — Mk II BPF encoding split.
+    //
+    // Thetis ChannelMaster/netInterface.c:461-477 [v2.10.3.13 @501e3f51]
+    // SetAntBits():
+    //   if (mkiibpf)
+    //   {
+    //       if (rx_only_ant == 1 || tx)   // EXT2 path or TX
+    //       {
+    //           prbpfilter->_Rx_1_Out = (rx_out & 0x01) != 0;  // bit 11 RL17
+    //           prbpfilter->_10_dB_Atten = 0;                  // bit 14 RL22
+    //       }
+    //       else                          // EXT1 / BYPS / XVTR while RX
+    //       {
+    //           prbpfilter->_Rx_1_Out = 0;
+    //           prbpfilter->_10_dB_Atten = rx_out & 0x1;       // bit 14 RL22
+    //       }
+    //   }
+    //   else
+    //   {
+    //       prbpfilter->_Rx_1_Out = (rx_out & 0x01) != 0;      // bit 11 RL17
+    //   }
+    //
+    // Mask isolates bits 11 + 14 (the two relay bits split by the conditional)
+    // so the test ignores HPF/LPF/ANT/RX-only-mux contamination.
+    void alex0_mkiibpf_relay_split_byteLock() {
+        struct Case {
+            const char* name;
+            bool        mkiiBpf;
+            int         rxOnly;
+            bool        rxOut;
+            bool        mox;
+            quint32     expectedBits11_14;  // bits 11 + 14 only
+        };
+        const std::array<Case, 12> cases = {{
+            // Non-Mk II boards — bit 11 carries rx_out unconditionally;
+            // bit 14 always clear.
+            {"non-mkii  ANT1     rxOut=0 rx", false, 0, false, false, 0u},
+            {"non-mkii  EXT1     rxOut=1 rx", false, 2, true,  false, (1u << 11)},
+            {"non-mkii  EXT1     rxOut=1 tx", false, 2, true,  true,  (1u << 11)},
+            {"non-mkii  XVTR     rxOut=1 rx", false, 3, true,  false, (1u << 11)},
+
+            // Mk II boards — split:
+            //   rxOnly==1 (EXT2) OR mox=1  →  bit 11 set, bit 14 clear
+            //   else (EXT1 / XVTR / no-mux on RX)  →  bit 14 set, bit 11 clear
+            {"mkii      ANT1     rxOut=0 rx", true,  0, false, false, 0u},
+            {"mkii      EXT2     rxOut=1 rx", true,  1, true,  false, (1u << 11)},
+            {"mkii      EXT1     rxOut=1 rx", true,  2, true,  false, (1u << 14)},  // the bug fix
+            {"mkii      XVTR     rxOut=1 rx", true,  3, true,  false, (1u << 14)},
+            {"mkii      EXT2     rxOut=1 tx", true,  1, true,  true,  (1u << 11)},
+            {"mkii      EXT1     rxOut=1 tx", true,  2, true,  true,  (1u << 11)},
+            {"mkii      XVTR     rxOut=1 tx", true,  3, true,  true,  (1u << 11)},
+            {"mkii      no-mux   rxOut=1 rx", true,  0, true,  false, (1u << 14)},
+        }};
+
+        constexpr quint32 kMask11_14 = (1u << 11) | (1u << 14);
+
+        for (const auto& tc : cases) {
+            P2CodecOrionMkII codec;
+            CodecContext ctx;
+            ctx.p2AlexRxAnt = 1;   // ANT1 — doesn't affect bits 11/14
+            ctx.p2AlexTxAnt = 1;
+            ctx.rxOnlyAnt   = tc.rxOnly;
+            ctx.rxOut       = tc.rxOut;
+            ctx.mox         = tc.mox;
+            ctx.mkiiBpf     = tc.mkiiBpf;
+
+            quint8 buf[1444] = {};
+            codec.composeCmdHighPriority(ctx, buf);
+
+            const quint32 alex0 =
+                (quint32(buf[1432]) << 24) | (quint32(buf[1433]) << 16) |
+                (quint32(buf[1434]) <<  8) |  quint32(buf[1435]);
+
+            const quint32 masked = alex0 & kMask11_14;
+            if (masked != tc.expectedBits11_14) {
+                qWarning("alex0_mkiibpf_relay_split: case '%s' failed: got 0x%08x expected 0x%08x",
+                         tc.name, masked, tc.expectedBits11_14);
+            }
+            QCOMPARE(masked, tc.expectedBits11_14);
+        }
+    }
+
     // Thetis parity: Alex0/Alex1 antenna bits per netInterface.c:479-485
     //   _ANT_1 → bit 24; _ANT_2 → bit 25; _ANT_3 → bit 26
     // [v2.10.3.13 @501e3f5]
@@ -332,6 +415,84 @@ private slots:
         QVERIFY(!(buf[1428] & 0x01));   // Alex1 bit 24 clear — not ANT1
         QVERIFY(!(buf[1428] & 0x02));   // Alex1 bit 25 clear — not ANT2
         QVERIFY( (buf[1428] & 0x04));   // Alex1 bit 26 set   —     ANT3
+    }
+
+    // HermesC10 (ANAN-G2E) uses DDC0 for RX1 on P2 (joins Hermes + HermesII family).
+    // From Thetis console.cs:8607-8620 [v2.10.3.15] //N1GP G2E added (HermesC10) —
+    // case HPSDRHW.HermesC10: rx1 = 0 (same branch as Hermes + HermesII, DDC0).
+    void hermesC10_primaryRxDdc_isDDC0()
+    {
+        // HermesC10 must return DDC0 (index 0) — same as Hermes and HermesII.
+        QCOMPARE(P2RadioConnection::primaryRxDdcForBoard(HPSDRHW::HermesC10), 0);
+        // Regression: Hermes and HermesII also return 0.
+        QCOMPARE(P2RadioConnection::primaryRxDdcForBoard(HPSDRHW::Hermes),    0);
+        QCOMPARE(P2RadioConnection::primaryRxDdcForBoard(HPSDRHW::HermesII),  0);
+        // Regression: Saturn (2-ADC boards) still returns 2.
+        QCOMPARE(P2RadioConnection::primaryRxDdcForBoard(HPSDRHW::Saturn),    2);
+        QCOMPARE(P2RadioConnection::primaryRxDdcForBoard(HPSDRHW::OrionMKII), 2);
+    }
+
+    // ── Codex PR #293 P1: the synchronized DDC belongs only in syncEnable ────
+    //
+    // Upstream puts DDC1 in SyncEnable and NEVER in DDCEnable when it is the
+    // synchronized leg of a pair. From Thetis console.cs:8266-8268
+    // [v2.10.3.15], transmitting with PureSignal on:
+    //     DDCEnable  = DDC0 + DDC2;
+    //     SyncEnable = DDC1;
+    // and console.cs:8289-8291 [v2.10.3.15], transmitting with diversity and
+    // no PureSignal:
+    //     DDCEnable  = DDC0;
+    //     SyncEnable = DDC1;
+    //
+    // Setting bit 1 in ddcEnable additionally asks the radio to run DDC1 as
+    // an independent stream, so the second leg arrives both on its own and
+    // folded into DDC0's synchronized packet. P2RadioConnection::processIqPacket
+    // assumes the synchronized leg only ever arrives folded in.
+    void ddcAssignment_puresignal_keeps_ddc1_out_of_the_enable_mask() {
+        P2CodecOrionMkII codec;
+        CodecContext ctx{};
+        ctx.puresignalRun = true;
+        ctx.mox           = true;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live         = true;
+        slices[0].frequencyHz  = 7100000;
+        slices[0].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QVERIFY2((a.ddcEnable & 0x02) == 0,
+            qPrintable(QStringLiteral("DDC1 is the synchronized leg and must not "
+                "be in ddcEnable (Thetis console.cs:8267 [v2.10.3.15]: "
+                "DDCEnable = DDC0 + DDC2). ddcEnable=0x%1")
+                .arg(a.ddcEnable, 0, 16)));
+        QVERIFY2((a.syncEnable & 0x02) != 0,
+            "DDC1 must be in syncEnable (console.cs:8268 [v2.10.3.15])");
+        // DDC0 (PS forward) + DDC2 (Slice A), exactly as upstream.
+        QCOMPARE(a.ddcEnable, 0x05);
+    }
+
+    void ddcAssignment_diversity_keeps_ddc1_out_of_the_enable_mask() {
+        P2CodecOrionMkII codec;
+        CodecContext ctx{};
+        ctx.diversity = true;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live         = true;
+        slices[0].frequencyHz  = 7100000;
+        slices[0].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QVERIFY2((a.ddcEnable & 0x02) == 0,
+            qPrintable(QStringLiteral("DDC1 is the synchronized leg and must not "
+                "be in ddcEnable (Thetis console.cs:8290 [v2.10.3.15]: "
+                "DDCEnable = DDC0). ddcEnable=0x%1")
+                .arg(a.ddcEnable, 0, 16)));
+        QVERIFY2((a.syncEnable & 0x02) != 0,
+            "DDC1 must be in syncEnable (console.cs:8291 [v2.10.3.15])");
+        // DDC0 alone: the diversity branch migrates stream 0 off DDC2.
+        QCOMPARE(a.ddcEnable, 0x01);
     }
 };
 

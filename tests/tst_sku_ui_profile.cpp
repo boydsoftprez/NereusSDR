@@ -195,6 +195,31 @@ private slots:
         QVERIFY(!p.hasRxOutOnTx);
         QVERIFY(!p.hasRxBypassUi);
     }
+
+    // Task C1 — ANAN_G2E EXT label overrides.
+    // Source: Thetis setup.cs:19904-19929 [v2.10.3.15] //N1GP G2E added
+
+    void g2e_ext2Label_isRxBypass() {
+        // setup.cs:19904-19929 [v2.10.3.15] //N1GP G2E added
+        const auto profile = skuUiProfileFor(HPSDRModel::ANAN_G2E);
+        QCOMPARE(profile.ext1OutOnTxLabel, QStringLiteral("Ext 1 on Tx"));
+        QCOMPARE(profile.ext2OutOnTxLabel, QStringLiteral("Rx BYPASS on Tx"));
+        QCOMPARE(profile.antennaTabLabel, QStringLiteral("Ant/Filters"));
+        QCOMPARE(profile.rxOnlyLabels[0], QStringLiteral("BYPS"));
+        QCOMPARE(profile.rxOnlyLabels[1], QStringLiteral("EXT1"));
+        QCOMPARE(profile.rxOnlyLabels[2], QStringLiteral("XVTR"));
+        QVERIFY(profile.hasExt1OutOnTx);
+        QVERIFY(profile.hasExt2OutOnTx);
+        QVERIFY(!profile.hasRxOutOnTx);
+        QVERIFY(!profile.hasRxBypassUi);
+    }
+
+    void defaultExt2Label_isExt2OnTx() {
+        // Every non-G2E SKU keeps the struct default "Ext 2 on Tx".
+        const auto profile = skuUiProfileFor(HPSDRModel::ANAN_G2);
+        QCOMPARE(profile.ext1OutOnTxLabel, QStringLiteral("Ext 1 on Tx"));
+        QCOMPARE(profile.ext2OutOnTxLabel, QStringLiteral("Ext 2 on Tx"));
+    }
 };
 
 QTEST_APPLESS_MAIN(TestSkuUiProfile)

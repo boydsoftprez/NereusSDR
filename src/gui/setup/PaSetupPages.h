@@ -290,8 +290,9 @@ public:
     QDoubleSpinBox*  adjustSpinForTest(Band b, int step) const;
     QDoubleSpinBox*  maxPowerSpinForTest(Band b) const;
     QCheckBox*       useMaxPowerCheckForTest(Band b) const;
-    QCheckBox*       autoCalibrateCheckForTest() const { return m_autoCalibrateCheck; }
-    QCheckBox*       newCalCheckForTest()        const { return m_newCalCheck; }
+    QCheckBox*       autoCalibrateCheckForTest()      const { return m_autoCalibrateCheck; }
+    QCheckBox*       bypassPaSettingsCheckForTest()   const { return m_bypassPaSettingsCheck; }
+    QCheckBox*       newCalCheckForTest()             const { return m_newCalCheck; }
     QLabel*          warningIconForTest()        const { return m_warningIcon; }
     QLabel*          warningLabelForTest()       const { return m_warningLabel; }
     QPushButton*     newButtonForTest()          const { return m_btnNew; }
@@ -476,8 +477,9 @@ private:
     QPushButton*  m_btnReset{nullptr};
     QLabel*       m_warningIcon{nullptr};        // pbPAProfileWarning
     QLabel*       m_warningLabel{nullptr};       // lblPAProfileWarning
-    QCheckBox*    m_newCalCheck{nullptr};        // chkPANewCal
-    QCheckBox*    m_autoCalibrateCheck{nullptr}; // chkAutoPACalibrate
+    QCheckBox*    m_newCalCheck{nullptr};             // chkPANewCal
+    QCheckBox*    m_autoCalibrateCheck{nullptr};      // chkAutoPACalibrate (D3)
+    QCheckBox*    m_bypassPaSettingsCheck{nullptr};   // chkBypassANANPASettings (D4)
 
     /// grpGainByBandPA equivalent. Title rebuilt in loadProfileIntoUi to show
     /// the active profile name (matches Thetis updatePAControls
@@ -682,6 +684,12 @@ public slots:
     QString fwdCalibratedPeakForTest() const;
     QString fwdCalibratedMinForTest()  const;
     void    clickResetForTest();
+
+    // D5 (ANAN-G2E port): per-label visibility seams for amps/volts rows.
+    // From Thetis clsHardwareSpecific.cs:245-264 [v2.10.3.15] HasVolts/HasAmps.
+    // //N1GP G2E added (lines 250/260 [v2.10.3.15])
+    bool isPaCurrentRowVisibleForTest()    const;
+    bool isSupplyVoltsRowVisibleForTest()  const;
 #endif
 
 private:

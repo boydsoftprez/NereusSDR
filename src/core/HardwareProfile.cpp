@@ -124,6 +124,13 @@ HardwareProfile profileForModel(HPSDRModel model)
             p.adcSupplyVoltage  = 33;
             p.lrAudioSwap       = false;
             break;
+        case HPSDRModel::ANAN_G2E:                                  // From Thetis clsHardwareSpecific.cs:129-135 [v2.10.3.15] //N1GP G2E added
+            p.effectiveBoard    = HPSDRHW::HermesC10;
+            p.adcCount          = 1;
+            p.mkiiBpf           = true;
+            p.adcSupplyVoltage  = 33;
+            p.lrAudioSwap       = false;
+            break;
         case HPSDRModel::ANAN200D:
             p.effectiveBoard    = HPSDRHW::Orion;
             p.adcCount          = 2;

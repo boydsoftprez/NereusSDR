@@ -59,6 +59,25 @@ private slots:
         QVERIFY(!tab.isSaturnBpf1Visible());
     }
 
+    // HermesC10 (ANAN-G2E) uses the OrionII/Saturn BPF1 algorithm.
+    // From Thetis console.cs:6829-6834 [v2.10.3.15] //N1GP G2E added (HermesC10) //DK1HLM —
+    // setAlex1HPF dispatches setBPF1ForOrionIISaturn for OrionMKII || Saturn || HermesC10.
+    // AntennaAlexTab::populate() gates the BPF1 column on (board==Saturn||SaturnMKII||HermesC10).
+    // This test exercises the true-path for HermesC10 directly via updateBoardCapabilities.
+    void hermesC10_showsBpf1Column()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::HermesC10);
+        AntennaAlexAlex1Tab tab(&model);
+
+        // HermesC10 joins OrionMKII + Saturn for the BPF1 algorithm path.
+        // AntennaAlexTab::populate() computes:
+        //   isSaturn = (caps.board == Saturn || caps.board == SaturnMKII || caps.board == HermesC10)
+        // and calls updateBoardCapabilities(isSaturn=true).
+        tab.updateBoardCapabilities(true);
+        QVERIFY(tab.isSaturnBpf1Visible());
+    }
+
     // restoreSettings with empty MAC is a no-op (no crash).
     void restore_empty_mac_noop()
     {

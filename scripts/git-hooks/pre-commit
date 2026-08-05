@@ -33,6 +33,15 @@ if ! python3 scripts/verify-thetis-headers.py; then
     exit 1
 fi
 
+echo "[pre-commit] verify-freedv-headers.py"
+if ! python3 scripts/verify-freedv-headers.py; then
+    echo
+    echo "[pre-commit] BLOCKED: freedv-gui header verifier failed."
+    echo "             Fix the headers, then re-stage and re-commit."
+    echo "             See docs/attribution/FREEDV-GUI-PROVENANCE.md."
+    exit 1
+fi
+
 echo "[pre-commit] check-new-ports.py (diff)"
 if ! CHECK_NEW_PORTS_BASE_REF="${CHECK_NEW_PORTS_BASE_REF:-origin/main}" \
      python3 scripts/check-new-ports.py; then
@@ -95,13 +104,44 @@ if ! python3 scripts/compliance-inventory.py --fail-on-unclassified >/dev/null; 
     exit 1
 fi
 
+# Phase 3F Sub-Epic J Task 11: architecture gate, not an attribution check,
+# but wired in beside them since it is the same shape (whole-tree sweep,
+# no upstream clone needed) and belongs in the fast path ahead of the
+# Thetis-clone-dependent steps below.
+echo "[pre-commit] verify-no-gui-dsp-access.py"
+if ! python3 scripts/verify-no-gui-dsp-access.py; then
+    echo
+    echo "[pre-commit] BLOCKED: GUI code calls rxChannel() directly."
+    echo "             Route through SliceModel; RadioModel pushes to the"
+    echo "             right channel. See scripts/verify-no-gui-dsp-access.py."
+    exit 1
+fi
+
+echo "[pre-commit] verify-no-captured-slice-spectrum-wiring.py"
+if ! python3 scripts/verify-no-captured-slice-spectrum-wiring.py; then
+    echo
+    echo "[pre-commit] BLOCKED: a spectrum slice control is wired to"
+    echo "             activeSpectrumWidget(), which is pan-0 forever."
+    echo "             Wire it in MainWindow::wireSpectrumSliceControls, which"
+    echo "             resolves the slice per signal via sliceForPan(panId)."
+    echo "             See scripts/verify-no-captured-slice-spectrum-wiring.py."
+    exit 1
+fi
+
 echo "[pre-commit] verify-inline-tag-preservation.py (author-tag check)"
 # Auto-locate upstream clones. Search order:
-#   1. $NEREUS_THETIS_DIR  / $NEREUS_MI0BOT_DIR (explicit override)
-#   2. ../Thetis            (standard main-repo sibling)
-#   3. ../../Thetis         (worktree layout: .worktrees/<branch>/)
-#   4. ../../../Thetis      (deeper worktree layout)
+#   1. $NEREUS_<NAME>_DIR (explicit override)
+#   2. every ancestor of the working tree, nearest first
 # CI sets the env vars explicitly; this logic is for local dev.
+#
+# The ancestor walk replaces a fixed ../, ../../, ../../../ probe list
+# (2026-07-28). That list stopped one level short of a linked worktree
+# under .claude/worktrees/<name>, where the sibling clone sits four
+# levels up, so the hook printed "no Thetis clone found locally" and
+# skipped the check for anyone working in a worktree. The same
+# off-by-depth bug existed independently in
+# verify-inline-tag-preservation.py; both now walk ancestors so neither
+# has to know how deeply it is nested.
 find_upstream() {
     local name="$1"
     local override="$2"
@@ -109,28 +149,34 @@ find_upstream() {
         echo "$override"
         return
     fi
-    for candidate in "../$name" "../../$name" "../../../$name"; do
-        if [ -d "$candidate" ]; then
-            echo "$candidate"
+    local dir
+    dir="$(pwd -P)"
+    while [ "$dir" != "/" ]; do
+        if [ -d "$dir/$name" ]; then
+            echo "$dir/$name"
             return
         fi
+        dir="$(dirname "$dir")"
     done
+    [ -d "/$name" ] && echo "/$name"
 }
 
 THETIS_LOCAL="$(find_upstream Thetis "${NEREUS_THETIS_DIR:-}")"
 MI0BOT_LOCAL="$(find_upstream mi0bot-Thetis "${NEREUS_MI0BOT_DIR:-}")"
 DESKHPSDR_LOCAL="$(find_upstream deskhpsdr "${NEREUS_DESKHPSDR_DIR:-}")"
+FREEDV_LOCAL="$(find_upstream freedv-gui "${NEREUS_FREEDV_DIR:-}")"
 
 if [ -n "${NEREUS_SKIP_TAG_CHECK:-}" ]; then
     echo "[pre-commit] tag-preservation SKIPPED (NEREUS_SKIP_TAG_CHECK set)"
 elif [ -z "$THETIS_LOCAL" ]; then
     echo "[pre-commit] tag-preservation SKIPPED (no Thetis clone found locally;"
-    echo "             searched ../Thetis, ../../Thetis, ../../../Thetis;"
+    echo "             searched every ancestor of $(pwd -P) for a Thetis/ dir;"
     echo "             set NEREUS_THETIS_DIR to override; CI runs strict check)"
 else
     export NEREUS_THETIS_DIR="$THETIS_LOCAL"
     [ -n "$MI0BOT_LOCAL" ]    && export NEREUS_MI0BOT_DIR="$MI0BOT_LOCAL"
     [ -n "$DESKHPSDR_LOCAL" ] && export NEREUS_DESKHPSDR_DIR="$DESKHPSDR_LOCAL"
+    [ -n "$FREEDV_LOCAL" ]    && export NEREUS_FREEDV_DIR="$FREEDV_LOCAL"
     if ! python3 scripts/verify-inline-tag-preservation.py >/dev/null 2>&1; then
         python3 scripts/verify-inline-tag-preservation.py || true
         echo

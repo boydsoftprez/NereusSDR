@@ -271,14 +271,20 @@ warren@wpratt.com
 #include "core/BoardCapabilities.h"
 #include "core/SkuUiProfile.h"
 #include "core/HpsdrModel.h"
+#include "core/accessories/AlexController.h"
 #include "gui/StyleConstants.h"
 #include "gui/styles/PopupMenuStyle.h"
+#include "gui/widgets/AntennaPickerMenu.h"
 #include "models/FilterPresetStore.h"
+#include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
 
+#include <QCoreApplication>
+#include <QEvent>
 #include <QGuiApplication>
 #include <QPainter>
+#include <QContextMenuEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QVBoxLayout>
@@ -292,6 +298,41 @@ warren@wpratt.com
 #include <algorithm>
 
 namespace NereusSDR {
+
+// 2026-05-13 bench fix (PR #238): QStackedWidget subclass that reports
+// the CURRENT page's sizeHint instead of the maximum across all pages.
+//
+// The flag wants to shrink to fit the active tab only (not the tallest
+// tab — that's an explicit user directive from 2026-04-23).  The
+// original implementation marked hidden pages with
+// QSizePolicy::Ignored to hide them from the stack's size
+// calculation.  Unfortunately Ignored short-circuits hint propagation
+// for the page's CHILDREN too: when rebuildFilterButtons grew the
+// filter-preset grid inside the active page, the container's sizeHint
+// kept returning (0, 0) and the flag SHRANK on adjustSize instead of
+// growing.  Diagnostic at 2026-05-13 confirmed the (0,0) read.
+//
+// Subclassing is the canonical Qt fix: sizeHint() / minimumSizeHint()
+// return only the currently-shown widget's hint.  Hidden pages don't
+// need the Ignored policy any more (they don't contribute to the
+// stack hint at all), so the hint chain stays clean and content
+// changes inside the active page propagate up normally.
+class CurrentPageSizedStack : public QStackedWidget {
+public:
+    using QStackedWidget::QStackedWidget;
+    QSize sizeHint() const override {
+        if (auto* w = currentWidget()) {
+            return w->sizeHint();
+        }
+        return QStackedWidget::sizeHint();
+    }
+    QSize minimumSizeHint() const override {
+        if (auto* w = currentWidget()) {
+            return w->minimumSizeHint();
+        }
+        return QStackedWidget::minimumSizeHint();
+    }
+};
 
 // File-local style helpers — §A2 exception: each diverges from canonical
 // Style:: on font-size (13px vs 10px), border colour (#304050 vs #205070),
@@ -407,6 +448,19 @@ VfoWidget::VfoWidget(QWidget* parent)
 // regressed by ff94942.
 VfoWidget::~VfoWidget() = default;
 
+// See the header for why this is a separate call rather than destructor work.
+// Deleting the buttons while both this flag and its SpectrumWidget parent are
+// still alive keeps the ordering ours, so it cannot reproduce issue #113.
+void VfoWidget::destroyFloatingButtons()
+{
+    for (QPushButton** btn : {&m_closeBtn, &m_lockBtn, &m_recBtn, &m_playBtn}) {
+        if (*btn) {
+            delete *btn;
+            *btn = nullptr;
+        }
+    }
+}
+
 void VfoWidget::buildUI()
 {
     auto* mainLayout = new QVBoxLayout(this);
@@ -417,11 +471,15 @@ void VfoWidget::buildUI()
     buildHeaderRow();
     buildFrequencyRow();
     buildSmeterRow();
+    buildSnrRow();       // Phase 3R L1 — hidden unless mode == RADE
     buildTabBar();
 
-    // Tab content stacked widget — HIDDEN by default (compact flag)
-    // From AetherSDR VfoWidget.cpp:545 — m_tabStack->hide()
-    m_tabStack = new QStackedWidget(this);
+    // Tab content stacked widget — HIDDEN by default (compact flag).
+    // From AetherSDR VfoWidget.cpp:545 — m_tabStack->hide().
+    // CurrentPageSizedStack subclass shrinks the stack to the active
+    // page's sizeHint (instead of the max-of-all default), so the
+    // flag shrinks to fit the active tab.  See class comment above.
+    m_tabStack = new CurrentPageSizedStack(this);
     buildAudioTab();
     buildDspTab();
     buildModeTab();
@@ -446,15 +504,16 @@ void VfoWidget::buildUI()
     m_tabStack->hide();  // Hidden by default — click tab to expand
     m_activeTab = -1;    // No tab active initially
 
-    // Per user directive 2026-04-23: flag height should shrink to fit the
-    // ACTIVE tab only (not the tallest tab). QStackedWidget defaults to
-    // sizing by the tallest child; we override by marking hidden pages as
-    // QSizePolicy::Ignored so the stack reports the size of the active page.
-    // The tab-switcher in buildTabBar calls adjustStackSize() to re-apply.
-    for (int i = 0; i < m_tabStack->count(); ++i) {
-        m_tabStack->widget(i)->setSizePolicy(
-            QSizePolicy::Ignored, QSizePolicy::Ignored);
-    }
+    // Per user directive 2026-04-23: flag height shrinks to fit the
+    // ACTIVE tab only (not the tallest tab).  CurrentPageSizedStack
+    // subclass (declared at the top of this file) overrides sizeHint
+    // / minimumSizeHint to return only the current page's hints, so
+    // we no longer need to fiddle with each page's sizePolicy
+    // (Ignored on the prior implementation broke hint propagation
+    // for content INSIDE the active page — see PR #238 v5 fix and
+    // the class comment).  Pages keep their default Preferred/Preferred
+    // policy and the stack's overridden hint takes care of the
+    // active-page-only sizing.
 
     setLayout(mainLayout);
     adjustSize();
@@ -581,6 +640,11 @@ void VfoWidget::buildHeaderRow()
     m_txBadge->setToolTip(QStringLiteral("Indicates this slice is the TX slice"));
     hdr->addWidget(m_txBadge);
 
+    // Phase 3F Sub-Epic C Task 9: TX badge click requests handoff to this slice.
+    // The QPushButton stays checkable so it visually echoes setTxSlice() updates
+    // pushed back from TxSliceArbiter::txBoundSliceChanged.
+    connect(m_txBadge, &QPushButton::clicked, this, &VfoWidget::onTxBadgeClicked);
+
     // Split badge — hidden in Stage 1; wired in Stage 2 when split semantics land
     m_splitBadge = new QLabel(QStringLiteral("SPLIT"), this);
     m_splitBadge->setFixedSize(36, 18);
@@ -651,9 +715,289 @@ void VfoWidget::buildFrequencyRow()
 
 void VfoWidget::buildSmeterRow()
 {
+    auto* vboxLayout = static_cast<QVBoxLayout*>(layout());
+
+    // 2026-05-12 bench fix: 4 px spacer between the frequency
+    // border and the S-meter tick strip so the "S1 3 5 7 9 +20 +40"
+    // tick labels don't visually collide with the cyan frequency-
+    // display border.  The default 2 px QVBoxLayout::setSpacing()
+    // applied in buildUI() left the tick labels appearing to sit
+    // inside the freq box; the user reported "S NUMBERS ARE
+    // OVERLAPPING WITH THE FREQUENCY READOUT AFTER ADDITION OF
+    // THE RADE SNR" during bench testing of PR #238.  A localized
+    // QSpacerItem keeps the rest of the row spacing at 2 px.
+    vboxLayout->addSpacing(4);
+
     m_levelBar = new VfoLevelBar(this);
     m_levelBar->setValue(float(m_smeterDbm));  // seed with cached value (default -127)
-    static_cast<QVBoxLayout*>(layout())->addWidget(m_levelBar);
+    vboxLayout->addWidget(m_levelBar);
+}
+
+// Phase 3R K-bench (bench feedback) — verbatim port from AetherSDR
+// src/gui/VfoWidget.cpp:553-560 + 3406-3445 [@0cd4559]. Single label
+// pattern that combines RADE active state, sync indicator (filled vs
+// empty circle), SNR value, and freq offset all on one strip line:
+//
+//   Active + synced:   "RADE [●] 12dB +500Hz"   (yellow/green dot per SNR)
+//   Active + nosync:   "RADE [○] ---"           (grey dot, em-dash value)
+//   Not active:        hidden, text cleared
+//
+// Hidden whenever the slice's mode is NOT RADE_U / RADE_L. setSlice()
+// + dspModeChanged path calls setRadeActive(on) on every mode swap.
+// I5's snrDbChanged + RadioModel's radeSyncChanged push values via
+// setRadeSnr / setRadeSynced.
+void VfoWidget::buildSnrRow()
+{
+    // From AetherSDR VfoWidget.cpp:553-560 [@0cd4559]. NereusSDR
+    // divergence: lives on its own row in the vertical layout (rather
+    // than inline with the freqRow as in AetherSDR) so the existing
+    // m_levelBar S-meter row above stays at full width.
+    m_snrRow = new QWidget(this);
+    auto* rowLayout = new QHBoxLayout(m_snrRow);
+    rowLayout->setContentsMargins(0, 0, 0, 0);
+    rowLayout->setSpacing(4);
+
+    // Single combined status label.  m_snrLabel is kept as the
+    // strip-element pointer for test-seam compatibility (older
+    // unit tests dereference it); m_snrValue is unused going forward
+    // but kept for API stability.
+    m_snrLabel = new QLabel(m_snrRow);
+    m_snrLabel->setFixedHeight(16);
+    m_snrLabel->setTextFormat(Qt::RichText);
+    m_snrLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #00b4d8; font-size: 10px; font-weight: bold;"
+        " background: transparent; border: none; padding: 0; margin: 0; }"));
+    m_snrLabel->hide();
+
+    // m_snrValue is now a no-op placeholder.  Older tests that
+    // dereference it still get a non-null QLabel so they don't crash;
+    // newer tests should target m_snrLabel directly.
+    m_snrValue = new QLabel(m_snrRow);
+    m_snrValue->hide();
+
+    rowLayout->addWidget(m_snrLabel);
+    rowLayout->addStretch(1);
+
+    static_cast<QVBoxLayout*>(layout())->addWidget(m_snrRow);
+
+    // Row container stays mounted (so the layout reserves its slot)
+    // but the visible label is hidden until setRadeActive(true) fires.
+    m_snrRow->setVisible(true);
+}
+
+// 2026-05-11 bench: unified RADE status row renderer.
+// Combines the cached callsign (m_lastRadeCallsign), sync indicator
+// (m_lastRadeSynced -> ●/○), and SNR (m_lastRadeSnrDb -> dB string +
+// color) into the single m_snrLabel text.  The prefix is the
+// callsign when known, falling back to the literal "RADE" otherwise.
+// Layout per JJ bench design 2026-05-11 (layout X):
+//   "<call> ● <snr>dB"    when synced AND SNR known
+//   "<call> ● ---"        when synced AND no SNR snapshot
+//   "<call> ○ ---"        when not synced (sticky callsign from last over)
+//   "RADE ● <snr>dB"      when synced, SNR known, no callsign yet
+//   "RADE ○ ---"          initial / not-yet-synced fallback
+// Color rules from AetherSDR VfoWidget.cpp:3424-3432 [@0cd4559]:
+//   < 5 dB  -> #e0e040 (yellow, marginal copy)
+//   >= 5 dB -> #00ff88 (green, solid copy)
+//   hollow / no SNR -> #505050 (grey)
+static QString radePrefixForCallsign(const QString& callsign)
+{
+    return callsign.isEmpty() ? QStringLiteral("RADE") : callsign;
+}
+
+void VfoWidget::setRadeActive(bool on)
+{
+    m_radeActive = on;
+    if (m_snrLabel) {
+        m_snrLabel->setVisible(on);
+        if (!on) {
+            m_snrLabel->setText(QString());
+            // Drop the cached callsign + SNR + sync on deactivate so the
+            // next RADE engage starts from a clean "RADE ○ ---" state.
+            m_lastRadeCallsign.clear();
+            m_lastRadeSnrDb = std::numeric_limits<float>::quiet_NaN();
+            m_lastRadeSynced = false;
+            return;
+        }
+    }
+    // Activate path -- composed render below picks up the (empty)
+    // callsign + (NaN) SNR + (false) sync caches and paints the
+    // initial "RADE ○ ---" hollow-circle state.
+    if (m_snrLabel) {
+        const QString prefix = radePrefixForCallsign(m_lastRadeCallsign);
+        m_snrLabel->setText(
+            QString("%1 <font color='#505050'>○</font> ---").arg(prefix));
+    }
+}
+
+// From AetherSDR VfoWidget.cpp:3415-3422 [@0cd4559] — setRadeSynced.
+// 2026-05-11 bench: cache the sync state and re-render so a subsequent
+// setRadeCallsign / setRadeSnrLabel call composes on top of the
+// correct circle glyph.
+void VfoWidget::setRadeSynced(bool synced)
+{
+    m_lastRadeSynced = synced;
+    if (!m_radeActive || !m_snrLabel) {
+        return;
+    }
+    if (!synced) {
+        // Unlock invalidates the decoder's last SNR snapshot. Painting that
+        // stale value would also call setRadeSnrLabel(), which treats every
+        // fresh SNR callback as proof of sync and would immediately undo this
+        // transition.
+        m_lastRadeSnrDb = std::numeric_limits<float>::quiet_NaN();
+    }
+    // If we don't have an SNR snapshot yet, paint the "<prefix> ●/○ ---"
+    // state.  When SNR is known, setRadeSnrLabel below has the richer
+    // colorized render path.
+    if (std::isnan(m_lastRadeSnrDb)) {
+        const QString prefix = radePrefixForCallsign(m_lastRadeCallsign);
+        const QString color = synced ? QStringLiteral("#00ff88")
+                                     : QStringLiteral("#505050");
+        const QString glyph = synced ? QStringLiteral("●")
+                                     : QStringLiteral("○");
+        m_snrLabel->setText(
+            QString("%1 <font color='%2'>%3</font> ---")
+                .arg(prefix, color, glyph));
+    } else {
+        // Re-render through the SNR path with the cached value to pick
+        // up the new sync glyph.
+        setRadeSnrLabel(m_lastRadeSnrDb);
+    }
+}
+
+// From AetherSDR VfoWidget.cpp:3424-3432 [@0cd4559] — setRadeSnr.
+// 2026-05-11 bench: prefix is the cached callsign when known, falling
+// back to "RADE".  Sync glyph from cached m_lastRadeSynced; the
+// AetherSDR default of treating any setRadeSnrLabel call as "synced"
+// is preserved by setting m_lastRadeSynced=true here (a fresh SNR
+// snapshot from the RADE decoder implies sync).
+void VfoWidget::setRadeSnrLabel(float snrDb)
+{
+    if (std::isnan(snrDb)) {
+        return;
+    }
+    m_lastRadeSnrDb = snrDb;
+    // A fresh SNR snapshot implies the decoder is producing samples,
+    // which the AetherSDR setter at line 3424 implicitly treats as
+    // "synced" by always painting the filled ● glyph.  Pin that here
+    // so a setRadeSnrLabel call after a stale setRadeSynced(false)
+    // still shows ●.  setRadeSynced(false) called LATER will overwrite
+    // m_lastRadeSynced back to false.
+    m_lastRadeSynced = true;
+    if (!m_radeActive || !m_snrLabel) {
+        return;
+    }
+    const QString prefix = radePrefixForCallsign(m_lastRadeCallsign);
+    const QString color = (snrDb < 5.0f) ? QStringLiteral("#e0e040")
+                                         : QStringLiteral("#00ff88");
+    m_snrLabel->setText(
+        QString("%1 <font color='%2'>●</font> %3dB")
+            .arg(prefix, color)
+            .arg(static_cast<int>(snrDb)));
+}
+
+// From AetherSDR VfoWidget.cpp:3434-3445 [@0cd4559] — setRadeFreqOffset.
+// Appends "+<Hz>Hz" or "-<Hz>Hz" to the existing label text.  Caller
+// pattern: setRadeSnr() runs first (sets up "...dB" suffix), then
+// setRadeFreqOffset() appends the offset.
+void VfoWidget::setRadeFreqOffset(float hz)
+{
+    if (!m_radeActive || !m_snrLabel) {
+        return;
+    }
+    QString current = m_snrLabel->text();
+    int dbPos = current.indexOf(QStringLiteral("dB"));
+    if (dbPos > 0) {
+        QString base = current.left(dbPos + 2);
+        QString sign = (hz >= 0) ? QStringLiteral("+") : QString();
+        m_snrLabel->setText(
+            QString("%1 %2%3Hz").arg(base, sign).arg(static_cast<int>(hz)));
+    }
+}
+
+// 2026-05-11 bench: receive the EOO-decoded speaker callsign and
+// rebuild the SNR row so the prefix shows the callsign instead of
+// the literal "RADE".  See radePrefixForCallsign + the per-state
+// repaint paths in setRadeSynced / setRadeSnrLabel for full
+// composition semantics.  Empty callsign clears the cache (no-op
+// for a never-set field) and falls back to the "RADE" prefix.
+void VfoWidget::setRadeCallsign(const QString& callsign)
+{
+    if (m_lastRadeCallsign == callsign) {
+        return;
+    }
+    m_lastRadeCallsign = callsign;
+    if (!m_radeActive || !m_snrLabel) {
+        return;
+    }
+    // Re-render through whichever path matches the current state.
+    // setRadeSnrLabel covers the synced-with-SNR case; setRadeSynced
+    // covers the sync-without-SNR case; the deactivate path is the
+    // not-active case which we already early-returned out of.
+    if (!std::isnan(m_lastRadeSnrDb)) {
+        setRadeSnrLabel(m_lastRadeSnrDb);
+    } else {
+        setRadeSynced(m_lastRadeSynced);
+    }
+}
+
+void VfoWidget::updateSnrVisibility()
+{
+    // AetherSDR-style: active state follows slice mode.  Setting
+    // m_radeActive=false hides the label and clears stale text.
+    const bool isRade = (m_currentMode == DSPMode::RADE_U
+                         || m_currentMode == DSPMode::RADE_L);
+    setRadeActive(isRade);
+}
+
+// Phase 3R L3 — paint the Mode tab button (m_tabButtons[2]) with the
+// RADE purple accent (#a78bfa) when the active mode is either RADE
+// sideband (RADE_U or RADE_L).  All other modes use the default
+// vfoTabBtnStyle() (cyan accent kAccent).  The mode tab button is the
+// user-visible "chip" for the current mode: its label is set to
+// SliceModel::modeName(mode) in setMode().  When RADE is active the
+// chip switches to purple as a visual cue that the signal chain has
+// swapped from WDSP to the RADE neural codec.
+void VfoWidget::updateModeTabAccent()
+{
+    if (m_tabButtons.size() <= 2 || !m_tabButtons[2]) {
+        return;
+    }
+    const bool isRade = (m_currentMode == DSPMode::RADE_U
+                         || m_currentMode == DSPMode::RADE_L);
+    if (isRade) {
+        // RADE accent style — same structure as vfoTabBtnStyle() but
+        // with the cyan kAccent replaced by the purple #a78bfa.  Both
+        // the unchecked text colour and the checked underline pick up
+        // the purple so the chip remains visually distinct whether
+        // the Mode tab page is expanded or collapsed.
+        m_tabButtons[2]->setStyleSheet(QStringLiteral(
+            "QPushButton {"
+            "  background: transparent; border: none;"
+            "  color: #a78bfa; font-size: 12px; font-weight: bold;"
+            "  padding: 2px 6px;"
+            "}"
+            "QPushButton:checked {"
+            "  color: #a78bfa;"
+            "  border-bottom: 2px solid #a78bfa;"
+            "}"));
+    } else {
+        // Restore the default tab style for any non-RADE mode.
+        m_tabButtons[2]->setStyleSheet(vfoTabBtnStyle());
+    }
+}
+
+void VfoWidget::onSnrChanged(double db)
+{
+    // Delegate to setRadeSnrLabel which renders the AetherSDR-style
+    // combined "RADE ● Ndb" status string on m_snrLabel. NaN bypasses
+    // the update; the label stays at its last-known state until
+    // setRadeSynced(false) or setRadeActive(false) overrides it.
+    if (qIsNaN(db)) {
+        return;
+    }
+    setRadeSnrLabel(static_cast<float>(db));
 }
 
 void VfoWidget::buildTabBar()
@@ -707,14 +1051,12 @@ void VfoWidget::buildTabBar()
                 for (auto* b : m_tabButtons) { b->setChecked(false); }
             } else {
                 m_activeTab = i;
-                // Mark all pages Ignored except the active one, so the
-                // QStackedWidget sizes to the ACTIVE page only (not to
-                // the tallest page). Per user directive 2026-04-23.
-                for (int j = 0; j < m_tabStack->count(); ++j) {
-                    m_tabStack->widget(j)->setSizePolicy(
-                        j == i ? QSizePolicy::Preferred : QSizePolicy::Ignored,
-                        j == i ? QSizePolicy::Preferred : QSizePolicy::Ignored);
-                }
+                // CurrentPageSizedStack (this file's QStackedWidget
+                // subclass) returns only the active page's sizeHint,
+                // so no per-page sizePolicy fiddling is needed —
+                // setCurrentIndex alone is enough.  See PR #238 v5
+                // fix and the subclass comment for why the prior
+                // Ignored-policy approach was removed.
                 m_tabStack->setCurrentIndex(i);
                 m_tabStack->show();
                 for (int j = 0; j < m_tabButtons.size(); ++j) {
@@ -1037,6 +1379,7 @@ void VfoWidget::buildDspTab()
     // NB cycling button (row 0, col 0) — tri-state Off → NB → NB2 → Off.
     // Mirrors Thetis chkNB — label switches "NB"/"NB2"; checked = active.
     // From Thetis console.cs:43513-43560 [v2.10.3.13].
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:43545) [v2.10.3.15]
     m_nbButton = makeToggle(QStringLiteral("NB"));
     m_nbButton->setToolTip(tr(
         "Noise blanker — left-click cycles Off \u2192 NB \u2192 NB2 \u2192 Off,\n"
@@ -1271,14 +1614,20 @@ void VfoWidget::buildModeTab()
         // rather than a combo box. No single Thetis control has an equivalent tooltip.
         m_modeCmb->setToolTip(QStringLiteral("Select demodulation mode"));
         // From Thetis enums.cs DSPMode — common modes
-        // 11 modes — parity with RxApplet; order follows Thetis enums.cs DSPMode enum
+        // 11 Thetis-faithful modes + the NereusSDR-native RADE-U /
+        // RADE-L entries (DSPMode::RADE_U = 12, RADE_L = 13, see
+        // WdspTypes.h).  Phase 3R L3 added the RADE entries so users
+        // can switch into either sideband of the FreeDV RADE neural
+        // codec from the floating VFO flag.
         m_modeCmb->addItems({
             QStringLiteral("LSB"), QStringLiteral("USB"),
             QStringLiteral("AM"), QStringLiteral("CWL"),
             QStringLiteral("CWU"), QStringLiteral("FM"),
             QStringLiteral("DIGU"), QStringLiteral("DIGL"),
             QStringLiteral("SAM"), QStringLiteral("DSB"),
-            QStringLiteral("DRM")
+            QStringLiteral("DRM"),
+            QStringLiteral("RADE-U"),  // Phase 3R L3, NereusSDR-native upper
+            QStringLiteral("RADE-L")   // Phase 3R L3, NereusSDR-native lower
         });
         m_modeCmb->setCurrentText(QStringLiteral("USB"));
         m_modeCmb->setStyleSheet(
@@ -1299,6 +1648,8 @@ void VfoWidget::buildModeTab()
                 if (m_tabButtons.size() > 2) {
                     m_tabButtons[2]->setText(text);
                 }
+                updateSnrVisibility();        // Phase 3R L1 — paint SNR row
+                updateModeTabAccent();        // Phase 3R L3 — purple accent
                 emit modeChanged(mode);
             }
         });
@@ -1483,19 +1834,43 @@ void VfoWidget::buildXRitTab()
 
 void VfoWidget::rebuildFilterButtons(DSPMode mode)
 {
-    // Remove old layout and buttons
-    if (m_filterBtnContainer->layout()) {
-        QLayoutItem* item;
-        while ((item = m_filterBtnContainer->layout()->takeAt(0)) != nullptr) {
-            delete item->widget();
+    // 2026-05-13 bench fix (PR #238 v7 — actual root cause): the
+    // previous "delete layout + new QGridLayout(parent)" pattern
+    // produced a container whose sizeHint permanently returned
+    // (0, 0) — diagnostic logs showed this regardless of button
+    // count.  Suspected cause: a Qt quirk around deleted-then-
+    // immediately-recreated layouts on the same widget where the
+    // new layout doesn't register as the widget's layout cleanly.
+    //
+    // v7: keep the SAME QGridLayout across rebuilds.  Just clear
+    // its child widgets via takeAt() and add the new buttons.
+    // The layout-as-widget-property association never breaks, so
+    // sizeHint propagation stays intact.
+    auto* grid = qobject_cast<QGridLayout*>(m_filterBtnContainer->layout());
+    if (!grid) {
+        grid = new QGridLayout(m_filterBtnContainer);
+        grid->setSpacing(2);
+        grid->setContentsMargins(0, 0, 0, 0);
+    } else {
+        // Remove existing buttons from the existing grid.
+        while (QLayoutItem* item = grid->takeAt(0)) {
+            if (QWidget* w = item->widget()) {
+                w->deleteLater();
+            }
             delete item;
         }
-        delete m_filterBtnContainer->layout();
     }
-
-    auto* grid = new QGridLayout(m_filterBtnContainer);
-    grid->setSpacing(2);
-    grid->setContentsMargins(0, 0, 0, 0);
+    // 2026-05-12 bench fix (PR #238): pin the column count so a
+    // single-preset mode (RADE_U / RADE_L) doesn't collapse to a
+    // 1×1 grid and stretch its lone button across the full
+    // container width.  QGridLayout infers columns from populated
+    // cells; without explicit stretches a single addWidget(btn,0,0)
+    // leaves the grid 1 column wide.  Same kCols=3 used by the
+    // for-loop below.  Mirrors the matching fix in RxApplet's
+    // m_filterGrid.
+    grid->setColumnStretch(0, 1);
+    grid->setColumnStretch(1, 1);
+    grid->setColumnStretch(2, 1);
 
     // Stage C2: prefer FilterPresetStore (user overrides over Thetis defaults).
     // Fall back to SliceModel::presetsForMode if no store is available.
@@ -1609,8 +1984,93 @@ void VfoWidget::rebuildFilterButtons(DSPMode mode)
 
         grid->addWidget(btn, i / kCols, i % kCols);
     }
+    // grid is already the layout of m_filterBtnContainer (either
+    // installed during initial construction via the QGridLayout
+    // constructor with the parent arg, or reused on subsequent
+    // rebuilds via the qobject_cast at the top of this function).
+    // No setLayout call needed.
 
-    m_filterBtnContainer->setLayout(grid);
+    // 2026-05-12 bench fix (PR #238 v2): force the entire flag
+    // layout chain to re-resolve after the rebuild.  v1 invalidated
+    // grid -> container -> parentTab and called adjustSize(), but
+    // that skipped m_tabStack (a QStackedWidget) which caches its
+    // sizeHint from the active page.  Hidden pages in the stack
+    // are QSizePolicy::Ignored (buildUI lines 455-458, 988-990),
+    // so the stack ONLY consults the active page's hint — and that
+    // hint stays stale unless explicitly invalidated.  Result:
+    // transitioning RADE -> SSB (1 button cleared, 10 added) left
+    // the flag at the 1-row height with the new 4-row SSB grid
+    // clipped at the top.
+    //
+    // Five-step invalidate chain that actually works:
+    //   1. grid->invalidate()              — new grid is dirty
+    //   2. m_filterBtnContainer->update    — propagate up one level
+    //   3. parentTab->updateGeometry()     — propagate to mode tab
+    //   4. m_tabStack->updateGeometry()    — invalidate stack cache
+    //   5. layout()->invalidate+activate   — invalidate VfoWidget's
+    //                                         own QVBoxLayout
+    //   6. adjustSize()                    — commit new frame
+    // 2026-05-12 bench fix (PR #238 v3): force the flag to resize
+    // after rebuilding the preset buttons.  v1 (column stretches)
+    // and v2 (per-level adjustSize) both failed because
+    // adjustSize() on a layout-managed widget gets overridden by
+    // the parent layout's next pass, and Qt's layout
+    // invalidations are POSTED EVENTS that don't fire until the
+    // next event-loop tick — so by the time the final adjustSize
+    // ran on `this`, every ancestor still had its stale cached
+    // sizeHint.
+    //
+    // v3: invalidate bottom-up via updateGeometry (just marks the
+    // cache dirty at each level), then drain the queued
+    // QEvent::LayoutRequest events synchronously with
+    // sendPostedEvents BEFORE the final adjustSize.  The drain
+    // forces Qt to re-poll every level's sizeHint with the
+    // rebuilt content; adjustSize then reads the FRESH hint and
+    // commits the new frame.  No hide/show flash, no per-level
+    // adjustSize, no event-loop deferral.
+    // 2026-05-13 bench fix (PR #238 v8 — final): drain queued
+    // LayoutRequest events with nullptr receiver so the
+    // sizeHint chain is fresh when adjustSize reads it.
+    //
+    // grid->addWidget() in the loop above queues LayoutRequest
+    // events on m_filterBtnContainer (the grid's parent widget),
+    // not on VfoWidget itself.  An earlier attempt used
+    // `sendPostedEvents(this, …)` which only drains events posted
+    // to `this` — so the container-level requests stayed queued
+    // and adjustSize() read stale hints.  Passing nullptr as the
+    // receiver drains LayoutRequest for every widget tree-wide,
+    // which is what we want.
+    //
+    // adjustSize() then commits the new flag frame.  Together
+    // with the layout-reuse refactor at the top of this function
+    // (v7) and the CurrentPageSizedStack subclass (v6), this is
+    // the third and final piece of the layout-resize chain.
+    // 2026-05-13 bench fix (PR #238 v9): belt-and-suspenders.
+    // Even with the layout-reuse refactor (v7) and the
+    // LayoutRequest drain (v8) the FLAG's sizeHint sometimes
+    // under-reports the actual height needed for the filter
+    // buttons (seen at the bench when the user has the mode tab
+    // open and switches between modes with very different button
+    // counts).  Force a minimum height on m_filterBtnContainer
+    // computed from the actual button geometry so the parent
+    // layout chain MUST reserve the right amount of space
+    // regardless of what sizeHint() returns.
+    //
+    //   rows  = ceil(count / kCols)
+    //   minH  = rows * btnH + (rows - 1) * spacing
+    //
+    // With kCols=3, kBtnH=22, spacing=2:
+    //   RADE 1 btn  -> 1 row -> minH = 22
+    //   LSB  10 btns -> 4 rows -> minH = 4*22 + 3*2 = 94
+    {
+        constexpr int kBtnH    = 22;
+        constexpr int kSpacing = 2;
+        const int rows = count > 0 ? (count + kCols - 1) / kCols : 0;
+        const int minH = rows > 0 ? rows * kBtnH + (rows - 1) * kSpacing : 0;
+        m_filterBtnContainer->setMinimumHeight(minH);
+    }
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+    adjustSize();
 }
 
 // ---- Stage C2: FilterPresetStore coupling ----
@@ -1659,12 +2119,18 @@ void VfoWidget::setMode(DSPMode mode)
     }
     rebuildFilterButtons(mode);
     applyModeVisibility(mode);    // S1.9 — model-driven mode change
+    updateSnrVisibility();        // Phase 3R L1 — show SNR row only in RADE
+    updateModeTabAccent();        // Phase 3R L3 — purple accent in RADE
     m_updatingFromModel = false;
 }
 
 void VfoWidget::setFilter(int low, int high)
 {
     m_updatingFromModel = true;
+    // Kept, not just rendered as text: SpectrumWidget reads these back through
+    // filterLow()/filterHigh() to shade THIS slice's passband. See the header.
+    m_filterLowHz = low;
+    m_filterHighHz = high;
     m_filterWidthLbl->setText(formatFilterWidth(low, high));
     // Update checked state of filter buttons — match by stored property
     for (auto* btn : m_filterBtnContainer->findChildren<QPushButton*>()) {
@@ -1726,6 +2192,12 @@ void VfoWidget::setStepHz(int hz)
     if (m_stepCycleBtn) {
         m_stepCycleBtn->setText(QStringLiteral("%1 Hz").arg(hz));
     }
+}
+
+// Phase 3F Sub-Epic C Task 9: emit handoff request to MainWindow for forwarding.
+void VfoWidget::onTxBadgeClicked()
+{
+    emit txHandoffRequested(m_sliceIndex);
 }
 
 void VfoWidget::setSliceIndex(int index)
@@ -2049,6 +2521,18 @@ void VfoWidget::setSlice(SliceModel* slice)
         onActiveNrChanged(slice->activeNr());
     }
 
+    // Phase 3R L1: SNR row binding. RadeChannel pushes snrDb via the
+    // I5 signal-graph (RadeChannel::snrChanged -> RadioModel::onRadeSnrChanged
+    // -> SliceModel::setSnrDb). The slice's snrDbChanged is the
+    // edge-triggered source we paint from. Seed with the current value
+    // so a slice rebinding after a previous SNR update shows the right
+    // text immediately.
+    if (slice) {
+        connect(slice, &SliceModel::snrDbChanged,
+                this, &VfoWidget::onSnrChanged);
+        onSnrChanged(slice->snrDb());
+    }
+
     // VAX selector — bidirectional wiring (Phase 3O Sub-Phase 8 Task 8.2)
     if (m_vaxSelector && slice) {
         connect(m_vaxSelector, &VaxChannelSelector::valueChanged,
@@ -2113,6 +2597,15 @@ void VfoWidget::buildFloatingButtons()
     connect(m_closeBtn, &QPushButton::clicked, this, [this]() {
         emit closeRequested(m_sliceIndex);
     });
+    // Phase 3F (Bug 2): Slice A (index 0) is the last-slice invariant —
+    // RadioModel::removeSlice refuses to remove the final slice, and its flag
+    // (m_vfoWidget) is referenced by many wireSliceToSpectrum lambdas whose
+    // teardown is deliberately skipped on sliceRemoved. Hiding the close
+    // button on Slice A keeps the affordance honest (a button that does
+    // nothing reads as broken) and avoids the fragile slice-0 removal path.
+    if (m_sliceIndex == 0) {
+        m_closeBtn->hide();
+    }
 
     // Lock button — wired
     m_lockBtn = makeBtn(QStringLiteral("\U0001F513"), kFloatingBtn);
@@ -2227,15 +2720,45 @@ void VfoWidget::positionFloatingButtons()
 
     int btnY = y();
 
+    // Phase 3F (Bug 2): the close button is hidden on Slice A (index 0);
+    // keep it hidden here and let the remaining buttons fill the gap so the
+    // strip has no empty slot at the top.
+    const bool closeShown = (m_sliceIndex != 0);
+
     QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn};
     for (QPushButton* btn : btns) {
+        const bool isCloseBtn = (btn == m_closeBtn);
+        const bool show = isVisible() && (closeShown || !isCloseBtn);
+        if (isCloseBtn && !closeShown) {
+            btn->hide();
+            continue;  // don't advance btnY — next button takes the top slot
+        }
         btn->move(btnX, btnY);
-        btn->setVisible(isVisible());
-        if (isVisible()) {
+        btn->setVisible(show);
+        if (show) {
             btn->raise();
         }
         btnY += 22;
     }
+}
+
+// The active-flag-on-top invariant (Bench 2026-07-28, Sub-Epic J): this
+// flag's own close/lock/record/play buttons are parented to the
+// SpectrumWidget, not to this flag (see destroyFloatingButtons above), so
+// QWidget::raise() on the flag body alone is not enough -- the buttons are
+// separate siblings and stay wherever they were last left, which can be
+// behind a flag that used to sit above this one. Same btns[] order as
+// positionFloatingButtons() above: buttons first, flag body last, so the
+// body also ends up above its own buttons.
+void VfoWidget::raiseAboveSiblings()
+{
+    QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn};
+    for (QPushButton* btn : btns) {
+        if (btn) {
+            btn->raise();
+        }
+    }
+    raise();
 }
 
 // ---- Positioning ----
@@ -2351,6 +2874,117 @@ void VfoWidget::wheelEvent(QWheelEvent* event)
         updateFreqLabel();
         emit frequencyChanged(newFreq);
     }
+}
+
+// Phase 3F Sub-Epic E Task 4: right-click context menu.
+// Per docs/architecture/2026-05-26-phase3f-sub-epic-e-ui-atlas-plan.md
+// Task 4. Antenna submenu is stubbed; AntennaPickerMenu (Task 5) lands
+// the SKU-aware antenna list with chain-consequence hints. Diversity
+// is greyed pending Sub-Epic G enable on Slice A + 2-ADC SKUs. Filter
+// policy currently routes through chainIndex=0; once slice-to-chain
+// mapping is exposed on VfoWidget, switch to the real chainIndex.
+void VfoWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    QMenu menu(this);
+
+    // Make this the TX slice
+    QAction* makeTxAct = menu.addAction(QStringLiteral("Make this the TX slice"));
+    connect(makeTxAct, &QAction::triggered, this, [this]() {
+        emit txHandoffRequested(m_sliceIndex);
+    });
+
+    menu.addSeparator();
+
+    // Phase 3F closeout — AntennaPickerMenu integration (Sub-Epic E Task 5
+    // consumer wire-up). The picker derives the live slice band, lists
+    // ANT1/ANT2/ANT3 limited by BoardCapabilities::antennaInputCount, marks
+    // the current antenna checked, and emits antennaSelected on user pick.
+    // We forward to antennaChangeRequested; MainWindow routes to
+    // SliceModel::setRxAntenna. Falls back to a stub ANT1/ANT2 submenu when
+    // no RadioModel / slice is wired (e.g. test contexts).
+    bool builtPicker = false;
+    if (m_radioModel) {
+        if (SliceModel* slice = contextMenuSliceForTest()) {
+            AlexController* alex = &m_radioModel->alexControllerMutable();
+            const BoardCapabilities& caps = m_radioModel->boardCapabilities();
+            auto* picker = new AntennaPickerMenu(slice, alex, caps, &menu);
+            picker->setTitle(QStringLiteral("Antenna >"));
+            menu.addMenu(picker);
+            connect(picker, &AntennaPickerMenu::antennaSelected, this,
+                    [this](int sliceIdx, const QString& antName) {
+                emit antennaChangeRequested(sliceIdx, antName);
+            });
+            builtPicker = true;
+        }
+    }
+    if (!builtPicker) {
+        QMenu* antMenu = menu.addMenu(QStringLiteral("Antenna >"));
+        antMenu->addAction(QStringLiteral("ANT1"));
+        antMenu->addAction(QStringLiteral("ANT2"));
+    }
+
+    // ── Sample rate submenu ─────────────────────────────────────────────
+    // Phase 3F Sub-Epic I closeout, defect G2. The rate is a property of the
+    // DDC stream this slice is hosted on, not of the slice, so co-hosted
+    // slices share it. On Protocol 1 one rate covers the WHOLE radio (the
+    // rate is srBits in C&C bank 0), so say so in the title rather than let a
+    // per-slice context menu imply a private rate.
+    const bool rateIsRadioWide =
+        m_radioModel != nullptr && m_radioModel->sampleRateIsRadioWide();
+    QMenu* rateMenu = menu.addMenu(
+        rateIsRadioWide ? QStringLiteral("Sample rate (whole radio) >")
+                        : QStringLiteral("Sample rate >"));
+
+    // Offer only what the connected board accepts. P1 saturates srBits at 3
+    // for anything >= 384 kHz, so a P2-only entry picked on a P1 radio would
+    // leave the client configured for a width the radio is not sending.
+    // Disconnected: fall back to the full P2 ladder so the menu is not empty.
+    QVector<int> rates =
+        m_radioModel ? m_radioModel->allowedStreamSampleRates() : QVector<int>{};
+    if (rates.isEmpty()) {
+        rates = {48000, 96000, 192000, 384000, 768000, 1536000};
+    }
+
+    // Check the rate the stream actually resolved to. SliceModel::sampleRateHz
+    // is RadioModel's mirror of that (see its Q_PROPERTY doc), so co-hosted
+    // flags agree and the checkmark cannot show a stale per-slice wish.
+    int resolvedRateHz = 0;
+    if (m_radioModel != nullptr) {
+        if (SliceModel* s = m_radioModel->sliceById(m_sliceIndex)) {
+            resolvedRateHz = s->sampleRateHz();
+        }
+    }
+
+    for (int hz : rates) {
+        QAction* act = rateMenu->addAction(QStringLiteral("%1 kHz").arg(hz / 1000));
+        act->setCheckable(true);
+        act->setChecked(hz == resolvedRateHz);
+        connect(act, &QAction::triggered, this, [this, hz]() {
+            emit sampleRateRequested(m_sliceIndex, hz);
+        });
+    }
+
+    menu.addSeparator();
+
+    // Diversity submenu (placeholder; Sub-Epic G enables on Slice A + 2-ADC SKU).
+    QAction* divAct = menu.addAction(QStringLiteral("Diversity >"));
+    divAct->setEnabled(false);
+
+    // Filter policy (opens FilterPolicyDialog via chainIndex=0 default).
+    QAction* filterAct = menu.addAction(QStringLiteral("Filter policy..."));
+    connect(filterAct, &QAction::triggered, this, [this]() {
+        emit filterPolicyRequested(0);
+    });
+
+    menu.addSeparator();
+
+    QAction* removeAct = menu.addAction(QStringLiteral("Remove slice"));
+    connect(removeAct, &QAction::triggered, this, [this]() {
+        emit removeSliceRequested(m_sliceIndex);
+    });
+
+    menu.setStyleSheet(QString::fromLatin1(kPopupMenu));   // Phase 3P-I-a T15 — issue #98
+    menu.exec(event->globalPos());
 }
 
 // ---- Helpers ----
@@ -2538,6 +3172,20 @@ void VfoWidget::setRxBypassActive(bool on)
     m_updatingFromModel = true;
     m_rxBypassBtn->setChecked(on);
     m_updatingFromModel = prev;
+}
+
+// Phase 3F closeout — AntennaPickerMenu requires live slice + AlexController +
+// BoardCapabilities access. Storing the RadioModel pointer here lets the
+// contextMenuEvent build a real picker instead of the stub fallback. Pointer
+// is non-owning; lifetime is RadioModel-owned and MainWindow-scoped.
+void VfoWidget::setRadioModel(RadioModel* model)
+{
+    m_radioModel = model;
+}
+
+SliceModel* VfoWidget::contextMenuSliceForTest() const
+{
+    return m_radioModel ? m_radioModel->sliceById(m_sliceIndex) : nullptr;
 }
 
 // --- Task 3.4: Small filter display mode (Appearance > Meter Styles) ---

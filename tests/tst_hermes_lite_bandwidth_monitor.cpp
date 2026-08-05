@@ -67,6 +67,39 @@ private slots:
         QVERIFY(m.ep6IngressBytesPerSec() > 0.0);
     }
 
+    // Phase 3J-1 closeout Item 10 (2026-05-12): startup grace.
+    //
+    // Before the radio has sent its first ep6 frame, the silent-tick
+    // counter must not advance even if ep2 is fully active (host is
+    // sending the metis-start + initial command burst).  Bench log
+    // 2026-05-12 15:38 showed the throttle false-positive at +104 ms
+    // after Connected, because the watchdog runs at ~30 Hz so three
+    // ticks elapse in ~100 ms -- well before any HL2 firmware can
+    // respond.  This regression test pins that gate.
+    void startup_grace_no_throttle_before_first_ep6_frame()
+    {
+        HermesLiteBandwidthMonitor m;
+        QSignalSpy spy(&m, &HermesLiteBandwidthMonitor::throttledChanged);
+
+        // Simulate the connect startup window: ep2 is active (host sent
+        // metis-start + initial C&C burst), ep6 has not delivered a single
+        // byte yet.  Run several ticks beyond the threshold to be sure.
+        for (int i = 0; i < HermesLiteBandwidthMonitor::kThrottleTickThreshold + 5; ++i) {
+            QTest::qSleep(5);
+            m.recordEp2Bytes(500);  // host commands continue
+            m.tick();
+        }
+        QVERIFY(!m.isThrottled());
+        QCOMPARE(spy.count(), 0);
+
+        // Now the radio responds with the first ep6 frame -- monitor
+        // should still NOT trip on this tick (ep6 ingress is positive).
+        m.recordEp6Bytes(1024);
+        m.recordEp2Bytes(500);
+        m.tick();
+        QVERIFY(!m.isThrottled());
+    }
+
     // Throttle is NOT detected with only ep6 silence but no ep2 traffic —
     // the condition requires ep2 to be active (host is still sending commands).
     void throttle_requires_ep2_active()

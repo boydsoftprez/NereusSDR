@@ -172,6 +172,7 @@ private slots:
 
     // ANAN7000D / ANAN_G2 / ANVELINAPRO3 / REDPITAYA share a row.
     // From Thetis clsHardwareSpecific.cs:685-716 [v2.10.3.13]
+    // Upstream tags preserved: //N1GP (from cited clsHardwareSpecific.cs:699) [v2.10.3.15]
     void anan7000d_hf_byteForByte() {
         QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN7000D,    Band::Band160m), 47.9f);
         QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN7000D,    Band::Band80m),  50.5f);
@@ -239,6 +240,27 @@ private slots:
         QCOMPARE(defaultPaGainsForBand(HPSDRModel::HERMESLITE,   Band::Band12m),  100.0f);
         QCOMPARE(defaultPaGainsForBand(HPSDRModel::HERMESLITE,   Band::Band10m),  100.0f);
         QCOMPARE(defaultPaGainsForBand(HPSDRModel::HERMESLITE,   Band::Band6m),   38.8f);
+    }
+
+    // ANAN_G2E — Thetis adds it to the ANAN7000D / ANAN_G2 / ANVELINAPRO3 /
+    // REDPITAYA shared row at clsHardwareSpecific.cs:699 [v2.10.3.15]
+    // with tag //N1GP G2E added.
+    // From Thetis clsHardwareSpecific.cs:698-713 [v2.10.3.15] //N1GP G2E added
+    void anan_g2e_usesAnan7000dRow() {
+        // HF bands — same values as ANAN7000D / ANAN_G2 group.
+        QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN_G2E, Band::Band160m), 47.9f);
+        QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN_G2E, Band::Band80m),  50.5f);
+        QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN_G2E, Band::Band60m),  50.8f);
+        QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN_G2E, Band::Band40m),  50.8f);
+        QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN_G2E, Band::Band30m),  50.9f);
+        QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN_G2E, Band::Band20m),  50.9f);
+        QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN_G2E, Band::Band17m),  50.5f);
+        QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN_G2E, Band::Band15m),  47.0f);
+        QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN_G2E, Band::Band12m),  47.9f);
+        QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN_G2E, Band::Band10m),  46.5f);
+        QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN_G2E, Band::Band6m),   44.6f);
+        // NereusSDR has no VHF0-VHF13 slots — XVTR returns sentinel.
+        QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN_G2E, Band::XVTR), 100.0f);
     }
 
     // ── Bypass profile uses the Hermes 41.x dB row ────────────────────────

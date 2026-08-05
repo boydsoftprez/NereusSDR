@@ -154,7 +154,7 @@ private slots:
         RadioModel model;
         model.setCapsForTest(/*hasAlex=*/true);
         model.addSlice();
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
         QVERIFY(slice);
 
         // Store antenna 3 for 40m in the controller but NOT on the slice
@@ -323,6 +323,77 @@ private slots:
         QVERIFY(mock->calls.size() >= 1);
         QCOMPARE(mock->calls.last().trxAnt, 4);
         QCOMPARE(mock->calls.last().rxOut, false);
+
+        model.injectConnectionForTest(nullptr);
+        delete mock;
+    }
+
+    // ── Issue #257 regression coverage ────────────────────────────────────────
+
+    // Issue #257 (Bug 2a): picking ANT* after an EXT* / BYPS / XVTR pick must
+    // also clear rxOnlyAnt so the RX-bypass mux releases and the main TX/RX
+    // input is restored. Without the fix, m_rxOnlyAnt stays non-zero and the
+    // wire keeps engaging the bypass mux even though the UI shows "ANT1".
+    //
+    // Mirrors the user-reported flow on w3ub's ANAN-7000DLE Mk II.
+    void issue257_picking_ANT_releases_rxOnly_mux() {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::OrionMKII);  // ANAN-7000D family — SKU labels BYPS/EXT1/XVTR
+        model.setCapsForTest(/*hasAlex=*/true);
+        model.addSlice();
+        SliceModel* slice = model.sliceById(0);
+        QVERIFY(slice);
+
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        model.wireSliceSignalsForTest();
+
+        // Stage 1: user picks "EXT1" → rxOnlyAnt should land at 2.
+        // (BYPS=1, EXT1=2, XVTR=3 in the SkuUiProfile for ANAN-7000D.)
+        slice->setRxAntenna(QStringLiteral("EXT1"));
+        QCOMPARE(model.alexController().rxOnlyAnt(model.lastBand()), 2);
+
+        // Stage 2: user picks "ANT1" → handler must clear rxOnlyAnt to 0.
+        // This is the regression check: pre-fix, setRxOnlyAnt(0) was never
+        // called and the mux stayed engaged.
+        slice->setRxAntenna(QStringLiteral("ANT1"));
+        QCOMPARE(model.alexController().rxOnlyAnt(model.lastBand()), 0);
+        QCOMPARE(model.alexController().rxAnt(model.lastBand()),     1);
+
+        model.injectConnectionForTest(nullptr);
+        delete mock;
+    }
+
+    // Issue #257 (Bug 2b): the slice's cached m_rxAntenna label must reflect
+    // the SKU-specific RX-only label (BYPS/EXT1/XVTR for ANAN-7000D) when
+    // rxOnlyAnt != 0. Pre-fix, refreshAntennasFromAlex always returned
+    // "ANT1/2/3" from alex.rxAnt(band), so the indicator showed "ANT1" while
+    // the radio was actually routing through EXT1 — the user saw the wrong
+    // label AND couldn't restore ANT1 because setRxAntenna's equality guard
+    // no-op'd the next ANT1 pick.
+    void issue257_refresh_shows_rxOnly_label_on_mkii_sku() {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::OrionMKII);  // ANAN-7000D family
+        model.setCapsForTest(/*hasAlex=*/true);
+        model.addSlice();
+        SliceModel* slice = model.sliceById(0);
+        QVERIFY(slice);
+
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        model.wireSliceSignalsForTest();
+
+        // Seed rxOnlyAnt=2 (EXT1 slot on ANAN-7000D) via the controller.
+        // The antennaChanged signal triggers RadioModel's connect lambda,
+        // which calls applyAlexAntennaForBand + refreshAntennasFromAlex.
+        model.alexControllerMutable().setRxOnlyAnt(model.lastBand(), 2);
+
+        // Slice's cached rxAntenna should now show the SKU label, NOT "ANT1".
+        QCOMPARE(slice->rxAntenna(), QStringLiteral("EXT1"));
+
+        // Clearing rxOnlyAnt back to 0 should drop the label back to "ANT1".
+        model.alexControllerMutable().setRxOnlyAnt(model.lastBand(), 0);
+        QCOMPARE(slice->rxAntenna(), QStringLiteral("ANT1"));
 
         model.injectConnectionForTest(nullptr);
         delete mock;

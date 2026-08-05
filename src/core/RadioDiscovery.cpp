@@ -106,6 +106,8 @@ int RadioInfo::maxReceiversForBoard(HPSDRHW type)
     case HPSDRHW::Hermes:       return 4;
     case HPSDRHW::HermesII:     return 4;
     case HPSDRHW::HermesLite:   return 4;
+    case HPSDRHW::HermesC10:    return 4; // ANAN-G2E: HERMES-class single-ADC nrx=4
+                                          // [N1GP G2E added; Thetis network.h:425 v2.10.3.15]
     case HPSDRHW::Angelia:      return 7;
     case HPSDRHW::Orion:        return 7;
     case HPSDRHW::OrionMKII:    return 7;
@@ -145,8 +147,45 @@ RadioDiscovery::~RadioDiscovery()
     stopDiscovery();
 }
 
+// Process-wide quiet deadline — see the declaration for why this is not
+// per-instance, and why it is monotonic rather than wall-clock.
+QDeadlineTimer RadioDiscovery::s_scanHoldOff;
+
+void RadioDiscovery::holdOffScans(std::chrono::milliseconds quiet)
+{
+    // Keep whichever deadline is later so a short holdoff can never pull in a
+    // longer one already in flight.  Qt::PreciseTimer because this bounds a
+    // radio-safety interval, not a UI refresh.
+    const QDeadlineTimer candidate(quiet, Qt::PreciseTimer);
+    if (candidate > s_scanHoldOff) {
+        s_scanHoldOff = candidate;
+    }
+}
+
+// Remaining quiet time, 0 when scans may run now.  See holdOffScans() decl
+// for the ANAN-G2E rationale.
+qint64 RadioDiscovery::holdOffRemainingMs() const
+{
+    // remainingTime() is monotonic and already clamps to 0 once expired; the
+    // guard covers the -1 "forever" encoding, which we never construct.
+    const qint64 remaining = s_scanHoldOff.remainingTime();
+    return remaining > 0 ? remaining : 0;
+}
+
 void RadioDiscovery::startDiscovery()
 {
+    // Post-disconnect quiet period: defer, never drop.  One pending deferred
+    // scan is enough — the scan that eventually runs walks every NIC anyway.
+    if (const qint64 waitMs = holdOffRemainingMs(); waitMs > 0) {
+        if (!m_deferredScanPending) {
+            m_deferredScanPending = true;
+            QTimer::singleShot(int(waitMs), this, [this]() {
+                m_deferredScanPending = false;
+                startDiscovery();
+            });
+        }
+        return;
+    }
     // Phase 3I rewrote discovery to walk all NICs per scan with ephemeral
     // per-NIC sockets (mi0bot clsRadioDiscovery pattern). Main's older
     // single-persistent-m_socket path was replaced entirely in Task 4;
@@ -228,7 +267,12 @@ bool RadioDiscovery::parseP1Reply(const QByteArray& bytes, const QHostAddress& s
     out.firmwareVersion = static_cast<quint8>(bytes[9]);
 
     // From Thetis: r.DeviceType = mapP1DeviceType(data[10])
-    // mapP1DeviceType: 0=Atlas, 1=Hermes, 2=HermesII, 4=Angelia, 5=Orion, 6=HermesLite, 10=OrionMKII
+    // From Thetis ChannelMaster/network.h:420-425 [v2.10.3.15] — upstream enum context:
+    //   HermesLite = 6,     // MI0BOT
+    //   Saturn = 10,        // ANAN-G2: added G8NJJ
+    //   HermesC10 = 20      // ANAN-G2E //N1GP G2E added (HermesC10)
+    // mapP1DeviceType: 0=Atlas, 1=Hermes, 2=HermesII, 4=Angelia, 5=Orion,
+    //   6=HermesLite, 10=OrionMKII, 20=HermesC10
     quint8 boardByte = static_cast<quint8>(bytes[10]);
     switch (boardByte) {
     case 0:  out.boardType = HPSDRHW::Atlas;      break;
@@ -238,6 +282,8 @@ bool RadioDiscovery::parseP1Reply(const QByteArray& bytes, const QHostAddress& s
     case 5:  out.boardType = HPSDRHW::Orion;      break;
     case 6:  out.boardType = HPSDRHW::HermesLite; break;  // MI0BOT: HL2 added [Thetis clsRadioDiscovery.cs:1239]
     case 10: out.boardType = HPSDRHW::OrionMKII;  break;
+    // network.h:423 upstream context: Saturn = 10  //G8NJJ (ANAN-G2 added by G8NJJ)
+    case 20: out.boardType = HPSDRHW::HermesC10;  break;  // From Thetis network.h:425 [v2.10.3.15] //N1GP G2E added (HermesC10)
     default: out.boardType = static_cast<HPSDRHW>(boardByte); break;
     }
 
@@ -346,13 +392,71 @@ bool RadioDiscovery::parseP2Reply(const QByteArray& bytes, const QHostAddress& s
 //   3. Poll up to quietPollsBeforeResend × pollTimeoutMs for replies.
 //   4. Parse replies, de-duplicate by MAC, emit radioDiscovered / radioUpdated.
 // ---------------------------------------------------------------------------
+
+// Byte 4 of the P1 discovery frame. Thetis leaves the whole tail zeroed
+// (clsRadioDiscovery.cs:1301-1309 buildDiscoveryPacketP1); NereusSDR sets a
+// non-zero pad here deliberately.
+//
+// Why: a P1 discovery probe is broadcast to UDP 1024, which is also the P2
+// "General" command port. Protocol 2 gateware claims any port-1024 datagram
+// whose byte 4 is zero and parses the rest as a General command --
+// General_CC.v:90/106 [TAPR OpenHPSDR-Firmware, Hermes_Protocol_2_C10_v11.0.5,
+// ANAN-G2E]:
+//
+//     if (udp_rx_active && to_port == port)              // 1024
+//         4: if (udp_rx_data != 8'd0)  state <= END;     // not for this module
+//
+// Our all-zero tail then lands as a valid config: byte 38 clears
+// HW_timer_enable (General_CC.v:141), which freezes the board's ~2 s deadman
+// (Hermes.v:406-411) -- the only automatic path that can clear a stuck `run`
+// (High_Priority_CC.v:145-147). Bytes 58/59 clear PA_enable and Alex_enable.
+// So merely scanning the LAN reconfigures every P2 radio on it and disarms
+// their watchdog.
+//
+// A non-zero byte 4 makes General_CC bail at the command check while leaving
+// P1 discovery untouched: every P1 gateware tests only the command byte and
+// never reads byte 4. Verified across the TAPR P1 archives for Hermes v3.3,
+// Angelia (ANAN-100D), Orion (ANAN-200D), ANAN-10E/100B and HermesC10
+// (ANAN-G2E) -- all are `if (PHY_output[47:40] == 8'h02) // check for Metis
+// Discovery` in Rx_MAC.v, which then captures only the requester's IP/MAC/port.
+//
+// Choosing the value: byte 4 is also the *P2 command* byte, decoded in
+// sdr_receive.v (same archive) as
+//
+//     3: case (udp_rx_data)          // packet byte 4
+//         2: state <= ST_DISCOVERY;
+//         3: if (broadcast)  state <= ST_SETIP;          // writes IP to EEPROM
+//         4: if (!broadcast) state <= ST_ERASE;
+//         5: if (!broadcast) state <= ST_PROGRAM_FIFO;
+//         6: if (!broadcast) state <= ST_RESET;          // resets the FPGA
+//         default: state <= ST_WAIT;
+//
+// so the pad must avoid 0x00 (General_CC claims it) *and* 0x02..0x06. These
+// probes go to the subnet broadcast, which is exactly the case ST_SETIP is
+// gated on. An earlier revision used 0x02 to "mirror the P1 command byte";
+// that made every P1 probe read as a second discovery request and doubled the
+// discovery replies each radio emits per scan (verified in the app log: 2 per
+// attempt before, 4 after). 0xFF falls through to ST_WAIT and is claimed by
+// nothing.
+//
+// Gateware cited as hardware fact only, per CLAUDE.md; no gateware logic is
+// translated here.
+static constexpr char kP1ProbeByte4Pad = static_cast<char>(0xFF);
+
+static QByteArray buildP1DiscoveryProbe()
+{
+    QByteArray p(63, 0);
+    p[0] = static_cast<char>(0xEF);
+    p[1] = static_cast<char>(0xFE);
+    p[2] = static_cast<char>(0x02);
+    p[4] = kP1ProbeByte4Pad;   // keep P2 General_CC from claiming this frame
+    return p;
+}
+
 void RadioDiscovery::scanAllNics()
 {
     // From Thetis clsRadioDiscovery.cs buildDiscoveryPacketP1()
-    QByteArray p1Packet(63, 0);
-    p1Packet[0] = static_cast<char>(0xEF);
-    p1Packet[1] = static_cast<char>(0xFE);
-    p1Packet[2] = static_cast<char>(0x02);
+    QByteArray p1Packet = buildP1DiscoveryProbe();
 
     // From Thetis clsRadioDiscovery.cs buildDiscoveryPacketP2()
     QByteArray p2Packet(60, 0);
@@ -542,6 +646,17 @@ void RadioDiscovery::probeAddress(const QHostAddress& addr,
                                   quint16 port,
                                   std::chrono::milliseconds timeout)
 {
+    // Same post-disconnect quiet period as startDiscovery(): a unicast probe
+    // at a radio mid-stop-transition is the same race as a broadcast one.
+    // Defer the whole call; the caller's timeout starts when the probe is
+    // actually sent, so Connect flows just see a slightly longer probe.
+    if (const qint64 waitMs = holdOffRemainingMs(); waitMs > 0) {
+        QTimer::singleShot(int(waitMs), this, [this, addr, port, timeout]() {
+            probeAddress(addr, port, timeout);
+        });
+        return;
+    }
+
     auto* sock = new QUdpSocket(this);
     sock->bind(QHostAddress::AnyIPv4, 0);
 
@@ -586,10 +701,9 @@ void RadioDiscovery::probeAddress(const QHostAddress& addr,
     // Both must be padded to the full discovery-frame size — real OpenHPSDR
     // firmware ignores short probes (only the broadcast scan path was sending
     // padded frames before; this matches scanAllNics's p1Packet/p2Packet shape).
-    QByteArray p1Packet(63, 0);
-    p1Packet[0] = static_cast<char>(0xEF);
-    p1Packet[1] = static_cast<char>(0xFE);
-    p1Packet[2] = static_cast<char>(0x02);
+    // Same byte-4 pad as the broadcast scan path; rationale at
+    // buildP1DiscoveryProbe() above.
+    QByteArray p1Packet = buildP1DiscoveryProbe();
 
     QByteArray p2Packet(60, 0);
     p2Packet[4] = static_cast<char>(0x02);

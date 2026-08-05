@@ -65,9 +65,11 @@
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
 #include "core/RadioConnection.h"
-#include "core/wdsp_api.h"
-#include "models/RadioModel.h"
+#include "core/RxChannel.h"
 #include "core/WdspEngine.h"
+#include "core/wdsp_api.h"
+#include "models/NotchModel.h"
+#include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
 
@@ -78,14 +80,17 @@
 #include <QFileInfo>
 #include <QFrame>
 #include <QGroupBox>
+#include <QHeaderView>
 #include <QLabel>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QScrollArea>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSpinBox>
 #include <QTabWidget>
+#include <QTableWidget>
 #include <QVBoxLayout>
 
 namespace NereusSDR {
@@ -1396,21 +1401,24 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
     // Sliders with inline live-value labels. Tooltips use Thetis's own user-
     // facing text (from setup.designer.cs ToolTip attributes [v2.10.3.13]).
     // Ranges / defaults mirror Thetis NumericUpDown widgets byte-for-byte.
-    auto& s = AppSettings::instance();
-
-    // Gate: the WDSP SetEXT* / SetRXASNBA* setters dereference
-    // panb[0]/pnob[0]/channels[0] — if no RX channel has been created
-    // (user opened Setup dialog before connecting to a radio), calling
-    // them will null-deref inside WDSP. The slider value is still
-    // persisted via AppSettings and seeded into NbFamily at channel
-    // create time, so "Setup → change before connect" still takes effect
-    // on next connect. This just stops the crash.
-    // (Codex review #120, P1 — 2026-04-23.)
-    auto channelReady = [this]() -> bool {
-        auto* rm = this->model();
-        if (!rm || !rm->wdspEngine()) { return false; }
-        return rm->wdspEngine()->rxChannel(0) != nullptr;
-    };
+    //
+    // Every control here used to write AppSettings plus a raw WDSP call with
+    // a hardcoded channel 0 (SetEXTANB* / SetEXTNOBMode / SetRXASNBA*), so
+    // tuning the blanker always acted on receiver A whichever receiver the
+    // operator was working. That bypass did not show up in Sub-Epic J's
+    // rxChannel() audit because it reached WDSP by a different route. The
+    // eight knobs now live on SliceModel and RadioModel pushes each to
+    // rxChannel(slice->sliceIndex()), the same path every other per-slice DSP
+    // setting takes, which is also why the old null-channel crash gate is
+    // gone: RadioModel's push resolves the channel and no-ops when there
+    // isn't one.
+    //
+    // Slice-tracking policy: binds to model->activeSlice() at construction,
+    // matching the sibling NrAnfSetupPage and AgcAlcSetupPage. Setup is not
+    // attached to any flag, so the rule is that it targets the active slice;
+    // switching slices needs a close and reopen of the dialog. Full dynamic
+    // rebind is deferred with the rest of the pages.
+    SliceModel* slice = model ? model->activeSlice() : nullptr;
 
     // Helper: integer slider, live value label showing "value / max" with unit.
     // Returns the slider so caller can wire valueChanged.
@@ -1470,58 +1478,74 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
     QGroupBox* nb1Grp = addSection("NB1");
     QVBoxLayout* nb1Lay = qobject_cast<QVBoxLayout*>(nb1Grp->layout());
 
-    // Threshold — udDSPNB: 1-1000, default 30. WDSP threshold = 0.165 × value.
+    // Tell the operator the truth about what these five reach. WDSP keeps one
+    // noise blanker per RECEIVER, not per slice: SetEXTANB* writes panb[id]
+    // and SetEXTNOBMode writes pnob[id] (Thetis wdsp/nob.c:376-423 +
+    // wdsp/nobII.c:658-663 [v2.10.3.15]), the single ANB / NOB members of
+    // struct _rcvr (cmaster.h:74-82). Two receivers sharing one DDC window
+    // therefore cannot have independent blankers, so NereusSDR mirrors these
+    // across co-hosted slices rather than pretending otherwise. Saying so here
+    // beats letting the operator discover it by watching another receiver's
+    // settings move.
+    {
+        auto* nb1Note = new QLabel(
+            tr("Shared by every receiver on the same DDC. Adjusting these "
+               "changes the blanker for all of them."));
+        nb1Note->setWordWrap(true);
+        nb1Note->setStyleSheet(QStringLiteral("color: #8aa8c0; font-size: 11px;"));
+        nb1Lay->addWidget(nb1Note);
+    }
+
+    // Threshold — udDSPNB: 1-1000, default 30. WDSP threshold = 0.165 × value,
+    // applied by RadioModel on the way to SetEXTANBThreshold.
     QSlider* nb1Thresh = addIntSlider(nb1Lay, tr("Threshold"),
         1, 1000,
-        s.value(QStringLiteral("NbDefaultThresholdSlider"), 30).toInt(),
+        slice ? slice->nb1Threshold() : 30,
         QString{},
         tr("Controls the detection threshold for impulse noise.\n"
            "Lower = more aggressive (blanks weaker impulses too).\n"
            "Higher = more conservative (only strong clicks get blanked)."));
-    connect(nb1Thresh, &QSlider::valueChanged, [channelReady](int v) {
-        AppSettings::instance().setValue(QStringLiteral("NbDefaultThresholdSlider"), v);
-        if (channelReady()) { SetEXTANBThreshold(0, 0.165 * static_cast<double>(v)); }
+    connect(nb1Thresh, &QSlider::valueChanged, this, [slice](int v) {
+        if (slice) { slice->setNb1Threshold(v); }
     });
 
     // Transition — udDSPNBTransition: 0.01-2.00 ms, step 0.01, default 0.01.
     // Slider internal: 1-200 (×100 scale). Label shows "X.XX / 2.00 ms".
     QSlider* nb1Trans = addScaledSlider(nb1Lay, tr("Transition"),
         1, 200,
-        s.value(QStringLiteral("NbDefaultTransition"), 1).toInt(),
+        slice ? qRound(slice->nb1TransitionMs() * 100.0) : 1,
         100.0, 2, tr(" ms"),
         tr("Time to decrease/increase to/from zero amplitude around an\n"
            "impulse. Controls how gradually the blanker fades in and out\n"
            "— very short = crisp click; longer = gentler but audible."));
-    connect(nb1Trans, &QSlider::valueChanged, [channelReady](int v) {
-        AppSettings::instance().setValue(QStringLiteral("NbDefaultTransition"), v);
-        // v/100 ms → × 0.001 s = v * 1e-5 s.
-        if (channelReady()) { SetEXTANBTau(0, static_cast<double>(v) * 1e-5); }
+    connect(nb1Trans, &QSlider::valueChanged, this, [slice](int v) {
+        // Slider is the x100 integer; the model stores real milliseconds and
+        // RadioModel does the ms -> seconds conversion on the way to WDSP.
+        if (slice) { slice->setNb1TransitionMs(static_cast<double>(v) / 100.0); }
     });
 
     // Lead — udDSPNBLead: 0.01-2.00 ms, default 0.01.
     QSlider* nb1Lead = addScaledSlider(nb1Lay, tr("Lead"),
         1, 200,
-        s.value(QStringLiteral("NbDefaultLead"), 1).toInt(),
+        slice ? qRound(slice->nb1LeadMs() * 100.0) : 1,
         100.0, 2, tr(" ms"),
         tr("Time at zero amplitude BEFORE the detected impulse. Blanks\n"
            "the leading edge of the click that the detector would\n"
            "otherwise miss. Raise slightly if clicks still get through."));
-    connect(nb1Lead, &QSlider::valueChanged, [channelReady](int v) {
-        AppSettings::instance().setValue(QStringLiteral("NbDefaultLead"), v);
-        if (channelReady()) { SetEXTANBAdvtime(0, static_cast<double>(v) * 1e-5); }
+    connect(nb1Lead, &QSlider::valueChanged, this, [slice](int v) {
+        if (slice) { slice->setNb1LeadMs(static_cast<double>(v) / 100.0); }
     });
 
     // Lag — udDSPNBLag: 0.01-2.00 ms, default 0.01.
     QSlider* nb1Lag = addScaledSlider(nb1Lay, tr("Lag"),
         1, 200,
-        s.value(QStringLiteral("NbDefaultLag"), 1).toInt(),
+        slice ? qRound(slice->nb1LagMs() * 100.0) : 1,
         100.0, 2, tr(" ms"),
         tr("Time to remain at zero amplitude AFTER the impulse. Blanks\n"
            "the decay tail of the click. Raise this if pops still have\n"
            "an audible ringing after the initial transient."));
-    connect(nb1Lag, &QSlider::valueChanged, [channelReady](int v) {
-        AppSettings::instance().setValue(QStringLiteral("NbDefaultLag"), v);
-        if (channelReady()) { SetEXTANBHangtime(0, static_cast<double>(v) * 1e-5); }
+    connect(nb1Lag, &QSlider::valueChanged, this, [slice](int v) {
+        if (slice) { slice->setNb1LagMs(static_cast<double>(v) / 100.0); }
     });
 
     // NB2 Mode — Thetis comboDSPNOBmode.
@@ -1529,7 +1553,7 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
     // Item text matches Thetis comboDSPNOBmode verbatim (setup.designer.cs:44434 [v2.10.3.13]).
     nb1Mode->addItems({tr("Zero"), tr("Sample && Hold"), tr("Mean-Hold"),
                        tr("Hold && Sample"), tr("Linear Interpolate")});
-    nb1Mode->setCurrentIndex(s.value(QStringLiteral("Nb2DefaultMode"), 0).toInt());
+    nb1Mode->setCurrentIndex(slice ? slice->nb2Mode() : 0);
     nb1Mode->setToolTip(tr(
         "Method used to fill in the blanked samples when NB2 triggers.\n"
         "Zero silences the impulse entirely; the other modes synthesise\n"
@@ -1537,9 +1561,8 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         "audible artifacts on voice peaks."));
     addLabeledCombo(nb1Lay, "NB2 Mode", nb1Mode);
     connect(nb1Mode, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            [channelReady](int v) {
-        AppSettings::instance().setValue(QStringLiteral("Nb2DefaultMode"), v);
-        if (channelReady()) { SetEXTNOBMode(0, v); }
+            this, [slice](int v) {
+        if (slice) { slice->setNb2Mode(v); }
     });
 
     // ── NB2 Threshold — intentionally absent (Thetis parity) ─────────────────
@@ -1551,35 +1574,43 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
     QGroupBox* snbGrp = addSection("SNB");
     QVBoxLayout* snbLay = qobject_cast<QVBoxLayout*>(snbGrp->layout());
 
+    // The other half of the same story, and the reason the NB1 note above is
+    // worth stating: SNB genuinely IS per receiver. SetRXASNBA* writes
+    // rxa[channel].snba (Thetis wdsp/snb.c:621-670 [v2.10.3.15]), one per WDSP
+    // channel, and NereusSDR gives every slice its own channel.
+    {
+        auto* snbNote = new QLabel(
+            tr("Applies to the selected receiver only."));
+        snbNote->setWordWrap(true);
+        snbNote->setStyleSheet(QStringLiteral("color: #8aa8c0; font-size: 11px;"));
+        snbLay->addWidget(snbNote);
+    }
+
     // Threshold 1 — udDSPSNBThresh1: 2.0-20.0, step 0.1, default 8.0.
     // Slider internal: 20-200 (×10 scale).
     QSlider* snbK1 = addScaledSlider(snbLay, tr("Threshold 1"),
         20, 200,
-        qRound(s.value(QStringLiteral("SnbDefaultK1"), 8.0).toDouble() * 10.0),
+        qRound((slice ? slice->snbK1() : 8.0) * 10.0),
         10.0, 1, QString{},
         tr("Multiple of the running noise power at which a sample is\n"
            "flagged as a candidate outlier. Lower = more aggressive\n"
            "first-pass detection; higher = miss weaker noise."));
-    connect(snbK1, &QSlider::valueChanged, [channelReady](int v) {
-        const double real = static_cast<double>(v) / 10.0;
-        AppSettings::instance().setValue(QStringLiteral("SnbDefaultK1"), real);
-        if (channelReady()) { SetRXASNBAk1(0, real); }
+    connect(snbK1, &QSlider::valueChanged, this, [slice](int v) {
+        if (slice) { slice->setSnbK1(static_cast<double>(v) / 10.0); }
     });
 
     // Threshold 2 — udDSPSNBThresh2: 4.0-60.0, step 0.1, default 20.0.
     // Slider internal: 40-600 (×10 scale).
     QSlider* snbK2 = addScaledSlider(snbLay, tr("Threshold 2"),
         40, 600,
-        qRound(s.value(QStringLiteral("SnbDefaultK2"), 20.0).toDouble() * 10.0),
+        qRound((slice ? slice->snbK2() : 20.0) * 10.0),
         10.0, 1, QString{},
         tr("Multiplier applied to the final detection threshold — confirms\n"
            "candidates from Threshold 1 as real noise outliers. Lower =\n"
            "more aggressive overall blanking; higher = fewer false triggers\n"
            "on genuine voice peaks."));
-    connect(snbK2, &QSlider::valueChanged, [channelReady](int v) {
-        const double real = static_cast<double>(v) / 10.0;
-        AppSettings::instance().setValue(QStringLiteral("SnbDefaultK2"), real);
-        if (channelReady()) { SetRXASNBAk2(0, real); }
+    connect(snbK2, &QSlider::valueChanged, this, [slice](int v) {
+        if (slice) { slice->setSnbK2(static_cast<double>(v) / 10.0); }
     });
 
     // SNB Output Bandwidth — NOT in Thetis Setup page. Thetis sets it
@@ -1587,17 +1618,25 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
     // global override.
     QSlider* snbOutBw = addIntSlider(snbLay, tr("Output Bandwidth"),
         100, 96000,
-        s.value(QStringLiteral("SnbDefaultOutputBW"), 6000).toInt(),
+        slice ? slice->snbOutputBandwidthHz() : 6000,
         tr(" Hz"),
         tr("Width of the audio band SNB operates on, centred on zero.\n"
            "Smaller = focuses the blanker on the active passband;\n"
            "larger = covers wider modes (FM, DRM). Default 6000 Hz\n"
            "covers SSB + AM comfortably."));
-    connect(snbOutBw, &QSlider::valueChanged, [channelReady](int v) {
-        AppSettings::instance().setValue(QStringLiteral("SnbDefaultOutputBW"), v);
-        const double half = static_cast<double>(v) / 2.0;
-        if (channelReady()) { SetRXASNBAOutputBandwidth(0, -half, half); }
+    connect(snbOutBw, &QSlider::valueChanged, this, [slice](int v) {
+        if (slice) { slice->setSnbOutputBandwidthHz(v); }
     });
+
+    // No slice yet means Setup was opened before any receiver existed. The
+    // controls have nothing to address, so disable rather than silently
+    // dropping the operator's adjustments.
+    if (!slice) {
+        nb1Grp->setEnabled(false);
+        snbGrp->setEnabled(false);
+        nb1Grp->setToolTip(tr("Connect to a radio to tune the noise blanker."));
+        snbGrp->setToolTip(tr("Connect to a radio to tune the noise blanker."));
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2100,31 +2139,457 @@ CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
     });
 }
 
+// ── MNF editor ranges ─────────────────────────────────────────────────────────
+// The centre bounds and the width ceiling belong to NotchModel, which does the
+// actual clamping; only the two the model has no equivalent for are declared
+// here.
+// From Thetis setup.designer.cs:44334-44338 [v2.10.3.15] — udMNFWidth.Minimum.
+static constexpr double kMnfWidthMinHz = 0.0;
+// From Thetis setup.designer.cs:44323-44327 [v2.10.3.15] — udMNFWidth.Increment.
+static constexpr double kMnfWidthStepHz = 1.0;
+
 // ══════════════════════════════════════════════════════════════════════════════
 // MnfSetupPage
 // ══════════════════════════════════════════════════════════════════════════════
 //
-// From Thetis setup.cs — tabDSP / tabPageMNF controls:
-//   chkMNFAutoIncrease, comboMNFWindow, lstNotches (display)
+// Setup → DSP → MNF. The tab keeps Thetis's name (setup.designer.cs:44141
+// [v2.10.3.15], this.tpDSPMNF.Text = "MNF") and the group box keeps Thetis's
+// caption (:44165, grpDSPMNF.Text = "Multi Notch Filter"); everything
+// operator-facing outside Settings says TNF.
 //
+// grpDSPMNF's control set is at setup.designer.cs:44145-44159 [v2.10.3.15].
+// This page keeps those object names and their verbatim tooltips but replaces
+// the upstream one-notch-at-a-time shape (udMNFNotch index spinner plus
+// Add / Edit / Enter / Cancel modal buttons) with a table that edits every
+// notch in place.
+//
+// The prior placeholder carried a "Window" combo. No such control exists
+// upstream (there is no comboMNFWindow anywhere in Thetis v2.10.3.15) and the
+// bandpass window is out of scope, so it is dropped rather than wired.
 MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
-    : SetupPage("MNF", model, parent)
+    : SetupPage("TNF", model, parent)
 {
-    // ── Manual Notch ──────────────────────────────────────────────────────────
-    QGroupBox* mnfGrp = addSection("Manual Notch");
+    // Thetis captions this group "Multi Notch Filter" and names the tab
+    // MNF (setup.designer.cs:44165, :44141 [v2.10.3.15]). NereusSDR says TNF
+    // everywhere instead (maintainer decision, 2026-08-02): Thetis is itself
+    // split, MNF on the Setup tab and chkTNF on the console, and carrying
+    // that split through meant the same feature had two names on screen at
+    // once. Deliberate naming divergence; the control objectNames below stay
+    // on Thetis's spellings because they are the source-first mapping.
+    QGroupBox* mnfGrp = addSection(QStringLiteral("Tunable Notch Filter"));
     QVBoxLayout* mnfLay = qobject_cast<QVBoxLayout*>(mnfGrp->layout());
 
-    auto* autoIncrease = new QPushButton("Enable");
-    addLabeledToggle(mnfLay, "Auto-Increase", autoIncrease);
+    if (!model || !model->notchModel() || !mnfLay) {
+        disableGroup(mnfGrp);
+        return;
+    }
 
-    auto* windowCombo = new QComboBox;
-    windowCombo->addItems({"Blackman-Harris", "Hann", "Flat-Top"});
-    addLabeledCombo(mnfLay, "Window", windowCombo);
+    NotchModel* nm = model->notchModel();
 
-    auto* notchList = new QLabel("(no notches)");
-    addLabeledLabel(mnfLay, "Notch List", notchList);
+    // ── Notch table ──────────────────────────────────────────────────────────
+    m_notchTable = new QTableWidget(0, 4, mnfGrp);
+    m_notchTable->setObjectName(QStringLiteral("tblMNFNotches"));
+    // Column captions follow Thetis lblMNFFreq / lblMNFWidth / chkMNFActive
+    // (setup.designer.cs:44308, :44298, :44260 [v2.10.3.15]); the frequency
+    // column is Hz here where upstream is MHz.
+    m_notchTable->setHorizontalHeaderLabels({
+        QStringLiteral("Center Frequency (Hz)"),
+        QStringLiteral("Width (Hz)"),
+        QStringLiteral("Active"),
+        QString()
+    });
+    m_notchTable->setStyleSheet(QStringLiteral(
+        "QTableWidget { background: #131326; color: #c8d8e8; "
+        "  gridline-color: #304050; border: 1px solid #304050; }"
+        "QTableWidget::item { padding: 2px 4px; }"
+        "QTableWidget::item:selected { background: #1a3050; }"
+        "QHeaderView::section { background: #1a2030; color: #8aa8c0; "
+        "  border: 1px solid #304050; padding: 4px; }"));
+    m_notchTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_notchTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_notchTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_notchTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
+    m_notchTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
+    m_notchTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
+    m_notchTable->setColumnWidth(1, 110);
+    m_notchTable->setColumnWidth(2, 60);
+    m_notchTable->setColumnWidth(3, 80);
+    m_notchTable->verticalHeader()->setVisible(false);
+    m_notchTable->setMinimumHeight(160);
+    mnfLay->addWidget(m_notchTable);
 
-    disableGroup(mnfGrp);
+    // ── Add ──────────────────────────────────────────────────────────────────
+    static const QString kMnfButtonStyle = QStringLiteral(
+        "QPushButton { background: #203040; color: #c8d8e8; border: 1px solid #304050; "
+        "  border-radius: 3px; padding: 4px 10px; }"
+        "QPushButton:hover { background: #2a4060; }"
+        "QPushButton:pressed { background: #1a2840; }");
+
+    m_addBtn = new QPushButton(QStringLiteral("Add"), mnfGrp);
+    m_addBtn->setObjectName(QStringLiteral("btnMNFAdd"));
+    // From Thetis setup.designer.cs:44286 [v2.10.3.15] — btnMNFAdd tooltip.
+    m_addBtn->setToolTip(QStringLiteral("Add a notch"));
+    m_addBtn->setStyleSheet(kMnfButtonStyle);
+
+    auto* addRow = new QHBoxLayout;
+    addRow->setContentsMargins(0, 0, 0, 0);
+    addRow->setSpacing(8);
+    addRow->addWidget(m_addBtn);
+    addRow->addStretch();
+    mnfLay->addLayout(addRow);
+
+    connect(m_addBtn, &QPushButton::clicked, this, [this] {
+        // SetupPage::model(), qualified: the ctor parameter of the same name
+        // is still in scope inside this lambda and would shadow the accessor.
+        RadioModel* rm = SetupPage::model();
+        if (!rm || !rm->notchModel()) { return; }
+        SliceModel* slice = rm->activeSlice();
+        if (!slice) { return; }
+        // Thetis splits this into two clicks: btnMNFAdd opens an empty row and
+        // btnVFOFreq fills it from VFOA ("Enter the Frequency from VFOA",
+        // setup.designer.cs:44190 [v2.10.3.15]). One gesture here, because the
+        // table edits in place.
+        endAdminEdit();
+        // Through RadioModel so the width is clamped to what this slice's
+        // filter can realise, exactly as the panadapter and +TNF routes do.
+        // A bare addNotch here stored the 200 Hz default even where the live
+        // minimum is 400 Hz (nc 1024), and WDSP widened it silently while this
+        // very table kept showing 200. Codex review of PR #313.
+        rm->addNotchForSlice(slice, slice->frequency(),
+                             NotchModel::kDefaultNotchWidthHz);
+    });
+
+    // ── Minimum notch width ──────────────────────────────────────────────────
+    // Narrowest notch the current bandpass can realise: WDSP min_notch_width
+    // (third_party/wdsp/src/nbp.c:82-96), read through RXANBPGetMinNotchWidth
+    // (nbp.c:594). NereusSDR-original control; Thetis pushes the same value
+    // out of UpdateMinimumNotchWidthRX (console.cs:48787-48818 [v2.10.3.15])
+    // to its notch popup rather than to the Setup tab.
+    m_minWidthLbl = new QLabel(QStringLiteral("--"), mnfGrp);
+    m_minWidthLbl->setObjectName(QStringLiteral("lblMNFMinWidth"));
+    m_minWidthLbl->setToolTip(QStringLiteral(
+        "Narrowest notch the current bandpass filter can realise"));
+    addLabeledLabel(mnfLay, QStringLiteral("Minimum Notch Width"), m_minWidthLbl);
+
+    // The readout follows the active slice's channel, so it has to re-resolve
+    // when the operator changes which slice that is.
+    connect(model, &RadioModel::activeSliceChanged, this,
+            [this](int) { refreshMinNotchWidth(); });
+
+    // ── Auto-increase ────────────────────────────────────────────────────────
+    // From Thetis setup.designer.cs:44204 [v2.10.3.15] — chkMNFAutoIncrease.Text.
+    m_autoIncreaseChk = new QCheckBox(
+        QStringLiteral("Auto-Increase width (if needed) to achieve >100dB attenuation"),
+        mnfGrp);
+    m_autoIncreaseChk->setObjectName(QStringLiteral("chkMNFAutoIncrease"));
+    m_autoIncreaseChk->setChecked(nm->autoIncrease());
+    // From Thetis setup.designer.cs:44205 [v2.10.3.15] — chkMNFAutoIncrease tooltip.
+    m_autoIncreaseChk->setToolTip(QStringLiteral(
+        "The notch width will be increased if needed to ensure >100dB of attenuation"));
+    mnfLay->addWidget(m_autoIncreaseChk);
+
+    // Thetis fans the flag straight to three fixed channel ids from the Setup
+    // form (setup.cs:17925-17931 [v2.10.3.15], chkMNFAutoIncrease_CheckedChanged
+    // → WDSP.RXANBPSetAutoIncrease ×3). NereusSDR routes it through NotchModel
+    // so RadioModel's fan-out reaches every open slice channel instead.
+    connect(m_autoIncreaseChk, &QCheckBox::toggled, nm, &NotchModel::setAutoIncrease);
+    connect(nm, &NotchModel::autoIncreaseChanged, m_autoIncreaseChk, [this](bool on) {
+        QSignalBlocker b(m_autoIncreaseChk);
+        m_autoIncreaseChk->setChecked(on);
+    });
+
+    // ── Visual notch ─────────────────────────────────────────────────────────
+    // From Thetis setup.designer.cs:44167-44179 [v2.10.3.15] — chkVisualNotch,
+    // the last control in grpDSPMNF (:44145). Caption (:44175-44176) and
+    // tooltip (:44177) copied verbatim. The designer makes no `Checked`
+    // assignment, so Windows Forms leaves it unchecked; NotchModel's default
+    // false matches.
+    m_visualNotchChk = new QCheckBox(
+        QStringLiteral("Visual approximation of notch (NOTE: this is not 100% "
+                       "representation of the active notch)"),
+        mnfGrp);
+    m_visualNotchChk->setObjectName(QStringLiteral("chkVisualNotch"));
+    m_visualNotchChk->setChecked(nm->visualEnabled());
+    m_visualNotchChk->setToolTip(QStringLiteral(
+        "This is a simple approximation and does not accurately represent the notch"));
+    mnfLay->addWidget(m_visualNotchChk);
+
+    // From Thetis setup.cs:24376-24380 [v2.10.3.15] —
+    // chkVisualNotch_CheckedChanged sets Display.ShowVisualNotch AND
+    // MiniSpec.ShowVisualNotch. NereusSDR has no mini-spectrum surface, so
+    // only the panadapter half is ported; the fan-out to every pan hangs off
+    // NotchModel::visualEnabledChanged rather than off this widget.
+    connect(m_visualNotchChk, &QCheckBox::toggled, nm, &NotchModel::setVisualEnabled);
+    connect(nm, &NotchModel::visualEnabledChanged, m_visualNotchChk, [this](bool on) {
+        QSignalBlocker b(m_visualNotchChk);
+        m_visualNotchChk->setChecked(on);
+    });
+
+    // ── Wiring: notch list ↔ table ───────────────────────────────────────────
+    // Structural changes go through a queued rebuild; a direct connection would
+    // let removeNotch() delete the row Delete button from inside that button's
+    // own clicked() emission.
+    connect(nm, &NotchModel::notchAdded, this,
+            [this](int) { rebuildTable(); }, Qt::QueuedConnection);
+    connect(nm, &NotchModel::notchRemoved, this,
+            [this](int, int) { rebuildTable(); }, Qt::QueuedConnection);
+    connect(nm, &NotchModel::notchesReset, this,
+            &MnfSetupPage::rebuildTable, Qt::QueuedConnection);
+
+    // Value-only changes refresh the row in place. Direct, not queued: it
+    // rewrites the existing editors instead of replacing them, so it is safe
+    // even when it lands inside a spin box's own editingFinished.
+    connect(nm, &NotchModel::notchChanged, this, &MnfSetupPage::refreshRow);
+
+    rebuildTable();
+    refreshMinNotchWidth();
+}
+
+// ── MnfSetupPage::rebuildTable ────────────────────────────────────────────────
+
+void MnfSetupPage::rebuildTable()
+{
+    RadioModel* rm = model();
+    if (!m_notchTable || !rm || !rm->notchModel()) { return; }
+
+    static const QString kMnfEditorStyle = QStringLiteral(
+        "QDoubleSpinBox { background: #1a2030; color: #c8d8e8; "
+        "  border: 1px solid #304050; border-radius: 2px; padding: 1px; }"
+        "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button "
+        "  { background: #202838; width: 14px; }");
+    static const QString kMnfRowButtonStyle = QStringLiteral(
+        "QPushButton { background: #203040; color: #c8d8e8; border: 1px solid #304050; "
+        "  border-radius: 2px; padding: 1px 6px; font-size: 11px; }"
+        "QPushButton:hover { background: #2a4060; }");
+
+    // setRowCount() destroys the outgoing cell widgets; a focused spin box
+    // being destroyed emits editingFinished on its way out, so the guard has
+    // to be up before the row count moves.
+    m_rebuilding = true;
+
+    const QList<Notch>& notches = rm->notchModel()->notches();
+    const int count = static_cast<int>(notches.size());
+
+    m_rowIds.clear();
+    m_rowIds.reserve(count);
+    m_notchTable->setRowCount(count);
+
+    for (int row = 0; row < count; ++row) {
+        const Notch& n = notches.at(row);
+        const int id = n.id;
+        m_rowIds.append(id);
+
+        // Col 0: centre frequency. Thetis's udMNFFreq is MHz over 0..1000000
+        // (setup.designer.cs:44352-44369 [v2.10.3.15]); this column is Hz, so
+        // the editor takes the bounds NotchModel itself constrains to.
+        auto* freqSpin = new QDoubleSpinBox(m_notchTable);
+        freqSpin->setObjectName(QStringLiteral("udMNFFreq"));
+        freqSpin->setDecimals(0);
+        freqSpin->setRange(NotchModel::kMinNotchCentreHz,
+                           NotchModel::kMaxNotchCentreHz);
+        freqSpin->setSingleStep(1.0);
+        freqSpin->setValue(n.centerHz);
+        freqSpin->setStyleSheet(kMnfEditorStyle);
+        // From Thetis setup.designer.cs:44374 [v2.10.3.15] — udMNFFreq tooltip.
+        freqSpin->setToolTip(QStringLiteral("Center frequency of the notch"));
+        // Connected after the value is pushed, so construction cannot read as
+        // an operator edit and raise the lock.
+        connect(freqSpin, &QDoubleSpinBox::valueChanged, this,
+                [this](double) { beginAdminEdit(); });
+        connect(freqSpin, &QDoubleSpinBox::editingFinished, this,
+                [this, id] { commitRow(id); });
+        m_notchTable->setCellWidget(row, 0, freqSpin);
+
+        // Col 1: width.
+        auto* widthSpin = new QDoubleSpinBox(m_notchTable);
+        widthSpin->setObjectName(QStringLiteral("udMNFWidth"));
+        widthSpin->setDecimals(0);
+        widthSpin->setRange(kMnfWidthMinHz, NotchModel::kMaxNotchWidthHz);
+        widthSpin->setSingleStep(kMnfWidthStepHz);
+        widthSpin->setValue(n.widthHz);
+        widthSpin->setStyleSheet(kMnfEditorStyle);
+        // From Thetis setup.designer.cs:44343 [v2.10.3.15] — udMNFWidth tooltip
+        // (upstream spelling preserved verbatim).
+        widthSpin->setToolTip(QStringLiteral("Bandwdith of the notch"));
+        connect(widthSpin, &QDoubleSpinBox::valueChanged, this,
+                [this](double) { beginAdminEdit(); });
+        connect(widthSpin, &QDoubleSpinBox::editingFinished, this,
+                [this, id] { commitRow(id); });
+        m_notchTable->setCellWidget(row, 1, widthSpin);
+
+        // Col 2: active.
+        auto* activeChk = new QCheckBox(m_notchTable);
+        activeChk->setObjectName(QStringLiteral("chkMNFActive"));
+        activeChk->setChecked(n.active);
+        // From Thetis setup.designer.cs:44261 [v2.10.3.15] — chkMNFActive tooltip.
+        activeChk->setToolTip(QStringLiteral("Checked if the notch is active"));
+        connect(activeChk, &QCheckBox::toggled, this, [this, id](bool on) {
+            if (m_rebuilding) { return; }
+            RadioModel* r = model();
+            if (!r || !r->notchModel()) { return; }
+            endAdminEdit();
+            r->notchModel()->setActive(id, on);
+        });
+        m_notchTable->setCellWidget(row, 2, activeChk);
+
+        // Col 3: delete.
+        auto* delBtn = new QPushButton(QStringLiteral("Delete"), m_notchTable);
+        delBtn->setObjectName(QStringLiteral("btnMNFDelete"));
+        // From Thetis setup.designer.cs:44219 [v2.10.3.15] — btnMNFDelete tooltip.
+        delBtn->setToolTip(QStringLiteral("Delete the current notch index"));
+        delBtn->setStyleSheet(kMnfRowButtonStyle);
+        connect(delBtn, &QPushButton::clicked, this, [this, id] {
+            RadioModel* r = model();
+            if (!r || !r->notchModel()) { return; }
+            endAdminEdit();
+            r->notchModel()->removeNotch(id);
+        });
+        m_notchTable->setCellWidget(row, 3, delBtn);
+
+        m_notchTable->setRowHeight(row, 26);
+    }
+
+    m_rebuilding = false;
+}
+
+// ── MnfSetupPage::refreshRow ──────────────────────────────────────────────────
+
+void MnfSetupPage::refreshRow(int notchId)
+{
+    RadioModel* rm = model();
+    if (!m_notchTable || !rm || !rm->notchModel()) { return; }
+
+    const int row = m_rowIds.indexOf(notchId);
+    if (row < 0) { return; }
+
+    const Notch* n = rm->notchModel()->notchById(notchId);
+    if (!n) { return; }
+
+    m_rebuilding = true;
+    if (auto* freqSpin = qobject_cast<QDoubleSpinBox*>(m_notchTable->cellWidget(row, 0))) {
+        QSignalBlocker b(freqSpin);
+        freqSpin->setValue(n->centerHz);
+    }
+    if (auto* widthSpin = qobject_cast<QDoubleSpinBox*>(m_notchTable->cellWidget(row, 1))) {
+        QSignalBlocker b(widthSpin);
+        widthSpin->setValue(n->widthHz);
+    }
+    if (auto* activeChk = qobject_cast<QCheckBox*>(m_notchTable->cellWidget(row, 2))) {
+        QSignalBlocker b(activeChk);
+        activeChk->setChecked(n->active);
+    }
+    m_rebuilding = false;
+}
+
+// ── MnfSetupPage::commitRow ───────────────────────────────────────────────────
+
+void MnfSetupPage::commitRow(int notchId)
+{
+    if (m_rebuilding) { return; }
+
+    RadioModel* rm = model();
+    if (!m_notchTable || !rm || !rm->notchModel()) { return; }
+
+    const int row = m_rowIds.indexOf(notchId);
+    if (row < 0) { return; }
+
+    auto* freqSpin  = qobject_cast<QDoubleSpinBox*>(m_notchTable->cellWidget(row, 0));
+    auto* widthSpin = qobject_cast<QDoubleSpinBox*>(m_notchTable->cellWidget(row, 1));
+    if (!freqSpin || !widthSpin) { return; }
+
+    // Lock down first, exactly as Thetis's ENTER does: btnMNFEnter_Click
+    // (setup.cs:17738 [v2.10.3.15]) sets AddActive false at :17744 before
+    // RXANBPAddNotch at :17749-17751, and EditActive false at :17759 before
+    // RXANBPEditNotch at :17766-17768. NotchModel's mutators are shared with
+    // the panadapter path and reject writes while adminBusy is set
+    // (console.cs:40009, :40079 [v2.10.3.15]), so this ordering is required
+    // for the page's own write to land at all.
+    endAdminEdit();
+
+    NotchModel* nm = rm->notchModel();
+    nm->setCenter(notchId, freqSpin->value());
+    nm->setWidth(notchId, widthSpin->value());
+}
+
+// ── MnfSetupPage::beginAdminEdit ──────────────────────────────────────────────
+
+void MnfSetupPage::beginAdminEdit()
+{
+    if (m_rebuilding) { return; }
+    RadioModel* rm = model();
+    if (!rm || !rm->notchModel()) { return; }
+    // Thetis raises the flag on btnMNFAdd (AddActive = true, setup.cs:17679
+    // [v2.10.3.15]) and btnMNFEdit (EditActive = true, :17718), and every
+    // console-side notch mutator bails on it (console.cs:40009, 40079, 40125,
+    // 40161, 40200, 40224, 40315 [v2.10.3.15]). An in-place table edit is the
+    // same window: it opens on the first value change and closes when the row
+    // commits.
+    rm->notchModel()->setAdminBusy(true);
+}
+
+// ── MnfSetupPage::endAdminEdit ────────────────────────────────────────────────
+
+void MnfSetupPage::endAdminEdit()
+{
+    RadioModel* rm = model();
+    if (!rm || !rm->notchModel()) { return; }
+    // Thetis clears the flag before it writes: btnMNFEnter_Click
+    // (setup.cs:17738 [v2.10.3.15]) sets `AddActive = false` at :17744 and
+    // only then calls WDSP.RXANBPAddNotch at :17749-17751, and likewise sets
+    // `EditActive = false` at :17759 before WDSP.RXANBPEditNotch at
+    // :17766-17768. NotchAdminBusy is AddActive | EditActive
+    // (:17728-17735), so clearing both is what unlocks the write.
+    rm->notchModel()->setAdminBusy(false);
+}
+
+// ── MnfSetupPage::refreshMinNotchWidth ────────────────────────────────────────
+
+void MnfSetupPage::refreshMinNotchWidth()
+{
+    if (!m_minWidthLbl) { return; }
+
+    // Whichever channel was being followed is no longer necessarily the right
+    // one; re-arm below against the channel actually resolved this pass.
+    disconnect(m_minWidthConn);
+
+    RadioModel* rm = model();
+    if (!rm) {
+        m_minWidthLbl->setText(QStringLiteral("--"));
+        return;
+    }
+
+    // Thetis surfaces this per-RX (console.cs:48787-48818,
+    // UpdateMinimumNotchWidthRX [v2.10.3.15]). NereusSDR's notch list is
+    // global, so the readout follows the active slice's channel and falls
+    // back to the first pooled channel before any slice exists.
+    const int sliceIndex = rm->activeSlice() ? rm->activeSlice()->sliceIndex()
+                                             : WdspEngine::kFirstSliceChannelId;
+    RxChannel* ch = rm->rxChannelForSlice(sliceIndex);
+    if (!ch) {
+        m_minWidthLbl->setText(QStringLiteral("--"));
+        return;
+    }
+
+    m_minWidthConn = connect(ch, &RxChannel::minNotchWidthChanged, this,
+                             [this](double minWidthHz) {
+        if (!m_minWidthLbl) { return; }
+        m_minWidthLbl->setText(QStringLiteral("%1 Hz").arg(minWidthHz, 0, 'f', 1));
+    });
+
+    m_minWidthLbl->setText(
+        QStringLiteral("%1 Hz").arg(ch->minNotchWidthHz(), 0, 'f', 1));
+}
+
+// ── MnfSetupPage::showEvent ───────────────────────────────────────────────────
+
+void MnfSetupPage::showEvent(QShowEvent* event)
+{
+    SetupPage::showEvent(event);
+    // The channel this readout follows may not have existed when the page was
+    // built (WDSP initialises asynchronously, and the slice pool opens on
+    // connect), so re-resolve on every visit as well as on the signal.
+    refreshMinNotchWidth();
+    rebuildTable();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

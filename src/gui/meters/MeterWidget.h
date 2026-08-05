@@ -55,6 +55,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include <QWidget>
+#include <QHash>
 #include <QImage>
 #include <QVector>
 
@@ -145,6 +146,17 @@ private:
     // Visibility filter state — see setMox/setDisplayGroup doc.
     bool m_mox{false};
     int  m_displayGroup{0};
+
+    // Last value pushed per binding, for the fuzzy guard in
+    // updateMeterValue.  MeterPoller fires every 100 ms across N
+    // bindings × M target widgets; in steady RX a quiet signal walks
+    // by a fraction of a dB or not at all between ticks.  Skipping the
+    // item iteration + update() when the polled value matches the
+    // previous push within FP noise cuts the redundant repaints
+    // (which compose the entire MeterWidget into IOSurface on macOS).
+    // QHash for sparse binding-id keys; std::unordered_map would do
+    // but QHash matches the rest of the file.
+    QHash<int, double> m_lastBindingValue;
 
 #ifdef NEREUS_GPU_SPECTRUM
     bool m_rhiInitialized{false};

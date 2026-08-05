@@ -10,6 +10,7 @@
 
 #include <QtTest/QtTest>
 #include <QSignalSpy>
+#include <atomic>
 #include "core/P1RadioConnection.h"
 #include "core/RadioConnection.h"
 #include "core/RadioDiscovery.h"
@@ -18,6 +19,26 @@
 
 using namespace NereusSDR;
 using NereusSDR::Test::P1FakeRadio;
+
+namespace {
+// Issue #258 regression — message handler that counts "ep6 stream established"
+// log lines emitted during the test.  Installed once per test method (init())
+// and uninstalled (cleanup()) so the count is fresh between cases.
+static std::atomic<int> g_ep6EstablishedLogCount{0};
+static QtMessageHandler g_previousMsgHandler = nullptr;
+
+static void countEp6EstablishedLogs(QtMsgType type,
+                                    const QMessageLogContext& ctx,
+                                    const QString& msg)
+{
+    if (msg.contains(QStringLiteral("Connected, ep6 stream established"))) {
+        g_ep6EstablishedLogCount.fetch_add(1);
+    }
+    if (g_previousMsgHandler) {
+        g_previousMsgHandler(type, ctx, msg);
+    }
+}
+} // namespace
 
 class TestP1LoopbackConnection : public QObject {
     Q_OBJECT
@@ -102,13 +123,79 @@ private slots:
 
         conn.connectToRadio(makeInfo(fake));
         QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connected, 3000);
+        // Wait for the fake to register the metis-start before issuing
+        // metis-stop — otherwise the stop can race ahead of the start in
+        // the fake's event loop and m_running ends up true.
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
 
         conn.disconnect();
         QCOMPARE(conn.state(), ConnectionState::Disconnected);
 
-        // The fake should have received a metis-stop and cleared m_running
-        QVERIFY(!fake.isRunning());
+        // The fake should have received a metis-stop and cleared m_running.
+        // Use QTRY_VERIFY because the stop is processed asynchronously by
+        // the fake's readyRead slot one event-loop turn after disconnect().
+        QTRY_VERIFY_WITH_TIMEOUT(!fake.isRunning(), 1000);
 
+        fake.stop();
+    }
+
+    // Issue #258 regression — when a burst of N 1032-byte ep6 datagrams
+    // lands in a single readyRead batch while state is still Connecting,
+    // the "P1: Connected, ep6 stream established" log line must fire
+    // EXACTLY ONCE, not once per datagram.  Field repro: first connect
+    // emitted 181 spurious lines in <10 ms because cs was a const local
+    // snapshot read outside the drain loop.
+    void firstConnectLogFiresExactlyOncePerBatch() {
+        P1FakeRadio fake;
+        // Disable the 10 ms auto-stream timer so we have exclusive control
+        // over when ep6 frames arrive.  Otherwise the first auto-stream
+        // tick would promote state to Connected before our burst lands,
+        // masking the bug (state==Connected -> log branch not taken).
+        fake.setAutoStreamEnabled(false);
+        fake.start();
+
+        // Install the counting message handler AFTER fake.start() so the
+        // fake's own diagnostics aren't counted (they don't match the
+        // substring, but belt-and-braces).
+        g_ep6EstablishedLogCount.store(0);
+        g_previousMsgHandler = qInstallMessageHandler(countEp6EstablishedLogs);
+
+        P1RadioConnection conn;
+        conn.init();
+
+        RadioInfo info;
+        info.address         = fake.localAddress();
+        info.port            = fake.localPort();
+        info.boardType       = HPSDRHW::HermesLite;
+        info.protocol        = ProtocolVersion::Protocol1;
+        info.macAddress      = QStringLiteral("aa:bb:cc:11:22:33");
+        info.firmwareVersion = 72;
+        info.name            = QStringLiteral("FakeHL2");
+        conn.connectToRadio(info);
+
+        // Wait for the fake to receive metis-start (m_running flips true)
+        // — that means conn is now in Connecting waiting for first ep6.
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+        QCOMPARE(conn.state(), ConnectionState::Connecting);
+
+        // Burst-send 100 ep6 frames in a tight loop.  All 100 land in
+        // the OS UDP receive queue before conn's event loop ticks; when
+        // onReadyRead fires it drains all 100 in one while-loop pass.
+        fake.sendEp6Frames(100);
+
+        // Pump the event loop until the conn transitions to Connected
+        // (i.e. at least the first of the 100 frames has been drained
+        // through onReadyRead).
+        QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connected, 3000);
+
+        // Bug A: pre-fix this was 100 (once per datagram in the batch).
+        // Post-fix: 1.
+        QCOMPARE(g_ep6EstablishedLogCount.load(), 1);
+
+        qInstallMessageHandler(g_previousMsgHandler);
+        g_previousMsgHandler = nullptr;
+
+        conn.disconnect();
         fake.stop();
     }
 

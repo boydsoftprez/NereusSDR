@@ -173,6 +173,9 @@ private slots:
         {
             StepAttenuatorController ctrl;
             ctrl.setTickTimerEnabled(false);
+            // Issue #259 gate: tag the controller as loaded for this MAC
+            // before mutating + saving, otherwise saveSettings is a no-op.
+            ctrl.loadSettings(kTestMac);
             ctrl.setBand(Band::Band20m);
             ctrl.setAttOnTxValue(22);
             ctrl.saveSettings(kTestMac);

@@ -367,8 +367,19 @@ void StepAttenuatorController::setAttOnTxValue(int dB)
     // strip the HL2 signed range.  Bypassing the clamp here is correct:
     // the value above is already validated against [m_minAttDb, 31].
     int idx = static_cast<int>(m_currentBand);
+    int oldValue = 0;
     if (idx >= 0 && idx < static_cast<int>(Band::SwlFirst)) {
+        oldValue = m_txAttByBand[static_cast<size_t>(idx)];
         m_txAttByBand[static_cast<size_t>(idx)] = dB;
+    }
+
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): emit attOnTxValueChanged so
+    // the Setup → Transmit → Power udATTOnTX spinbox (and any other UI
+    // surface) mirrors AutoAtt's adjustments + user-side changes.  Old/new
+    // guard prevents a feedback loop when the spinbox writes back to its
+    // own bound setter.
+    if (dB != oldValue) {
+        emit attOnTxValueChanged(dB);
     }
 
     // From Thetis console.cs:10613-10622 TxAttenData setter [v2.10.3.13]:
@@ -948,6 +959,23 @@ void StepAttenuatorController::onDdcMappingChanged()
 
 void StepAttenuatorController::saveSettings(const QString& mac)
 {
+    // Issue #259 gate: refuse to save until loadSettings has populated this
+    // controller for the same MAC. Without this, the teardownConnection
+    // that runs INSIDE RadioModel::connectToRadio (when a previous m_connection
+    // still exists, e.g. auto-reconnect retry) would persist the constructor
+    // defaults — m_attDb=0, m_stepAttEnabled=true — over the user's real
+    // saved state. The bench trace at /tmp/nereus259/run.log shows the
+    // failure mode: 18:31:11.242 save with m_attDb=0 wipes the prior session's
+    // m_attDb=6, followed at 18:31:15.854 by a loadSettings that reads back
+    // the freshly-clobbered zero.
+    //
+    // Empty mac is also rejected — same guard pattern as the
+    // m_transmitModel.persistToSettings block at the matching site in
+    // RadioModel::teardownConnection().
+    if (mac.isEmpty() || m_loadedMac != mac) {
+        return;
+    }
+
     auto& s = AppSettings::instance();
 
     // Step attenuator global config.
@@ -1023,6 +1051,14 @@ void StepAttenuatorController::saveSettings(const QString& mac)
 
 void StepAttenuatorController::loadSettings(const QString& mac)
 {
+    // Issue #259: record the MAC we're loading for so saveSettings can refuse
+    // pre-load writes. Set BEFORE reading values so a synchronous early-
+    // return path (none today, but a future maintainer's guard could
+    // bail mid-load) still leaves the gate in a consistent state — the
+    // save would re-emit our just-read state which is at worst identical
+    // to disk.
+    m_loadedMac = mac;
+
     auto& s = AppSettings::instance();
 
     // Step attenuator global config.
@@ -1099,8 +1135,16 @@ void StepAttenuatorController::loadSettings(const QString& mac)
     }
 
     // Notify UI of restored values.
+    //
+    // Issue #259 fix: stepAttEnabledChanged is emitted here so the
+    // "RX1 Enable" checkbox on Setup → General → Options picks up the
+    // restored value on connect. Without this emit, the controller's
+    // m_stepAttEnabled is correct but the checkbox stays at its
+    // constructor default (unchecked) until the user clicks it — so
+    // persistence appears broken even when the round-trip works.
     emit attenuationChanged(m_attDb);
     emit preampModeChanged(m_preampMode);
+    emit stepAttEnabledChanged(m_stepAttEnabled);
 }
 
 }  // namespace NereusSDR

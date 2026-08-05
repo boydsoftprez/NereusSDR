@@ -139,6 +139,14 @@ private slots:
     void onOutputPinClicked(int idx);
     void onIoBoardOcByteChanged(quint8 ocByte, int bandIdx, bool mox);
 
+    // Recomputes m_btnWrite's enabled state from the two gating checkboxes
+    // (chkI2cEnable + chkI2cWriteEnable). Wired once in buildI2cControl, and
+    // also called directly from onI2cEnableToggled. Replaces an earlier
+    // lambda-based connect with Qt::UniqueConnection that fired the Qt
+    // "unique connections require a pointer to member function" warning on
+    // every Settings dialog open (lambdas can't be deduped) — #272.
+    void syncI2cWriteButtonEnabled();
+
 private:
     void buildHermesLiteOptions(QWidget* parent);
     void buildI2cControl(QWidget* parent);

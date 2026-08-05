@@ -61,7 +61,10 @@ mw0lge@grange-lane.co.uk
 
 #include "core/WdspTypes.h"
 
+#include <functional>  // std::function for setRxOffsetSource (RXOffset port)
+
 #include <QObject>
+#include <QList>
 #include <QPointer>
 #include <QTimer>
 #include <QVector>
@@ -72,6 +75,8 @@ class RxChannel;
 class TxChannel;
 class MeterWidget;
 class RadioStatus;
+class SMeterWidget;
+class WdspEngine;
 
 // Binding IDs map to WDSP meter types (RxMeterType enum values)
 namespace MeterBinding {
@@ -126,6 +131,16 @@ public:
 
     void setRxChannel(RxChannel* channel);
 
+    // ── SMeterWidget feed (Task 41, Phase 3P-II) ──────────────────────────
+    //
+    // setSMeter: register the analog SMeterWidget (AppletPanelWidget header).
+    // pollSMeter() reads the WDSP source selected by m_sMeter->rxMode() and
+    // calls m_sMeter->setLevel(dbm) on each poll tick.
+    // setWdspEngine: provides getMaxBinDbm() for RxMode::MaxBin.
+    // Both are non-owning; call with nullptr to detach.
+    void setSMeter(SMeterWidget* widget);
+    void setWdspEngine(WdspEngine* engine);
+
     // ── TX meter bindings (H.2, Phase 3M-1a) ─────────────────────────────
     //
     // setTxChannel: register the TX channel for TX-meter polling.
@@ -178,6 +193,25 @@ public:
     /// aggregates forward/reflected/swr from that loop via powerChanged).
     void setRadioStatus(RadioStatus* status);
 
+    // ── RX meter calibration offset (Thetis-faithful port) ───────────────
+    //
+    // Source for the per-poll cumulative offset (preamp + cal) applied to
+    // SignalPeak / SignalAvg / MaxBin readings before display.
+    //
+    // The callable is invoked once per poll tick and must be lightweight
+    // (RadioModel::rxMeterOffsetDb() is a const lookup over
+    // m_hardwareProfile + StepAttenuatorController + AppSettings, no
+    // mutex, no I/O).  Returning 0.0 disables the offset cleanly.
+    //
+    // Thetis call sites:
+    //   console.cs:46821  float offset = RXOffset(1);
+    //   console.cs:46824  ... = CalculateRXMeter(...) + offset;       // S_PK
+    //   console.cs:46828  ... = CalculateRXMeter(...) + offset;       // S_AV
+    //   console.cs:46881  ... = GetDetectMaxBin(0)    + offset;       // MaxBin
+    //
+    // Pass nullptr to detach (e.g. on RadioModel teardown).
+    void setRxOffsetSource(std::function<double()> source);
+
 public slots:
     // Switch between RX and TX meter polling.
     // Connected to MoxController::moxStateChanged(bool) by MainWindow (H.2).
@@ -186,13 +220,40 @@ public slots:
     // not mid-poll, matching Thetis's integer-tick dispatch via UpdateTimer.
     void setInTx(bool isTx);
 
+    /// Which slices to emit sliceSmeterUpdated for, by slice id.
+    ///
+    /// Slice id doubles as the WDSP RX channel id (the invariant Sub-Epic I
+    /// establishes), so this is also the list of channels polled. Pushed by
+    /// MainWindow on every slice add / remove; empty disables the per-slice
+    /// pass entirely and costs nothing.
+    void setSliceChannels(const QList<int>& sliceIds) { m_sliceChannels = sliceIds; }
+
 signals:
     // Emitted on each poll tick with the current S-meter (SignalAvg) dBm value.
     // Connect to VfoWidget::setSmeter to drive the VFO level bar.
+    //
+    // This is the ACTIVE slice's reading only -- it carries no slice id, and
+    // this poller owns a single m_rxChannel. Use sliceSmeterUpdated for a
+    // specific slice's flag.
     void smeterUpdated(double dbm);
+
+    /// Per-slice S-meter, so every flag can show its own signal.
+    ///
+    /// Slices B+ had no S-meter at all: the poller reads one channel and the
+    /// unqualified signal above was connected to Slice A's flag, so every
+    /// other flag's bar sat dead. Emitted once per slice per tick for the
+    /// slices given to setSliceChannels().
+    void sliceSmeterUpdated(int sliceIndex, double dbm);
 
 private slots:
     void poll();
+
+private:
+    /// Emit sliceSmeterUpdated for each slice in m_sliceChannels. Independent
+    /// of pollSMeter's analog-widget and m_rxChannel guards.
+    void pollSliceSMeters();
+
+private slots:
 
 private:
     // ── TX poll helper ────────────────────────────────────────────────────────
@@ -201,6 +262,15 @@ private:
     // Porting from Thetis dsp.cs:999-1050 [v2.10.3.13] CalculateTXMeter.
     void pollTxMeters();
 
+    // ── SMeterWidget poll helper (Task 41, Phase 3P-II) ──────────────────────
+    // Branches on m_sMeter->rxMode() to read the correct WDSP source and
+    // calls m_sMeter->setLevel(dbm).  Called from poll() when m_inTx=false.
+    // Selector mapping (from Thetis Console/console.cs:954-957 [@501e3f5]):
+    //   SMeter / SMeterPeak  -> GetRXAMeter(ch, RXA_S_PK)  (enum 0)
+    //   SignalAverage        -> GetRXAMeter(ch, RXA_S_AV)  (enum 1)
+    //   MaxBin               -> GetDetectMaxBin(disp=0)
+    void pollSMeter();
+
     // m_avgWindow: averaging window size set by MultimeterPage (Task 3.1).
     // Task 3.2 will use this value in dispatch; stored here for round-trip.
     // From Thetis udDisplayMeterAvg (display.cs) [v2.10.3.13].
@@ -208,6 +278,10 @@ private:
 
     QTimer m_timer;
     QPointer<RxChannel> m_rxChannel;
+
+    /// Slice ids to poll for the per-slice S-meter pass; see setSliceChannels.
+    /// Slice id == WDSP RX channel id, so these index rxChannel() directly.
+    QList<int> m_sliceChannels;
     // Non-owning TX channel pointer (H.2).  Valid only while WdspEngine has
     // opened the TX channel (after createTxChannel()).  Guarded in poll().
     // QPointer auto-clears when TxChannel is destroyed — matches m_rxChannel
@@ -228,6 +302,19 @@ private:
     // disconnected on re-set or when status is nullptr.
     RadioStatus*            m_radioStatus{nullptr};
     QMetaObject::Connection m_powerConn;
+
+    // SMeterWidget + WdspEngine (Task 41, Phase 3P-II).
+    // Both are non-owning raw pointers.  QPointer for SMeterWidget matches
+    // the m_rxChannel / m_txChannel safety pattern above.
+    QPointer<SMeterWidget>  m_sMeter;
+    WdspEngine*             m_wdspEngine{nullptr};
+
+    // RX meter cal offset (Thetis-faithful port).  Set via
+    // setRxOffsetSource(); empty callable yields 0.0 dB (no offset).
+    // Polled once per pollSMeter() invocation, then reused for the
+    // poll() SignalPeak/SignalAvg loop and the smeterUpdated emit.
+    // See setRxOffsetSource() doc for Thetis console.cs:46821 cite.
+    std::function<double()> m_rxOffsetSource;
 };
 
 } // namespace NereusSDR

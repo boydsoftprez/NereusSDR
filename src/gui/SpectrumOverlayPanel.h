@@ -3,7 +3,7 @@
 // Ported from AetherSDR SpectrumOverlayMenu — same visual style, adapted
 // for NereusSDR's OpenHPSDR/Thetis feature set.
 //
-// 10 buttons (68×22px, stacked vertically) + 5 flyout sub-panels.
+// 8 buttons (68×22px, stacked vertically) + 4 flyout sub-panels.
 // Positioned via move() as a child of the spectrum widget.
 
 // =================================================================
@@ -30,7 +30,7 @@
 //   2026-04-20 — Phase 3O Sub-Phase 9 Task 9.2c (issue #70 fold-in):
 //                 added setRadioModel() so the previously-disabled VAX Ch
 //                 combo on the left-edge overlay is now wired bidirectionally
-//                 to slice 0's vaxChannel() with echo prevention. IQ Ch
+//                 to the resolved pan slice's vaxChannel() with echo prevention. IQ Ch
 //                 stays feature-flagged off (design spec §6.7/§11.3 —
 //                 audio/SendIqToVax stored-but-not-active). J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
@@ -41,6 +41,7 @@
 
 #include <QWidget>
 #include <QVector>
+#include <functional>
 
 class QPushButton;
 class QComboBox;
@@ -53,6 +54,7 @@ namespace NereusSDR {
 
 struct BoardCapabilities;
 class RadioModel;
+class SliceModel;
 
 class SpectrumOverlayPanel : public QWidget {
     Q_OBJECT
@@ -60,12 +62,25 @@ class SpectrumOverlayPanel : public QWidget {
 public:
     explicit SpectrumOverlayPanel(QWidget* parent = nullptr);
 
+    /// The panadapter this strip is drawn on. A control rendered on a pan acts
+    /// on THAT pan -- the id travels with the signals rather than the consumer
+    /// resolving an implicit "active" pan, so what a visible button does never
+    /// depends on hidden state. Same shape as AetherSDR's SpectrumOverlayMenu,
+    /// which carries m_panId and emits addRxClicked(m_panId)
+    /// (SpectrumOverlayMenu.cpp:315 [@c6481cbf]).
+    void setPanId(const QString& panId) { m_panId = panId; }
+    QString panId() const { return m_panId; }
+
     // Bind this overlay panel to a RadioModel. Enables the VAX Ch combo
-    // and wires it bidirectionally to slice 0's vaxChannel(). Safe to
+    // and wires it bidirectionally to the resolved pan slice. Safe to
     // call multiple times — each rebind drops prior SliceModel connections.
     // The IQ Ch combo remains disabled (feature-flagged per design spec
     // §6.7/§11.3 — audio/SendIqToVax is stored-but-not-active).
     void setRadioModel(RadioModel* model);
+
+    using SliceResolver = std::function<SliceModel*()>;
+    void setSliceResolver(SliceResolver resolver);
+    void bindToPanSlice();
 
     // Raise panel and all flyouts above siblings.
     void raiseAll();
@@ -73,7 +88,7 @@ public:
 public slots:
     // Phase 3P-I-a T18 — repopulate antenna combos from caps and hide
     // both RX/TX rows on boards without Alex (HL2/Atlas). Also reseeds
-    // the combo's current value from slice 0 so the label matches the
+    // the combo's current value from the resolved slice so the label matches the
     // new port list (e.g. a persisted ANT3 preserves after reconnect).
     void setBoardCapabilities(const NereusSDR::BoardCapabilities& caps);
 
@@ -102,9 +117,17 @@ signals:
     // Clarity adaptive tuning (Phase 3G-9c)
     void clarityRetuneRequested();
 
-    // NYI placeholders
-    void addRxClicked();
-    void addTnfClicked();
+    /// Add an RX slice on the pan this strip belongs to. Carries the pan id so
+    /// the consumer never has to guess which pan the operator meant.
+    void addRxClicked(const QString& panId);
+
+    /// Add a notch on the pan this strip belongs to. Carries the pan id for
+    /// the same reason addRxClicked does: a control rendered on a pan acts on
+    /// THAT pan, never on whichever pan is implicitly "active".
+    ///
+    /// A pure signal. The notch centre is composed by NotchModel and the add
+    /// is issued by MainWindow, so no DSP logic lands in this file.
+    void addTnfClicked(const QString& panId);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
@@ -122,6 +145,9 @@ public:
     void setClarityStatus(bool active, bool paused);
 
 private:
+    /// Which panadapter this strip is drawn on; see setPanId.
+    QString m_panId;
+
     // Layout
     void updateLayout();
     void toggle();
@@ -144,7 +170,7 @@ private:
 
     // ── Main button strip ────────────────────────────────────────────────
     QPushButton*         m_collapseBtn{nullptr};
-    QVector<QPushButton*> m_menuBtns;   // indices 0-8 (buttons 2-10)
+    QVector<QPushButton*> m_menuBtns;   // indices 0-6 (buttons 2-8)
     bool                 m_expanded{true};
 
     // ── Active flyout tracking (one visible at a time) ───────────────────
@@ -163,7 +189,7 @@ private:
     QComboBox*   m_rxAntCmb{nullptr};
     QComboBox*   m_txAntCmb{nullptr};
     // Stored so the widget→model connection ordering inside setRadioModel
-    // can replicate the bindToSliceZero pattern used for VAX.
+    // can replicate the per-pan rebind pattern used for VAX.
     QMetaObject::Connection m_rxAntConn;
     QMetaObject::Connection m_txAntConn;
     QSlider*     m_rfGainSlider{nullptr};
@@ -200,14 +226,11 @@ private:
     // prior subscription. m_updatingFromModel guards the echo path
     // (model → widget) from re-triggering the widget → model side.
     RadioModel*              m_radioModel{nullptr};
+    SliceResolver            m_sliceResolver;
     QMetaObject::Connection  m_vaxChannelConn;
     bool                     m_updatingFromModel{false};
 
-    // Seat (or re-seat) the Model→Widget subscription onto whichever
-    // SliceModel currently occupies index 0. Called from setRadioModel()
-    // at bind time AND from the sliceAdded/sliceRemoved listeners so a
-    // late-arriving or reshuffled slice 0 rebinds cleanly.
-    void bindToSliceZero();
+    SliceModel* resolvedSlice() const;
 
     // ── Waterfall zoom buttons (bottom-left of spectrum widget) ──────────
     QWidget*     m_zoomStrip{nullptr};   // container for the 4 zoom buttons

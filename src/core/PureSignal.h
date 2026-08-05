@@ -150,6 +150,11 @@ public:
     void setAutoCalEnabled(bool on);
     bool isAutoCalEnabled() const noexcept { return m_autoCalEnabled; }
 
+    // Effective radio/DDC run state. This follows the cmd-state machine's
+    // PSEnabled transitions (Auto Cal, Single Cal, restore, and teardown),
+    // unlike isAutoCalEnabled(), which is only the user's auto-cal preference.
+    bool isPsEnabled() const noexcept { return m_psEnabled; }
+
     // ForcePS body — PSForm.cs:924-954 [v2.10.3.13].  Re-issues
     // SetPSControl based on _autoON (single 1,0,0,0 vs auto 0,0,1,0)
     // plus all the state-transfer setter calls (LoopDelay / TXDelay /
@@ -229,6 +234,35 @@ public:
     // From Thetis PSForm.cs:1103-1105 [v2.10.3.13]:
     //   public static int CalibrationCount { get { return _info[5]; } }
     int calibrationCount() const noexcept { return m_calCount.load(); }
+
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): expose raw info[i] so the
+    // PsForm dialog can update all 9 calibration labels per Thetis
+    // PSForm.cs:561-573 timer1code [v2.10.3.13]:
+    //   lblPSInfo0.Text = puresignal.Info[0].ToString();   // bldr.rx
+    //   lblPSInfo1.Text = puresignal.Info[1].ToString();   // bldr.cm
+    //   lblPSInfo2.Text = puresignal.Info[2].ToString();   // bldr.cc
+    //   lblPSInfo3.Text = puresignal.Info[3].ToString();   // bldr.cs
+    //   lblPSfb2.Text   = puresignal.FeedbackLevel.ToString();   // info[4]
+    //   lblPSInfo5.Text = puresignal.CalibrationCount.ToString();// info[5]
+    //   lblPSInfo6.Text = puresignal.Info[6].ToString();   // sln.chk
+    //   lblPSInfo13.Text = puresignal.Info[13].ToString(); // dg.cnt
+    //   lblPSInfo15.Text = puresignal.Info[15].ToString(); // state
+    // Pre-fix PsForm only wired lblPSInfo5 (CalibrationCount); the other
+    // 8 fields stayed visually stuck at 0 because nothing pushed info[]
+    // values to them.  Bench-confirmed by JJ 2026-05-23 16:34 — the
+    // PsForm calibration grid showed state/sln.chk/dg.cnt all 0 while
+    // the engine log clearly showed corrApplied=1 windows running.
+    // Returns 0 for out-of-range indices.
+    int infoAt(int idx) const noexcept {
+        return (idx >= 0 && idx < 16) ? m_info[idx] : 0;
+    }
+
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): Thetis PSForm.cs:614
+    // timer1code [v2.10.3.13]:
+    //   lblPSHWPeak.Text = puresignal.HWPeak.ToString("F4");
+    // where HWPeak getter wraps GetPSHWPeak.  Pre-fix our PsForm
+    // m_lblGetPSpeak was created but never updated.
+    double getHwPeak() const;
 
 #ifdef NEREUS_BUILD_TESTS
     // Test seam (PR #212 follow-up bench fix, J.J. KG4VCF, 2026-05-07):

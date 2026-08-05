@@ -122,10 +122,41 @@
 //                 RX audio panel instead of an external post-DSP scalar.
 //                 wdsp/rxa.c:538 [v2.10.3.14] initializes panel.gain1 = 4.0
 //                 (+12 dB), so a host that never calls SetRXAPanelGain1
-//                 ships hot — that's the distortion-at-high-volume bug
+//                 ships hot -- that's the distortion-at-high-volume bug
 //                 surfaced 2026-05-07.  Thetis radio.cs:1089 [v2.10.3.14]
 //                 RXOutputGain setter is the canonical call site; signature
 //                 matches dsp.cs:399-400 P/Invoke decl and wdsp/patchpanel.c:142.
+//                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-05-19  SetupDetectMaxBin + GetDetectMaxBin declarations added by
+//                 J.J. Boyd (KG4VCF) during Phase 3P-II Phase 2 Task 31/32
+//                 (Analog S-Meter port, MaxBin peak-bin detector wrappers).
+//                 Signatures match Thetis Console/dsp.cs:846-850 [@501e3f5]
+//                 P/Invoke decls and wdsp/analyzer.c:775+830 [@501e3f5].
+//                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-08-01  RXANBPSetTuneFrequency declaration added by J.J. Boyd
+//                 (KG4VCF) during the Tunable Notch Filter epic, Task 1
+//                 (docs/architecture/2026-07-28-tunable-notch-filter-
+//                 design.md section 4). Nothing in this tree had ever
+//                 called it, so every RXA channel's notchdb.tunefreq sat at
+//                 its construction default and calc_nbp_lightweight mapped
+//                 notch centres from the wrong RF origin
+//                 (offset = b->tunefreq + b->shift, wdsp/nbp.c:192).
+//                 Signature matches Thetis Console/dsp.cs:718-719
+//                 [v2.10.3.15] P/Invoke decl and wdsp/nbp.c:475.
+//                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-08-01  RXANBPAddNotch, RXANBPGetNotch, RXANBPEditNotch,
+//                 RXANBPDeleteNotch, RXANBPGetNumNotches,
+//                 RXANBPSetNotchesRun, RXANBPGetMinNotchWidth,
+//                 RXANBPSetAutoIncrease declarations added by J.J. Boyd
+//                 (KG4VCF) during the Tunable Notch Filter epic, Task 2,
+//                 the RxChannel manual-notch wrappers. Signatures match
+//                 wdsp/nbp.c:362, 393, 444, 418, 465, 499, 594, 604
+//                 [v2.10.3.15]; managed-side P/Invoke decls are
+//                 Console/dsp.cs:703-737 [v2.10.3.15]. None of the eight
+//                 are declared in the vendored third_party/wdsp/src/nbp.h,
+//                 which exports only RXANBPSetFreqs / SetNC / SetMP
+//                 (nbp.h:96-100), the same situation as the existing
+//                 RXANBPSetShiftFrequency declaration.
 //                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
@@ -345,10 +376,76 @@ void SetRXAShiftRun(int channel, int run);
 void SetRXAShiftFreq(int channel, double fshift);
 
 // ---------------------------------------------------------------------------
-// Notch bandpass shift (nbp.h) — From Thetis radio.cs:1418
+// Notch bandpass shift (nbp.h). From Thetis radio.cs:1420 [v2.10.3.15]
 // ---------------------------------------------------------------------------
 
 void RXANBPSetShiftFrequency(int channel, double shift);
+
+// ---------------------------------------------------------------------------
+// Notch bandpass tune frequency (nbp.h): the RF origin the per-channel notch
+// database maps its absolute-Hz notch centres from.
+// calc_nbp_lightweight computes offset = tunefreq + shift
+// (third_party/wdsp/src/nbp.c:192), so this is the hosting DDC stream's
+// CENTRE, NOT the slice frequency: RXANBPSetShiftFrequency above already
+// carries the slice's displacement from that centre.
+// From Thetis console.cs:31940-31941 [v2.10.3.15] (RX1 pushes the same
+// tunefreq to both subrx ids, RX1DDSFreq being CentreFrequency at
+// console.cs:31932) and console.cs:32926 [v2.10.3.15] (RX2).
+// Internally idempotent: nbp.c:479 guards on if (tunefreq != a->tunefreq).
+// ---------------------------------------------------------------------------
+
+void RXANBPSetTuneFrequency(int channel, double tunefreq);
+
+// ---------------------------------------------------------------------------
+// Manual notch filter: the per-channel notch database (WDSP nbp.c)
+// From Thetis Project Files/Source/Console/dsp.cs:703-737 [v2.10.3.15],
+// P/Invoke declarations. Thetis marshals `active` / `run` / `autoincr` as C#
+// bool, which DllImport marshals as a 4-byte Win32 BOOL; the C signatures
+// below take int, which is the same wire value.
+//
+// The vendored third_party/wdsp/src/nbp.h declares only RXANBPSetFreqs (:96),
+// RXANBPSetNC (:98) and RXANBPSetMP (:100). Every entry point below is
+// PORT-exported from nbp.c but absent from that header, which is why it has to
+// be declared here. RXANBPSetNC is deliberately NOT declared: the route to it
+// already exists transitively through RXASetNC (RXA.c:1043).
+// ---------------------------------------------------------------------------
+
+// nbp.c:362, an INSERT at position `notch`. Returns -1 and mutates nothing
+// when notch > nn or the database is already full (RXA.c:88 sizes it at 1024).
+// Callers must surface the -1; the recovery is a full resync.
+int RXANBPAddNotch(int channel, int notch, double fcenter, double fwidth,
+                   int active);
+
+// nbp.c:393, readback. Returns -1 and writes fcenter = -1.0, fwidth = 0.0,
+// active = -1 when notch >= nn.
+int RXANBPGetNotch(int channel, int notch, double* fcenter, double* fwidth,
+                   int* active);
+
+// nbp.c:444, overwrite in place. Returns -1 when notch >= nn.
+int RXANBPEditNotch(int channel, int notch, double fcenter, double fwidth,
+                    int active);
+
+// nbp.c:418, erase and shift the remaining entries down one slot. Returns -1
+// when notch >= nn.
+int RXANBPDeleteNotch(int channel, int notch);
+
+// nbp.c:465
+void RXANBPGetNumNotches(int channel, int* nnotches);
+
+// nbp.c:499, the ONLY writer of notchdb.master_run. RXA.c:86-88 builds every
+// database with master_run = 0 and nbp0 with its notch-run flag 0, and both
+// calc_nbp_lightweight (nbp.c:190) and calc_nbp_impulse (nbp.c:223) bypass the
+// database entirely when fnfrun is 0. A channel that never gets this call is
+// notch-inert, not merely notch-empty.
+void RXANBPSetNotchesRun(int channel, int run);
+
+// nbp.c:594, narrowest notch the current filter can realise. Varies with the
+// filter's coefficient count and sample rate (min_notch_width, nbp.c:82-95),
+// so it is not a constant.
+void RXANBPGetMinNotchWidth(int channel, double* minwidth);
+
+// nbp.c:604
+void RXANBPSetAutoIncrease(int channel, int autoincr);
 
 // ---------------------------------------------------------------------------
 // Patch panel (patchpanel.h) — final mix stage in RXA pipeline
@@ -556,6 +653,14 @@ void SetEXTANBAdvtime(int id, double time);
 void SetEXTANBBacktau(int id, double tau);
 void SetEXTANBThreshold(int id, double thresh);
 
+// Live buffer/rate setters — called from the SetXcmInrate-equivalent path
+// (NbFamily::setSampleRate) when the channel input rate or buffer size
+// changes without re-create. Each updates the internal field then calls
+// initBlanker() to recompute time-domain constants.
+// From Thetis specHPSDR.cs (declared) + WDSP nob.c:354-373.
+void SetEXTANBBuffsize(int id, int size);
+void SetEXTANBSamplerate(int id, int rate);
+
 // ---------------------------------------------------------------------------
 // Noise blanker II — external (nobII.h, nobII.c)
 // ---------------------------------------------------------------------------
@@ -606,6 +711,12 @@ void SetEXTNOBThreshold(int id, double thresh);
 // From Thetis specHPSDR.cs:931 — SetEXTNOBBacktau(int id, double tau)
 // WDSP: third_party/wdsp/src/nobII.c
 void SetEXTNOBBacktau(int id, double tau);
+
+// Live buffer/rate setters — companion to the NB1 pair above.
+// From Thetis specHPSDR.cs (declared) + WDSP nobII.c:666-683. Each updates
+// the internal field then calls init_nob() to recompute time-domain constants.
+void SetEXTNOBBuffsize(int id, int size);
+void SetEXTNOBSamplerate(int id, int rate);
 
 // ---------------------------------------------------------------------------
 // APF — Audio Peak Filter (apfshadow.c / apfshadow.h)
@@ -681,6 +792,25 @@ void SetRXAFMSQThreshold(int channel, double threshold);
 double GetRXAMeter(int channel, int mt);
 
 double GetTXAMeter(int channel, int mt);
+
+// ---------------------------------------------------------------------------
+// Peak-bin detector (analyzer.c)
+//
+// These two functions configure and read the "strongest bin in passband"
+// detector that Thetis drives from setupDisplayMaxBinDetect().
+//
+// From Thetis Console/dsp.cs:846-847 [@501e3f5] (P/Invoke declarations):
+//   void SetupDetectMaxBin(int run, int disp, int ss, int LO, double rate,
+//                          double fLow, double fHigh, double tau, int frame_rate)
+//   double GetDetectMaxBin(int disp)
+// From Thetis wdsp/analyzer.c:775 and 830 [@501e3f5] (C implementation).
+// Call site: Thetis Console/console.cs:51150 [@501e3f5]
+// ---------------------------------------------------------------------------
+
+void SetupDetectMaxBin(int run, int disp, int ss, int LO, double rate,
+                       double fLow, double fHigh, double tau, int frame_rate);
+
+double GetDetectMaxBin(int disp);
 
 // ---------------------------------------------------------------------------
 // Wisdom + impulse cache (wisdom.c, impulse_cache.h)
@@ -1351,6 +1481,44 @@ void TXASetSipDisplay(int channel, int disp);
 // default is the existing TXA.c:586 position, BEFORE xiqc — pre-PS
 // correction = the clean intended signal Thetis displays)
 void TXASetSipPosition(int channel, int pos);
+// =====================================================================
+// External Diversity (WDSP div.c, Warren Pratt NR0V).
+// From Thetis Project Files/Source/Console/dsp.cs:609-619 [v2.10.3.15]
+// P/Invoke declarations + wdsp/src/div.c:138-187 [v2.10.3.15] definitions.
+//
+// Keyed off pdiv[id] (MAX_EXT_DIVS=2) — create_divEXT() must run first.
+// id here is the External Diversity id, NOT the RXA channel id used
+// elsewhere in this header.  Caller is responsible for the lifetime.
+// =====================================================================
+
+// Allocate one of WDSP's two process-wide external-diversity slots.
+// From Thetis ChannelMaster/sync.c:32-35 and wdsp/div.c:108 [v2.10.3.15] [@501e3f5].
+void create_divEXT(int id, int run, int nr, int size);
+
+// Release a slot allocated by create_divEXT.
+// From Thetis ChannelMaster/sync.c:38-41 and wdsp/div.c:114 [v2.10.3.15] [@501e3f5].
+void destroy_divEXT(int id);
+
+// Combine nsamples complex samples from the configured inputs.
+// From Thetis ChannelMaster/sync.c:45-51 and wdsp/div.c:126 [v2.10.3.15] [@501e3f5].
+void xdivEXT(int id, int nsamples, double** in, double* out);
+
+// 0 - does nothing; 1 - operates
+// From Thetis wdsp/div.c:138 [v2.10.3.15].
+void SetEXTDIVRun(int id, int run);
+
+// Number of receivers being used for diversity.
+// From Thetis wdsp/div.c:158 [v2.10.3.15].
+void SetEXTDIVNr(int id, int nr);
+
+// Number of which receiver to output. If output == nr, mixing occurs.
+// From Thetis wdsp/div.c:169 [v2.10.3.15].
+void SetEXTDIVOutput(int id, int output);
+
+// I and Q "rotate" multipliers for each receiver. Can be set to
+// 1.0 / 0.0 for the "reference receiver".
+// From Thetis wdsp/div.c:180 [v2.10.3.15].
+void SetEXTDIVRotate(int id, int nr, double* Irotate, double* Qrotate);
 
 } // extern "C"
 

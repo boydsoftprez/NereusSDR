@@ -1,0 +1,144 @@
+<h2>Multi-band on same ADC → per-pan WIDE badge</h2>
+<p class="subtitle">Your scenario: 20m slice on ANT1, add a 40m slice on ANT1. What happens to filtering and what does the operator see?</p>
+
+<h3>Step-by-step walkthrough</h3>
+<div class="mockup">
+  <div class="mockup-header">Slice A on 20m (ANT1) — then operator adds Slice B on 40m (also ANT1)</div>
+  <div class="mockup-body" style="font-family:monospace;font-size:11px;color:#cde;padding:14px;line-height:1.8">
+    <strong style="color:#8aa8c0">Before:</strong><br>
+    &nbsp;&nbsp;Slice A → 14.225 MHz → DDC2 → ADC0 → ANT1<br>
+    &nbsp;&nbsp;Alex0 BPF = 20m (filtered, good OOB rejection)<br>
+    &nbsp;&nbsp;Pan showing Slice A: <span style="color:#5cb85c">no WIDE badge</span><br>
+    <br>
+    <strong style="color:#fc9">Operator clicks "+ RX" on a pan, picks 40m for Slice B:</strong><br>
+    <br>
+    <strong style="color:#8aa8c0">Codec decision:</strong><br>
+    &nbsp;&nbsp;Slice B needs a DDC. Routing options:<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;a) DDC3 → ADC1 (different ADC, no BPF conflict) ← preferred if 2-ADC board<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;b) DDC3 → ADC0 (same ADC, BPF conflict) ← only option if 1-ADC board, or if operator routed via Setup<br>
+    <br>
+    <strong style="color:#fc9">If 2-ADC board (G2-class):</strong><br>
+    &nbsp;&nbsp;Slice B → DDC3 → ADC1 → ANT1 (auto-distributed to second ADC)<br>
+    &nbsp;&nbsp;Alex1 BPF = 40m (filtered)<br>
+    &nbsp;&nbsp;Alex0 BPF stays 20m (Slice A still filtered)<br>
+    &nbsp;&nbsp;Pan A: <span style="color:#5cb85c">no WIDE badge</span><br>
+    &nbsp;&nbsp;Pan B: <span style="color:#5cb85c">no WIDE badge</span><br>
+    &nbsp;&nbsp;<em style="color:#888"># both slices filtered, both bands clean</em><br>
+    <br>
+    <strong style="color:#fc9">If 1-ADC board (HL2 / Hermes) — or 2-ADC with both slices forced to same ADC:</strong><br>
+    &nbsp;&nbsp;Slice B → DDC1 → ADC0 → ANT1 (same ADC as Slice A)<br>
+    &nbsp;&nbsp;AlexController.recomputeBpf(ADC0) fires:<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;uniqueBands = {20m, 40m} → 2 bands → can't filter both<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;state.effective = BYPASS<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;state.reasonText = "BYPASS (multi-band: 20m + 40m)"<br>
+    &nbsp;&nbsp;Pan A: <span style="color:#fc9">WIDE badge appears top-right</span><br>
+    &nbsp;&nbsp;Pan B: <span style="color:#fc9">WIDE badge appears top-right</span><br>
+    &nbsp;&nbsp;<em style="color:#888"># both slices unfiltered, both potentially see OOB signals/noise</em>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">The WIDE badge — what the operator sees</h3>
+
+<div style="background:#0d1218;border:1px solid #2a3548;border-radius:4px;padding:0;margin:16px auto;max-width:880px;overflow:hidden">
+
+  <div style="display:flex;gap:1px;background:#0d1218">
+    <div style="flex:1;background:linear-gradient(180deg,#1a3548 0%,#0d1218 50%,#1a1a3a 75%,#3a1a3a 100%);height:220px;position:relative">
+      <div style="background:linear-gradient(180deg,#3a4a5a 0%,#2a3a4a 50%,#1a2a38 100%);padding:4px 10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #44556a">
+        <span style="color:#8aa8c0;font-size:10px;font-weight:bold">SLICE A · DDC0 · 14.225 MHz USB · 192 kHz</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span style="background:#fc9;color:#0d1218;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:2px">A · TX</span>
+          <span style="background:#a87a3a;color:#fff;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:2px;border:1px solid #c89a5a;letter-spacing:0.5px" title="Alex BPF bypassed — multi-band on ADC0 (20m + 40m). Reduced out-of-band rejection.">WIDE</span>
+        </div>
+      </div>
+      <div style="position:absolute;top:26px;left:0;right:0;height:12px;display:flex;justify-content:space-between;padding:0 6px;font-size:8px;color:#557">
+        <span>14.130</span><span>14.180</span><span>14.225</span><span>14.270</span><span>14.320</span>
+      </div>
+      <div style="position:absolute;top:42px;left:0;right:0;height:80px">
+        <svg viewBox="0 0 460 80" style="width:100%;height:100%">
+          <path d="M0,72 L40,68 L80,70 L120,62 L160,68 L180,42 L200,52 L220,65 L228,28 L240,42 L260,62 L280,68 L320,70 L360,62 L400,68 L440,70 L460,72" stroke="#6acb6a" stroke-width="1.2" fill="none"/>
+        </svg>
+      </div>
+      <div style="position:absolute;top:40px;bottom:80px;left:50%;width:1px;background:#fc9"></div>
+      <div style="position:absolute;top:40px;bottom:80px;left:48%;width:5%;background:rgba(255,200,100,0.15)"></div>
+      <div style="position:absolute;bottom:0;left:0;right:0;height:80px;background:repeating-linear-gradient(180deg,#1a1a3a 0%,#3a2a5a 30%,#5a3a3a 60%,#8a5a3a 90%);opacity:0.6"></div>
+    </div>
+
+    <div style="flex:1;background:linear-gradient(180deg,#481a35 0%,#0d1218 50%,#1a1a3a 75%,#3a1a3a 100%);height:220px;position:relative">
+      <div style="background:linear-gradient(180deg,#3a4a5a 0%,#2a3a4a 50%,#1a2a38 100%);padding:4px 10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #44556a">
+        <span style="color:#8aa8c0;font-size:10px;font-weight:bold">SLICE B · DDC1 · 7.150 MHz LSB · 96 kHz</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span style="background:#a66;color:#fff;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:2px">B</span>
+          <span style="background:#a87a3a;color:#fff;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:2px;border:1px solid #c89a5a;letter-spacing:0.5px" title="Alex BPF bypassed — multi-band on ADC0 (20m + 40m). Reduced out-of-band rejection.">WIDE</span>
+        </div>
+      </div>
+      <div style="position:absolute;top:26px;left:0;right:0;height:12px;display:flex;justify-content:space-between;padding:0 6px;font-size:8px;color:#557">
+        <span>7.102</span><span>7.126</span><span>7.150</span><span>7.174</span><span>7.198</span>
+      </div>
+      <div style="position:absolute;top:42px;left:0;right:0;height:80px">
+        <svg viewBox="0 0 460 80" style="width:100%;height:100%">
+          <path d="M0,68 L40,62 L80,68 L120,55 L150,38 L170,52 L200,62 L220,65 L240,68 L280,58 L320,62 L340,42 L360,52 L400,68 L440,65 L460,68" stroke="#6acb6a" stroke-width="1.2" fill="none"/>
+        </svg>
+      </div>
+      <div style="position:absolute;top:40px;bottom:80px;left:50%;width:1px;background:#a66"></div>
+      <div style="position:absolute;top:40px;bottom:80px;left:47%;width:6%;background:rgba(170,100,100,0.18)"></div>
+      <div style="position:absolute;bottom:0;left:0;right:0;height:80px;background:repeating-linear-gradient(180deg,#1a1a3a 0%,#3a2a5a 30%,#5a3a3a 60%,#8a5a3a 90%);opacity:0.6"></div>
+    </div>
+  </div>
+
+  <div style="background:#0a0e14;padding:6px 12px;border-top:1px solid #2a3548;font-size:10px;color:#aac;display:flex;justify-content:space-between">
+    <span>Alex0: <strong style="color:#a87a3a">BYPASS (multi-band: 20m + 40m)</strong> · Alex1: not in use · Connected · 18% Mbps</span>
+    <span style="color:#666">Hover WIDE badge for explanation</span>
+  </div>
+
+</div>
+
+<p style="font-size:11px;color:#8aa;text-align:center;margin-top:10px">Both pans get the WIDE badge because both source DDCs share ADC0 with bypassed BPF. Bottom banner echoes the reason for redundancy / quick scan.</p>
+
+<h3 style="margin-top:24px">When the WIDE badge appears (full rules)</h3>
+<div class="mockup">
+  <div class="mockup-header">WIDE badge follows the ADC, every pan whose DDC sources from a bypassed ADC sees it</div>
+  <div class="mockup-body" style="padding:0">
+    <table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:11px;color:#cde">
+      <thead><tr style="background:#2a3548;color:#8aa8c0;font-size:10px;text-transform:uppercase">
+        <th style="padding:6px;text-align:left">Cause of bypass</th>
+        <th style="padding:6px;text-align:left">Tooltip text on badge</th>
+        <th style="padding:6px;text-align:left">Pans showing badge</th>
+      </tr></thead>
+      <tbody>
+        <tr style="background:#1a2030"><td style="padding:6px">Multi-band slices share ADC (auto)</td><td>"Alex BPF bypassed — multi-band on ADCN (bands…). Reduced out-of-band rejection."</td><td>Every pan whose DDC is on ADCN</td></tr>
+        <tr><td style="padding:6px">Operator force-bypass via menu</td><td>"Alex BPF bypassed (operator override)."</td><td>Every pan on ADCN</td></tr>
+        <tr style="background:#1a2030"><td style="padding:6px">Any pan zoomed out to extended view</td><td>"Alex BPF bypassed — extended pan active on ADCN."</td><td>Every pan on ADCN (the extension request causes it)</td></tr>
+        <tr><td style="padding:6px">Wideband-only pan source (if we still support it as separate)</td><td>"Wideband active — BPF bypassed."</td><td>Every pan on that ADC</td></tr>
+        <tr style="background:#1a2030"><td style="padding:6px">PS active during MOX (HPF bypass for FB ADC only)</td><td>NOT shown — this is HPF, not BPF. Different filter, different concern. Bottom banner still surfaces "PS FB active".</td><td>None (PS-specific, transient, doesn't warrant pan badge)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">Visual design choices for the badge</h3>
+<div style="background:#1a2030;padding:14px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  <strong style="color:#8aa8c0">Color:</strong> warm amber (<code>#a87a3a</code> background, <code>#c89a5a</code> border). Distinct from the slice letter badge (which uses the slice's color) and from the TX badge (red). Amber says "caution, not alarm" — it's a warning, not a danger.<br><br>
+
+  <strong style="color:#8aa8c0">Placement:</strong> top-right of each affected pan, in the title bar row, immediately after the slice letter badge. Always visible when active, never blinks.<br><br>
+
+  <strong style="color:#8aa8c0">Tooltip:</strong> hover reveals reason (multi-band / operator / extended / wideband). Text is verbatim from <code>AlexAdcState::reasonText</code> so operator and design doc stay in sync.<br><br>
+
+  <strong style="color:#8aa8c0">Click behavior:</strong> click the badge → opens the Alex Filter Policy popup (set Auto / ForceFilter / ForceBypass for this ADC). Lets operator override the auto behavior right from the pan.<br><br>
+
+  <strong style="color:#8aa8c0">Bottom banner:</strong> still shows the per-Alex state ("Alex0: BYPASS (multi-band)") for redundancy and quick whole-radio scan. Both surfaces tell the same truth.
+</div>
+
+<h3 style="margin-top:24px">Edge cases I want to call out</h3>
+<div style="background:#2a3548;padding:14px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  <strong style="color:#fc9">E1.</strong> Operator removes Slice B (40m). AlexController recomputes ADC0: only 20m remains. BPF re-engages on 20m. WIDE badge clears from Pan A. No friction, just disappears.<br><br>
+
+  <strong style="color:#fc9">E2.</strong> Operator retunes Slice B from 40m back to 20m. Now both slices on 20m → recompute → 1 band → BPF re-engages. WIDE badges clear from both pans.<br><br>
+
+  <strong style="color:#fc9">E3.</strong> 2-ADC board, operator forces both slices to ADC0 via Setup → DDC Routing override. Codec respects the override, AlexController fires recompute, both pans get WIDE badge with tooltip "Alex BPF bypassed — multi-band on ADC0 (20m + 40m). Reduced out-of-band rejection." Operator sees the consequence of their routing choice clearly.<br><br>
+
+  <strong style="color:#fc9">E4.</strong> Operator zooms one pan out to extended view (wideband wings). That pan's badge appears with tooltip "extended pan active on ADC0". The OTHER pan on ADC0 also gets the WIDE badge (BPF is bypassed for the whole ADC, affects every DDC on it). Both pans show why.<br><br>
+
+  <strong style="color:#fc9">E5.</strong> Operator clicks WIDE badge → popup: "Alex Filter Policy ADC0: [Auto ✓] [Force Filter] [Force Bypass]". Operator picks Force Filter. Auto recompute is suppressed; BPF engages to (say) the TX-bound slice's band. WIDE badge stays visible but tooltip changes to "BPF forced (operator) — non-band slice may see attenuation." Different message, but still warns.
+</div>
+
+<p class="subtitle" style="margin-top:24px;text-align:center">Locking in: WIDE badge per pan, follows the ADC, click → policy popup. Pan title bar gets: slice letter badge · [TX badge if TX-bound] · [WIDE badge if BPF bypassed]. Bottom banner echoes for whole-radio glance. Matches Policy D semantics, just gives operators a much clearer per-pan visual cue.</p>

@@ -43,6 +43,12 @@ public:
         setFixedHeight(16);
         setMinimumWidth(60);
         setCursor(Qt::PointingHandCursor);
+        // Performance: paintEvent fills rect() opaquely (line ~82) as
+        // the first draw, so Qt does not need to composite our parent
+        // under us.  Saves one IOSurface memmove per paint — meaningful
+        // because MeterSlider sits in TX applets that update at 10-20 Hz
+        // while transmitting.
+        setAttribute(Qt::WA_OpaquePaintEvent);
     }
 
     float gain() const { return m_gain; }

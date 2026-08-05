@@ -210,6 +210,20 @@ void PureSignal::setEnabled(bool enabled)
     emit enabledChanged(m_enabled);
 }
 
+double PureSignal::getHwPeak() const
+{
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): expose calcc's current
+    // hardware peak so PsForm GetPk label can mirror Thetis PSForm.cs:614
+    // [v2.10.3.13].  Returns 0.0 when no TX channel is bound (e.g.
+    // pre-connect).  Const-cast required because TxChannel::getPSHWPeak
+    // wraps a non-const WDSP call (GetPSHWPeak); the WDSP call itself
+    // is read-only despite the missing const qualifier.
+    if (!m_tx) {
+        return 0.0;
+    }
+    return const_cast<TxChannel*>(m_tx)->getPSHWPeak();
+}
+
 void PureSignal::setAutoCalEnabled(bool on)
 {
     // From Thetis PSForm.cs:272-289 AutoCalEnabled property [v2.10.3.13]:
@@ -222,6 +236,27 @@ void PureSignal::setAutoCalEnabled(bool on)
     m_autoCalEnabled = on;
     if (m_autoCalEnabled) {
         m_autoON = true;
+        // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): sync m_aaLastSeenCalCount
+        // to the live m_calCount so the FIRST autoAttentionTick after PS
+        // engagement does NOT fire on stale info[4].  In Thetis the
+        // equivalent gate uses CalibrationAttemptsChanged (_info[5] !=
+        // _oldInfo[5]), and _oldInfo is updated every timer1 tick so
+        // _info[5] and _oldInfo[5] match between sessions.  Our auto-att
+        // path uses a separate scratch variable (m_aaLastSeenCalCount)
+        // that starts at 0 and is only updated inside autoAttentionTick.
+        // If calcc has been ticking (e.g. info[5]=99 from a prior MOX
+        // session), the first post-engage tick sees 99 != 0 and fires on
+        // whatever info[4] happens to be left in calcc's buffer from
+        // before — which on the G2E bench was fbLevel=337 (out-of-range
+        // > 256) triggering the 31.1 dB AutoAtt fallback, slamming ATT to
+        // 31, and starting a cascade of bad corrections.  Bench-confirmed
+        // on G2E PS run at 11:58:03.570 (log line ~17):
+        //   AutoAtt fbLevel=337 currentAttOnTx=0 → SetNewValues
+        //   AutoAtt setAttOnTx 0 → 31 dB (deltaDb=31)
+        // The fix: when PS engages, treat the current m_calCount as
+        // "already seen" so AutoAtt only fires on a NEW calcc cycle
+        // (m_calCount increments past the synced value).
+        m_aaLastSeenCalCount = m_calCount.load();
     } else {
         m_OFF = true;
     }
@@ -479,9 +514,35 @@ void PureSignal::setRelaxTolerance(bool on)
     if (on == m_relaxTolerance) { return; }
     m_relaxTolerance = on;
     if (m_tx) {
-        // From Thetis PSForm.cs chkPSRelaxPtol_CheckedChanged [v2.10.3.13]:
-        //   puresignal.SetPSPtol(_txachannel, chkPSRelaxPtol.Checked ? 0.8 : 0.4);
-        m_tx->setPSPtol(on ? 0.8 : 0.4);
+        // From Thetis PSForm.cs:805-810 chkPSRelaxPtol_CheckedChanged
+        // [v2.10.3.13]:
+        //   if (chkPSRelaxPtol.Checked)
+        //       puresignal.SetPSPtol(_txachannel, 0.400);
+        //   else
+        //       puresignal.SetPSPtol(_txachannel, 0.800);
+        //
+        // Adjacent upstream author tags preserved per CLAUDE.md GPL
+        // inline-tag rule (chkPSRelaxPtol_CheckedChanged sits between
+        // two MW0LGE-tagged neighbours in PSForm.cs):
+        //   //[2.10.3.7]MW0LGE attribution from adjacent UpdateWarningSetPk
+        //     line at PSForm.cs:802 (`pbWarningSetPk.Visible = _PShwpeak !=
+        //     HardwareSpecific.PSDefaultPeak; //[2.10.3.7]MW0LGE`).
+        //   //MW0LGE attribution from adjacent chkPSAutoAttenuate_CheckedChanged
+        //     line at PSForm.cs:815 (`AutoAttenuate = chkPSAutoAttenuate.Checked;
+        //     //MW0LGE use property`).
+        //
+        // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): the earlier port
+        // cite was misread as `Checked ? 0.8 : 0.4` (inverted) which
+        // landed `on ? 0.8 : 0.4`.  Re-reading the Thetis source line
+        // by line confirms the branches are the OTHER way: Checked
+        // -> 0.4 (stricter), Unchecked -> 0.8 (more permissive).
+        // Default state in Thetis is chkPSRelaxPtol unchecked at
+        // startup, so the construction-time ptol=0.8 (TXA.c:414) stays
+        // in effect until the user toggles the box.  Our prior
+        // inversion meant toggling the box flipped the engine from 0.8
+        // -> 0.4 -> 0.8 in the wrong direction relative to the
+        // checkbox label.
+        m_tx->setPSPtol(on ? 0.4 : 0.8);
     }
     emit relaxToleranceChanged(on);
 }
@@ -770,6 +831,23 @@ void PureSignal::onMoxChanged(bool mox)
     if (m_tx) {
         m_tx->setPSMox(mox);
     }
+
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): on each MOX-on transition
+    // while PS-A is armed, re-sync m_aaLastSeenCalCount = m_calCount so
+    // the FIRST autoAttentionTick after MOX engages waits for calcc to
+    // actually start a NEW cycle before firing.  Without this, calCount
+    // may have drifted between PS-on and MOX-on (e.g. if a PRIOR MOX
+    // cycle left calCount at N, and the next MOX-on starts cycle N+1),
+    // and the first auto-att fire would read info[4] from BEFORE the
+    // post-MOX PSCC pump has had time to fill its buffer — producing
+    // the same stale-data 31 dB ATT slam observed on the G2E bench at
+    // 11:58:03.570.  Cite: NereusSDR-only divergence (Thetis's parallel
+    // CalibrationAttemptsChanged gate uses _info[5] vs _oldInfo[5]
+    // which is auto-synced every timer1 tick — see setAutoCalEnabled
+    // header for the full story).
+    if (mox && m_autoCalEnabled) {
+        m_aaLastSeenCalCount = m_calCount.load();
+    }
 }
 
 // ── Polling tick (timer1code port) ────────────────────────────────────────
@@ -837,12 +915,34 @@ void PureSignal::processNewInfo(const int newInfo[16])
     // (~1 sec) so the bench can see whether calcc is progressing.
     static int diagCounter = 0;
     if (++diagCounter % 10 == 0) {
+        // hwPeak + maxTX added 2026-08-01 (J.J. Boyd, KG4VCF). PureSignal
+        // parks in LCOLLECT on a live HL2 with both PS streams measurably
+        // hot, so the question is no longer whether samples arrive but
+        // whether the binning can ever complete.
+        //
+        // LCOLLECT sorts by n = env * hw_scale * ints and needs all `ints`
+        // bins filled (calcc.c:733-775); hw_scale is 1/hwPeak. These two
+        // numbers decide it between them:
+        //
+        //   maxTX * (1/hwPeak) reaching ~1.0   the envelope spans the bins
+        //   much below 1.0                     only the low bins ever fill,
+        //                                      and full_ints resets every
+        //                                      4 seconds forever
+        //
+        // hwPeak is read back from the engine rather than from m_hwPeak, so
+        // a value that never reached WDSP shows up as the default instead of
+        // as the number we believe we pushed.
+        const double hwPeak = m_tx ? m_tx->getPSHWPeak() : -1.0;
+        const double maxTx  = m_tx ? m_tx->getPSMaxTX()  : -1.0;
         qCInfo(lcDsp).nospace()
             << "PureSignal info[]: state=" << newInfo[15]
             << " corrApplied=" << newInfo[14]
             << " calCount=" << newInfo[5]
             << " feedbackLevel=" << newInfo[4]
             << " dogCount=" << newInfo[13]
+            << " hwPeak=" << hwPeak
+            << " maxTX=" << maxTx
+            << " binReach=" << (hwPeak > 0.0 ? maxTx / hwPeak : -1.0)
             << " (mox=" << (m_mox && m_mox->isMox())
             << " autoCal=" << m_autoCalEnabled << ")";
     }

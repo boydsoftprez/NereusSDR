@@ -121,6 +121,7 @@ const char* modelEnumName(HPSDRModel m) noexcept
         case HPSDRModel::ANVELINAPRO3: return "ANVELINAPRO3";
         case HPSDRModel::HERMESLITE:   return "HERMESLITE";
         case HPSDRModel::REDPITAYA:    return "REDPITAYA";
+        case HPSDRModel::ANAN_G2E:     return "ANAN_G2E";  // //N1GP G2E added
         case HPSDRModel::FIRST:
         case HPSDRModel::LAST:         return "Unknown";
     }
@@ -140,10 +141,12 @@ QString defaultProfileNameForModel(HPSDRModel model)
 // Reverse-map a "Default - <model>" name back to the corresponding
 // HPSDRModel. For any name that doesn't match the prefix, returns FIRST
 // (which the Bypass path handles via its own branch in seedFactoryProfile).
+// From Thetis setup.cs:23394 [v2.10.3.15] — iterate n < (int)HPSDRModel.LAST
+// so future SKU additions auto-include without updating this loop bound.
 HPSDRModel modelFromFactoryName(const QString& name) noexcept
 {
     for (int n = static_cast<int>(HPSDRModel::HPSDR);
-         n <= static_cast<int>(HPSDRModel::REDPITAYA); ++n) {
+         n < static_cast<int>(HPSDRModel::LAST); ++n) {
         const HPSDRModel m = static_cast<HPSDRModel>(n);
         if (name == QStringLiteral("Default - ") +
                     QString::fromLatin1(modelEnumName(m))) {
@@ -224,15 +227,75 @@ void PaProfileManager::load(HPSDRModel connectedModel)
                 m_profiles.insert(name, p);
             }
         }
+
+        // 2026-05-22 bench-finding (ANAN-G2E port): existing per-MAC
+        // manifests created BEFORE a new HPSDRModel SKU lands won't
+        // contain the new "Default - <model>" entry, even after the
+        // factoryProfileNames() loop is updated.  PaSetupPages filters
+        // the combo down to `Default - <connectedModel>` + user profiles
+        // (per Thetis setup.cs:23341-23344 [v2.10.3.13]), so the dropdown
+        // is empty for the new SKU until the user manually creates one.
+        //
+        // Backfill: any factory profile name now in factoryProfileNames()
+        // that isn't in the existing manifest gets seeded with the
+        // canonical PaGainProfile values and added to the manifest.
+        // User-customized profiles are untouched.
+        const QStringList factory = factoryProfileNames();
+        bool addedAny = false;
+        for (const QString& fname : factory) {
+            if (!names.contains(fname)) {
+                const bool isBypass =
+                    (fname == QString::fromLatin1(kBypassProfileName));
+                const HPSDRModel modelForRow =
+                    isBypass ? HPSDRModel::FIRST
+                             : modelFromFactoryName(fname);
+                seedFactoryProfile(fname, modelForRow, isBypass);
+                names.append(fname);
+                addedAny = true;
+            }
+        }
+        if (addedAny) {
+            std::sort(names.begin(), names.end());
+            writeManifest(names);
+            emit profileListChanged();
+        }
     }
 
     // Active-profile-on-connect (NereusSDR-spin):
-    //   1. Stored active in manifest? Use it.
+    //   1. Stored active in manifest AND visible under current connectedModel?
+    //      Use it.  Visible = NOT a factory-default for some other model.
     //   2. Else if "Default - <connectedModel>" exists, use it.
     //   3. Else fall back to the first profile in the sorted manifest.
+    //
+    // 2026-05-22 bench-finding (ANAN-G2E port): previously this resolver
+    // accepted any storedActive that was in the manifest, even if it was
+    // a `Default - <other model>` that PaSetupPages' combo filter
+    // (userVisibleProfileNames) would hide.  Symptom on the bench: G2E
+    // connect → storedActive = "Default - HERMES" from prior testing →
+    // resolver kept it → Hermes 41 dB gains applied to G2E → 1 W slider
+    // produced 29 W out.  Adding a `is the storedActive visible?` check
+    // so that an obviously-wrong inherited factory default gets switched
+    // to the model-appropriate one on connect.  User-customised profiles
+    // are always visible and so always retain priority.
     const QString storedActive = readActiveKey();
     QString resolved;
+    bool storedActiveVisible = false;
     if (!storedActive.isEmpty() && names.contains(storedActive)) {
+        const PaProfile* p = profileByName(storedActive);
+        // Visible if user-customised (!isFactoryDefault) OR if it's a
+        // factory default for THIS connected model (or for FIRST/Bypass
+        // sentinel which is always visible when explicitly selected).
+        if (!p) {
+            storedActiveVisible = false;
+        } else if (!p->isFactoryDefault()) {
+            storedActiveVisible = true;
+        } else if (p->model() == connectedModel) {
+            storedActiveVisible = true;
+        } else if (storedActive == QString::fromLatin1(kBypassProfileName)) {
+            storedActiveVisible = true;
+        }
+    }
+    if (storedActiveVisible) {
         resolved = storedActive;
     } else {
         const QString defaultName = defaultProfileNameForModel(connectedModel);
@@ -563,15 +626,15 @@ void PaProfileManager::seedFactoryProfile(const QString& name,
 
 QStringList PaProfileManager::factoryProfileNames()
 {
-    // From Thetis setup.cs:23306-23316 [v2.10.3.13] — initPAProfiles loops
+    // From Thetis setup.cs:23394 [v2.10.3.15] — initPAProfiles loops
     // for (int n = 0; n < (int)HPSDRModel.LAST; n++) and adds one
     // "Default - <model>" per iteration, then appends one "Bypass" entry.
-    // NereusSDR walks the same enum range (HPSDR..REDPITAYA = 0..15) and
-    // appends Bypass at the end — manifest order matches Thetis combo
-    // order.
+    // NereusSDR walks the same enum range (HPSDR=0 .. LAST exclusive) and
+    // appends Bypass at the end — manifest order matches Thetis combo order.
+    // Using < LAST (not <= REDPITAYA) means future SKU additions auto-include.
     QStringList out;
     for (int n = static_cast<int>(HPSDRModel::HPSDR);
-         n <= static_cast<int>(HPSDRModel::REDPITAYA); ++n) {
+         n < static_cast<int>(HPSDRModel::LAST); ++n) {
         const HPSDRModel m = static_cast<HPSDRModel>(n);
         out.append(QStringLiteral("Default - ") +
                    QString::fromLatin1(modelEnumName(m)));

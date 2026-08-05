@@ -71,8 +71,9 @@ private slots:
         const QStringList names = mgr.profileNames();
         // Default + 20 Thetis factory profiles ported from
         // database.cs:AddTXProfileTable [v2.10.3.13] (Default DX +
-        // 19 entries from the bIndcludeExtraProfiles block).
-        QCOMPARE(names.size(), 21);
+        // 19 entries from the bIndcludeExtraProfiles block) + the
+        // NereusSDR-native "RADE" preset (Phase 3R K1) = 22.
+        QCOMPARE(names.size(), 22);
         // Default remains the active profile so existing-user first-run
         // behaviour is unchanged.
         QCOMPARE(mgr.activeProfileName(), QStringLiteral("Default"));
@@ -281,8 +282,9 @@ private slots:
 
         QCOMPARE(AppSettings::instance().value(profileKey(kMacA, "Default", "MicGain")).toString(),
                  QStringLiteral("42"));
-        // Default + 20 factory profiles seeded on the first launch persist.
-        QCOMPARE(mgr2.profileNames().size(), 21);
+        // Default + 20 factory profiles + RADE (3R K1) seeded on the
+        // first launch persist.
+        QCOMPARE(mgr2.profileNames().size(), 22);
     }
 
     void firstLaunch_emitsProfileListChanged()
@@ -564,8 +566,9 @@ private slots:
         QCOMPARE(s.value(profileKey(kMacA, "MyProfile", "TwoToneDrivePowerOrigin")).toString(),
                  QStringLiteral("Fixed"));
 
-        // Profile list now contains Default + 20 factory profiles + MyProfile = 22.
-        QCOMPARE(mgr.profileNames().size(), 22);
+        // Profile list now contains Default + 20 factory profiles +
+        // RADE (3R K1) + MyProfile = 23.
+        QCOMPARE(mgr.profileNames().size(), 23);
         QVERIFY(mgr.profileNames().contains("MyProfile"));
         QVERIFY(mgr.profileNames().contains("Default"));
         QVERIFY(mgr.profileNames().contains("D-104+EQ"));  // factory profile
@@ -607,8 +610,9 @@ private slots:
         // Per F.2 contract: "Overwrites if the name already exists.  Return true."
         QCOMPARE(AppSettings::instance().value(profileKey(kMacA, "MyProfile", "MicGain")).toString(),
                  QStringLiteral("20"));
-        // Profile count remains the same (Default + 20 factory + MyProfile = 22).
-        QCOMPARE(mgr.profileNames().size(), 22);
+        // Profile count remains the same (Default + 20 factory +
+        // RADE (3R K1) + MyProfile = 23).
+        QCOMPARE(mgr.profileNames().size(), 23);
     }
 
     void saveProfile_stripsCommas()
@@ -637,10 +641,10 @@ private slots:
         MicProfileManager mgr;
         mgr.setMacAddress(kMacA);
         mgr.load();
-        // Default + 20 factory profiles seeded.  Delete all but one to
-        // reach the last-remaining state.
+        // Default + 20 factory profiles + RADE (3R K1) seeded.
+        // Delete all but one to reach the last-remaining state.
         const QStringList all = mgr.profileNames();
-        QCOMPARE(all.size(), 21);
+        QCOMPARE(all.size(), 22);
         for (const QString& name : all) {
             if (name == QStringLiteral("Default")) {
                 continue;
@@ -821,24 +825,24 @@ private slots:
         }
 
         // Reload MAC A — should still have its own list.
-        // Default + 20 factory + 2 user profiles = 23.
+        // Default + 20 factory + RADE (3R K1) + 2 user profiles = 24.
         MicProfileManager mgrA;
         mgrA.setMacAddress(kMacA);
         mgrA.load();
         QStringList namesA = mgrA.profileNames();
-        QCOMPARE(namesA.size(), 23);
+        QCOMPARE(namesA.size(), 24);
         QVERIFY(namesA.contains("Default"));
         QVERIFY(namesA.contains("ProfileA1"));
         QVERIFY(namesA.contains("ProfileA2"));
         QVERIFY(!namesA.contains("ProfileB1"));
 
         // Reload MAC B — should have its own list.
-        // Default + 20 factory + 1 user profile = 22.
+        // Default + 20 factory + RADE (3R K1) + 1 user profile = 23.
         MicProfileManager mgrB;
         mgrB.setMacAddress(kMacB);
         mgrB.load();
         QStringList namesB = mgrB.profileNames();
-        QCOMPARE(namesB.size(), 22);
+        QCOMPARE(namesB.size(), 23);
         QVERIFY(namesB.contains("Default"));
         QVERIFY(namesB.contains("ProfileB1"));
         QVERIFY(!namesB.contains("ProfileA1"));

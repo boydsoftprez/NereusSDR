@@ -17,6 +17,8 @@ private slots:
     void usb_isAllowed();
     void digl_isAllowed();
     void digu_isAllowed();
+    void radeU_isAllowed();   // Phase 3R K-bench: ride USB carrier
+    void radeL_isAllowed();   // Phase 3R K-bench: ride LSB carrier
 
     // ── isModeAllowedForTx: rejected modes ────────────────────────────────
     void cwl_isRejected();
@@ -73,6 +75,22 @@ void TestBandPlanGuardModeAllowList::digu_isAllowed()
 {
     BandPlanGuard guard;
     QVERIFY(guard.isModeAllowedForTx(DSPMode::DIGU));
+}
+
+// Phase 3R K-bench: RADE_U / RADE_L ride USB / LSB carriers respectively.
+// User bench-reported "MOX + RADE-U produces no RF / TUNE does not work"
+// traced to BandPlanGuard rejecting RADE_U/L as "Mode not supported for TX"
+// (default-case fallthrough). Band-plan etiquette equivalent to DIGU/DIGL.
+void TestBandPlanGuardModeAllowList::radeU_isAllowed()
+{
+    BandPlanGuard guard;
+    QVERIFY(guard.isModeAllowedForTx(DSPMode::RADE_U));
+}
+
+void TestBandPlanGuardModeAllowList::radeL_isAllowed()
+{
+    BandPlanGuard guard;
+    QVERIFY(guard.isModeAllowedForTx(DSPMode::RADE_L));
 }
 
 // ---------------------------------------------------------------------------

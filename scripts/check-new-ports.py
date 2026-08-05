@@ -51,6 +51,7 @@ REPO = Path(__file__).resolve().parent.parent
 PROVENANCE = REPO / "docs" / "attribution" / "THETIS-PROVENANCE.md"
 WDSP_PROVENANCE = REPO / "docs" / "attribution" / "WDSP-PROVENANCE.md"
 AETHER_RECONCILIATION = REPO / "docs" / "attribution" / "aethersdr-reconciliation.md"
+FREEDV_PROVENANCE = REPO / "docs" / "attribution" / "FREEDV-GUI-PROVENANCE.md"
 BASE_REF = os.environ.get("CHECK_NEW_PORTS_BASE_REF", "origin/main")
 FULL_TREE = (
     os.environ.get("CHECK_NEW_PORTS_FULL") == "1"
@@ -85,6 +86,23 @@ AETHER_FILES = [
     "VfoWidget", "SpectrumOverlayMenu", "SpectrumWidget", "FilterPassbandWidget",
     "GuardedSlider", "AudioEngine", "RadioSetupDialog", "RadioDiscovery",
     "RadioModel", "SliceModel", "PanadapterModel",
+]
+
+# freedv-gui contributor callsigns. Sparse compared to Thetis - only a
+# handful appear in the freedv-gui source tree (verified by
+# scripts/discover-freedv-author-tags.py). Listed here so a contributor
+# can't drop one during a port without flagging the new-port detector.
+# Always-on (diff + full-tree) because freedv-gui callsigns are
+# distinctive enough to over-trigger only on actual ports.
+FREEDV_CALLSIGNS = ["VK5DGR", "K6AQ", "KD0EAG", "NH6Z", "N2ADR"]
+# Distinctive freedv-gui source filenames. Same precaution as
+# AETHER_FILES: limited to bases unlikely to false-positive against
+# NereusSDR-original code. Full-tree-only and gated on a "freedv-gui"
+# sibling marker (see RE_FREEDV_FILE_NEAR_MARKER).
+FREEDV_FILES = [
+    "RADEReceiveStep", "RADETransmitStep", "rade_text", "FreeDVReporter",
+    "pskreporter", "EqualizerStep", "AgcStep", "freedv_reporter",
+    "freedv_interface",
 ]
 
 # Distinctive Thetis source filenames. Limited to bases that are unlikely
@@ -138,6 +156,28 @@ RE_THETIS_CITE = re.compile(
 )
 RE_HAS_VERSION_STAMP = re.compile(
     r"\[(?:v\d+(?:\.\d+)+(?:\+[0-9a-f]{7,})?|@[0-9a-f]{7,})\]"
+)
+
+# freedv-gui-specific patterns (mirror the AetherSDR set above).
+RE_FREEDV_CALLSIGN = re.compile(r"\b(" + "|".join(FREEDV_CALLSIGNS) + r")\b")
+RE_FREEDV_FILE_NEAR_MARKER = re.compile(
+    r"\bfreedv-gui\b.*\b("
+    + "|".join(re.escape(f) for f in FREEDV_FILES)
+    + r")\b|\b("
+    + "|".join(re.escape(f) for f in FREEDV_FILES)
+    + r")\b.*\bfreedv-gui\b",
+    re.IGNORECASE,
+)
+RE_FREEDV_COMMENT = re.compile(
+    r"//\s*(Source|From|Ported from|Layout from|Pattern from).*\bfreedv-gui\b",
+    re.IGNORECASE,
+)
+# Diff-mode cite-version stamp gate for freedv-gui ports. Mirrors
+# RE_THETIS_CITE above. Captures `// From freedv-gui <path>:<line>` or
+# `// Source: freedv-gui/<path>:<line>` constructions.
+RE_FREEDV_CITE = re.compile(
+    r"//\s*(?:From\s+freedv-gui\s+|Source:\s+freedv-gui/)"
+    r"[\w./-]+\.(?:c|h|cpp|cc|hpp)(?::\d+(?:[,\s]+\d+)*)"
 )
 
 
@@ -278,6 +318,9 @@ def check_file(rel, listed, diff_lines=None):
             (RE_AETHER_COMMENT, "Source: comment citing AetherSDR"),
             (RE_AETHER_CALLSIGN, "AetherSDR contributor callsign"),
             (RE_AETHER_FILE_NEAR_MARKER, "AetherSDR filename adjacent to 'AetherSDR' marker"),
+            (RE_FREEDV_COMMENT, "Source: comment citing freedv-gui"),
+            (RE_FREEDV_CALLSIGN, "freedv-gui contributor callsign"),
+            (RE_FREEDV_FILE_NEAR_MARKER, "freedv-gui filename adjacent to 'freedv-gui' marker"),
         ])
     findings = []
     for i, line in enumerate(text.splitlines(), start=1):
@@ -297,15 +340,20 @@ def check_file(rel, listed, diff_lines=None):
             if i not in diff_lines:
                 continue
             m = RE_THETIS_CITE.search(line)
-            if not m:
+            if m and not RE_HAS_VERSION_STAMP.search(line):
+                findings.append((
+                    i,
+                    "Thetis cite missing version stamp",
+                    m.group(0).strip(),
+                ))
                 continue
-            if RE_HAS_VERSION_STAMP.search(line):
-                continue
-            findings.append((
-                i,
-                "Thetis cite missing version stamp",
-                m.group(0).strip(),
-            ))
+            m = RE_FREEDV_CITE.search(line)
+            if m and not RE_HAS_VERSION_STAMP.search(line):
+                findings.append((
+                    i,
+                    "freedv-gui cite missing version stamp",
+                    m.group(0).strip(),
+                ))
 
     return findings
 
@@ -314,7 +362,8 @@ def main():
     if FULL_TREE:
         files = all_src_files()
         listed = parse_provenance_paths(
-            PROVENANCE, WDSP_PROVENANCE, AETHER_RECONCILIATION
+            PROVENANCE, WDSP_PROVENANCE, AETHER_RECONCILIATION,
+            FREEDV_PROVENANCE,
         )
         mode_label = "full-tree"
     else:

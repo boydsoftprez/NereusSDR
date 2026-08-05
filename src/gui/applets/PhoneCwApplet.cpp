@@ -538,7 +538,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     NyiOverlay::markNyi(m_micProfileCombo,  kNyiPhone);   // #3
     NyiOverlay::markNyi(m_micSourceCombo,   kNyiPhone);   // #4
     NyiOverlay::markNyi(m_accBtn,           kNyiPhone);   // #6
-    NyiOverlay::markNyi(m_vaxBtn,           kNyiVax);     // #8 — Phase 3-VAX
+    // #8 m_vaxBtn: wired (Phase 3M-VAX-toggle)
     NyiOverlay::markNyi(m_monBtn,           kNyiPhone);   // #9
     NyiOverlay::markNyi(m_monSlider,        kNyiPhone);   // #9 slider
     NyiOverlay::markNyi(m_amCarSlider,      kNyiProc);    // #13 — Phase 3I-3
@@ -941,6 +941,43 @@ void PhoneCwApplet::wireControls()
         });
     }
 
+    // ── #8 VAX button bidirectional with TransmitModel::toggleVaxSource ────
+    // Left-click toggles MicSource between Vax and the user's previous
+    // non-VAX source (tracked by TransmitModel::previousNonVaxMicSource,
+    // persisted per-MAC). Right-click opens Setup -> Audio -> TX Input.
+    if (m_vaxBtn) {
+        m_vaxBtn->setToolTip(QStringLiteral(
+            "VAX digital audio input.\n"
+            "Left-click: toggle VAX as the TX audio source.\n"
+            "Right-click: open Setup > Audio > TX Input."));
+        {
+            QSignalBlocker b(m_vaxBtn);
+            m_vaxBtn->setChecked(tx.micSource() == MicSource::Vax);
+        }
+        // UI -> Model
+        connect(m_vaxBtn, &QPushButton::toggled, this, [this, &tx](bool on) {
+            if (m_updatingFromModel) { return; }
+            tx.toggleVaxSource(on);
+        });
+        // Model -> UI (mirrors button to model so external changes - profile
+        // load, future combo wiring, MMIO - keep the checked state honest).
+        connect(&tx, &TransmitModel::micSourceChanged, this, [this](MicSource src) {
+            m_updatingFromModel = true;
+            {
+                QSignalBlocker b(m_vaxBtn);
+                m_vaxBtn->setChecked(src == MicSource::Vax);
+            }
+            m_updatingFromModel = false;
+        });
+        // Right-click goes to Setup > Audio > TX Input.
+        m_vaxBtn->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(m_vaxBtn, &QPushButton::customContextMenuRequested, this,
+                [this](const QPoint&) {
+            emit openSetupRequested(QStringLiteral("Audio"),
+                                    QStringLiteral("TX Input"));
+        });
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Phase 3M-3a-iii Task 15: DEXP (#11) row wiring.
     //
@@ -1140,6 +1177,14 @@ void PhoneCwApplet::syncFromModel()
         QSignalBlocker b(m_dexpBtn);
         m_dexpBtn->setChecked(tx.dexpEnabled());
         m_updatingFromModel = false;
+    }
+
+    // VAX button (Phase 3M-VAX-toggle): bidirectional sync to
+    // TransmitModel::micSource.
+    if (m_vaxBtn) {
+        TransmitModel& tx = m_model->transmitModel();
+        QSignalBlocker b(m_vaxBtn);
+        m_vaxBtn->setChecked(tx.micSource() == MicSource::Vax);
     }
 
     // Other controls wired in Phase 3I-1 (Phone/FM) / Phase 3I-2 (CW)

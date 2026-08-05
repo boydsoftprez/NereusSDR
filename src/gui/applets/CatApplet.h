@@ -18,8 +18,10 @@
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
 //                 Layout mirrors AetherSDR `src/gui/CatApplet.{h,cpp}`
-//                 (serial CAT / rigctl / TCI enable rows + PTT LEDs).
+//                 (serial CAT / rigctld enable rows + PTT LEDs).
 //                 All controls NYI — wired in later phase.
+//   2026-05-10 — Phase 24 (Task 24.1): stripped TCI button row; TCI
+//                 controls now live in TciApplet (Phase 21, 0b615a7).
 // =================================================================
 
 #pragma once
@@ -27,27 +29,26 @@
 
 class QPushButton;
 class QLabel;
-class QLineEdit;
 class QComboBox;
 
 namespace NereusSDR {
 
-// CAT / rigctld / TCI control interfaces.
-// NYI — Phase 3K (CAT/rigctld) + 3J (TCI) + 3-VAX (VAX/IQ).
+// CAT / rigctld control interfaces.
+// NYI — Phase 3K (CAT/rigctld) + 3-VAX (VAX/IQ).
+// TCI controls live in TciApplet (Phase 21).
 //
 // Controls:
 //   1. CAT TCP enable + LEDs — QPushButton green "TCP" + 4x QLabel (A/B/C/D)
 //   2. CAT PTY enable + paths — QPushButton green "PTY" + 4x QLabel paths
-//   3. TCI enable + port + LED — QPushButton green "TCI" + QLineEdit port + QLabel LED
-//   4. VAX enable + meters — QPushButton green "VAX" + 4x QLabel channel status
-//   5. VAX IQ enable + rate — QPushButton green "IQ" + QComboBox rate
+//   3. VAX enable + meters — QPushButton green "VAX" + 4x QLabel channel status
+//   4. VAX IQ enable + rate — QPushButton green "IQ" + QComboBox rate
 class CatApplet : public AppletWidget {
     Q_OBJECT
 public:
     explicit CatApplet(RadioModel* model, QWidget* parent = nullptr);
 
     QString appletId()    const override { return QStringLiteral("cat"); }
-    QString appletTitle() const override { return QStringLiteral("CAT / TCI"); }
+    QString appletTitle() const override { return QStringLiteral("CAT"); }
     void    syncFromModel() override;
 
 private:
@@ -61,12 +62,7 @@ private:
     QPushButton* m_ptyBtn        = nullptr;
     QLabel*      m_ptyPath[4]    = {};
 
-    // Control 3 — TCI: enable button + port field + status LED
-    QPushButton* m_tciBtn        = nullptr;
-    QLineEdit*   m_tciPort       = nullptr;
-    QLabel*      m_tciLed        = nullptr;
-
-    // Control 4 — VAX: enable button + 4 channel status labels
+    // Control 3 — VAX: enable button + 4 channel status labels
     QPushButton* m_vaxBtn        = nullptr;
     QLabel*      m_vaxStatus[4]  = {};
 

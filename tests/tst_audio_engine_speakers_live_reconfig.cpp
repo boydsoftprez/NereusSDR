@@ -57,7 +57,7 @@ private:
 
         int addSlice(int vaxCh = 0) {
             const int idx = radio->addSlice();
-            radio->sliceAt(idx)->setVaxChannel(vaxCh);
+            radio->sliceById(idx)->setVaxChannel(vaxCh);
             return idx;
         }
     };

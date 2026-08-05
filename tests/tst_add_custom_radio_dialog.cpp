@@ -11,7 +11,7 @@
 //
 // Coverage:
 //   1. modelDropdownContainsAutoDetectFirst — index 0 is "Auto-detect"
-//   2. modelDropdownContainsAllSixteenSkus  — all 16 SKUs present
+//   2. modelDropdownContainsAllSeventeenSkus  — all 16 SKUs present
 //   3. saveOfflineButtonExists              — objectName "saveOfflineButton"
 //   4. probeAndConnectButtonExists          — objectName "probeButton"
 // =================================================================
@@ -44,7 +44,7 @@ private slots:
                      .arg(combo->itemText(0))));
     }
 
-    void modelDropdownContainsAllSixteenSkus()
+    void modelDropdownContainsAllSeventeenSkus()
     {
         AddCustomRadioDialog dlg;
         auto* combo = dlg.findChild<QComboBox*>(QStringLiteral("modelCombo"));
@@ -59,7 +59,9 @@ private slots:
                 displayName(static_cast<HPSDRModel>(i)));
         }
 
-        QCOMPARE(expected.size(), 16);  // Self-check: 16 SKUs expected
+        // 17 SKUs: ANAN_G2E added in Phase E of the ANAN-G2E port (bumps LAST to 17).
+        // //N1GP G2E added [v2.10.3.15]
+        QCOMPARE(expected.size(), 17);  // Self-check: 17 SKUs expected
 
         for (const auto& name : expected) {
             int idx = combo->findText(name, Qt::MatchContains);

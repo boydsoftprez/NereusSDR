@@ -68,6 +68,13 @@
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 #include "core/ConnectionState.h"
+#include "core/PgxlConnection.h"
+#include "core/Rf2ksConnection.h"
+#include "core/TgxlConnection.h"
+#include "core/FaultLog.h"
+#include "core/TxInterlockPolicy.h"
+#include "core/TuneMemoryStore.h"
+#include "models/TunerModel.h"
 #include "Band.h"
 #include "BandPlanManager.h"
 #include "SliceModel.h"
@@ -80,6 +87,7 @@
 #include "core/HermesLiteBandwidthMonitor.h"
 #include "core/RadioStatus.h"
 #include "core/SettingsHygiene.h"
+#include "core/SliceStreamAllocator.h"
 #include "core/accessories/AlexController.h"
 #include "core/accessories/ApolloController.h"
 #include "core/accessories/PennyLaneController.h"
@@ -87,15 +95,23 @@
 #include "core/RadioDiscovery.h"
 #include "core/RadioConnection.h"
 #include "core/HardwareProfile.h"
+#include "core/codec/CodecContext.h"  // SliceConfig (Phase 3F Sub-Epic B Task 16)
+#include "core/DdcAssignment.h"       // DdcAssignment (Phase 3F Sub-Epic B Task 16)
+#include "core/SkuUiProfile.h"  // issue #257 — setLastBandForTest passes the SKU into refreshAntennasFromAlex
 #include "core/safety/SwrProtectionController.h"
 #include "core/safety/TxInhibitMonitor.h"
 #include "core/safety/BandPlanGuard.h"
 
 #include <QDateTime>
+#include <QHash>
 #include <QObject>
+#include <QMap>
+#include <QSet>     // Phase 3F: panBypassState takes PanadapterApplet::associatedSlices
 #include <QString>
 #include <QList>
 #include <QThread>
+
+#include <limits>   // 2026-05-22 NaN sentinel for m_lastEmittedRxMeterOffsetDb
 
 // 3M-1a G.1: TxMicRouter is a plain (non-QObject) strategy interface.
 // Include required directly so unique_ptr destructor is available here.
@@ -107,6 +123,7 @@
 #include <algorithm>  // std::clamp (used by computeWireDriveForTest)
 #include <array>      // std::array (HL2 temp averaging ring)
 #include <memory>  // std::unique_ptr
+#include <optional>
 
 namespace NereusSDR {
 
@@ -115,9 +132,18 @@ class AudioEngine;
 class WdspEngine;
 class RxDspWorker;
 class NoiseFloorTracker;
+// Phase 3F Sub-Epic F Task 5: per-ADC wideband FFT engine. Forward decl
+// here; included in RadioModel.cpp so we don't pull fftw3.h into every
+// translation unit that touches RadioModel.h.
+class WidebandFftEngine;
 // 3M-1a G.1: forward declarations for TX-side components.
 class MoxController;
 class TxChannel;
+// Phase 3F Sub-Epic J Task 11: forward decl for rxChannelForSlice()'s
+// return type (see below, near txChannel()).
+class RxChannel;
+// Phase 3F Sub-Epic C: TX-slice arbiter (single-TX invariant + RF-safe handoff).
+class TxSliceArbiter;
 // 3M-1b L.1: forward declarations for mic-source strategy objects.
 class PcMicSource;
 class RadioMicSource;
@@ -142,6 +168,45 @@ class TxWorkerThread;
 // Stage C2 filter preset editor — user-override layer over Thetis defaults.
 class FilterPresetStore;
 
+// Phase 3J-2 H2: spot-system forward declarations. RadioModel owns the
+// seven spot-ingest clients (DxCluster, RBN, WSJT-X, SpotCollector,
+// POTA, FreeDV Reporter, PSK Reporter), the three view models
+// (SpotModel, FreeDVStationModel, RxDecodeModel), and the
+// DxccColorProvider. Each client's spotReceived(DxSpot) signal lands
+// in a per-source adapter slot that builds the QMap<QString,QString>
+// kvs SpotModel::applySpotStatus expects.
+class DxClusterClient;
+class WsjtxClient;
+class SpotCollectorClient;
+class PotaClient;
+class FreeDVReporterClient;
+class FreeDVRadeReporterBridge;
+class PskReporterClient;
+class DxccColorProvider;
+class SpotModel;
+class SpotTableModel;
+class FreeDVStationModel;
+class RxDecodeModel;
+// TNF (design section 5): the canonical notch store, owned by RadioModel
+// alongside SpotModel. One list shared by every slice (design D1) because
+// notch centres are absolute RF Hz, so a 20 m notch is inherently inert on a
+// 40 m slice.
+class NotchModel;
+struct DxSpot;
+struct FreeDVStation;
+
+// Phase 3R Task I5: forward declaration for the RadeChannel codec wrapper.
+// RadioModel does not own the channel (J2 / J3 create one per slice as
+// mode flips to RADE), but exposes wireRadeChannel(sliceId, channel, slice)
+// to attach the channel's snrChanged / syncChanged / rxTextDecoded
+// signals into the slot graph.
+class RadeChannel;
+
+// Phase 3R K-bench forward decl: Resampler is used by RadioModel to
+// upsample RadeChannel's 24 kHz baseband output to the radio's TX
+// I/Q wire rate before m_connection->sendTxIq.  Lives in core/Resampler.h.
+class Resampler;
+
 // RadioModel is the central data model for a connected radio.
 // It owns the RadioConnection (on a worker thread), ReceiverManager,
 // and all sub-models. It routes signals between components.
@@ -161,6 +226,8 @@ class RadioModel : public QObject {
     Q_PROPERTY(QString model       READ model       NOTIFY infoChanged)
     Q_PROPERTY(QString version     READ version     NOTIFY infoChanged)
     Q_PROPERTY(bool    connected   READ isConnected NOTIFY connectionStateChanged)
+    Q_PROPERTY(bool rfKitEnabled READ rfKitEnabled WRITE setRfKitEnabled
+               NOTIFY rfKitEnabledChanged)
 
 public:
     explicit RadioModel(QObject* parent = nullptr);
@@ -173,6 +240,14 @@ public:
     ReceiverManager*  receiverManager()  { return m_receiverManager; }
     AudioEngine*      audioEngine()      { return m_audioEngine; }
     WdspEngine*       wdspEngine()       { return m_wdspEngine; }
+
+    /// Phase 3F Sub-Epic F Task 5: per-ADC wideband FFT engine accessor.
+    /// Returns nullptr if adcIndex out of range (valid: 0 or 1).  Used by
+    /// SpectrumWidget and bench rigs to inspect the wideband FFT pipeline
+    /// without going through the widebandSpectrumReady signal hop.
+    NereusSDR::WidebandFftEngine* widebandFftEngine(int adc) const {
+        return (adc >= 0 && adc < 2) ? m_widebandFftEngines[adc] : nullptr;
+    }
 
     // OC matrix — single instance shared between the OC Outputs UI and the
     // codec layer (P1/P2 buildCodecContext). Loaded per-MAC at connect time.
@@ -217,6 +292,124 @@ public:
     const AlexController& alexController()        const { return m_alexController; }
     AlexController&       alexControllerMutable()       { return m_alexController; }
 
+    // ── Phase 3F: per-panadapter RX preselector bypass state (WIDE badge) ────
+    // NereusSDR-original; no upstream port. Design doc
+    // 2026-05-26-phase3f-multi-pan-multi-slice-design.md §16.4.
+    //
+    // WIDE means one thing: the RX preselector chain feeding this pan is
+    // bypassed on the wire right now. It reports an effect, not a cause;
+    // the cause is named in `reason` (§16.4.3, §16.4.4).
+    struct PanBypassState {
+        bool    bypassed {false};
+        QString reason;   ///< operator-facing sentence; empty unless bypassed
+    };
+
+    /// Resolve the WIDE state for the slices one panadapter is showing.
+    ///
+    /// Routing, per §16.4.2:
+    ///     pan -> its slices -> their stream -> that stream's ADC -> effective
+    ///
+    /// The answer is per chain, not global: on a 2-chain SKU with the bypass
+    /// on chain 1 only, pans on chain 0 come back clear. That is the whole
+    /// point of the badge -- it tells the operator WHICH of their receivers
+    /// is exposed. A pan with no slices, or whose slices have not bound a
+    /// stream, feeds off nothing and reports nothing.
+    ///
+    /// Takes slice indices (the keys PanadapterApplet::associatedSlices
+    /// hands out) rather than SliceModel pointers so callers never have to
+    /// resolve the model themselves.
+    PanBypassState panBypassState(const QSet<int>& sliceIndices) const;
+
+    /// The ADC chain feeding one slice, or -1 when it is on none.
+    ///
+    ///     slice -> its stream -> that stream's ADC
+    ///
+    /// The single resolver for that hop. panBypassState calls it to decide
+    /// the WIDE pill, and MainWindow calls it to paint the CH tag sitting
+    /// beside that pill, so the two cannot report different chains for one
+    /// pan. Do not reach for SliceModel::chainIndex() instead: nothing in
+    /// production writes it, so it answers 0 for every slice.
+    ///
+    /// Takes a slice ID (see sliceById), not a list position -- the same key
+    /// PanadapterApplet::associatedSlices holds. Returns -1 for an unknown id
+    /// and for a slice that has not bound a stream; an unbound slice feeds
+    /// off nothing, which is not the same as being on chain 0.
+    int sliceChainIndex(int sliceId) const;
+
+    /// The filter chain feeding one DDC stream, or -1 when the stream index
+    /// is not a stream. sliceChainIndex is the by-slice front end of this;
+    /// republishAlexAdcSlices and bypassReasonForAdc take the stream form
+    /// because they are already iterating streams.
+    ///
+    /// CHAIN, not ADC, and the distinction is load-bearing (defect D4). A
+    /// chain is one preselector bank plus the ADC behind it (design §16.1.1),
+    /// and a board can have more ADCs than chains: ANAN-100D and ANAN-200D
+    /// are both NetworkIO.SetRxADC(2) yet neither appears in the setAlex2HPF
+    /// model list at Thetis console.cs:15435-15443 [v2.10.3.15], so both
+    /// their ADCs sit behind one filter bank. On such a board a stream really
+    /// can be routed to ADC1 and is still behind chain 0, so it is folded
+    /// onto chain 0 here. That is the physical truth on a one-chain board,
+    /// not a workaround: with one bank in front of both ADCs, every slice's
+    /// range has to be counted against that one bank.
+    int chainForStream(int stream) const;
+
+    /// The wideband state a chain should actually be in, as opposed to what
+    /// one slice just asked for.
+    ///
+    /// Codex review, PR #293. The widebandExtensionRequestedChanged handler
+    /// forwarded the changing slice's boolean straight through, so on a chain
+    /// hosting two slices whichever one cleared last switched the chain off
+    /// while the other was still zoomed out: the Alex preselector came back in
+    /// and the P2 wideband-enable bit dropped underneath a live extended view.
+    /// The answer is a property of the chain, not of the slice that moved, so
+    /// it is recomputed here as an OR across every live slice on it.
+    ///
+    /// Also the one place BoardCapabilities::widebandAdcs is honoured. That
+    /// field was declared per SKU and read by nothing, so a board that cannot
+    /// stream wideband at all still had its preselector forced into bypass by
+    /// a zoom it could never satisfy, costing receive filtering for nothing.
+    bool widebandActiveForChain(int chainIdx) const;
+
+    /// Test seam for the above. Read-only, no production caller.
+    bool widebandActiveForChainForTest(int chainIdx) const {
+        return widebandActiveForChain(chainIdx);
+    }
+
+    /// Recompute widebandActiveForChain(chainIdx) and push the answer to the
+    /// Alex preselector and, on Protocol 2, to the radio's wideband enable
+    /// mask.
+    ///
+    /// Codex review round 3, PR #293. The first fix recomputed on the request
+    /// property's own edges, which is not the only way the answer changes:
+    /// removing the slice that was the sole requester alters it without any
+    /// property moving, so the chain stayed bypassed and the radio kept
+    /// streaming wideband until some unrelated slice happened to toggle. Both
+    /// callers go through here so there is one push and not two copies of it.
+    void pushWidebandStateForChain(int chainIdx);
+
+    /// Push every filter chain's wideband state.
+    ///
+    /// Codex review round 4, PR #293, and the reason this is a sweep rather
+    /// than another trigger. The answer for a chain changes on more inputs
+    /// than one signal can name: a slice's request moving, a slice being
+    /// removed, and a slice migrating between chains when its antenna moves
+    /// its DDC to the other ADC. Each of those was found in a separate review
+    /// round, because each was wired as its own hook and the next one was
+    /// always missing.
+    ///
+    /// Reconciling every chain from current state instead makes the operation
+    /// idempotent and complete: any input can change however it likes, and one
+    /// sweep afterwards is correct. Called from publishDdcAssignment, which
+    /// already recomputes DDC, chain and psPaused for every slice the same
+    /// way, so chain migration is covered by construction.
+    void reconcileWidebandForAllChains();
+
+    /// Operator-facing sentence naming WHY the given chain is bypassed.
+    /// One string per cause, per design doc §16.4.4. Public so the Filter
+    /// Policy dialog can show the same wording the badge tooltip carries.
+    QString bypassReasonForAdc(int adc,
+                               const AlexController::AlexAdcState& st) const;
+
     // Band-plan overlay manager — loaded once on construction from bundled
     // Qt resource JSON files. Active plan persists in AppSettings under
     // "BandPlanName". Phase 3G RX Epic sub-epic D.
@@ -256,11 +449,381 @@ public:
 
     // Slice management (client-side — radio has no slice concept)
     QList<SliceModel*> slices() const { return m_slices; }
-    SliceModel* sliceAt(int index) const;
+
+    /// The slice whose SliceModel::sliceIndex() equals `sliceId`, or nullptr.
+    ///
+    /// Slice ids are stable for the life of a slice and are NOT list
+    /// positions: addSlice hands out the lowest free id and removeSlice does
+    /// not renumber the survivors, so the two diverge after any mid-list
+    /// removal. The id doubles as the slice's WDSP RX channel id.
+    /// For positional access, index slices() directly.
+    SliceModel* sliceById(int sliceId) const;
+
     SliceModel* activeSlice() const { return m_activeSlice; }
-    int addSlice();
-    void removeSlice(int index);
+
+    /// Hand the transmitter to the slice with this ID, RF-safely.
+    ///
+    /// Takes a slice ID (see sliceById), not a list position, and converts.
+    /// TxSliceArbiter::requestHandoff is positional, but every per-slice UI
+    /// surface carries the stable id -- PanadapterApplet::activeSliceIndex()
+    /// is resolved through sliceById by the status-overlay refresh -- so
+    /// handing one straight to the other picks the wrong slice, or none at
+    /// all, as soon as a mid-list removal makes ids and positions diverge.
+    /// With A(0) B(1) C(2), removing B leaves C at id 2 / position 1: the
+    /// unconverted call asks for position 2 and is rejected, so the
+    /// transmitter silently stays where it was.
+    ///
+    /// Returns false without moving anything when the id resolves to no
+    /// slice, or when there is no arbiter. Delegates the MOX drop to
+    /// TxSliceArbiter::requestHandoff rather than reproducing it: that
+    /// sequence is the whole reason the arbiter owns this.
+    ///
+    /// Factored out of the MainWindow badge handler so both the pan TX badge
+    /// and a test can reach it without standing up a MainWindow, the same way
+    /// requestSliceSampleRate is.
+    bool requestTxHandoffToSlice(int sliceId);
+
+    /// Phase 3F: hardware-capped user-facing slice count. Reads BoardCapabilities.maxSlices
+    /// for the currently connected SKU. Returns 1 when disconnected (safe default).
+    /// See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
+    int maxSlices() const;
+
+    // ── Phase 3F Sub-Epic I: DDC stream pool ────────────────────────────
+    //
+    // A stream is one hardware DDC plus its ReceiverManager receiver, its
+    // FFTEngine, its panadapter window, and its noise blanker. Streams are
+    // opened once at connect and reused, mirroring Thetis CreateRadio
+    // (cmaster.cs:516 [v2.10.3.15]) and deskhpsdr's create-all loop
+    // (radio.c:1259 [@f3d857c]). Neither upstream opens a WDSP channel at
+    // runtime.
+    //
+    // Slices bind many-to-one: several whose frequencies fall inside one
+    // window share it, differing only by shift offset. An idle stream costs
+    // memory; its DDC stays out of the ddcEnable bitmask so the radio never
+    // streams it.
+
+    /// Size the pool to the connected SKU and clear all bindings.
+    void configureStreamPool(int userDdcCount, int maxSlices, int defaultRateHz);
+
+    /// Open the WDSP RX channel pool: one channel per slice the SKU allows.
+    ///
+    /// `poolSize` is BoardCapabilities::maxSlices; values below 1 are treated
+    /// as 1, and anything above WdspEngine::kMaxSliceChannels is CLAMPED, not
+    /// honoured. The clamp is the collision guard: WDSP's channel table is one
+    /// global array (channel.c:29) and OpenChannel overwrites whatever sits at
+    /// the id without closing it, so a pool that ran past kMaxSliceChannels
+    /// would silently take over kTxChannelId and orphan the TXA's thread. A SKU
+    /// that wants a bigger pool has to raise the reserved block, which moves TX
+    /// and PS with it.
+    ///
+    /// Already-open channels are left alone, so this is idempotent and safe to
+    /// re-run on reconnect.
+    ///
+    /// Called from the WdspEngine::initializedChanged lambda in
+    /// connectToRadio(), after Slice A's channel has its state.
+    void openRxChannelPool(int poolSize, int inputBufferSize,
+                           int inputSampleRateHz);
+
+    /// Switch on the WDSP channel of every slice that currently holds a stream.
+    ///
+    /// A pooled channel is opened stopped (WDSP `initial state = 0`, Thetis
+    /// ChannelMaster/cmaster.c:80 [v2.10.3.15]) and RxChannel::processIq
+    /// memsets its output to silence until setActive(true). Called at the tail
+    /// of openRxChannelPool so a reconnect, which re-binds every slice before
+    /// WDSP has any channels, still comes back with all of them audible.
+    void activateBoundSliceChannels();
+
+    /// Reconcile every OPEN pool channel with the current notch set.
+    ///
+    /// Design section 6.3. Runs at the tail of openRxChannelPool because
+    /// activateSliceChannel is dead as a hook for Slice A: connectToRadio's
+    /// WDSP-init lambda activates channel 0 before it opens the pool, and
+    /// activateSliceChannel early-returns on an already-active channel.
+    /// Covers reconnect for free, since teardownConnection destroys every
+    /// channel.
+    ///
+    /// Reconciles channels that no slice is bound to yet as well: a notch
+    /// database is created inert (third_party/wdsp/src/RXA.c:87) and this is
+    /// where the run flag lands.
+    void syncNotchesToAllChannels();
+
+    /// Switch on one slice's WDSP channel, pushing its demodulation state
+    /// first. No-op when the slice has no stream, has no channel yet, or is
+    /// already live (Slice A, which connectToRadio activates after the full
+    /// state push).
+    ///
+    /// Mirrors Thetis's receiver-enable order: push the DSPRX state, then
+    /// SetChannelState(ch, 1, 0) (console.cs:37359-37361 [v2.10.3.15]).
+    void activateSliceChannel(SliceModel* slice);
+
+    /// Stop a slice's WDSP channel running. The channel object stays open for
+    /// whichever slice takes the id next. Thetis's disable half:
+    /// SetChannelState(ch, 0, 0) (console.cs:37398-37400 [v2.10.3.15]).
+    void deactivateSliceChannel(int sliceId);
+
+    /// Run the allocator for every slice that currently has no stream.
+    ///
+    /// Connect-time step: Slice A is created before the pool is sized, so its
+    /// addSlice-time bind was a no-op, and after a teardown every slice is
+    /// unbound (see releaseStreamBindings).
+    void bindUnboundSlices();
+
+    /// Push every stream's current slice set to the DSP worker.
+    ///
+    /// Phase 3F Sub-Epic I closeout, defect F1. connectToRadio sizes the pool
+    /// and binds every slice BEFORE wireConnectionSignals constructs
+    /// m_dspWorker, so each of those binds published into a null pointer and
+    /// the freshly-built worker started life knowing only its constructor's
+    /// seed ({stream 0: [slice 0]}). Anything on a non-zero stream then
+    /// demodulated nothing until the operator happened to retune it. Called
+    /// from wireConnectionSignals once the worker exists.
+    void republishAllStreamBindings();
+
+    /// Drop every slice's stream binding and idle the whole pool.
+    ///
+    /// Phase 3F Sub-Epic I closeout, defect F1. Teardown destroys the DSP
+    /// worker but the slices kept their streamIndex, so the reconnect bind
+    /// loop in connectToRadio (guarded on streamIndex() < 0) skipped them all
+    /// and nothing was ever republished to the new worker. Deactivating the
+    /// allocator's streams here keeps its bookkeeping consistent with the
+    /// slices that just became unbound, rather than leaving live streams that
+    /// no slice claims.
+    void releaseStreamBindings();
+
+    int streamPoolSize() const;
+    int activeStreamCount() const;
+
+    /// SliceModel::sliceIndex() of every slice currently bound to a stream,
+    /// ascending. These double as WDSP channel ids (Sub-Epic I invariant:
+    /// WDSP RX channel id == slice index).
+    QVector<int> slicesOnStream(int streamIndex) const;
+
+    /// Recompute every slice's shift oscillator against a new stream centre.
+    ///
+    /// A shared DDC window has one centre and N slices sitting at their own
+    /// offsets inside it. When the centre moves (a CTUN drag, a band jump),
+    /// each member's shift is (frequency - newCentreHz). Missing a co-host
+    /// leaves it demodulating the wrong signal while its flag still reads
+    /// the right number.
+    ///
+    /// Deliberately does NOT move the allocator's own centre: this is called
+    /// from the CTUN drag, which retunes the DDC through
+    /// ReceiverManager::forceHardwareFrequency precisely because it is
+    /// bypassing the allocator's placement policy. Callers that DO own the
+    /// placement (bindSliceToStream) already write the shift themselves.
+    void reshiftSlicesOnStream(int streamIndex, double newCentreHz);
+
+    /// Phase 3F Sub-Epic I Task 7b: hardware DDC currently routed to
+    /// `streamIndex`, or -1 when that stream is idle (or no codec has run).
+    /// This is the codec's choice, republished; every slice on the stream
+    /// reports the same number through SliceModel::ddcIndex().
+    int ddcForStream(int streamIndex) const;
+
+    /// Phase 3F Sub-Epic I Task 10: change a DDC stream's sample rate.
+    ///
+    /// The rate IS the window width, so widening lets more slices share this
+    /// stream and narrowing can push slices out of it. Every slice bound to
+    /// the stream is therefore re-run through the allocator afterwards: an
+    /// evicted slice migrates to a free DDC rather than being left aliased
+    /// on a window that no longer contains it.
+    ///
+    /// Protocol 1 carries ONE rate for the whole radio in C&C bank 0
+    /// (P1RadioConnection::composeCcBank0 takes a single sampleRate and
+    /// encodes it as srBits), so on a P1 connection this applies the rate to
+    /// every active stream. Protocol 2 carries a per-DDC rate in
+    /// DdcAssignment::rate[], which the codecs populate per stream, so there
+    /// it applies only to the stream named.
+    bool setStreamSampleRate(int streamIndex, int rateHz);
+
+    /// Phase 3F Sub-Epic I closeout, defect G2: the operator picked a sample
+    /// rate on one slice's VFO flag.
+    ///
+    /// Takes a slice ID (see sliceById), not a list position, because that is
+    /// what VfoWidget carries. Resolves the slice to its DDC stream and hands
+    /// off to setStreamSampleRate, so the request necessarily resolves to a
+    /// stream-wide rate: co-hosted slices share one DDC and cannot hold
+    /// different widths. Unknown or unbound slices are ignored.
+    ///
+    /// This is the body of MainWindow's sampleRateRequested handler, factored
+    /// out so both flag-wiring sites share it and so it is reachable from a
+    /// test without a MainWindow.
+    void requestSliceSampleRate(int sliceId, int rateHz);
+
+    /// Push a slice's just-restored per-band sample rate onto its DDC.
+    ///
+    /// Codex review round 7, PR #293. SliceModel::restoreFromSettings reads
+    /// the persisted per-band SampleRate and calls setSampleRateHz, which is
+    /// a plain property setter: it moves the number the VFO menu displays
+    /// and nothing else. The rate the receiver, codec and wire actually run
+    /// at only changes through requestSliceSampleRate. So returning to a
+    /// band you had left at 384 kHz showed 384 kHz while the DDC stayed on
+    /// whatever the previous band was using, and the saved preference was in
+    /// effect never restored.
+    ///
+    /// Called after restoreFromSettings rather than inside it: the restore
+    /// sets the frequency first, which completes the allocator rebind, and
+    /// the rate transaction has to run against the stream the slice ended up
+    /// on. SliceModel also holds no RadioModel handle by design, and the
+    /// rate is a stream-wide transaction rather than a slice property.
+    void applyRestoredSampleRate(SliceModel* slice);
+
+    /// True when one sample rate covers the whole radio rather than one DDC.
+    ///
+    /// Protocol 1 encodes the rate as srBits in C&C bank 0
+    /// (P1RadioConnection::composeCcBank0 takes a single sampleRate), so every
+    /// stream shares it and setStreamSampleRate fans a change across all of
+    /// them. Protocol 2 carries a per-DDC rate in DdcAssignment::rate[]. UI
+    /// that offers the rate from a per-slice surface has to disclose the P1
+    /// scope rather than imply a private rate. False when disconnected.
+    bool sampleRateIsRadioWide() const;
+
+    /// Sample rates the connected radio accepts, ascending; empty when
+    /// disconnected.
+    ///
+    /// Thin wrapper over SampleRateCatalog::allowedSampleRates with the live
+    /// protocol, board capabilities and SKU. Rate pickers must filter through
+    /// this: P1 saturates srBits at 3 for anything >= 384 kHz, so offering a
+    /// P2-only rate on a P1 board would leave the client configured for a
+    /// width the radio is not sending.
+    QVector<int> allowedStreamSampleRates() const;
+
+    // Phase 3F bench fix 2026-06-03: optional initialPanId is stamped on the
+    // new SliceModel as a dynamic property BEFORE sliceAdded() emits, so the
+    // MainWindow handler can route the VfoWidget to the owning pan. Passing
+    // an empty string preserves the legacy single-pan behaviour.
+    /// Returns the new slice's id — the lowest not currently in use, which
+    /// is also its WDSP RX channel id and its A-E display letter. Returns
+    /// -1 if the allocator refused to place it, in which case nothing is
+    /// added: see the rollback in the definition.
+    ///
+    /// Whether the slice gets its own receiver window or shares an existing
+    /// one is DERIVED from `initialPanId`, not passed in: a pan with no
+    /// other slices is new and needs its own, a pan that already has slices
+    /// is a host and sharing it is the point. It was briefly a caller-
+    /// supplied flag; every caller that forgot it silently reintroduced the
+    /// coupled-pan defect, so the decision lives with the data it depends on.
+    int addSlice(const QString& initialPanId = QString());
+
+    /// Takes a slice ID (see sliceById), not a list position. sliceRemoved
+    /// carries the same id.
+    void removeSlice(int sliceId);
+
+    /// NOTE: still a LIST POSITION, unlike sliceById / removeSlice above.
+    /// This API remains positional for internal list navigation only.
+    ///
+    /// Prefer setActiveSliceById below for anything driven by a UI surface:
+    /// every per-slice widget carries the stable id, not the position.
     void setActiveSlice(int index);
+
+    /// Make the slice with this ID the active one.
+    ///
+    /// UI surfaces that select a slice all carry the stable slice ID
+    /// (VfoWidget::sliceActivationRequested emits what createSliceFlag
+    /// stamped from SliceModel::sliceIndex(); RxApplet::updateSliceButtons
+    /// keys its button group the same way), while setActiveSlice above
+    /// indexes m_slices positionally. Ids and positions diverge after any
+    /// mid-list removal, because removeSlice does not renumber survivors.
+    /// With A(0) B(1) C(2), closing B leaves C at id 2 / position 1: the
+    /// unconverted call asked for position 2 of a two-element list and
+    /// selected nothing at all, so clicking flag C did nothing.
+    ///
+    /// Returns false, changing nothing, when the id resolves to no slice.
+    /// Leaving the previous active slice in place matters: every
+    /// active-slice surface (container S-meter, RX applet, DSP menu) would
+    /// otherwise be stranded on nullptr by one stale click.
+    bool setActiveSliceById(int sliceId);
+
+    /// Phase 3F Sub-Epic C Task 7: AetherSDR-faithful slice creation entry
+    /// point.  Creates a new SliceModel (delegates to addSlice) and tags it
+    /// with the supplied pan id as a dynamic property for Sub-Epic D wiring.
+    /// Enforces the maxSlices() cap and emits sliceAddRejected with a human
+    /// readable reason on overflow.
+    /// Pattern from AetherSDR MainWindow.cpp:6849-6859 [@0cd4559a]
+    /// (+RX button handler).
+    Q_INVOKABLE void addSliceOnPan(const QString& panId);
+
+    /// Re-point any slice whose pan is not in `livePanIds` at the first one
+    /// that is. Returns how many moved.
+    ///
+    /// Codex review, PR #293. Shrinking the pan layout deleted the omitted
+    /// PanadapterApplets, but the slice-side loop in MainWindow only ever
+    /// added (`for (i = existing; i < target; ++i)`), so with existing >
+    /// target its body never ran. Slices whose panKey named a deleted pane
+    /// were left pointing at nothing: their VFO widgets went with the pane,
+    /// re-expanding did not re-associate them because nothing emitted
+    /// panKeyChanged, and they went on holding a DDC, a stream and audio.
+    ///
+    /// Rehomes rather than removes. A slice carries the operator's frequency,
+    /// mode, filter and DSP state, and throwing that away as a side effect of
+    /// picking a smaller layout is destructive and was never asked for.
+    ///
+    /// An empty `livePanIds` is a no-op: there is nowhere to move to, and
+    /// leaving a slice on a stale pan id beats pointing it at an empty string
+    /// that no pane will ever match.
+    ///
+    /// Lives here rather than in the MainWindow lambda that has the defect,
+    /// because MainWindow is not constructible in the test harness and logic
+    /// put there cannot be tested at all.
+    int rehomeSlicesToPans(const QStringList& livePanIds);
+
+    /// Which of `panIds` currently host no slice, in the order given.
+    ///
+    /// Codex review round 4, PR #293, and a regression rehomeSlicesToPans
+    /// created. The layout handler decided which pans to populate with
+    /// `for (i = slices().size(); i < target; ++i)`, which assumes the slice
+    /// COUNT is the first unoccupied pan index. Rehoming breaks that: shrink
+    /// a 2x2 to one pane and all four slices land on pan-0, so expanding back
+    /// has existing == target == 4, the loop adds nothing, and three panes
+    /// come up with no VFO and no RX entry. Co-hosting slices by hand, or
+    /// removing a non-final slice id, breaks the same assumption.
+    ///
+    /// Occupancy is the question the caller is actually asking, so it is the
+    /// question answered here. Co-hosted slices count once: a pan with three
+    /// slices on it is occupied, not three-times occupied.
+    QStringList pansWithoutSlices(const QStringList& panIds) const;
+
+    /// Slices currently living on `panId`, optionally skipping one.
+    ///
+    /// `except` exists for the add path: addSlice appends the new slice to
+    /// m_slices before binding it, so asking "does this pan already have
+    /// slices" would otherwise always answer yes and count the newcomer
+    /// itself. That distinction decides whether the slice opens a new
+    /// receiver or joins an existing one, so getting it wrong is the whole
+    /// difference between two independent pans and two views of one.
+    QVector<SliceModel*> slicesOnPan(const QString& panId,
+                                     const SliceModel* except = nullptr) const;
+
+    /// Move surplus co-hosted slices onto pans in `panIds` that have none.
+    /// Returns how many moved.
+    ///
+    /// Codex review round 5, PR #293, and a regression pansWithoutSlices
+    /// created. After a 2x2 shrinks to one pane every slice sits on pan-0;
+    /// expanding again finds three empty pans, and creating a slice for each
+    /// spends the maxSlices budget on NEW slices while four co-hosted ones sit
+    /// idle. On a five-slice radio that fills pan-1, hits the cap, and leaves
+    /// pan-2 and pan-3 empty with a surplus fifth slice in the model.
+    ///
+    /// The slices needed are already there, so they are moved before any are
+    /// made. Only genuinely surplus ones move: a pan holding a single slice is
+    /// never raided, or expanding would just relocate the hole.
+    int spreadSlicesOntoEmptyPans(const QStringList& panIds);
+
+    /// Phase 3F closeout — public helper for invoking the antennaAutoSwitched
+    /// signal from operator surfaces (Tools menu "Test antenna switch toast"
+    /// entry) and from future conflict-detection logic in AlexController.
+    /// Plain helper avoids the Qt private-signal access dance for callers.
+    Q_INVOKABLE void emitAntennaAutoSwitched(int sliceIndex,
+                                              const QString& oldAntenna,
+                                              const QString& newAntenna);
+
+    /// Phase 3F closeout — Sub-Epic E Task 7 consumer wire surface. Emits
+    /// txBoundReRouteRequested(proposedAntenna, existingAntenna). Today this
+    /// is invoked only from the Tools menu test entry that exercises the
+    /// TxBoundConfirmDialog surface; real emission from addSliceOnPan when
+    /// the slice-add would force a TX-bound chain re-route lands when the
+    /// conflict-detection state machine ships.
+    Q_INVOKABLE void requestTxBoundReRoute(const QString& proposedAntenna,
+                                            const QString& existingAntenna);
 
     // Band-button click handler. Routes both SpectrumOverlayPanel::bandSelected
     // and ContainerWidget::bandClicked through one code path. On first
@@ -307,6 +870,29 @@ public:
     void setStepAttController(class StepAttenuatorController* c);
     NoiseFloorTracker* noiseFloorTracker() const { return m_noiseFloorTracker; }
     void setNoiseFloorTracker(NoiseFloorTracker* t) { m_noiseFloorTracker = t; }
+
+    /// Register the tracker measuring one DDC stream's band.
+    ///
+    /// Auto AGC-T derives its threshold from the noise floor, so a slice has
+    /// to measure the band it is on. With one shared tracker (stream 0's), a
+    /// 20m slice would take its threshold from 40m's noise floor.
+    void setStreamNoiseFloorTracker(int streamIndex, NoiseFloorTracker* t) {
+        if (t) { m_streamNoiseFloors.insert(streamIndex, t); }
+    }
+
+    /// The tracker for this slice's stream, falling back to the global one
+    /// when the slice is unbound or its stream has no tracker yet.
+    NoiseFloorTracker* noiseFloorTrackerForSlice(const SliceModel* s) const {
+        if (s) {
+            const int stream = s->streamIndex();
+            if (stream >= 0) {
+                if (NoiseFloorTracker* t = m_streamNoiseFloors.value(stream, nullptr)) {
+                    return t;
+                }
+            }
+        }
+        return m_noiseFloorTracker;
+    }
     // Task 3.1: MeterPoller view hook so MultimeterPage can apply live
     // polling-interval and averaging-window changes without a MainWindow
     // round-trip.  Non-owning; MainWindow calls setMeterPoller() after
@@ -326,6 +912,37 @@ public:
     // both objects exist.  Non-owning; lifetime is RadioModel's lifetime.
     // Master design §5.1.1; pre-code review §1.6.
     MoxController* moxController() const { return m_moxController; }
+
+    // Phase 3F Sub-Epic C: TX-slice arbiter (single-TX invariant + RF-safe
+    // handoff). Owned by RadioModel (Qt parent), wired to slice list +
+    // MoxController during construction. MAC injected + load() driven on
+    // every currentRadioChanged emit; save() runs from teardownConnection.
+    // Used by the upcoming VfoWidget TX-badge click handoff path and any
+    // future code that needs the authoritative TX-bound slice index.
+    TxSliceArbiter* txSliceArbiter() const { return m_txSliceArbiter; }
+
+    // The slice bound to the transmitter — the source of every transmit
+    // frequency. NOT activeSlice(), which is only the slice the operator is
+    // looking at; in multi-slice those diverge, and taking the transmit
+    // frequency from the wrong one puts the PA on the wrong band (and, via
+    // the Alex low-pass, behind the wrong filter).
+    //
+    // Thetis draws the same distinction: its VFO A arm is guarded by
+    // `!chkVFOBTX.Checked` so it stands down when VFO B is transmitting
+    // (console.cs:31889-31893 [v2.10.3.15]), and the VFO B handler assigns
+    // tx_dds_freq_mhz itself in that case (console.cs:32866-32869).
+    //
+    // Returns nullptr when no arbiter binding resolves. TX-global callers
+    // must fail safely rather than substituting listening/UI state.
+    SliceModel* txBoundSlice() const;
+
+    // Phase 3F Sub-Epic D Task 13: NereusSDR-original FFT fan-out router.
+    // Wires receiverId -> N pans so a single DDC FFT pipeline can feed
+    // multiple zoom levels of the same I/Q data. MainWindow registers
+    // pan-to-receiver mappings on sliceAdded; the per-receiver FFTEngine
+    // fan-out pump is wired in Sub-Epic E / F polish (the routing table
+    // is correct as soon as the mappings are populated).
+    class FFTRouter* fftRouter() const { return m_fftRouter; }
 
     // 3M-1c Phase L.1: expose MicProfileManager so MainWindow / SetupDialog
     // can hand the per-MAC profile bank to TxApplet (J.1 setter) and
@@ -361,6 +978,95 @@ public:
     // Constructed once in RadioModel ctor; lifetime is RadioModel's lifetime.
     FilterPresetStore* filterPresetStore() const { return m_filterPresetStore; }
 
+    // ── Phase 3J-2 H2: spot-system accessors ────────────────────────────────
+    // RadioModel owns the seven spot-ingest clients, three view models, and
+    // the DxccColorProvider as std::unique_ptr members. Each accessor returns
+    // a non-owning pointer; lifetime is RadioModel's lifetime. MainWindow
+    // (H1) consumes these to instantiate SpotHubDialog + FreeDVReporterDialog
+    // with shared model pointers, and the M3 follow-up task wires the
+    // `<Source>/AutoConnect` AppSettings keys to actually start each client.
+    //
+    // Constructed in RadioModel ctor with identity / endpoint defaults from
+    // AppSettings; startConnection() is NOT called at construction time.
+    SpotModel*            spotModel()           const { return m_spotModel.get(); }
+    // 2026-05-12 bench fix: moved from SpotHubDialog ownership so the
+    // table stays populated from app start regardless of whether the
+    // dialog is open.  Spots from auto-connected sources were
+    // previously dropped on the floor until the user opened Tools →
+    // Spot Hub for the first time (the SpotTableModel didn't exist
+    // before then), forcing a manual disconnect+reconnect to repopulate.
+    SpotTableModel*       spotTableModel()      const { return m_spotTableModel.get(); }
+    FreeDVStationModel*   freeDvStationModel()  const { return m_freeDvStationModel.get(); }
+    RxDecodeModel*        rxDecodeModel()       const { return m_rxDecodeModel.get(); }
+    DxccColorProvider*    dxccColorProvider()   const { return m_dxccColorProvider.get(); }
+    DxClusterClient*      dxCluster()           const { return m_dxCluster.get(); }
+    DxClusterClient*      rbn()                 const { return m_rbn.get(); }
+    WsjtxClient*          wsjtx()               const { return m_wsjtx.get(); }
+    SpotCollectorClient*  spotCollector()       const { return m_spotCollector.get(); }
+    PotaClient*           pota()                const { return m_pota.get(); }
+    FreeDVReporterClient* freeDvReporter()      const { return m_freeDvReporter.get(); }
+    PskReporterClient*    pskReporter()         const { return m_pskReporter.get(); }
+
+    // ── TNF (design section 8.1): the canonical notch store ─────────────────
+    //
+    // Constructed in the RadioModel ctor and restored from AppSettings there,
+    // before any WDSP channel exists, so the openRxChannelPool-tail reconcile
+    // (section 6.3) always has the full list to install. Non-owning pointer;
+    // lifetime is RadioModel's. Consumed by the TCI rx_nf_enable repoint
+    // (section 6.4), the +TNF button and status-bar light (section 7), and
+    // MnfSetupPage (section 9).
+    NotchModel*           notchModel()          const { return m_notchModel.get(); }
+
+    // ── Phase 3J-2 + 3R M3: spot-client auto-start state restore ────────────
+    //
+    // Reads each per-source AutoConnect / AutoStart key from AppSettings
+    // and, when True, calls the corresponding start method with the
+    // persisted identity / port / interval params. Designed to be called
+    // once at launch from MainWindow (sibling to tryAutoReconnect for the
+    // radio connection itself).
+    //
+    // Keys consulted (all flat PascalCase, matching SpotHubDialog F2):
+    //   DxClusterAutoConnect   -> connectToCluster(host, port, callsign)
+    //   RbnAutoConnect         -> same shape, different host default
+    //   WsjtxAutoStart         -> startListening(address, port)
+    //   SpotCollectorAutoStart -> startListening(port)
+    //   PotaAutoStart          -> startPolling(intervalSec)
+    //   FreeDvAutoStart        -> startConnection() (identity / URL
+    //                              already plumbed by RadioModel ctor)
+    //   PskReporterAutoStart   -> no-op (PSK Reporter is send-only)
+    //
+    // Safe to call multiple times. Each client's start method already
+    // guards against double-start.
+    void restoreSpotClientAutoStartState();
+
+    // ── Phase 3R Task I5: RadeChannel slot-graph wiring ─────────────────────
+    //
+    // wireRadeChannel attaches a freshly-created RadeChannel into RadioModel's
+    // slot graph. Phase J calls this from createRadeChannel (J2) / mode-swap
+    // (J3) after constructing the channel.
+    //
+    // The channel's per-channel signals (snrChanged / syncChanged /
+    // rxTextDecoded) do not carry a slice ID; the wiring adapts each through
+    // a captured-sliceId lambda so the receiving RadioModel slots know which
+    // slice to apply the event to.
+    //
+    // Routing:
+    //   RadeChannel::snrChanged       -> onRadeSnrChanged     -> SliceModel::setSnrDb
+    //                                                         -> radeSnrChanged re-emit
+    //   RadeChannel::syncChanged      -> onRadeSyncChanged    -> radeSyncChanged
+    //                                                            (only on transition)
+    //   RadeChannel::rxTextDecoded    -> onRadeTextDecoded    -> RxDecodeModel::addDecode
+    //
+    // Null channel or null slice is a safe no-op.
+    void wireRadeChannel(int sliceId, NereusSDR::RadeChannel* channel,
+                         NereusSDR::SliceModel* slice);
+
+    // Reads the latest RADE sync state for the given slice ID. Returns
+    // false when the slice has no recorded sync state (e.g. RADE was
+    // never wired for that slice). Surface for the future Phase L
+    // RadeApplet status indicator + status-bar SYNC badge.
+    bool radeSynced(int sliceId) const;
+
     // 3M-1a G.1: expose TxChannel view so TxApplet and G.4 TUNE function
     // can call setTuneTone / setRunning without depending on WdspEngine.
     // Non-owning; WdspEngine owns the channel. Null until WDSP initializes.
@@ -370,6 +1076,136 @@ public:
     // in TxChannel drives fexchange2 → sendTxIq (SPSC ring) while running.
     // Wired by 3M-1a Task G.1 (bench fix: TUNE carrier now reaches the radio).
     TxChannel* txChannel() const { return m_txChannel; }
+
+    // Phase 3F Sub-Epic J Task 11: the one place GUI code may resolve a
+    // slice's WDSP channel. Mirrors txChannel()'s shape. Added so MainWindow
+    // and the Setup pages can stop calling wdspEngine()->rxChannel()
+    // directly -- that direct reach is what let ANF-on-slice-B toggle slice
+    // A (this same sub-epic, Task 1). RadioModel stays the only layer that
+    // touches WdspEngine::rxChannel(); everything under src/gui/ goes
+    // through this accessor instead (enforced by
+    // scripts/verify-no-gui-dsp-access.py).
+    // Returns nullptr if WDSP has not initialised yet or sliceIndex has no
+    // channel.
+    RxChannel* rxChannelForSlice(int sliceIndex) const;
+
+    // Phase 3P-II: PGXL / TGXL / Tuner accessors.
+    // PgxlConnection and TgxlConnection are QObject children of RadioModel
+    // (constructed once in the ctor with parent=this). TunerModel is likewise
+    // a QObject child that binds its connection once in the ctor.
+    // All three accessors return non-null pointers from construction time.
+    PgxlConnection* pgxlConnection() { return m_pgxlConnection; }
+    Rf2ksConnection* rfKitConnection() const { return m_rfKitConnection.get(); }
+    TgxlConnection* tgxlConnection() { return m_tgxlConnection; }
+    TunerModel*     tunerModel()     { return m_tunerModel;     }
+    // SmartSDR API server on TCP 4992. Owned by RadioModel; lifetime matches.
+    // Used by MainWindow to push slice/transmit state so PGXL/TGXL pull the
+    // current band/freq via the SmartSDR API rather than from a stale cache.
+    class SmartSdrApiListener* smartSdrListener() { return m_smartSdrListener; }
+
+    // Live toggle for the 4O3A master switch (Settings -> CAT & Network ->
+    // 4O3A -> General tab).  Starts or stops the TCP 4992 listener
+    // without requiring an app restart.  Persisted automatically via
+    // AppSettings key "FourO3A_Enabled".  Default OFF on first run.
+    //
+    // When false: TCP 4992 not bound, PGXL/TGXL auto-connect skipped,
+    // and the detail tabs (PowerGenius XL / Tuner Genius XL / Diagnostics)
+    // are disabled in the Setup UI.
+    //
+    // When true: listener starts (if not already running), AppSettings
+    // persisted, FourO3APage updates its enabled state.
+    void setFourO3AEnabled(bool enabled);
+    bool fourO3AEnabled() const;
+
+    // Phase 3P-III RF-Kit RF2K-S master toggle.
+    // Persisted per-MAC under hardware/<mac>/peripherals/RfKit_Enabled.
+    // Default OFF on first run. When true the Rf2ksApplet and Setup tab
+    // become active; when false the REST poller is idle and the applet
+    // is hidden. No-op when not connected (no MAC scope to write under).
+    void setRfKitEnabled(bool enabled);
+    // Pushes RfKit_AutoReconnect + RfKit_PollIntervalMs from AppSettings into
+    // the live connection. Called before every connectToAmp().
+    void applyRfKitOperatorSettings();
+    bool rfKitEnabled() const;
+
+    // ── Per-radio peripherals scope (RF-Kit / 4O3A / PGXL / TGXL) ────────
+    //
+    // The four external-amp accessories used to read GLOBAL AppSettings
+    // keys so they fired on every radio regardless of which one was
+    // connected.  As of this refactor each accessory's enable + connection
+    // info is scoped under hardware/<mac>/peripherals/<key>.
+    //
+    // Storage format:
+    //   hardware/<mac>/peripherals/RfKit_Enabled       "True" | "False"
+    //   hardware/<mac>/peripherals/RfKit_ManualIp      string
+    //   hardware/<mac>/peripherals/RfKit_ManualPort    int (string-encoded)
+    //   hardware/<mac>/peripherals/FourO3A_Enabled     "True" | "False"
+    //   hardware/<mac>/peripherals/PGXL_ManualIp       string
+    //   hardware/<mac>/peripherals/PGXL_ManualPort     int (string-encoded)
+    //   hardware/<mac>/peripherals/TGXL_ManualIp       string
+    //   hardware/<mac>/peripherals/TGXL_ManualPort     int (string-encoded)
+    //
+    // peripheralValue(key, default):
+    //   Returns the per-MAC value when connected, defaultValue otherwise.
+    //   Use this for every read of the keys listed above.
+    //
+    // setPeripheralValue(key, value):
+    //   Writes the per-MAC value when connected.  When NOT connected this
+    //   is a no-op + qCWarning(lcConnection) so a Setup page that fires
+    //   before a radio is selected can't silently lose data.  Setup pages
+    //   should gray themselves out via connectionStateChanged().
+    //
+    // currentRadioMac():
+    //   Returns m_lastRadioInfo.macAddress when connected, empty otherwise.
+    //   Setup pages use this to populate the "Editing peripherals for ..."
+    //   banner.  Tests reach for setLastRadioInfoForTest() to drive the
+    //   per-MAC scope without a live RadioConnection.
+    QString peripheralValue(const QString& key,
+                            const QString& defaultValue = QString{}) const;
+    void    setPeripheralValue(const QString& key, const QString& value);
+    QString currentRadioMac() const;
+
+    bool hasAmplifier() const { return m_hasAmplifier; }
+    bool ampOperate()  const  { return m_ampOperate; }
+
+    // Cross-vendor "is any external amp currently amplifying?" predicate.
+    // True if PGXL is connected + in OPERATE OR if the RF-Kit RF2K-S is in
+    // OPERATE.  Used by MainWindow's SMeterWidget wiring to decide whether
+    // to feed the TX needle from the radio's barefoot meters or from an
+    // external amp's telemetry.  Phase 3P-III bench fix 2026-05-25 KG4VCF:
+    // without this gate, PGXL Connect 2 (radio TX power) was overwriting
+    // RF-Kit Connect B (amp forward power) at the radio's higher emit rate.
+    bool isAnyExternalAmpInOperate() const;
+
+    // RF-Kit-only counterpart to the predicate above: true when the RF2K-S
+    // is connected AND reporting OPERATE, ignoring PGXL entirely.
+    //
+    // Needed because externalAmpFwdSwrUpdated carries RF-Kit telemetry
+    // exclusively, so gating that feed on the cross-vendor predicate let a
+    // PGXL in OPERATE wave through RF-Kit /power polls from an amp sitting
+    // in STANDBY, overwriting the live PGXL meter with RF-Kit's 0 W.  A
+    // per-source feed needs a per-source gate.  Codex review, PR #291.
+    bool isRfKitInOperate() const;
+
+    // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
+    // Constructed once in the ctor (Qt parent-ownership). Non-null from
+    // construction time. Shared with PgxlInterlockPage (non-owning read/write)
+    // and MoxController (non-owning gate via setInterlockPolicy).
+    TxInterlockPolicy* txInterlockPolicy() { return m_txInterlockPolicy; }
+
+    // Phase 3P-II Phase 4 Task 89: TuneMemoryStore -- shared per-(antenna,band)
+    // TGXL relay position cache. Constructed once in the ctor (Qt parent-ownership).
+    // Non-null from construction time. Shared by TgxlAdvancedPage (non-owning
+    // view/edit) and TunerApplet (non-owning save/recall from context menu).
+    TuneMemoryStore* tuneMemoryStore() { return m_tuneMemoryStore; }
+
+    // Phase 3P-II Phase 4 Task 94: FaultLog -- shared PGXL / TGXL fault ring buffers.
+    // Constructed once in the ctor (Qt parent-ownership). Non-null from construction
+    // time. RadioModel captures PGXL FAULT state transitions into m_pgxlFaultLog.
+    // Shared (non-owning) with PgxlAdvancedPage and TgxlAdvancedPage so their
+    // Fault History tables reflect live captures.
+    FaultLog* pgxlFaultLog() { return m_pgxlFaultLog; }
+    FaultLog* tgxlFaultLog() { return m_tgxlFaultLog; }
 
     // Phase 3G-9b: one-shot profile that sets the 7 smooth-default recipe
     // values on SpectrumWidget. Called from the constructor exactly once
@@ -393,6 +1229,44 @@ public:
     // Phase 3P-A Task 15: exposes caps so RxApplet can set slider range at
     // construction time, not only after a connection is established.
     const BoardCapabilities& boardCapabilities() const;
+
+    // ── RX meter calibration offset (Thetis-faithful port) ────────────────
+    //
+    // Returns the cumulative dB offset applied to WDSP S-meter readings
+    // (RXA_S_PK, RXA_S_AV) and MaxBin readings before display.  Without
+    // this offset, raw WDSP meter values are in ADC dBFS rather than
+    // antenna dBm.
+    //
+    // Ported from Thetis console.cs:21040 [v2.10.3.13]:
+    //   public float RXOffset(int rx) {
+    //       return RXPreampOffset(rx) + RXCalibrationOffset(rx);
+    //   }
+    //
+    // RXPreampOffset (console.cs:20989) selects between attenuator_data
+    // (when step-att enabled) and preamp_offset[mode] (when disabled).
+    //
+    // RXCalibrationOffset (console.cs:21022) sums per-radio meter cal +
+    // XVTR + 6m offsets.  NereusSDR currently applies only the per-radio
+    // meter cal (defaults from rxMeterCalOffsetDefaultFor() and the user
+    // override AppSettings key RX1_MeterCalOffsetDb); XVTR/6m offsets
+    // ride a future XVTR/transverter epic.
+    //
+    // Consumed by MeterPoller::pollSMeter and MeterPoller::poll for the
+    // SignalPeak / SignalAvg / SIGNAL_MAX_BIN bindings only; matches
+    // Thetis console.cs:46824 + :46881 [v2.10.3.13] where +offset is
+    // applied to those exact reading types.  ADC_PK / ADC_AV / AGC_PK /
+    // AGC_AV / AGC_GAIN do NOT take the offset (Thetis line 46831-46835
+    // omit +offset for the same reason).
+    double rxMeterOffsetDb() const;
+
+signals:
+    // Emitted when rxMeterOffsetDb() changes (model swap, preamp change,
+    // step-att enable/disable, attenuator dB change, or AppSettings
+    // RX1_MeterCalOffsetDb override).  MeterPoller connects this to
+    // refresh its cached offset value.
+    void rxMeterOffsetChanged(double db);
+
+public:
 
     bool isConnected() const;
 
@@ -439,7 +1313,8 @@ public:
     //     dropped.  Callers should ensure MOX is off before calling.
     //   - dspChangeMeasured(qint64) signal (Task 1.8) is emitted on completion.
     //     The elapsed time is also returned synchronously.
-    qint64 setSampleRateLive(int newRateHz);
+    qint64 setSampleRateLive(int newRateHz,
+                             bool reconcileDiversity = true);
 
     // Task 1.7 — Active-RX-count live-apply coordinator.
     //
@@ -516,6 +1391,25 @@ public:
     // private setConnectionState() called from connection signals.
     void setConnectionStateForTest(ConnectionState s) { setConnectionState(s); }
 
+    // Test-only: walk the FULL Connected/Disconnected handler so tests
+    // can drive the peripherals lifecycle (applyPeripheralsForCurrentMac
+    // / teardownPeripherals) without standing up a RadioConnection.
+    // Mirrors the production signal-driven path -- equivalent to wiring
+    // a fake RadioConnection and emitting its connectionStateChanged
+    // signal, but without the QObject overhead.
+    void onConnectionStateChangedForTest(ConnectionState s) {
+        onConnectionStateChanged(s);
+    }
+
+    // Test-only: targeted seams for the peripherals lifecycle.  Tests
+    // that don't want the full onConnectionStateChanged side-effects
+    // (settings-hygiene validation, currentRadioChanged emit, etc.)
+    // can drive applyPeripheralsForCurrentMac / teardownPeripherals
+    // directly after setting the connection state via
+    // setConnectionStateForTest + setLastRadioInfoForTest.
+    void applyPeripheralsForTest() { applyPeripheralsForCurrentMac(); }
+    void teardownPeripheralsForTest() { teardownPeripherals(); }
+
 #ifdef NEREUS_BUILD_TESTS
 public:
     // Test-only: inject board caps without a live radio connection.
@@ -530,10 +1424,40 @@ public:
     // state handler, and override board capabilities. Production code
     // must never use these.
     void injectConnectionForTest(RadioConnection* conn) { m_connection = conn; }
+    // Install a real PureSignal coordinator without the full WDSP/connect
+    // pipeline so codec-context tests can distinguish the auto-cal preference
+    // from the cmd-state machine's effective PSEnabled state. RadioModel owns
+    // the returned coordinator, matching production lifetime.
+    PureSignal* installPureSignalForTest(TxChannel* tx);
+    // Phase 3F Sub-Epic I closeout, defect F1: attach a DSP worker without
+    // standing up the connection / DSP-thread pipeline, so a test can
+    // reproduce connectToRadio's real ordering (pool sized and slices bound
+    // FIRST, worker constructed second) and assert the bindings still reach
+    // it. Non-owning, exactly like the production m_dspWorker.
+    void attachDspWorkerForTest(RxDspWorker* w) { m_dspWorker = w; }
+    // Phase 3F Sub-Epic I closeout, defect F3: force the radio-state inputs
+    // the codec branches on, so the PureSignal and diversity branches are
+    // reachable without standing up a connection, a WDSP engine and a
+    // PureSignal coordinator. Sticky once set; production code must never
+    // call this.
+    void setDdcContextForTest(bool mox, bool puresignalRun, bool diversity) {
+        m_ddcCtxForTest    = true;
+        m_ddcCtxMoxForTest = mox;
+        m_ddcCtxPsForTest  = puresignalRun;
+        m_ddcCtxDivForTest = diversity;
+    }
     // B6 — XIT: allow tests to trigger wireSliceSignals() directly after
     // injecting a mock connection, mirroring what wireConnectionSignals() does
     // when a real radio connects.
-    void wireSliceSignalsForTest() { wireSliceSignals(); }
+    void wireSliceSignalsForTest() { wireSliceSignals(m_activeSlice); }
+    // The transmit-frequency derivation the push and both TUNE arms share.
+    // setTune() itself is unreachable from a unit test (it requires a live
+    // connection AND an audio engine, console.cs:30035-30043 [v2.10.3.15]'s
+    // PowerOn guard), so the shared derivation is what gets pinned.
+    quint64 txFrequencyForSliceForTest(const SliceModel* s) const {
+        return txFrequencyForSlice(s);
+    }
+    void installBandPlanMoxCheckForTest() { installBandPlanMoxCheck(); }
     // Issue #182 — invoke the mic_ptt_disabled wiring helper directly so
     // tst_radio_model_mic_ptt_wire can verify the signal/slot bind + prime
     // path without spinning up the full wireConnectionSignals pipeline.
@@ -546,8 +1470,14 @@ public:
             // Mirror the production T10 path so tests catch regressions
             // in the slice-label refresh (see RadioModel.cpp frequencyChanged
             // handler for the canonical version).
+            //
+            // Issue #257: production now passes the SkuUiProfile so the
+            // RX-only label slot wins over the ANT* default. Mirror that
+            // here so band-cross tests exercise the same path.
             if (m_activeSlice) {
-                m_activeSlice->refreshAntennasFromAlex(m_alexController, b);
+                const NereusSDR::SkuUiProfile sku =
+                    NereusSDR::skuUiProfileFor(m_hardwareProfile.model);
+                m_activeSlice->refreshAntennasFromAlex(m_alexController, b, &sku);
             }
         }
     }
@@ -589,12 +1519,6 @@ public:
     void setTuneOffSettleMsForTest(int ms) noexcept { m_tuneOffSettleMs = ms; }
     bool tuneOffPendingForTest()          const noexcept { return m_pendingTuneOff; }
 
-    // TUN state, exported for H.3 UI polling and for issue #177 tests.
-    // True between setTune(true) and the completion of the corresponding
-    // setTune(false) → completeTuneOff() chain.
-    // Cite: Thetis console.cs:30010 [v2.10.3.13] — _tuning = true (read by
-    // many UI/meter/PA paths in console.cs).
-    bool isTune() const noexcept { return m_isTuning; }
     // 3M-1b I.3: inject HPSDRHW board type to select the per-family Radio Mic
     // group box in AudioTxInputPage without a live radio connection.
     // Does not reset other test-cap flags — independent of hasMicJack.
@@ -608,6 +1532,59 @@ public:
         emit currentRadioChanged(NereusSDR::RadioInfo{});
     }
     NereusSDR::Band lastBand() const { return m_lastBand; }
+
+    // Phase 3F: expose the codec's input array so tests can assert what the
+    // per-board codec is actually handed (SliceConfig::txBound in
+    // particular, which is the OR of SliceModel::isTxSlice across the slices
+    // sharing a DDC stream). Production callers reach the same builder
+    // through requestDdcAssignment.
+    std::array<NereusSDR::SliceConfig, 5> buildStreamConfigsForCodecForTest() const {
+        return buildStreamConfigsForCodec();
+    }
+
+    // Companion to the above for the other half of the codec's inputs.
+    // Added with the D2 fix (CodecContext::adcCtrl was never seeded on
+    // Protocol 2), so a test can assert the seed without standing up a
+    // connection to observe it through a wire frame.
+    NereusSDR::CodecContext currentCodecContextForTest() const {
+        return currentCodecContext();
+    }
+
+    // Publish a hand-built assignment through the real production path.
+    //
+    // Added with the D1 fix. The per-stream ADC now reaches the model in
+    // exactly one way: a codec composes a DdcAssignment and this function
+    // decodes its adcCtrl bytes. A test that wants a slice on chain 1 has to
+    // go through here or it is seeding a field nothing reads, which is the
+    // defect D1 was.
+    //
+    // Deliberately the whole function rather than a setter for m_streamAdc.
+    // A narrow ADC setter could drift from what publishDdcAssignment
+    // actually writes and the suite would never notice; routing through the
+    // real body means the decode (NereusSDR::adcForDdc) is under test too.
+    //
+    // For tests that want the codec's own answer instead of a hand-built
+    // one, inject a codec and use requestDdcAssignment: that is the fuller
+    // path and it is what tst_alex_per_adc_bpf_wire drives.
+    void publishDdcAssignmentForTest(const NereusSDR::DdcAssignment& a) {
+        publishDdcAssignment(a);
+    }
+
+    // Per-radio peripherals scope: tests pin m_lastRadioInfo without
+    // standing up a fake RadioConnection so peripheralValue / setPeripheralValue
+    // can resolve their per-MAC scope.  Production code populates this via
+    // the connection-thread handshake.
+    void setLastRadioInfoForTest(const NereusSDR::RadioInfo& info) {
+        m_lastRadioInfo = info;
+    }
+
+    // Codex review round 7, PR #293 — drive the I/Q tap fork directly.
+    // Production reaches it from the iqDataForReceiver lambda installed in
+    // wireConnectionSignals, which needs DSP threads, an RxDspWorker and a
+    // live connection. Same on*ForTest pattern as handlePaTelemetryForTest.
+    void forkIqToTapsForTest(int receiverIndex, const QVector<float>& samples) {
+        forkIqToTaps(receiverIndex, samples);
+    }
 
     // P1 full-parity §3.4 test hook — invoke the per-sample PA telemetry
     // handler directly without spinning up the full wireConnectionSignals
@@ -692,7 +1669,7 @@ public:
     // TxChannel pointer so the drive-slider / TUNE rewrite tests can spy on
     // setTxFixedGain() without standing up the full WdspEngine pipeline.
     // Production code never calls this — m_txChannel is wired by the
-    // WDSP-init lambda inside connectToRadio() (see "createTxChannel(1)"
+    // WDSP-init lambda inside connectToRadio() (see "createTxChannel(kTxChannelId)"
     // around RadioModel.cpp:1514).
     void injectTxChannelForTest(class TxChannel* ch) { m_txChannel = ch; }
 
@@ -711,6 +1688,19 @@ public:
         applyHpsdrModel(m);
     }
 #endif
+
+    // TUN state, exported for H.3 UI polling and for issue #177 tests.
+    // True between setTune(true) and the completion of the corresponding
+    // setTune(false) → completeTuneOff() chain.
+    // Cite: Thetis console.cs:30010 [v2.10.3.13] — _tuning = true (read by
+    // many UI/meter/PA paths in console.cs).
+    //
+    // Lives OUTSIDE the NEREUS_BUILD_TESTS block because production code
+    // (TunerApplet::onTuneClicked at TunerApplet.cpp:183) uses it to gate
+    // local-tune carrier engage on hardware-TUNE entry.  Prior placement
+    // inside the test block compiled green on Linux (-DNEREUS_BUILD_TESTS=ON
+    // in CI) but broke macOS / Windows where the option defaults OFF.
+    bool isTune() const noexcept { return m_isTuning; }
 
     // Connection
     void connectToRadio(const RadioInfo& info);
@@ -756,6 +1746,26 @@ public:
     void setGanymedePresent(bool present);
 
 public slots:
+    /// Flush any coalesced notch edit immediately. Called when a notch drag
+    /// ends so the committed position is exact rather than up to one
+    /// coalescing window stale. See scheduleNotchEditPush.
+    void commitPendingNotchEdits();
+
+    /// The single creation route for every notch. Resolves the minimum
+    /// realisable width from THE GIVEN SLICE's channel and clamps to it, so a
+    /// notch is never stored or drawn at a width WDSP will silently widen.
+    ///
+    /// Codex review of PR #313 found three separate add routes with three
+    /// different behaviours: the panadapter gesture clamped against
+    /// activeSlice() rather than the pan that was clicked, and the +TNF button
+    /// and the settings-page Add button did not clamp at all. Every route goes
+    /// through here now, and `slice` is always the slice the operator acted
+    /// on, per the standing rule that a control drawn on a pan targets that
+    /// pan.
+    ///
+    /// Returns the new notch id, or -1 if the model refused it.
+    int addNotchForSlice(SliceModel* slice, double centerHz, double widthHz);
+
     // ── Phase 3M-1a Task F.1: MoxController::hardwareFlipped fan-out ───────────
     // Slot connected to MoxController::hardwareFlipped(bool isTx).
     // Fans out hardware-flip side-effects to AlexController + RadioConnection
@@ -809,6 +1819,402 @@ public slots:
     // Cite: Thetis console.cs:29978-30157 [v2.10.3.13] — chkTUN_CheckedChanged.
     void setTune(bool on);
 
+    // TGXL autotune orchestration (NereusSDR-native, no Thetis source).
+    //
+    // Bench-driven on 2026-05-20: TGXL refuses to run its relay sweep when
+    // PGXL is in OPERATE -- the amp is amplifying the radio's tune carrier
+    // and TGXL can't calibrate against an amplified signal. The operator
+    // workflow with real FlexRadio is: put PGXL in STANDBY, run TGXL
+    // autotune at radio tunepower (~10-25 W), then re-arm PGXL to OPERATE.
+    //
+    // This method orchestrates that sequence:
+    //   1. Save current PGXL operate-state (m_pgxlSavedOperate)
+    //   2. Send `operate=0` to PGXL if it was operating
+    //   3. Engage local CW tune carrier via setTune(true). Thetis-faithful
+    //      `chkTUN_CheckedChanged` already swaps rfpower -> tunepower for
+    //      the cycle (console.cs:30075 [v2.10.3.13]).
+    //   4. After 200 ms settle, send `autotune` to TGXL on :9010 (unless
+    //      fromHardware=true, in which case TGXL is already running its
+    //      own internal cycle and we only need to provide the carrier).
+    //   5. Wait for TGXL tuning=0 -> drop carrier (handled by the
+    //      TunerApplet tuningChanged path that calls setTune(false)).
+    //   6. On carrier drop, if m_pgxlSavedOperate was true, send
+    //      `operate=1` to restore PGXL.
+    //
+    // fromHardware: true when the cycle was initiated by a TGXL hardware
+    // TUNE button (we received `transmit tune on` via LAN PTT). Skips
+    // step 4 because TGXL is already running its own sweep internally.
+    void startTgxlAutotune(bool fromHardware);
+
+    // ── Phase 3J-1 follow-up: TCI Q_INVOKABLE shims (bench wire-up) ──────────
+    //
+    // TciProtocol calls into RadioModel by *method name string* via
+    // QMetaObject::invokeMethod(...).  For Qt to resolve those names, the
+    // methods must be marked Q_INVOKABLE (or be slots, or Q_PROPERTY
+    // READ/WRITE — Q_INVOKABLE is the explicit choice here).
+    //
+    // Phase 6 wired the call sites in TciProtocol.cpp but added the matching
+    // Q_INVOKABLE shims only on TestMockRadioModel.  The matrix runner asserts
+    // byte-for-byte parity against the mock, so all 80+ matrix rows pass — but
+    // when a real client (WSJT-X / ESDR3 / SunSDR) connects against the live
+    // RadioModel, every set/query silently no-ops because the meta-object has
+    // no entry under those names.
+    //
+    // This block adds the WSJT-X minimum: PTT (trx), VFO (vfo), mode
+    // (modulation), and split_enable.  Subsequent commits will fill the long
+    // tail (DSP toggles, AGC, SQL, RIT/XIT, balance, audio configs,
+    // calibration).
+    //
+    // Signatures MUST match the Q_ARG / Q_RETURN_ARG types at each call site
+    // in src/core/TciProtocol.cpp:
+    //   handleVfo       (line 1086 set / 1104 query)
+    //   handleModulation(line 1236 query / 1275 set)
+    //   handleTrx       (line 1365 set  / 1380 query)
+    //   handleSplit     (line 1416 set  / 1430 query)
+    //
+    // Connection type: TciProtocol invokes with Qt::DirectConnection (test
+    // thread) but the runtime TciServer pumps from the main thread (same
+    // thread as RadioModel), so DirectConnection is fine for production too.
+
+    /// Set MOX (PTT).  Routes to MoxController if installed, else
+    /// TransmitModel.  Mirrors AppMod::PttSource:TCI in Thetis.
+    /// From Thetis TCIServer.cs:3454-3500 [v2.10.3.13] — handleTrx, set path.
+    Q_INVOKABLE void setMox(bool on);
+
+    /// Query MOX (PTT).  Returns the current MOX latch state.
+    /// From Thetis TCIServer.cs:3555-3558 [v2.10.3.13] — sendMOX.
+    Q_INVOKABLE bool mox() const;
+
+    /// Set VFO frequency for receiver `rx`, channel `chan` (0=A, 1=B).
+    /// NereusSDR has one frequency per slice; `chan==1` (VFO B) is silently
+    /// ignored because the second VFO concept maps to a separate slice, not
+    /// to a per-slice secondary frequency.
+    /// From Thetis TCIServer.cs:3719-3793 [v2.10.3.13] — handleVfo, set path.
+    Q_INVOKABLE void setVfoHz(int rx, int chan, qint64 hz);
+
+    /// Query VFO frequency for receiver `rx`, channel `chan`.  Returns
+    /// the slice frequency regardless of `chan` (see setVfoHz note).
+    /// From Thetis TCIServer.cs:3793-3833 [v2.10.3.13] — handleVfo, query path.
+    Q_INVOKABLE qint64 vfoHz(int rx, int chan) const;
+
+    /// Set demodulation mode for receiver `rx`.  `modeStr` is uppercase
+    /// (LSB, USB, CWL, CWU, AM, FM, DIGL, DIGU, etc.).
+    /// CWbecomesCWUabove10mhz transform from [2.10.3.6]MW0LGE fixes #365
+    /// (TCIServer.cs:3868-3895) is DEFERRED — `cw` maps to CWL until VFOATX /
+    /// VFOBTX state plumbing arrives.
+    //[2.10.3.6]MW0LGE fixes #365  [original inline tag from TCIServer.cs:3868]
+    /// From Thetis TCIServer.cs:3835-3942 [v2.10.3.13] — handleModulation, set.
+    Q_INVOKABLE void setMode(int rx, QString modeStr);
+
+    /// Query demodulation mode for receiver `rx`.  Returns uppercase name.
+    /// From Thetis TCIServer.cs:3942-3954 [v2.10.3.13] — handleModulation, query.
+    Q_INVOKABLE QString mode(int rx) const;
+
+    /// Query split-TX state.  Always returns false: Phase 3F deletes the
+    /// `setSplit` stub per design §3 ("split is replaced with XIT for plus
+    /// or minus 10 kHz tuning offset, or addSliceOnPan to create a second
+    /// slice for full retune"). The query stays so TciProtocol's init burst
+    /// can still emit `split_enable:rx,false;` for wire-protocol stability
+    /// with WSJT-X / N1MM / Log4OM clients ("Split Operation: None/Fake It"
+    /// is the supported configuration).
+    /// See `docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md`
+    /// §3 ("VFO A/B / split: not implemented").
+    Q_INVOKABLE bool split(int rx) const;
+
+    // ── Phase 3J-1 closeout Item 3 (2026-05-12): TCI Q_INVOKABLE long tail ──
+    //
+    // ~56 additional shims that TciProtocol calls via QMetaObject::invokeMethod.
+    // Without these the matrix test (against TestMockRadioModel) passes but
+    // ESDR3 / N1MM / Log4OM / SunSDR-native clients hit silent no-ops on the
+    // production RadioModel.  Each shim is documented with what it does
+    // semantically (mock parity) and what underlying state it writes (real
+    // model side).  Stubs are explicitly labeled "stub until <feature> lands".
+
+    // VFO lock — routes to SliceModel::locked.  TCI carries two-chan-per-rx
+    // semantics from Thetis (VFOALock + VFOBLock); NereusSDR collapses them
+    // because per-slice VFO B isn't modeled.  Both chan==0 and chan==1
+    // read/write the same slice-level locked flag.
+    Q_INVOKABLE void setVfoLock(int rx, int chan, bool locked);
+    Q_INVOKABLE bool vfoLock(int rx, int chan) const;
+    Q_INVOKABLE void setLock(int rx, bool locked);
+    Q_INVOKABLE bool lock(int rx) const;
+
+    // Mute — routes to SliceModel::muted (per-slice) and a new RadioModel
+    // member m_globalMute (global).  Global mute is broadcast-only state;
+    // when global mute is on, all slices' audio is suppressed downstream.
+    Q_INVOKABLE void setGlobalMute(bool on);
+    Q_INVOKABLE bool globalMute() const;
+    Q_INVOKABLE void setRxMute(int rx, bool on);
+    Q_INVOKABLE bool rxMute(int rx) const;
+
+    // Filter — routes to SliceModel::filterLow / filterHigh.  setFilterBand
+    // sets BOTH cutoffs atomically.
+    Q_INVOKABLE void setFilterBand(int rx, int lowHz, int highHz);
+    Q_INVOKABLE int  filterLow(int rx) const;
+    Q_INVOKABLE int  filterHigh(int rx) const;
+
+    // AGC mode — routes to SliceModel::agcMode (enum).  Mock uses uppercase
+    // strings: "OFF" / "LONG" / "SLOW" / "MED" / "FAST" / "CUSTOM".
+    Q_INVOKABLE void    setAgcMode(int rx, const QString& mode);
+    Q_INVOKABLE QString agcMode(int rx) const;
+
+    // AGC gain (threshold) — routes to SliceModel::agcThreshold (-20..120).
+    Q_INVOKABLE void setAgcGain(int rx, int gain);
+    Q_INVOKABLE int  agcGain(int rx) const;
+
+    // Squelch — routes to SliceModel::ssqlEnabled / ssqlThresh.  TCI level
+    // is int (-140..0 dBm); SliceModel::ssqlThresh is double in same units.
+    Q_INVOKABLE void setSqlEnable(int rx, bool on);
+    Q_INVOKABLE bool sqlEnable(int rx) const;
+    Q_INVOKABLE void setSqlLevel(int rx, int level);
+    Q_INVOKABLE int  sqlLevel(int rx) const;
+
+    // RIT / XIT — routes to SliceModel::ritEnabled/ritHz/xitEnabled/xitHz on
+    // the active slice.  Thetis treats these as radio-global (single VFO
+    // pair); NereusSDR collapses to active-slice for symmetry with mode/mox.
+    Q_INVOKABLE void setRitEnable(bool on);
+    Q_INVOKABLE bool ritEnable() const;
+    Q_INVOKABLE void setRitOffset(int hz);
+    Q_INVOKABLE int  ritOffset() const;
+    Q_INVOKABLE void setXitEnable(bool on);
+    Q_INVOKABLE bool xitEnable() const;
+    Q_INVOKABLE void setXitOffset(int hz);
+    Q_INVOKABLE int  xitOffset() const;
+
+    // RX balance / audio pan — routes to SliceModel::audioPan.  TCI uses
+    // double in [-1, 1]; SliceModel matches.  chan arg is ignored (single
+    // pan per slice, not per VFO).
+    Q_INVOKABLE void   setRxBalance(int rx, int chan, double balance);
+    Q_INVOKABLE double rxBalance(int rx, int chan) const;
+
+    // CTUN — per-slice stub (no CTUN model state yet; spectrum-widget owns
+    // the interaction mode).  Stored in m_tciStubRxCtun, set-and-read only
+    // until a CTUN model lands.
+    Q_INVOKABLE void setRxCtun(int rx, bool on);
+    Q_INVOKABLE bool rxCtun(int rx) const;
+
+    // ── DSP toggles (NbMode + activeNr based) ────────────────────────────
+    // setRxNb: maps bool to NbMode (true -> last-non-None mode; false -> None).
+    Q_INVOKABLE void setRxNb(int rx, bool on);
+    Q_INVOKABLE bool rxNb(int rx) const;
+    // setRxNr: maps (bool, int nrIndex) to activeNr enum slot.
+    Q_INVOKABLE void setRxNr(int rx, bool on, int nrIndex);
+    Q_INVOKABLE bool rxNr(int rx) const;
+    Q_INVOKABLE int  rxNrIndex(int rx) const;
+    // setRxAnf / rxAnf: routes to SliceModel::anfEnabled (Phase 3F Sub-Epic J
+    // Task 1 added ANF as its own Q_PROPERTY, independent of the activeNr
+    // slot enum).  Previously this pair stubbed ANF state into
+    // m_tciStubRxApf -- the APF array -- so toggling ANF via TCI silently
+    // flipped APF's stored bit too, and neither one touched real WDSP ANF.
+    // Sub-Epic J Task 10 (rx_volume) closeout fixed the routing.
+    Q_INVOKABLE void setRxAnf(int rx, bool on);
+    Q_INVOKABLE bool rxAnf(int rx) const;
+
+    // setRxBin / rxBin: routes to SliceModel::binauralEnabled.
+    // setRxApf / rxApf: routes to SliceModel::apfEnabled.
+    // Both are per-receiver upstream (handleRxBinEnable TCIServer.cs:1854-1869,
+    // handleRxApfEnable TCIServer.cs:1870-1894 [v2.10.3.15]) and both already
+    // had SliceModel properties wired to RxChannel, but Phase 3F chip
+    // task_c1e6fbad found these two shims still storing into private arrays
+    // and reading straight back out, so a TCI client could set either one, be
+    // told it took effect, and change nothing in the DSP chain.
+    Q_INVOKABLE void setRxBin(int rx, bool on);
+    Q_INVOKABLE bool rxBin(int rx) const;
+    Q_INVOKABLE void setRxApf(int rx, bool on);
+    Q_INVOKABLE bool rxApf(int rx) const;
+
+    // NOT a stub since TNF section 6.4: these read and write the NotchModel
+    // master enable.  Global despite the per-rx command shape, exactly as
+    // Thetis GetMNF is (console.cs:52317-52330 [v2.10.3.15]).
+    Q_INVOKABLE void setRxNf(int rx, bool on);
+    Q_INVOKABLE bool rxNf(int rx) const;
+
+    // ── Stub categories: SliceModel doesn't expose these as Q_PROPERTYs yet ─
+    // Each stub stores the requested value in a small per-slice array so
+    // round-trip (set then get) returns the operator's last value.  Real
+    // wiring to WDSP comes when the underlying feature lands.
+    Q_INVOKABLE void setRxEnable(int rx, bool on);
+    Q_INVOKABLE bool rxEnable(int rx) const;
+
+    // ── Per-slice AF gain (rx_volume: query source) ──────────────────────
+    // Distinct from afLinear() below: afLinear is the single radio-global
+    // master volume slider (Thetis console AF field, handleVolume /
+    // "volume:" line).  afGain(rx) is the per-receiver AF gain (Thetis
+    // RX0Gain/RX1Gain/RX2Gain, handleRxVolume / "rx_volume:" lines), routed
+    // to SliceModel::afGain (WDSP RXA panel gain1 -- see the afGainChanged
+    // connect in the constructor).  Getter-only: TciProtocol has no
+    // rx_volume set/query dispatch case today (only the init burst reads
+    // this), matching the calibration getters above.  See
+    // TciProtocol.cpp's buildInitialRadioStateLines rx_volume block for the
+    // receiver -> slice id mapping this feeds and its active-slice fallback.
+    Q_INVOKABLE int afGain(int rx) const;
+
+    // ── Volume (linear int) ──────────────────────────────────────────────
+    // setAfLinear: TCI sends 0..32767; we store and let the audio path read.
+    // monLinear: TX monitor volume; same range.  These are NereusSDR-global
+    // (not per-slice) -- matches Thetis console.cs handleAFVolume.
+    Q_INVOKABLE void setAfLinear(int v);
+    Q_INVOKABLE int  afLinear() const;
+    Q_INVOKABLE void setMonLinear(int v);
+    Q_INVOKABLE int  monLinear() const;
+
+    // ── IQ sample rate ───────────────────────────────────────────────────
+    // setIqSampleRate: TCI echoes the rate back per Thetis pattern; the
+    // radio hardware doesn't actually change rate from a TCI command.
+    Q_INVOKABLE void setIqSampleRate(int sr);
+    Q_INVOKABLE int  iqSampleRate() const;
+
+    // ── Audio stream config ──────────────────────────────────────────────
+    // Per-client state lives in TciClientSession; TciServer intercepts these
+    // commands BEFORE the invokeMethod fires, so the production shims here
+    // are dead-code parity with the mock.  Kept for symmetry + matrix-test
+    // compatibility.  They store last-seen value but no other side effect.
+    Q_INVOKABLE void    setAudioSampleRate(int sr);
+    Q_INVOKABLE int     audioSampleRate() const;
+    Q_INVOKABLE void    setAudioStreamSampleType(const QString& t);
+    Q_INVOKABLE QString audioStreamSampleType() const;
+    Q_INVOKABLE void    setAudioStreamChannels(int n);
+    Q_INVOKABLE int     audioStreamChannels() const;
+    Q_INVOKABLE void    setAudioStreamSamples(int n);
+    Q_INVOKABLE int     audioStreamSamples() const;
+
+    // ── TX profile (via MicProfileManager) ───────────────────────────────
+    // setTxProfile: name lookup against the operator's profile library.
+    // txProfilesList: enumerates installed profiles.
+    Q_INVOKABLE void        setTxProfile(const QString& name);
+    Q_INVOKABLE QString     txProfile() const;
+    Q_INVOKABLE QStringList txProfilesList() const;
+
+    // ── Calibration (getter-only stubs returning 0.0) ────────────────────
+    // No calibration model in RadioModel yet.  Mock semantics: set/get pair;
+    // production has setters absent (caller side never sets these), so
+    // getters return 0.0.  Real calibration data would live in a future
+    // CalibrationModel + per-slice persistence.
+    Q_INVOKABLE double calibrationMeter(int rx) const;
+    Q_INVOKABLE double calibrationDisplay(int rx) const;
+    Q_INVOKABLE double calibrationXvtr(int rx) const;
+    Q_INVOKABLE double calibrationSixMeter(int rx) const;
+    Q_INVOKABLE double calibrationTxDisplay(int rx) const;
+
+    // ── Phase 3J-1 closeout (2026-05-22): init-burst live-state shims ───────
+    //
+    // Added so TciProtocol::buildInitialRadioStateLines can read live
+    // RadioModel state instead of emitting the Phase 4 Task 4.2 hardcoded
+    // placeholders.  Each shim is a thin Q_INVOKABLE wrapper over existing
+    // state or trivial derivation -- no new member variables, no behavior
+    // changes.  Architectural divergences (where NereusSDR's storage model
+    // differs from Thetis Console) are documented in each shim header AND
+    // mirrored in the TciProtocol.cpp call site so reviewers see the same
+    // story from both sides.
+
+    /// "RX2 enabled" -- derived from connectionActiveRxCount >= 2.
+    /// Thetis console.cs:37278 [v2.10.3.15] backs RX2Enabled with the
+    /// rx2_enabled member (chkRX2.Checked).  NereusSDR uses the active-
+    /// receiver count (set by RadioModel::setActiveRxCountLive) as the
+    /// authoritative source.
+    Q_INVOKABLE bool rx2Enabled() const;
+
+    /// TX monitor enable -- forwards to TransmitModel::monEnabled().
+    /// Thetis console.cs:18656-18663 [v2.10.3.15] -- MON = chkMON.Checked.
+    /// NereusSDR's m_transmitModel.m_monEnabled defaults false and is never
+    /// persisted (safety: MON loads OFF always, matching Thetis audio.cs:406).
+    Q_INVOKABLE bool monEnabled() const;
+
+    /// Tune state -- m_isTuning (latched true between setTune(true) and
+    /// completeTuneOff()).  Thetis console.cs:18677-18684 [v2.10.3.15] --
+    /// TUN = chkTUN.Checked.  Semantically identical.
+    ///
+    /// Separate from the existing isTune() accessor (which is noexcept and
+    /// cannot be Q_INVOKABLE).  Same backing field.
+    Q_INVOKABLE bool tune() const;
+
+    /// Power-on -- forwards to isConnected().
+    ///
+    /// Architectural divergence from Thetis console.cs:19799-19803
+    /// [v2.10.3.15] PowerOn = chkPower.Checked.  In Thetis PowerOn and
+    /// connection state are SEPARATE concepts: a user can "power off" the
+    /// radio while remaining connected.  NereusSDR has no such mode -- the
+    /// connection IS the power switch.  TCI clients see powerOn = true
+    /// while connected, false while disconnected (no "soft off" state).
+    Q_INVOKABLE bool powerOn() const;
+
+    /// DIGL click-tune offset -- active slice's diglOffsetHz.
+    ///
+    /// Architectural divergence from Thetis console.cs:14693-14749
+    /// [v2.10.3.15] DIGLClickTuneOffset (radio-global private member,
+    /// default 2210 Hz).  NereusSDR stores per-slice on SliceModel
+    /// (m_diglOffsetHz, default 0 Hz per SliceModel.h:928).  For TCI we
+    /// expose the active slice's value as the radio's "current" DIGL
+    /// offset; falls back to 0 when no slice is active (pre-connect probe).
+    Q_INVOKABLE int diglOffset() const;
+
+    /// DIGU click-tune offset -- active slice's diguOffsetHz.
+    ///
+    /// Same Thetis-vs-NereusSDR divergence as diglOffset.  Thetis
+    /// console.cs:14658-14691 [v2.10.3.15] -- DIGUClickTuneOffset
+    /// (radio-global, default 1500 Hz).  NereusSDR per-slice
+    /// (m_diguOffsetHz, default 0 Hz per SliceModel.h:929).
+    Q_INVOKABLE int diguOffset() const;
+
+    // ── Phase 3R Task I5: RadeChannel signal-graph slots ────────────────────
+    //
+    // Public slots so Qt's auto-connection queues them correctly when the
+    // emitting RadeChannel ever moves to a worker thread (J2/J3 currently
+    // keep it on the main thread; the public-slot declaration is forward-
+    // safe regardless).
+    //
+    // All three accept an int sliceId so a single RadioModel can route
+    // multiple per-slice RadeChannels through one set of slots. The
+    // wireRadeChannel helper captures the slice ID in a lambda at wire
+    // time and adapts the channel's per-channel signals into these.
+
+    // Forwards a decoded callsign (+ optional grid) into RxDecodeModel as
+    // a single decode row. mode="RADE", source="rade_text". Grid is
+    // appended to the payload only when non-empty (I4 Option B does not
+    // carry grid; the field is present for future text-channel revs).
+    void onRadeTextDecoded(int sliceId, const QString& callsign,
+                           const QString& grid);
+
+    // Tracks per-slice RADE decoder sync state. Emits radeSyncChanged
+    // only on actual transitions: repeated identical values collapse to
+    // a single emit (de-duplication keeps the future status-bar
+    // indicator from flickering on repeated sync=true reports from the
+    // codec).
+    void onRadeSyncChanged(int sliceId, bool synced);
+
+    // Forwards the codec's SNR estimate to the slice's snrDb property
+    // (D5 added SliceModel::setSnrDb). Cast-up float->double at the
+    // boundary; the slice setter no-ops on identical numeric values
+    // so repeated identical SNR updates do not spam UI repaint.
+    void onRadeSnrChanged(int sliceId, float snrDb);
+
+    // 2026-05-12 bench: throttled FreeDV Reporter freq publish.  See
+    // m_freedvFreqDwellTimer member declaration for the policy.  Called
+    // from the slice.frequencyChanged subscriber at line ~4945 in
+    // RadioModel.cpp.  Caller passes the new VFO Hz; this method either
+    // publishes immediately (initial baseline / band-jump fast-path /
+    // MOX force) or restarts the dwell timer for a deferred publish.
+    void publishFreedvFrequencyDwelled(quint64 hz);
+    // Force-publish the current pending freq right now and reset the
+    // dwell.  Called from MoxController::txAboutToBegin so a TX engage
+    // never leaves the reporter showing a stale freq.
+    void flushFreedvFrequencyDwell();
+
+    // Phase 3J-1 closeout follow-up (2026-05-12): FreeDV Reporter is a
+    // dashboard for FreeDV / RADE operators.  Our station should be
+    // visible there only when we're actually using RADE (RADE_U or
+    // RADE_L) -- not when we're on SSB / WSJT-X / CW.  Mirrors
+    // freedv-gui's connect-and-hide-when-not-on-FreeDV behavior; we stay
+    // connected so we can still see other FreeDV stations and report
+    // their decodes via sendRxReport, but our own row stays hidden on
+    // the public dashboard unless we're TX-capable in RADE.
+    //
+    // Wired on:
+    //   - active slice's dspModeChanged (mode switch during operation)
+    //   - active slice swap (different slice becomes active)
+    //   - FreeDVReporterClient::connected (initial state after connect)
+    void updateFreedvReporterVisibility();
+
 signals:
     void infoChanged();
     // Phase 3Q-1: parametrized — state passed so UI consumers can act without
@@ -823,6 +2229,16 @@ signals:
     // Task 1.7: emitted after setActiveRxCountLive() successfully applies
     // the new receiver count to both hardware and WDSP channels.
     void activeRxCountChanged(int newCount);
+
+    // Fires when the 4O3A master toggle flips (Setup → CAT & Network →
+    // 4O3A → General). Consumers (e.g., MainWindow's applet visibility
+    // wiring) react to grey out / hide the Amplifier and Tuner applets
+    // when 4O3A is off.
+    void fourO3AEnabledChanged(bool enabled);
+    // Fires when the RF-Kit master toggle flips (Setup -> CAT & Network ->
+    // RF-Kit -> General). Consumers (e.g. MainWindow applet visibility)
+    // react to show/hide the RF2K-S applet.
+    void rfKitEnabledChanged(bool enabled);
     // Fires on each transition to Connected with the RadioInfo of the live
     // connection. HardwarePage (Phase 3I) listens to this to repopulate
     // sub-tabs with per-radio fields.
@@ -843,6 +2259,71 @@ signals:
     void pureSignalCoordinatorReady(NereusSDR::PureSignal* coordinator);
     void sliceAdded(int index);
     void sliceRemoved(int index);
+
+    /// Phase 3F Sub-Epic F Task 5: emitted after the per-ADC wideband FFT
+    /// completes.  adcIndex is 0 or 1; dbmBins is 8192 entries (kOutputBins
+    /// from WidebandFftEngine).  SpectrumWidget consumes this in extended
+    /// pan rendering; visual paint wires in Sub-Epic F polish (T7-T10).
+    void widebandSpectrumReady(int adcIndex, QVector<float> dbmBins);
+    // Phase 3F Sub-Epic C Task 7: emitted when addSliceOnPan rejects a
+    // request because the maxSlices() cap has been reached.  Status-bar /
+    // toast subscribers wire to this signal in Sub-Epic C Tasks 8-9.
+    void sliceAddRejected(QString reason);
+
+    /// Phase 3F Sub-Epic I closeout, defect F4: the operator retuned a slice
+    /// to a frequency no DDC can reach, and the frequency has been rolled
+    /// back to the last one that bound. Distinct from sliceAddRejected
+    /// because that one talks about adding a slice, which is not what
+    /// happened -- the operator turned the knob.
+    ///
+    /// After this fires, the slice's frequency, stream binding and shift
+    /// offset all agree again. `reason` is plain English, ready for a status
+    /// bar, and names the frequency the slice stayed on.
+    void sliceRetuneRejected(int sliceIndex, const QString& reason);
+
+    /// Phase 3F Sub-Epic I: a stream's slice set changed. Consumers rebuild
+    /// FFT routing; RadioModel republishes the set to RxDspWorker.
+    void streamBindingsChanged(int streamIndex, const QVector<int>& sliceIndices);
+
+    /// Phase 3F Sub-Epic I closeout, defect F3: streams that still host slices
+    /// but that the per-board codec left without a DDC, so the radio has
+    /// stopped streaming them. Emitted on transitions only (both into and out
+    /// of the suspended state; an empty list means everything is back).
+    ///
+    /// This happens legitimately on the 1-ADC HERMES class, where Thetis
+    /// collapses to a single synced pair whenever PureSignal transmits or
+    /// diversity engages (console.cs:8448-8456 [v2.10.3.15]). The behaviour is
+    /// upstream-faithful; the silence around it was not, which is what this
+    /// signal fixes. `reason` is plain English, ready for a status bar.
+    void streamsSuspended(const QVector<int>& streamIndices, const QString& reason);
+
+    /// Phase 3F Sub-Epic I: a stream was activated or retuned; its FFTEngine
+    /// and panadapter window must follow.
+    void streamCentreChanged(int streamIndex, double centreHz, int sampleRateHz);
+
+    /// Phase 3F Sub-Epic I: emitted whenever the slice or stream set changes
+    /// such that the per-board codec must recompute the DDC assignment.
+    /// Observation hook; invokeCodecDdcAssignment does the work. Task 7b: it
+    /// no longer no-ops while disconnected; only the wire push is gated on
+    /// a connection, because the client-side mapping has to be correct
+    /// before the first packet arrives.
+    void ddcAssignmentRequested();
+
+    // Phase 3F closeout — Sub-Epic E Task 6 consumer wire. Emitted when
+    // AlexController auto-switches an antenna due to a conflict-policy
+    // re-route (Sub-Epic E Tasks 11-13 will fill in the real detection;
+    // for now the signal surface exists so MainWindow can wire
+    // AntennaSwitchToast). Carries the slice that moved plus the old and
+    // new antenna names. UNDO action is consumer-defined.
+    void antennaAutoSwitched(int sliceIndex, QString oldAntenna,
+                              QString newAntenna);
+    // Phase 3F closeout — Sub-Epic E Task 7 consumer wire. Emitted when
+    // adding a slice would force a TX-bound chain re-route to a different
+    // antenna. Consumer (MainWindow) opens TxBoundConfirmDialog. Real
+    // emission from addSliceOnPan lands when the conflict-policy state
+    // machine ships in a follow-up.
+    void txBoundReRouteRequested(QString proposedAntenna,
+                                  QString existingAntenna);
     void activeSliceChanged(int index);
     // Emitted once at the end of loadSliceState() after the slice has been
     // restored from AppSettings. Mirrors Thetis console.cs:27204 [v2.10.3.13]
@@ -853,7 +2334,7 @@ signals:
     // ran with the slice's pre-restore default values.
     void sliceStateRestored(int index);
     // Issue #153 sub-bug 2 — diagnostic + test observation hook.
-    // Emitted by pushTxModeAndBandpass() when an active slice exists,
+    // Emitted by pushTxModeAndBandpass() when a TX-bound slice exists,
     // BEFORE the queued setter dispatch to TxWorkerThread.  Carries the
     // slice's current DSPMode + audio-space filter cutoffs.  Tests use
     // it as a proxy for "push helper triggered with X"; production code
@@ -865,6 +2346,13 @@ signals:
 
     // Raw interleaved I/Q for spectrum display (tapped before WDSP processing)
     void rawIqData(const QVector<float>& interleavedIQ);
+
+    // Phase 3F Sub-Epic I Task 8: stream-tagged companion to rawIqData,
+    // which is kept for existing single-slice subscribers. MainWindow's
+    // per-stream FFTEngine pool subscribes to this one so each DDC's bins
+    // reach its own engine (and from there its own panadapter).
+    // Emitted from the same Connection-thread fork as rawIqData.
+    void rawIqDataForStream(int streamIndex, const QVector<float>& samples);
 
     // Phase 3Q-6: forwarded from the active RadioConnection::frameReceived()
     // so TitleBar::ConnectionSegment can pulse its activity LED without
@@ -933,6 +2421,53 @@ signals:
     // NereusSDR-original glue (no Thetis equivalent needed).
     void txFilterRequest(int audioLowHz, int audioHighHz, NereusSDR::DSPMode mode);
 
+    // ── Phase 3R Task I5: RadeChannel slot-graph re-emit signals ─────────────
+    //
+    // Re-emitted after RadioModel internalises the corresponding
+    // RadeChannel signal. UI consumers (RadeApplet, status bar SYNC
+    // badge, future SNR readout in VfoWidget) subscribe here rather
+    // than to the per-channel RadeChannel directly, so they survive
+    // mode-swap / channel-rebuild cycles without re-wiring.
+    //
+    // radeSyncChanged fires only on actual transitions (de-duplicated
+    // by onRadeSyncChanged via m_radeSyncedSlices). radeSnrChanged
+    // fires on every onRadeSnrChanged invocation: no de-dup here,
+    // the slice setter's NaN-aware short-circuit handles repaint thrash.
+    void radeSyncChanged(int sliceId, bool synced);
+    void radeSnrChanged(int sliceId, float snrDb);
+
+    // Phase 3R Task L2: RADE carrier-frequency offset re-emit. Wired
+    // alongside the I5 trio for the RadeApplet freq-offset readout.
+    // No model-side de-dup: the codec already coalesces by emitting
+    // only on actual offset change.
+    void radeFreqOffsetChanged(int sliceId, float hz);
+
+    // Phase 3P-II: PGXL amplifier presence / state / meter signals.
+    // amplifierChanged: fires once on the first statusUpdated from PgxlConnection
+    //   (m_hasAmplifier transitions false -> true). present=true only.
+    // ampStateChanged: fires whenever m_ampOperate changes (OPERATE-family vs not).
+    // ampMetersChanged: fires on each statusUpdated that carries peakfwd + swr keys.
+    //   fwd is forward power in watts (dBm input converted: watts = 10^(dbm/10)/1000).
+    //   swr is the SWR ratio (return-loss dB input: ratio = 10^(-rl/20), clamped >= 1.0).
+    void amplifierChanged(bool present);
+    void ampStateChanged();
+    void ampMetersChanged(float fwd, float swr);
+
+    // Phase 3P-III Task 13: cross-vendor external-amp aggregator signals.
+    // Both PgxlConnection state transitions and Rf2ksConnection::operateModeUpdated
+    // feed externalAmpOperateChanged so SMeterWidget and any other consumer can
+    // subscribe once rather than per-brand.
+    //
+    // externalAmpOperateChanged(bool inOperate):
+    //   true  when any connected external amp enters OPERATE.
+    //   false when all external amps leave OPERATE (or disconnect).
+    //
+    // externalAmpFwdSwrUpdated(int forwardW, float swr):
+    //   fired for every RF-Kit power snapshot so consumers can feed the TX
+    //   needle without knowing which amp brand supplied the reading.
+    void externalAmpOperateChanged(bool inOperate);
+    void externalAmpFwdSwrUpdated(int forwardW, float swr);
+
 private slots:
     void onConnectionStateChanged(NereusSDR::ConnectionState state);
 
@@ -966,10 +2501,85 @@ private slots:
     // reassigned anywhere in baseline Thetis — effectively no-op.
     void pumpAudioVolume(double audioVolume);
 
+    /// Recompute the drive byte through the NORMAL (non-tune) power path.
+    ///
+    /// Ports the restore mi0bot performs on every MOX-to-TX transition, at
+    /// console.cs:30272 [v2.10.3.13-beta2] inside chkMOX_CheckedChanged2's
+    /// `if (tx)` branch:
+    ///
+    ///   if (!chkTUN.Checked && !chk2TONE.Checked) ptbPWR_Scroll(this, EventArgs.Empty);
+    ///   //MW0LGE_22b need this here as we may have adjusted power via tune slider when not in mox
+    ///
+    /// `ptbPWR_Scroll` calls setPowerFromDriveSlider (console.cs:47601-47607),
+    /// which is SetPowerUsingTargetDBM with bFromTune=false. Without it a
+    /// preceding TUNE leaves its drive value in place for the next normal
+    /// transmit. On the HL2 that value is 0, because the mi0bot carve-out at
+    /// console.cs:47660-47673 deliberately zeroes the drive byte for tune
+    /// powers at or below 51 and carries the level in the post-gen tone
+    /// magnitude instead, so a TUNE silences every following SSB transmit.
+    void restoreNormalTxDrive();
+
+    // ── Phase 3J-2 H2: per-source spot-adapter slots ────────────────────────
+    //
+    // Each ingest client emits spotReceived(DxSpot); the adapter slot
+    // translates that into the QMap<QString,QString> kvs shape
+    // SpotModel::applySpotStatus expects (TCI-style sink). Per-source
+    // lifetime and color defaults are read from AppSettings under the
+    // <Source>SpotLifetimeSec / <Source>SpotColor key family.
+    //
+    // The WSJT-X adapter is special: it also pushes to RxDecodeModel so the
+    // "what my radio just heard" feed tracks live decodes (NereusSDR design;
+    // freedv-gui has no equivalent feed). WsjtxClient does not have a
+    // separate decodeReceived signal; the single spotReceived signal is the
+    // source for both sinks.
+    void onClusterSpotReceived(const NereusSDR::DxSpot& spot);
+    void onRbnSpotReceived(const NereusSDR::DxSpot& spot);
+    void onWsjtxSpotReceived(const NereusSDR::DxSpot& spot);
+    void onSpotCollectorSpotReceived(const NereusSDR::DxSpot& spot);
+    void onPotaSpotReceived(const NereusSDR::DxSpot& spot);
+    void onFreeDvReporterSpotReceived(const NereusSDR::DxSpot& spot);
+    void onPskReporterSpotReceived(const NereusSDR::DxSpot& spot);
+
+    // Phase 3P-II Task 19: PGXL status update handler.
+    // Called on every statusUpdated from PgxlConnection. On first call sets
+    // m_hasAmplifier and emits amplifierChanged(true). Parses the "state" key
+    // to update m_ampOperate and emits ampStateChanged() on transition. Parses
+    // "peakfwd" (dBm) and "swr" (return-loss dB) and emits ampMetersChanged.
+    void onPgxlStatus(const QMap<QString, QString>& kvs);
+
+    // Phase 3P-II Task 62: runs the amplifierCreate + flexradioPair +
+    // enableKeepalive sequence once PgxlConnection reports connected.
+    // Reads PGXL_PairAttempt / PGXL_FlexAmpSlice / PGXL_TxAnt / PGXL_AntMap
+    // from AppSettings. Serial is "NereusSDR-<macAddress>".
+    void onPgxlConnected();
+
+    // Phase 3P-II Phase 4 Task 96: auto-recall TGXL tune memory when the
+    // TX-bound slice crosses a band boundary. Connected to
+    // SliceModel::bandChanged from addSlice(). Fires only when
+    // TGXL_AutoTuneMemoryRecall == "True" and a stored entry exists for
+    // (activeAntenna, newBand).  Falls back to issuing "tune start" per
+    // design bench-caveat (absolute relay-write API not yet confirmed).
+    void onSliceBandChanged(SliceModel* source, NereusSDR::Band band);
+
 private:
     // Phase 3Q-1: drives the RadioModel-level connection state machine.
     // Guards against redundant transitions (no emit if state unchanged).
     void setConnectionState(ConnectionState s);
+
+    // ── Per-radio peripherals lifecycle ────────────────────────────────────
+    // Drive the RF-Kit / 4O3A / PGXL / TGXL connections from the connection
+    // state machine.  applyPeripheralsForCurrentMac() runs after the radio
+    // reports Connected (and m_lastRadioInfo.macAddress is populated);
+    // teardownPeripherals() runs on Disconnected / LinkLost.
+    //
+    // migratePeripheralGlobalsIfNeeded() is a one-shot that folds the legacy
+    // GLOBAL RfKit_* / FourO3A_Enabled / PGXL_Manual* / TGXL_Manual* keys
+    // into the currently connected radio's hardware/<mac>/peripherals/
+    // scope on the FIRST Connected event after this code lands.  Subsequent
+    // launches see PeripheralsMigrationDone="True" and skip.
+    void applyPeripheralsForCurrentMac();
+    void teardownPeripherals();
+    void migratePeripheralGlobalsIfNeeded();
 
     // v0.4.1 hotfix: single point that fans the connected hardware
     // HPSDRModel out to every sub-model that needs it.  Updates
@@ -994,10 +2604,125 @@ private:
     //
     // Source: Thetis HPSDR/Alex.cs:310-413 [@501e3f5].
     void applyAlexAntennaForBand(NereusSDR::Band band, bool isTx = false);
+    // Reconciles the TX-bound slice's stored antenna intent into the
+    // per-band Alex state. Called at every authority boundary (slice edit,
+    // TX handoff, and immediately before MOX routing).
+    void applyTxAntennaFromBoundSlice();
 
     void wireConnectionSignals(int wdspInSize);
-    void wireSliceSignals();
+    /// Wire one slice's property changes to its OWN WDSP channel and to the
+    /// radio. Call for every slice, not just the active one: this used to
+    /// read m_activeSlice and run once, leaving 65 per-slice DSP handlers
+    /// (AGC, filter, mode, NB, SNB, APF, RIT/XIT, squelch, mute, pan and the
+    /// whole NR parameter set) wired for Slice A alone -- and every one of
+    /// them writing rxChannel(0). Idempotent per slice: the handlers use
+    /// Qt::UniqueConnection-safe member targets or are wired once at
+    /// addSlice time.
+    void wireSliceSignals(SliceModel* slice);
+
+    /// Connect NotchModel's mutation signals to the per-channel WDSP
+    /// fan-out. Called once from the ctor; NotchModel outlives every
+    /// connection.
+    void wireNotchModel();
+
+    /// Push the full notch state at one channel: the list, the master run
+    /// flag, the auto-increase flag and the NBP tune frequency. `channelId`
+    /// is also the slice index (Sub-Epic I invariant), which is how the
+    /// hosting stream's centre is resolved for the tune frequency
+    /// (design section 4.1).
+    void syncNotchesToChannel(RxChannel* ch, int channelId);
+
+    /// Every WDSP RX channel that currently backs a slice. The fan-out
+    /// target set for a live notch mutation (design section 6.3).
+    QVector<RxChannel*> sliceRxChannels() const;
+
+    /// Design section 6.2: our list position IS the WDSP notch index, so a
+    /// count divergence is a correctness bug. Detect and recover with a full
+    /// resync rather than assert, which a release build compiles out.
+    void reconcileNotchCount(RxChannel* ch);
+
+    // Recomputes the transmit frequency from the TX-bound slice and pushes it
+    // at the connection. The single place that answers "what frequency is the
+    // radio transmitting on", so the Alex TX low-pass, the TX NCO and the
+    // drive-level band gate cannot disagree about it.
+    //
+    // Mirrors Thetis UpdateTXDDSFreq(), which likewise recomputes from
+    // tx_dds_freq_mhz and fans out to setAlexLPF(..., true) and
+    // NetworkIO.VFOfreq(0, tx_dds_freq_mhz, 1) together
+    // (console.cs:15464-15485 [v2.10.3.15]).
+    //
+    // XIT is included and RIT is not, per Thetis console.cs:31782-31784
+    // [v2.10.3.15]: udXIT lands on tx_freq, udRIT on rx_freq.
+    void pushTxFrequencyFromTxSlice();
+
+    // The total WDSP shift for a slice: the allocator's offset from its
+    // hosting stream's centre, plus RIT, plus the per-mode DIG click-tune
+    // offset. Five sites push the shift (bindSliceToStream,
+    // activateSliceChannel, reshiftSlicesOnStream,
+    // commitStreamSampleRateChange and the RIT/DIG lambda in
+    // wireSliceSignals) and they used to disagree about which terms belonged
+    // in it, so each clobbered the others'. Toggling RIT on a shifted slice
+    // threw away the stream offset; retuning with RIT on threw away the RIT.
+    //
+    // Reads slice->shiftOffsetHz(), so every caller must commit the stream
+    // term to the model before calling.
+    // See docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.4.
+    double composedShiftHz(const SliceModel* slice) const;
+    /// Shift derived from an EXPLICIT stream centre, so it cannot disagree
+    /// with the NOTCHDB::tunefreq written alongside it. Design section 4.1.
+    double composedShiftHz(const SliceModel* slice, double streamCentreHz) const;
+    /// The ONLY writer of the notch RF origin. Writes tunefreq and shift
+    /// together from one centre; WDSP sums them (nbp.c:192).
+    void pushNotchOrigin(SliceModel* slice, RxChannel* ch, double streamCentreHz);
+
+    /// Coalesces notch edits during a drag. RXANBPEditNotch runs a full
+    /// UpdateNBPFilters (an FFT per partition at nc=4096, plus a bpsnba
+    /// recalculation) and swaps the masks under the DSP lock, so pushing one
+    /// per mouse-move costs ~50 filter redesigns per second PER CHANNEL.
+    /// Thetis does push per move (console.cs:49967 [v2.10.3.15]) but for one
+    /// notch on one channel; multi-pan multiplies that by the channel count.
+    /// The marker is drawn from the model and does not wait for this, so the
+    /// only thing rate-limited is the DSP redesign.
+    void scheduleNotchEditPush(int id);
+    void flushNotchEditPush();
+
+    QTimer* m_notchEditTimer{nullptr};
+    QSet<int> m_pendingNotchEdits;
+
+    // The connect-time DDC seed, factored out of the wireSliceSignals
+    // singleShot so it can be driven without a live connection. Commands the
+    // centre of whichever stream hosts `slice`, then re-seeds the TX NCO.
+    // See docs/architecture/2026-07-28-tunable-notch-filter-design.md 4.5.
+    void seedConnectFrequency(SliceModel* slice);
+
+    // The frequency a slice would actually transmit on: its dial plus XIT.
+    //
+    // One answer for three callers, because they had drifted apart. The
+    // transmit-frequency push folded XIT in; both TUNE arms read the raw
+    // dial. Keying TUNE with XIT set therefore put the carrier somewhere the
+    // transmit chain had not been told about, and with XIT straddling a
+    // filter edge that included the Alex transmit low-pass.
+    //
+    // From Thetis console.cs:31774-31783 [v2.10.3.15]
+    //   double tx_freq = freq;
+    //   ...
+    //   if (chkXIT.Checked) tx_freq += (int)udXIT.Value * 0.000001;
+    // The TUNE offsets are applied to that same tx_freq afterwards
+    // (console.cs:31845-31860 [v2.10.3.15]) before it becomes
+    // tx_dds_freq_mhz at console.cs:31891, so TUNE transmits on the
+    // XIT-shifted frequency too.
+    //
+    // Returns 0 for a null slice, and clamps at 0 rather than wrapping.
+    quint64 txFrequencyForSlice(const SliceModel* slice) const;
     void teardownConnection();
+
+    // Derives the 16-digit dashed FlexRadio-style serial number from the
+    // radio's MAC address. SHA-256(mac + salt) -> first 8 bytes -> uint64 ->
+    // mod 10^16 -> "XXXX-XXXX-XXXX-XXXX". Used by both onPgxlConnected() and
+    // connectToRadio() (FlexRadio discovery beacon) so the serial matches in
+    // both contexts. If PGXL_FlexRadioSerial is set in AppSettings, returns
+    // that override instead of the derived value.
+    QString derivedFlexSerial(const QString& mac) const;
 
     // Issue #182 — wire TransmitModel::micPttDisabledChanged →
     // RadioConnection::setMicPTTDisabled and prime the connection with the
@@ -1056,19 +2781,12 @@ public:
     // sliceStateRestored(index) on completion (see comment on the signal).
     void loadSliceState(SliceModel* slice);
 
-    // Issue #153 sub-bug 2 — push the active slice's DSPMode + the
-    // user's configured TX bandpass (TransmitModel::filterLow/High) to
-    // TxChannel.  No-op if no active slice.
+    // Issue #153 sub-bug 2 — push the TX-bound slice's DSPMode plus the
+    // TransmitModel's positive audio-space filter cutoffs to TxChannel.
+    // No-op if no TX binding resolves.
     //
-    // Filter source is TransmitModel, NOT SliceModel.  TransmitModel
-    // stores audio-space TX cutoffs (positive, low<=high invariant),
-    // which is what TxChannel::requestFilterChange + applyTxFilterForMode
-    // expect.  SliceModel filter values are RX-passband IQ-space
-    // (negative for LSB-family); routing them through
-    // applyTxFilterForMode would double-negate on LSB and clobber
-    // any user-configured TX bandwidth on every connect/MOX.  Mirrors
-    // the canonical wire at RadioModel.cpp:2550-2560 which sources
-    // audio cutoffs from TransmitModel::filterChanged.
+    // SliceModel filter bounds are RX/IQ-space and signed for LSB-family
+    // modes, so they are deliberately not a TX bandpass source.
     //
     // Read happens on RadioModel's main thread; the TxChannel setter
     // call is queued to TxWorkerThread via QMetaObject::invokeMethod
@@ -1091,8 +2809,231 @@ public:
     // (Thetis seeds at mode-change only; we additionally re-seed at
     // MOX-engage so prior TUN-state desync cannot starve SSB MOX).
     void pushTxModeAndBandpass();
+    void installBandPlanMoxCheck();
+
+    // ── Phase 3F Sub-Epic B Task 16: multi-slice codec glue ─────────────────
+    // Build the 5-element codec input array. Phase 3F Sub-Epic I Task 7b:
+    // indexed by DDC STREAM, not by slice. Slot [st] is live when the
+    // allocator reports stream `st` active; frequencyHz is the stream's
+    // window CENTRE (the DDC tunes there; slices sit at shift offsets inside
+    // it) and the per-slice flags are folded across slicesOnStream(st).
+    // Indexing by slice handed two co-hosted slices two different DDCs,
+    // contradicting the sharing model they were bound under.
+    // NereusSDR-original; no Thetis equivalent (Thetis builds UpdateDDCs
+    // inputs inline in console.cs:8186-8538 [v2.10.3.15]).
+    std::array<NereusSDR::SliceConfig, 5> buildStreamConfigsForCodec() const;
+
+    // Phase 3F Sub-Epic I Task 7b: run the per-board codec over the current
+    // stream set and return its DdcAssignment. Pure: no wire I/O, no model
+    // mutation, safe to call while disconnected. Split out of
+    // invokeCodecDdcAssignment so the mapping is testable without a socket.
+    //
+    // Codec source: the RadioConnection owns the codec and is authoritative
+    // whenever a connection object exists; ReceiverManager holds the same
+    // non-owning pointer (wired at connect, cleared in reset()) and is the
+    // fallback when it does not.
+    //
+    // std::nullopt when no codec has been selected yet, which is NOT the same
+    // fact as an assignment whose streamDdc entries are all -1 and must not be
+    // spelled the same way. Bench report 2026-07-31 (JJ, KG4VCF): this used to
+    // return an all-idle assignment for "nobody has been asked", and
+    // publishDdcAssignment cannot tell that apart from a codec answering that
+    // the radio has stopped every stream. connectToRadio binds the slice pool
+    // before it installs the codec, so every connect published a fabricated
+    // "no DDCs anywhere", deactivated the receiver it had activated forty
+    // lines earlier, and dropped every I/Q packet until the operator moved the
+    // VFO. See tst_connect_routes_first_iq.
+    std::optional<NereusSDR::DdcAssignment> computeDdcAssignment() const;
+
+    /// Phase 3F Sub-Epic I closeout, defect F3: single read of the radio-state
+    /// codec inputs (MOX / PureSignal / diversity), so computeDdcAssignment and
+    /// describeSuspendedStreams cannot disagree about them.
+    NereusSDR::CodecContext currentCodecContext() const;
+
+    /// Whether the radio is running the diversity DDC pair right now.
+    /// Extracted from currentCodecContext so republishAlexAdcSlices reads the
+    /// same answer the codec branched on, including under the
+    /// setDdcContextForTest seam. Two reads of this would be two chances for
+    /// the filter decision and the DDC map to disagree about the same
+    /// transmit-critical state.
+    bool diversityActive() const;
+
+    /// Reconcile the process-wide WDSP slot and the DSP worker's paired raw-DDC
+    /// route against one complete codec assignment. This is the sole start
+    /// owner, which keeps source selection and hardware publication atomic from
+    /// the model's point of view.
+    void reconcileExternalDiversityRoute(
+        const NereusSDR::DdcAssignment& assignment);
+
+    /// Resolve the stable target's primary DDC plus the assignment's DDC0 sync
+    /// partner. Returns false when PureSignal owns the pair or the codec did not
+    /// publish two equal-rate diversity legs. The sync partner need not also
+    /// appear in ddcEnable; Hermes-class Thetis assignments enable DDC0 and
+    /// activate DDC1 through syncEnable alone.
+    bool resolveExternalDiversitySources(
+        const NereusSDR::DdcAssignment& assignment,
+        const SliceModel* target, int& primaryDdc, int& secondaryDdc) const;
+
+    /// Apply the target's current phase/gain rotation to an already-created
+    /// external-diversity slot.
+    void configureExternalDiversityRotation(const SliceModel* target);
+
+    // Phase 3F Sub-Epic I Task 7b: publish a computed assignment onto the
+    // client-side model. Routes each stream's hardware DDC to its logical
+    // receiver via ReceiverManager::setDdcMapping, stamps every slice with
+    // the DDC of the stream hosting it, and reconciles ReceiverManager's
+    // per-stream active flag against slicesOnStream(). No wire I/O, so it
+    // runs whether or not a connection exists.
+    void publishDdcAssignment(const NereusSDR::DdcAssignment& assignment);
+
+    // Drive the per-board codec's applyDdcAssignment(), forward the result to
+    // P2RadioConnection (P1 wire integration deferred to Sub-Epic C), then
+    // publish the mapping client-side. The wire push is gated on an actual
+    // connection; the client-side publish is not.
+    void invokeCodecDdcAssignment();
+
+    /// Plain-English sentence naming the affected slice letters and why they
+    /// lost their receiver. Empty when nothing is suspended.
+    QString describeSuspendedStreams(const QVector<int>& streams) const;
+
+    /// Publish one I/Q frame to the two taps: rawIqDataForStream always,
+    /// rawIqData only for stream zero.
+    ///
+    /// Codex review round 7, PR #293. The untagged rawIqData signal
+    /// predates multi-stream, and its only subscriber (TciServer) still
+    /// hardcodes receiver 0. Forwarding every stream through it fed a
+    /// single TCI IQ client frames from unrelated frequencies under one
+    /// header. Named rather than left inline so the rule has somewhere to
+    /// be stated and somewhere to be tested.
+    void forkIqToTaps(int receiverIndex, const QVector<float>& samples);
+
+    // ── Phase 3F Sub-Epic I: slice-to-stream binding ───────────────────────
+
+    /// Run the allocator for `slice` at `frequencyHz` and apply the result
+    /// (stream binding, shift offset, stream centre, codec recompute).
+    /// Returns false and emits sliceAddRejected when the hardware has no
+    /// room. Returns false silently when the pool has not been sized yet
+    /// (disconnected): there is no DDC to bind to, and a slice with
+    /// streamIndex() < 0 is unbound and feeds nothing.
+    /// `preferOwnStream` is forwarded to SliceStreamAllocator::placeSlice on a
+    /// first bind, and says the caller wants an independent window rather than
+    /// the cheapest placement. Set by the +PAN path; see that header for why a
+    /// pan and a slice want different answers. Ignored on a retune, which
+    /// already owns a stream.
+    bool bindSliceToStream(SliceModel* slice, double frequencyHz,
+                           bool preferOwnStream = false);
+
+    /// Mirror a stream's liveness into ReceiverManager's active-receiver set,
+    /// which is what decides whether that hardware DDC's samples are forwarded
+    /// or dropped. Called from bindSliceToStream on both edges. Idempotent.
+    /// See the definition for the bench defect that showed the two were never
+    /// connected.
+    void syncReceiverToStream(int streamIndex, bool live);
+
+    /// Push the current slice set for `streamIndex` to RxDspWorker and emit
+    /// streamBindingsChanged. Called after every bind / unbind.
+    void republishStreamBindings(int streamIndex);
+
+    /// Emit ddcAssignmentRequested and drive the per-board codec recompute.
+    void requestDdcAssignment();
+
+    /// Phase 3F: group the live slices by the ADC their stream sits on, hand
+    /// each group to AlexController::notifySlicesOnAdc, and push the resulting
+    /// per-chain band-pass decision at the connection.
+    ///
+    /// Closes the gap CT1IQI reported on PR #293: the per-ADC analysis existed
+    /// but had no producer and no consumer, so the wire took its HPF from
+    /// whichever receiver was retuned last and a second slice on another band
+    /// made the first one deaf.
+    void republishAlexAdcSlices();
+
+    /// Phase 3F Sub-Epic I closeout, defect H1: put the DSP side of the pool
+    /// back in step with the allocator after anything moves a stream's rate
+    /// or moves a slice between streams.
+    ///
+    /// Two halves of one geometry, both derived from the stream's rate
+    /// through the single bufferSizeForRate() in the tree:
+    ///   * RxDspWorker's accumulator drain threshold for that stream, and
+    ///   * SetInputSamplerate / SetInputBuffsize on the WDSP channel of every
+    ///     slice bound to it.
+    ///
+    /// This is ChannelMaster's SetXcmInrate, split across the two objects
+    /// NereusSDR keeps the state in:
+    ///   From Thetis cmaster.c:461,473-475 [v2.10.3.15]
+    ///     pcm->xcm_insize[in_id] = getbuffsize (rate);
+    ///     for (i = 0; i < pcm->cmSubRCVR; i++) {
+    ///         SetInputSamplerate (chid (in_id, i), rate);
+    ///         SetInputBuffsize (chid (in_id, i), pcm->xcm_insize[in_id]);
+    ///     }
+    ///
+    /// The two must never disagree while a drain can run: fexchange2 copies
+    /// ch[channel].in_size samples out of the buffer it is handed
+    /// (iobuffs.c:532-536 [WDSP v1.29]) and ignores any count we pass, so a
+    /// drain threshold below the channel's in_size reads past the end of the
+    /// accumulator. Rather than order the two writes (the safe order inverts
+    /// between widening and narrowing), this quiesces the I/Q feed for the
+    /// duration exactly as setSampleRateLive steps 2 and 10 do, so no drain
+    /// can observe a half-applied geometry at all.
+    ///
+    /// Cheap and side-effect-free when nothing is out of step, which is every
+    /// call on a single-rate radio.
+    void applyStreamDspGeometry();
+
+    /// Re-run the codec after a MOX, effective PureSignal, or diversity
+    /// transition through the same complete request used by slice binding.
+    /// Protocol 2 therefore has one full DdcAssignment wire owner; Protocol 1
+    /// keeps its legacy PsDdcConfig wire path while this request publishes
+    /// the client-side assignment.
+    void refreshDdcAssignmentForRadioState();
+
+    /// Prevent new paired feeds, then stop and destroy WDSP external-diversity
+    /// slot 0. The worker clear is synchronous when it lives on the DSP thread,
+    /// so no queued raw-I/Q delivery can process against a torn-down slot.
+    void stopExternalDiversityRoute();
+
+    /// Streams the codec left without a DDC while slices are still bound to
+    /// them. Empty in steady state.
+    QVector<int> suspendedStreams() const { return m_suspendedStreams; }
+
+    /// Phase 3F Sub-Epic I closeout, defect F4 test seam: a stream's window
+    /// centre, so a test can reconstruct the frequency WDSP is actually
+    /// demodulating (centre + the slice's shift offset) and require it to
+    /// match what the VFO reads.
+    double streamCentreHzForTest(int streamIndex) const {
+        return m_streamAllocator.streamCentreHz(streamIndex);
+    }
+    int streamSampleRateHzForTest(int streamIndex) const {
+        return m_streamAllocator.streamSampleRateHz(streamIndex);
+    }
+    bool streamActiveForTest(int streamIndex) const {
+        return m_streamAllocator.isStreamActive(streamIndex);
+    }
+
+    /// TNF Task 1 test seam (design doc 4.5): runs the connect-time DDC seed
+    /// without a live connection, so a test can assert the quantity it
+    /// commands.
+    void seedConnectFrequencyForTest(SliceModel* slice) {
+        seedConnectFrequency(slice);
+    }
 
 private:
+    struct PlannedSlicePlacement {
+        int sliceId{-1};
+        int previousStream{-1};
+        SliceStreamAllocator::Placement placement;
+        int resolvedRateHz{0};
+    };
+
+    struct StreamRateChangePlan {
+        SliceStreamAllocator allocator;
+        QVector<PlannedSlicePlacement> slices;
+    };
+
+    std::optional<StreamRateChangePlan>
+    planStreamSampleRateChange(int streamIndex, int rateHz) const;
+
+    void commitStreamSampleRateChange(const StreamRateChangePlan& plan);
+
     // Sub-components (owned, main thread)
     RadioDiscovery*  m_discovery{nullptr};
     ReceiverManager* m_receiverManager{nullptr};
@@ -1175,6 +3116,11 @@ private:
     // Phase 3P-F Task 3.
     AlexController m_alexController;
 
+    // Phase 3F Sub-Epic F Task 5: per-ADC WidebandFftEngine instances.
+    // Indexed by adcIndex (0 or 1). Constructed in the RadioModel ctor with
+    // a default 122.88 MHz ADC sample rate. Owned via QObject parent.
+    std::array<NereusSDR::WidebandFftEngine*, 2> m_widebandFftEngines{};
+
     // Band-plan overlay manager — app-global, loaded once from Qt resources.
     // Phase 3G RX Epic sub-epic D.
     BandPlanManager m_bandPlanManager;
@@ -1199,11 +3145,108 @@ private:
 
     // View hooks (non-owning, set by MainWindow). Phase 3G-8 + 3G-9c +
     // 3M-5d (m_txAnalyzer).
+    // Phase 3F Sub-Epic I: which DDC stream hosts which slice. Pure policy;
+    // sized by configureStreamPool at connect, empty (and therefore
+    // bind-refusing) while disconnected.
+    NereusSDR::SliceStreamAllocator m_streamAllocator;
+
+    // Rate handed to configureStreamPool, used when a stream is claimed
+    // before m_connectionSampleRateHz has been set (Slice A binds during
+    // connectToRadio, before wireConnectionSignals records the wire rate).
+    int m_streamDefaultRateHz{192000};
+
+    // Phase 3F Sub-Epic I closeout, defect H1: the drain size last published
+    // to RxDspWorker for each stream, keyed by stream index. Seeded by
+    // configureStreamPool to bufferSizeForRate(defaultRateHz), which is
+    // exactly what the worker's global default already is, so a pool that
+    // never leaves its connect rate is recognised as already in step and
+    // applyStreamDspGeometry stays a no-op. Main thread only.
+    QHash<int, int> m_streamInSizePushed;
+
+    // Phase 3F Sub-Epic I Task 7b: the codec's last per-stream DDC choice,
+    // indexed by stream. -1 = that stream is idle, so an emptied stream
+    // leaves no stale DDC behind. Backs ddcForStream().
+    std::array<int, 5> m_streamDdc{{-1, -1, -1, -1, -1}};
+
+    // Process-wide WDSP pdiv[0] lifecycle shadow. Main-thread-only: the worker
+    // route itself is published/cleared synchronously on m_dspThread before
+    // this state changes.
+    static constexpr int kExternalDiversityId = 0;
+    static constexpr int kExternalDiversityTargetSliceId = 0;
+    bool m_externalDiversityRouteActive{false};
+    int m_externalDiversityPrimaryDdc{-1};
+    int m_externalDiversitySecondaryDdc{-1};
+    int m_externalDiversityChunkSize{0};
+
+    // Defect D1: the ADC that same assignment routed each stream to, decoded
+    // from its adcCtrl bytes. Backs chainForStream(), which is what the Alex
+    // per-chain filter decision groups by.
+    //
+    // Held here rather than read back out of ReceiverManager, even though
+    // publishDdcAssignment mirrors it there too. ReceiverConfig only exists
+    // for a receiver that has been created, and connectToRadio creates one
+    // per stream, so a RadioModel driven without a connection (every unit
+    // test, and the pre-connect model state) has no ReceiverConfig to answer
+    // from and would silently report ADC0 for everything. That is precisely
+    // the failure mode D1 was: an ADC field that always says 0 and a wire
+    // that says otherwise.
+    //
+    // 0 rather than -1 for an idle stream: chainForStream returns -1 for
+    // "not on a chain" off the stream index itself, and a stream with no DDC
+    // has no ADC to name.
+    std::array<int, 5> m_streamAdc{{0, 0, 0, 0, 0}};
+
+    // Phase 3F Sub-Epic I closeout, defect F3: last-published set of streams
+    // that host slices but have no DDC. Change-gates the streamsSuspended
+    // emit so it fires on transitions rather than on every codec run.
+    QVector<int> m_suspendedStreams;
+
+    // Phase 3F Sub-Epic I closeout, defect F4: guards the rollback
+    // setFrequency in the retune handler from re-entering the allocator.
+    // Everyone else still sees the rolled-back frequencyChanged.
+    bool m_rollingBackFrequency{false};
+
+    // Phase 3F Sub-Epic J Task 6: guards the nbModeChanged mirror from
+    // re-entering itself. The blanker is per-DDC, not per-slice (Thetis
+    // cmaster.h:74-82 [v2.10.3.15]), so a change on one slice writes
+    // setNbMode on every co-host; each of those emits its own
+    // nbModeChanged, which would otherwise walk the stream again.
+    bool m_mirroringNbMode{false};
+    // Re-entrancy guard for the NB1 / NB2 detailed-tuning mirror, which
+    // spreads one slice's blanker tuning across every co-host on the same
+    // DDC. Separate from m_mirroringNbMode: the two mirrors run off different
+    // signals and a shared flag would let one suppress the other. Shared
+    // across the five tuning knobs is fine, because each mirror only ever
+    // writes the same property it fired on, so they never nest.
+    bool m_mirroringNbTuning{false};
+
+    // Phase 3F Sub-Epic I closeout, defect F4: the allocator's own words for
+    // the last rejected placement, handed to the retune handler so its
+    // status-bar line can explain what the hardware ran out of.
+    QString m_lastPlacementRejectReason;
+
+    // Phase 3F Sub-Epic I closeout, defect F3: injected via
+    // setDdcContextForTest. Off in production; currentCodecContext() reads
+    // MoxController / PureSignal / the slice diversity flag as before.
+    bool m_ddcCtxForTest{false};
+    bool m_ddcCtxMoxForTest{false};
+    bool m_ddcCtxPsForTest{false};
+    bool m_ddcCtxDivForTest{false};
+
+    // View hooks (non-owning, set by MainWindow). Phase 3G-8 + 3G-9c.
     class SpectrumWidget*     m_spectrumWidget{nullptr};
     class FFTEngine*          m_fftEngine{nullptr};
     class TxAnalyzer*         m_txAnalyzer{nullptr};
     class ClarityController*  m_clarityController{nullptr};
     class StepAttenuatorController* m_stepAttController{nullptr};
+
+    // 2026-05-22 spectrum-calibration fix: cache of the last rxMeterOffsetDb
+    // value we emitted via rxMeterOffsetChanged. NaN sentinel forces the
+    // first call to compare unequal so subscribers always get the initial
+    // value (matches the MoxController NaN-sentinel pattern). Updated only
+    // by setStepAttController's recompute lambda; rxMeterOffsetDb itself
+    // stays const and recomputes on every call.
+    mutable double m_lastEmittedRxMeterOffsetDb{std::numeric_limits<double>::quiet_NaN()};
 
     // Radio info
     QString m_name;
@@ -1254,6 +3297,16 @@ private:
     // write at flush time. Set from the antennaChanged/blockTxChanged
     // handlers in wireSlice<Slot>, cleared by saveSliceState().
     bool m_alexControllerDirty{false};
+    // Phase 3F re-entrancy guard for republishAlexAdcSlices().
+    // republishAlexAdcSlices feeds AlexController::notifySlicesOnAdc, which
+    // recomputes and can emit bpfStateChanged, which is wired back to
+    // republishAlexAdcSlices so an operator override or a wideband toggle
+    // reaches the wire on its own trigger. The re-entry lands between the
+    // ADC0 and ADC1 notifications, so the inner pass would compose ADC1
+    // from state the outer pass has not refreshed yet. The guard drops the
+    // nested call; the outer one finishes the loop and pushes once, from
+    // fully-updated state.
+    bool m_republishingAlexBpf{false};
 
 #ifdef NEREUS_BUILD_TESTS
     bool     m_testCapsOverride{false};
@@ -1293,6 +3346,7 @@ private:
     // From Thetis v2.10.3.13 console.cs:46057 — tmrAutoAGC (500ms interval)
     QTimer* m_autoAgcTimer{nullptr};
     NoiseFloorTracker* m_noiseFloorTracker{nullptr};
+    QMap<int, NoiseFloorTracker*> m_streamNoiseFloors;
     // Task 3.1 view hook — non-owning, set by MainWindow.
     class MeterPoller*      m_meterPoller{nullptr};
     // Task 3.2 view hook — non-owning, set by MainWindow.
@@ -1307,6 +3361,9 @@ private:
     //   Default USB (matches SliceModel default). Used only when old_dsp_mode
     //   was CWL or CWU; restored unconditionally on TUN-off.
     DSPMode m_savedTxDspMode{DSPMode::USB};
+    // Stable slice identity paired with m_savedTxDspMode. Listening focus
+    // may move while the asynchronous TUN-off sequence is settling.
+    int m_savedTxDspSliceId{-1};
     //
     // m_savedPowerPct: power slider value (0-100) before the tune-power push.
     //   Cite: Thetis console.cs:30033 [v2.10.3.13] — PreviousPWR = ptbPWR.Value.
@@ -1380,9 +3437,77 @@ private:
     //[2.10.3.6]MW0LGE att_fixes  [original inline comment from console.cs:29647-29659]
     MoxController* m_moxController{nullptr};
 
-    // Non-owning view of the WDSP TX channel (channel ID = 1 = WDSP.id(1, 0)).
+    // Stable WDSP RX identity stopped at MOX entry. Release restores this
+    // exact channel even if listening focus changes before key-up.
+    int m_moxStoppedRxChannel{-1};
+
+    // Phase 3F Sub-Epic C: TX-slice arbiter (single-TX invariant + RF-safe
+    // handoff). QObject child of RadioModel (Qt parent ownership). Wired
+    // to &m_slices + m_moxController in the constructor body, fed MAC +
+    // load() on every currentRadioChanged emit. See txSliceArbiter()
+    // accessor and docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md
+    // Task 6.
+    TxSliceArbiter* m_txSliceArbiter{nullptr};
+
+    // Phase 3F Sub-Epic D Task 13: receiver -> pan FFT fan-out router.
+    // QObject child of RadioModel. Constructed in the ctor body after
+    // m_txSliceArbiter; the per-receiver FFTEngine pump and pan FFT
+    // subscriber wiring lands in Sub-Epic E / F polish.
+    class FFTRouter* m_fftRouter{nullptr};
+
+    // Phase 3J-1 closeout Item 3 (2026-05-12): TCI Q_INVOKABLE long-tail
+    // state.  See setGlobalMute / setAfLinear / setIqSampleRate / etc. for
+    // semantics.  Defaults chosen to match TestMockRadioModel initial
+    // values so the production path passes the existing matrix tests.
+    //
+    // Per-slice stub state for DSP toggles SliceModel doesn't yet expose
+    // as Q_PROPERTYs: rxCtun / rxEnable.  Sized to the max RX count
+    // NereusSDR supports today (4 for the four-DDC SKUs); the setter clamps
+    // the index so an out-of-range slice silently no-ops.
+    // rxNf left this set in TNF section 6.4: it is the global notch master
+    // enable and now reads and writes NotchModel::globalEnabled.
+    static constexpr int kTciStubSliceMax = 4;
+    bool        m_tciGlobalMute{false};
+    // AF / MON volume fallback defaults match the live-source defaults
+    // they back-fill (AudioEngine::m_masterVolume{0.5f} and
+    // TransmitModel::m_monitorVolume{0.5f} both = 50 linear).  Live
+    // sources are non-null on a constructed RadioModel, so these stubs
+    // are only read in degenerate test paths -- but using 50 instead of
+    // 0 means a future change that drops the live-source guard won't
+    // silently emit `volume:-60.0;` (full mute) on first client connect.
+    // PR #279 review P1 (2026-05-22).
+    int         m_tciAfLinear{50};
+    int         m_tciMonLinear{50};
+    // iqSampleRate fallback: prefers live connectionSampleRateHz(); this
+    // stub is only read pre-connect.  Use the canonical HPSDR P2 baseline
+    // (192 kHz, matches SampleRateCatalog::kDefaultSampleRate) so first
+    // client connect doesn't see iq_samplerate:0; which real TCI clients
+    // reject.  PR #279 review P1 (2026-05-22).
+    int         m_tciIqSampleRate{192000};
+    // Audio-stream config: per-client semantics live in TciClientSession;
+    // these mirror "last value any client sent" for matrix-test parity.
+    int         m_tciAudioSampleRate{48000};
+    int         m_tciAudioStreamChannels{2};
+    int         m_tciAudioStreamSamples{2048};
+    // audioStreamSampleType: Thetis TCI wire-format tokens (audio_stream
+    // sample-type field) are all lower-case in golden captures
+    // ("float32" / "int16" / "int24" / "int32").  Default "Float32"
+    // (capital F) made the first-connect frame non-canonical.
+    // PR #279 review P1 (2026-05-22).
+    QString     m_tciAudioStreamSampleType{QStringLiteral("float32")};
+    // Per-slice DSP toggle stubs (set-and-read only; not wired to WDSP).
+    // BIN and APF used to live here too; Phase 3F chip task_c1e6fbad routed
+    // them to SliceModel::binauralEnabled / apfEnabled, which are wired to
+    // RxChannel, and deleted their arrays rather than leaving state nothing
+    // reads. NF followed them out in TNF section 6.4, onto
+    // NotchModel::globalEnabled -- see the setRxNf comment in RadioModel.cpp.
+    std::array<bool, kTciStubSliceMax> m_tciStubRxCtun{};
+    std::array<bool, kTciStubSliceMax> m_tciStubRxEnable{ {true, false, false, false} };
+
+    // Non-owning view of the WDSP TX channel (WdspEngine::kTxChannelId,
+    // == WDSP.id(1, 0)).
     // WdspEngine owns the channel via m_txChannels. This pointer is valid only
-    // after m_wdspEngine->initializedChanged fires and createTxChannel(1) is
+    // after m_wdspEngine->initializedChanged fires and createTxChannel(kTxChannelId) is
     // called inside the initializedChanged lambda. null before that.
     // Callers must guard: if (m_txChannel) { ... }.
     // Thread safety: read only from the main thread. WDSP TX processing happens
@@ -1495,9 +3620,262 @@ private:
     // down so the consumer side is fully disconnected).
     std::unique_ptr<class TxMicSource> m_txMicSource;
 
+    // Phase 3R K-bench: RADE TX 24 -> txSampleRate upsampler.  Lazily
+    // constructed on first txModemReady arrival once we know the
+    // connection's txSampleRate() (P1 = 48 kHz; P2 = 192 kHz; per
+    // RadioConnection.h:408 default + P2RadioConnection.h:265).
+    // m_radeTxResamplerHwRate stores the rate the resampler was
+    // built against so a reconnect at a different rate triggers a
+    // rebuild rather than silently producing wrong-rate audio.
+    //
+    // m_radeTxMonoScratch / m_radeTxIqScratch are reused per emission
+    // to avoid per-call allocations.  Both are sized once on first use.
+    std::unique_ptr<Resampler> m_radeTxResampler;
+    int                        m_radeTxResamplerHwRate{0};
+    std::vector<float>         m_radeTxMonoScratch;
+    std::vector<float>         m_radeTxIqScratch;
+
+    // Phase 3R K-bench (bench feedback): RADE RX speakers-side
+    // upsamplers. RadeChannel emits 24 kHz stereo float; AudioEngine
+    // expects 48 kHz. Without these upsamplers the speech plays at
+    // 2x speed ("chipmunk sounding"). One Resampler per leg so each
+    // channel sees a self-consistent stream.
+    std::unique_ptr<Resampler> m_radeRxSpeechL;
+    std::unique_ptr<Resampler> m_radeRxSpeechR;
+    std::vector<float>         m_radeRxLScratch;
+    std::vector<float>         m_radeRxRScratch;
+    std::vector<float>         m_radeRxInterleaved48k;
+
     // Stage C2 — filter preset user-override store.
     // Constructed in RadioModel ctor; QObject child so dtor cleans up.
     FilterPresetStore* m_filterPresetStore{nullptr};
+
+    // ── Phase 3J-2 H2: spot-system ownership ────────────────────────────────
+    //
+    // RadioModel becomes the wiring hub for Phase 3J-2's spot system. View
+    // models are constructed first (the adapter slots below depend on
+    // m_spotModel + m_rxDecodeModel + m_freeDvStationModel being live), then
+    // the ingest clients. Each client emits spotReceived(DxSpot); a per-
+    // source adapter slot translates that into the kvs map
+    // SpotModel::applySpotStatus expects.
+    //
+    // None of the clients start their network I/O at construction time;
+    // startConnection() / startListening() / startPolling() is the M3
+    // follow-up task. H2 only wires the in-process signal graph.
+    std::unique_ptr<SpotModel>            m_spotModel;
+    std::unique_ptr<SpotTableModel>       m_spotTableModel;
+    std::unique_ptr<FreeDVStationModel>   m_freeDvStationModel;
+    std::unique_ptr<RxDecodeModel>        m_rxDecodeModel;
+    std::unique_ptr<DxccColorProvider>    m_dxccColorProvider;
+
+    std::unique_ptr<DxClusterClient>      m_dxCluster;      // DX cluster (DxSpider / AR-Cluster / CC-Cluster)
+    std::unique_ptr<DxClusterClient>      m_rbn;            // Reverse Beacon Network (RBN-suffixed spotter)
+    std::unique_ptr<WsjtxClient>          m_wsjtx;
+    std::unique_ptr<SpotCollectorClient>  m_spotCollector;
+    std::unique_ptr<PotaClient>           m_pota;
+    std::unique_ptr<FreeDVReporterClient> m_freeDvReporter;
+    std::unique_ptr<PskReporterClient>    m_pskReporter;
+
+    // TNF (design section 5): notch store. Persisted globally rather than
+    // per-MAC (design D3) because a notch tracks a QRM source at the
+    // operator's location and band, not a property of the radio.
+    std::unique_ptr<NotchModel>           m_notchModel;
+
+    // Phase 3R-bridge: drives the freedv-gui-style RADE "sync-only"
+    // rx_report upload (empty callsign, "RADEV1" mode, 1 Hz) into
+    // m_freeDvReporter. Ported from freedv-gui src/main.cpp:
+    // 1971-1996 [@77e793a]. Path A (callsign-decoded via EOO) is
+    // separately driven by RadioModel::onRadeTextDecoded.
+    std::unique_ptr<FreeDVRadeReporterBridge> m_radeReporterBridge;
+
+    // Monotonic index passed to SpotModel::applySpotStatus on every adapter
+    // dispatch. Increments once per emitted spot regardless of source.
+    int m_nextSpotIndex{0};
+
+    // ── Phase 3R Task I5: per-slice RADE sync state cache ───────────────────
+    //
+    // Latest RADE decoder sync state per slice ID, updated by
+    // onRadeSyncChanged on every transition. radeSynced(sliceId) reads
+    // this; a missing key reads as false (slice never had RADE wired).
+    //
+    // Stored on RadioModel rather than SliceModel so future UI surfaces
+    // can iterate sync state across all slices without recursing into
+    // each slice's WDSP channel pointer. The dedup logic in
+    // onRadeSyncChanged also lives here for the same reason.
+    QHash<int, bool> m_radeSyncedSlices;
+
+    // 2026-05-12 bench: per-slice timestamp of the most recent sync
+    // FALLING edge (true -> false transition).  Used by onRadeSyncChanged
+    // to debounce the "clear cached speaker callsign on sync rise"
+    // behaviour: only count a rising edge as a "new transmission /
+    // new speaker" event if sync was down for >= kRadeSyncDropClearDebounceMs.
+    // Brief flickers (< debounce) keep the previous over's callsign on
+    // the VFO flag.  Per bench design refinement 2026-05-12 (option B
+    // debounce-by-sync-loss-duration).
+    QHash<int, QDateTime> m_radeSyncDropAt;
+    static constexpr int kRadeSyncDropClearDebounceMs = 2000;
+
+    // 2026-07-27 (ANAN-G2E lockup): discovery quiet period after any
+    // teardown.  Must outlast (a) the radio's stop-transition settling
+    // (observed death window: up to ~1 s after run=0 in the 2026-07-27 TZSP
+    // captures) and (b) the gateware's ~2 s C&C deadman edge
+    // (Hermes.v:398-414, HW_TIMEOUT at 250e6 cycles @ 125 MHz), so the first
+    // probe a stopped radio hears arrives with its state machines fully
+    // settled.  Thetis's post-stop behaviour is total silence; 3 s of quiet
+    // approximates that without making the reopened panel feel dead.
+    static constexpr std::chrono::milliseconds kPostDisconnectScanQuietMs{3000};
+
+    // 2026-05-12 bench: FreeDV Reporter freq-publish throttle.
+    //
+    // Spinning the VFO would otherwise fire a Socket.IO freq_change
+    // event on every sub-Hz movement (mouse wheel cadence) -- the
+    // qso.freedv.org server gets DoS'd and other operators see the
+    // dashboard flicker.  Throttle policy (per JJ bench design
+    // 2026-05-12):
+    //
+    //   1. Trailing dwell: restart a single-shot timer on every freq
+    //      change; only publish when the timer expires
+    //      (kFreedvFreqDwellMs = 7000 ms).  Spinning across a band
+    //      publishes exactly once, 7 s after the user stops.
+    //   2. Band-jump fast-path: if the new freq is >= kFreedvFreqJumpHz
+    //      (100 kHz) from the last *published* freq, bypass the dwell
+    //      and publish immediately -- band changes don't lag.
+    //   3. MOX force-publish: TX engage flushes any pending dwell so
+    //      the reporter never shows "TXing on stale freq."
+    //
+    // Driven by publishFreedvFrequencyDwelled() called from
+    // SliceModel::frequencyChanged.  m_freedvLastPublishedHz is the
+    // baseline for the band-jump comparison.  Initial publish on
+    // Socket.IO ACK bypasses this and uses setFrequency() directly so
+    // the first packet establishes the baseline.
+    QTimer*  m_freedvFreqDwellTimer{nullptr};
+    quint64  m_freedvLastPublishedHz{0};
+    quint64  m_freedvPendingHz{0};
+    static constexpr int     kFreedvFreqDwellMs = 7000;
+    static constexpr quint64 kFreedvFreqJumpHz  = 100'000;
+
+    // Phase 3P-II Task 19: PGXL / TGXL / Tuner ownership.
+    // All three are QObject children of RadioModel (parent=this, constructed
+    // once in the ctor). Raw pointer pattern follows m_moxController et al.
+    PgxlConnection* m_pgxlConnection{nullptr};
+    TgxlConnection* m_tgxlConnection{nullptr};
+    TunerModel*     m_tunerModel{nullptr};
+
+    // Phase 3P-III: RF-Kit RF2K-S connection. unique_ptr with Qt parent=this
+    // so destruction order is deterministic and QObject hierarchy is intact.
+    // Constructed once in the ctor; non-null from that point.
+    std::unique_ptr<Rf2ksConnection> m_rfKitConnection;
+
+    // Phase 3P-III review fix I2: last-seen RF-Kit operate state, used to gate
+    // externalAmpOperateChanged so the cross-vendor signal fires only on actual
+    // transitions, not on every 1 Hz REST poll. Initialized false (STANDBY).
+    bool m_lastRfKitInOperate{false};
+
+    // Amplifier presence and operate-state cache (driven by onPgxlStatus).
+    bool m_hasAmplifier{false};
+    bool m_ampOperate{false};
+
+    // TGXL autotune orchestration state (NereusSDR-native).
+    // Event-driven flow (mirrors the FlexAPI interlock handshake pattern):
+    //   1. startTgxlAutotune() snapshots PGXL state into m_pgxlSavedOperate
+    //      and sets m_tgxlAutotuneInProgress + m_pgxlStandbyPending
+    //   2. Send `operate=0` to PGXL (if it was operating)
+    //   3. Wait for ampStateChanged(false) confirmation (PGXL transitioned
+    //      to STANDBY), then call continueTgxlAutotuneAfterStandby()
+    //   4. Engage local TUN carrier; set m_awaitingInterlockForAutotune
+    //   5. Wait for interlockGranted from SmartSdrApiListener (TGXL has
+    //      now received S0|interlock state=TRANSMITTING and knows PTT is
+    //      live), then send `autotune` to TGXL on :9010
+    //   6. On tuningChanged(false) -> drop carrier -> manualMoxChanged(false)
+    //      -> restore PGXL to m_pgxlSavedOperate state
+    //
+    // m_tgxlAutotuneFromHardware: true if TGXL initiated (LAN PTT). Skips
+    //   the `autotune` cmd because TGXL is already sweeping. We also skip
+    //   the interlockGranted wait in that case.
+    // m_awaitingInterlockForAutotune: true between continueTgxlAutotune-
+    //   AfterStandby and the interlockGranted handler. Gates the autotune
+    //   command on TRANSMITTING actually being broadcast so TGXL sees PTT
+    //   before it gets the sweep command (previously a 200 ms fixed timer
+    //   raced the interlock chain and caused first-press "no PTT in"
+    //   aborts on cold caches).
+    // 1500 ms failsafe in case PGXL never confirms standby (e.g. amp
+    //   disconnected / unresponsive) -- proceed anyway and log a warning.
+    // 1500 ms failsafe also on the interlockGranted wait, for the same
+    //   degraded-amp case (e.g. amp disconnected mid-cycle before ACK).
+    bool m_pgxlSavedOperate{false};
+    bool m_tgxlAutotuneInProgress{false};
+    bool m_pgxlStandbyPending{false};
+    bool m_tgxlAutotuneFromHardware{false};
+    bool m_awaitingInterlockForAutotune{false};
+    void continueTgxlAutotuneAfterStandby();
+    void sendTgxlAutotuneCmd();
+
+    // RF-flow gate state (NereusSDR-native, deck item #3).
+    //
+    // When MoxController::txReady fires (rfDelay elapsed, radio ready to
+    // TX), we normally call TxChannel::setRunning(true) which causes the
+    // audio pump to start feeding samples to the radio. With an external
+    // amp like PGXL in the chain, this is too early: PGXL needs to ACK
+    // PTT_REQUESTED and switch its relays from bypass to amp path BEFORE
+    // the carrier arrives, or it sees ~250 ms of carrier through bypass
+    // into a (possibly unmatched) antenna and intermittently trips its
+    // own SWR protection.
+    //
+    // The fix: defer setRunning(true) until interlockGranted fires
+    // (TRANSMITTING was just broadcast to all amps; PGXL has ACKed or
+    // the 500 ms lenient grant has fired). The lambda in the ctor reads
+    // this flag and calls setRunning(true) when the grant arrives.
+    //
+    // 1500 ms failsafe (same budget as the autotune gate): if interlock-
+    // Granted doesn't fire, start the audio anyway so the operator isn't
+    // stuck with a silent TX.
+    bool m_awaitingInterlockForTx{false};
+    // RF-flow gate two-condition tracker (deck item #3, ordering fix
+    // 2026-05-20 21:19): TxChannel::setRunning(true) needs BOTH
+    //   (a) MoxController::txReady fired (radio is in TX mode), and
+    //   (b) SmartSdrApiListener::interlockGranted fired (amp in
+    //       TRANSMITTING state, relays switched to amp path).
+    // Whichever signal fires SECOND triggers setRunning. We track each
+    // independently because Qt event-queue ordering can race; we cannot
+    // rely on one always firing before the other when amp ACK is fast.
+    // m_txReadyReceived is set in the txReady wire, cleared on TX-off
+    // (moxStateChanged(false)). m_awaitingInterlockForTx is set in the
+    // txAboutToBegin wire (BEFORE PTT_REQUESTED is sent so the gate is
+    // armed before any interlockGranted can fire) and cleared by the
+    // grant handler.
+    bool m_txReadyReceived{false};
+
+    // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
+    // Qt parent-ownership (parent=this); non-null from construction time.
+    TxInterlockPolicy* m_txInterlockPolicy{nullptr};
+
+    // Phase 3P-II Phase 4 Task 89: TuneMemoryStore -- shared per-(antenna,band)
+    // TGXL relay position cache. Qt parent-ownership (parent=this); non-null from
+    // construction time. Shared (non-owning) with TgxlAdvancedPage and TunerApplet.
+    TuneMemoryStore* m_tuneMemoryStore{nullptr};
+
+    // Phase 3P-II Phase 4 Task 94: FaultLog ring buffers for PGXL and TGXL.
+    // Qt parent-ownership (parent=this); non-null from construction time.
+    // Shared (non-owning) with PgxlAdvancedPage and TgxlAdvancedPage.
+    FaultLog* m_pgxlFaultLog{nullptr};
+    FaultLog* m_tgxlFaultLog{nullptr};
+
+    // Phase 3P-II Phase 4 Task 94: last known PGXL state string.
+    // Tracks "previous state" so we capture only on FAULT *transitions*
+    // (not on every repeated FAULT status push).
+    QString m_lastPgxlState;
+
+    // FlexRadio UDP 4992 discovery beacon. Owned by RadioModel (Qt parent=this).
+    // Constructed once in the ctor; configured and started in connectToRadio()
+    // once m_lastRadioInfo.macAddress is known; stopped in teardownConnection().
+    // Allows PGXL/TGXL to auto-discover NereusSDR in their FlexRadio dropdown
+    // without any manual IP entry.
+    class FlexRadioDiscoveryBroadcaster* m_flexBroadcaster{nullptr};
+
+    // Passive SmartSDR API listener on TCP 4992. Bench-recon stub: logs every
+    // line PGXL sends so we can design the response layer in a follow-up.
+    // Phase 3P-II follow-up: replace with a full SmartSDR API server.
+    class SmartSdrApiListener* m_smartSdrListener{nullptr};
 };
 
 } // namespace NereusSDR

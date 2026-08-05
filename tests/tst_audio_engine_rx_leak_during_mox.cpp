@@ -84,7 +84,7 @@ private:
         // (E.4 RadioModel fix to propagate m_active).
         int addSlice(int vaxChannel = 0) {
             const int idx = radio->addSlice();
-            SliceModel* slice = radio->sliceAt(idx);
+            SliceModel* slice = radio->sliceById(idx);
             slice->setVaxChannel(vaxChannel);
             return idx;
         }
@@ -105,10 +105,52 @@ private:
         h.speakers = speakers.get();
         h.engine->setSpeakersBusForTest(std::move(speakers));
 
+        // Register the mixer slots, exactly as connecting to a radio does
+        // (RadioModel::configureStreamPool -> AudioEngine::preregisterSlices).
+        //
+        // MasterMixer::accumulate() drops any slice id it has no entry for,
+        // so without this the block never reaches the mix at all. That went
+        // unnoticed for as long as the speakers push was unconditional: an
+        // empty push still incremented pushCount(), so these tests read as
+        // passing while the audio was being discarded. Phase 3F gates the
+        // push on the mixer actually producing a block, which turns the same
+        // condition into pushCount() == 0.
+        h.radio->configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
+                                     /*defaultRateHz=*/192000);
+
         return h;
     }
 
 private slots:
+
+    void moxGatesTheTxBoundSliceEvenWhenAnotherSliceIsActive()
+    {
+        Harness h = makeHarness();
+        const int a = h.addSlice();
+        const int c = h.addSlice();
+        QVERIFY(h.radio->requestTxHandoffToSlice(c));
+        QCOMPARE(h.radio->activeSlice()->sliceIndex(), a);
+        QCOMPARE(h.radio->txBoundSlice()->sliceIndex(), c);
+
+        h.engine->setMoxStateForTest(true);
+
+        h.engine->rxBlockReady(c, kTestSamples.data(), kTestFrames);
+        QCOMPARE(h.speakers->pushCount(), 0);
+
+        h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+        QVERIFY2(h.speakers->pushCount() > 0,
+                 "the non-TX listening slice should remain audible during MOX");
+
+        h.radio->setActiveSlice(1);
+        const int before = h.speakers->pushCount();
+        h.engine->rxBlockReady(c, kTestSamples.data(), kTestFrames);
+        QCOMPARE(h.speakers->pushCount(), before);
+
+        h.engine->setMoxStateForTest(false);
+        h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+        h.engine->rxBlockReady(c, kTestSamples.data(), kTestFrames);
+        QVERIFY(h.speakers->pushCount() > before);
+    }
 
     // ── 1. Default MOX state is false ─────────────────────────────────────
 
@@ -140,8 +182,8 @@ private slots:
         const int s = h.addSlice();
 
         // Verify slice 0 is the active slice.
-        QVERIFY(h.radio->sliceAt(s) != nullptr);
-        QVERIFY(h.radio->sliceAt(s)->isActiveSlice());
+        QVERIFY(h.radio->sliceById(s) != nullptr);
+        QVERIFY(h.radio->sliceById(s)->isActiveSlice());
 
         // MOX off (default).
         QCOMPARE(h.engine->moxState(), false);
@@ -160,7 +202,7 @@ private slots:
         const int s = h.addSlice();
 
         // Verify slice 0 is the active slice.
-        QVERIFY(h.radio->sliceAt(s)->isActiveSlice());
+        QVERIFY(h.radio->sliceById(s)->isActiveSlice());
 
         // Turn MOX on.
         h.engine->setMoxStateForTest(true);
@@ -179,8 +221,8 @@ private slots:
         h.addSlice();           // slice 0 — active
         const int s1 = h.addSlice();  // slice 1 — not active
 
-        QVERIFY(h.radio->sliceAt(0)->isActiveSlice());
-        QVERIFY(!h.radio->sliceAt(s1)->isActiveSlice());
+        QVERIFY(h.radio->sliceById(0)->isActiveSlice());
+        QVERIFY(!h.radio->sliceById(s1)->isActiveSlice());
 
         // Turn MOX on.
         h.engine->setMoxStateForTest(true);
@@ -199,7 +241,7 @@ private slots:
         Harness h = makeHarness();
         const int s = h.addSlice();
 
-        QVERIFY(h.radio->sliceAt(s)->isActiveSlice());
+        QVERIFY(h.radio->sliceById(s)->isActiveSlice());
 
         // MOX on — block dropped.
         h.engine->setMoxStateForTest(true);

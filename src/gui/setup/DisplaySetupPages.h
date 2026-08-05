@@ -178,6 +178,7 @@ private:
     // From Thetis specHPSDR.cs:325 [v2.10.3.13] NormOneHzPan
     QCheckBox* m_dispNormalizeToggle{nullptr};
     // From Thetis console.cs:20073 [v2.10.3.13] PeakTextDelay
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     QCheckBox* m_showPeakValueOverlayToggle{nullptr};
     QComboBox* m_peakValuePositionCombo{nullptr};
     QSpinBox*  m_peakTextDelaySpin{nullptr};

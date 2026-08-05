@@ -153,6 +153,8 @@
 #include "core/PttMode.h"
 #include "core/WdspTypes.h"
 #include "core/safety/BandPlanGuard.h"
+// Phase 3P-II Task 87: TxInterlockPolicy gate in setMox(true).
+#include "core/TxInterlockPolicy.h"
 
 namespace NereusSDR {
 
@@ -507,6 +509,40 @@ public slots:
     //   MoxController::antiVoxRunRequested → TxWorkerThread::setAntiVoxRun
     void setAntiVoxRun(bool run);
 
+    // ── Bench fix 2026-05-14: WDSP re-prime after late-wired TxChannel ───────
+    //
+    // primeWdspState: re-emit the three NaN-sentinel-guarded signals
+    //   voxThresholdRequested, voxHangTimeRequested, antiVoxGainRequested
+    // using the current MoxController member state, by resetting the
+    // m_lastXxxEmitted sentinels and re-running the recompute() helpers.
+    //
+    // Motivation (reported bench symptom 2026-05-14, "VOX needs juggling to
+    // prime"): TransmitModel::loadFromSettings (RadioModel.cpp:2631) is called
+    // EARLY in connectToRadio, before the MoxController -> TxChannel connects
+    // at RadioModel.cpp:3604/3612/3620 are established by the WDSP-init
+    // lambda.  During that load the TM -> MoxController connections (wired in
+    // RadioModel ctor at lines 770/812) fire setVoxThreshold / setVoxHangTime
+    // / setAntiVoxGain, each consuming its NaN sentinel via the first-call
+    // emit -- but those emits land in a void receiver because TxChannel
+    // doesn't exist yet.  After TxChannel is wired the sentinels are already
+    // consumed, so a same-value call short-circuits.  Result: WDSP retains
+    // its construction-time defaults until the user moves a slider, which
+    // generates a different value that passes the equality guard.
+    //
+    // The asymmetric design choice for antiVoxTau (RadioModel.cpp:5025) and
+    // antiVoxRun (RadioModel.cpp:5051) -- defer the TM -> Mox connect until
+    // after TxWorkerThread is constructed and add an explicit re-push --
+    // avoids the race entirely.  primeWdspState() retrofits the equivalent
+    // semantic for the three older paths without restructuring their connect
+    // ordering.
+    //
+    // Called from RadioModel::pushTxProcessingChain (the WDSP-init lambda at
+    // RadioModel.cpp:3747) after the MoxController -> TxChannel connects are
+    // established.  Safe to call multiple times -- each call resets the
+    // sentinels and re-emits, which is the desired behaviour on
+    // disconnect/reconnect (a fresh TxChannel needs to be re-primed).
+    void primeWdspState();
+
     // ── H.4: PTT-source dispatch slots ───────────────────────────────────────
     //
     // Each slot routes an external PTT event through the MoxController state
@@ -560,6 +596,7 @@ public slots:
     //   PollPTT: bool cat_ptt = (_ptt_bit_bang_enabled && ...) | _cat_ptt;
     //   _current_ptt_mode = PTTMode.CAT;                    [v2.10.3.13]
     //   From Thetis console.cs:25469 [v2.10.3.13]
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:25473) [v2.10.3.15]
     //
     // Full CAT integration is Phase 3K.  Wiring deferred to 3K; this slot
     // establishes the API.
@@ -623,6 +660,7 @@ public slots:
     //   PollPTT: bool cw_ptt = CWInput.KeyerPTT && ...;
     //   _current_ptt_mode = PTTMode.CW;                     [v2.10.3.13]
     //   From Thetis console.cs:25475 [v2.10.3.13]
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:25473) [v2.10.3.15]
     //
     // 3M-2 will implement the CW keyer, sidetone, and QSK/break-in state
     // machine.  This slot logs and returns without driving MOX.
@@ -649,10 +687,53 @@ public slots:
     // emitted rx argument is always 1 until RadioModel calls these setters.
     //
     // From Thetis console.cs:29324 [v2.10.3.13] — MoxPreChangeHandlers and
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:29326) [v2.10.3.15]
     //                console.cs:29677 [v2.10.3.13] — MoxChangeHandlers:
     //   rx2_enabled && VFOBTX ? 2 : 1
     void setRx2Enabled(bool enabled);
     void setVfobTx(bool enabled);
+
+    // ── Phase 3P-II Task 87: TxInterlockPolicy gate ───────────────────────────
+    //
+    // setInterlockPolicy: install (or clear) the TxInterlockPolicy that
+    // setMox(true) consults immediately after the BandPlanGuard check
+    // (K.2) and before the Codex P2 safety effects.
+    //
+    // When a policy is installed and setMox(true) is called:
+    //   policy->evaluateTxRequest(m_ampPresent, m_ampInOperate, m_lastSwr)
+    // returns false (Block mode) => the policy emits denied(reason) and
+    //   setMox returns early. The denied() signal is connected in
+    //   MainWindow::buildUI() to onTxInterlockDenial() which toasts the
+    //   operator via QStatusBar::showMessage.
+    // returns true (Disabled/Warn) => TX proceeds; in Warn mode the policy
+    //   emits warned(reason) which reaches onTxInterlockWarning similarly.
+    //
+    // Amp state and SWR are cached via the two slots below and updated
+    // by RadioModel signal connections established after this call.
+    //
+    // Pass nullptr to remove the policy (reverts to pre-policy behavior).
+    // Called once from RadioModel ctor after both m_moxController and
+    // m_txInterlockPolicy are constructed.
+    void setInterlockPolicy(TxInterlockPolicy* policy);
+
+    // onAmpStateChanged: update the cached amplifier presence and operate
+    // flags used by the interlock gate.
+    //
+    // RadioModel wires this from its amplifierChanged / ampStateChanged
+    // lambda so MoxController always has an up-to-date snapshot without
+    // holding a RadioModel pointer.
+    //
+    // Thread safety: must be called from the main thread (same as setMox).
+    void onAmpStateChanged(bool hasAmp, bool inOperate);
+
+    // onAmpSwrUpdated: cache the most-recent SWR ratio from the PGXL
+    // meter stream.
+    //
+    // RadioModel wires this from ampMetersChanged(float fwd, float swr).
+    // Only the swr argument is forwarded here.
+    //
+    // Thread safety: must be called from the main thread (same as setMox).
+    void onAmpSwrUpdated(float swr);
 
     // setMox: Codex P2-ordered slot.
     //
@@ -851,6 +932,7 @@ signals:
     //   RX2 alone without VFOBTX still yields rx==1 — TX comes off VFO-A.
     //
     // From Thetis console.cs:29324 [v2.10.3.13] — Pre emit point:
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:29326) [v2.10.3.15]
     //   MoxPreChangeHandlers?.Invoke(rx2_enabled && VFOBTX ? 2 : 1, _mox,
     //                                chkMOX.Checked); // MW0LGE_21k8
     // From Thetis console.cs:29677 [v2.10.3.13] — Post emit point:
@@ -963,6 +1045,24 @@ private:
     // returns !ok, moxRejected is emitted and setMox returns early.
     MoxCheckFn m_moxCheck;
 
+    // ── Phase 3P-II Task 87: TxInterlockPolicy gate ───────────────────────────
+    // Non-owning pointer. Null by default; set by RadioModel after both
+    // m_moxController and m_txInterlockPolicy are constructed.
+    // setMox(true) consults this AFTER the BandPlanGuard (K.2) check and
+    // BEFORE the Codex P2 safety effects.
+    TxInterlockPolicy* m_interlockPolicy{nullptr};
+
+    // Cached amplifier state snapshot (updated by onAmpStateChanged).
+    // Default false/false: no amp present, not in OPERATE.
+    bool  m_ampPresent{false};
+    bool  m_ampInOperate{false};
+
+    // Cached SWR from PGXL meter stream (updated by onAmpSwrUpdated).
+    // Default 0.0f: no SWR reading yet.  0.0f is below any non-trivial
+    // swrGateMax so the gate does not falsely trip before the first meter
+    // packet arrives.
+    float m_lastSwr{0.0f};
+
     // ── Fields ───────────────────────────────────────────────────────────────
 
     // ── VOX gate state (H.1) ─────────────────────────────────────────────────
@@ -1054,6 +1154,7 @@ private:
     // activeRxForTx() returns 2 iff (m_rx2Enabled && m_vfobTx), else 1.
     //
     // From Thetis console.cs:29324 [v2.10.3.13] — MoxPreChangeHandlers and
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:29326) [v2.10.3.15]
     //                console.cs:29677 [v2.10.3.13] — MoxChangeHandlers:
     //   rx2_enabled && VFOBTX ? 2 : 1
     bool     m_rx2Enabled{false};

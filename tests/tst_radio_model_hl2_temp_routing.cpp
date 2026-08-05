@@ -21,9 +21,10 @@
 //   - hl2_suppresses_exciter_power
 //       After 1 HL2 sample, RadioStatus.exciterPowerMw() == 0 even
 //       when the test seam forces TX state.
-//   - non_hl2_keeps_exciter_power
+//   - non_hl2_scales_exciter_via_orionmkii_curve
 //       Non-HL2 board (Saturn / ANAN_G2) sees setExciterPowerMw fire
-//       with the raw value as before, and setPaTemperature is NOT
+//       with the Thetis-faithful OrionMKII piecewise-linear scaled
+//       value (not a raw passthrough), and setPaTemperature is NOT
 //       fired by the HL2 branch.
 //   - hl2_averaging_window_smooths_noisy_input
 //       Alternating high/low raw samples land at a midpoint °C that
@@ -98,10 +99,31 @@ private slots:
         QCOMPARE(model.radioStatus().exciterPowerMw(), 0);
     }
 
-    // ── 3. Non-HL2 board still publishes exciter mW from the raw value ──────
-    // Saturn (ANAN_G2 family) keeps the original semantic: exciter_power
-    // C&C bytes carry exciter mW and the temp ring is untouched.
-    void non_hl2_keeps_exciter_power()
+    // ── 3. Non-HL2 board applies Thetis OrionMKII piecewise curve ───────────
+    // Saturn (ANAN_G2 family) routes raw exciter ADC counts through
+    // scaleExciterPowerMw() → computeOrionMkIIExciterPower(), NOT a raw
+    // passthrough.  The pre-F1 NereusSDR behaviour of publishing raw counts
+    // as milliwatts was a bug; Thetis ALWAYS scales through the piecewise
+    // curve for the ANAN_G2 / OrionMKII family.
+    //
+    // From Thetis console.cs:26001-26014 [v2.10.3.15] — exciter dispatch
+    // (verbatim, inline tags preserved):
+    //   case HPSDRModel.ORIONMKII:
+    //   case HPSDRModel.ANAN7000D:
+    //   case HPSDRModel.ANAN8000D:
+    //   case HPSDRModel.ANAN_G2E: //N1GP G2E added
+    //   case HPSDRModel.ANAN_G2:
+    //   case HPSDRModel.ANAN_G2_1K:
+    //   case HPSDRModel.ANVELINAPRO3:
+    //   case HPSDRModel.REDPITAYA: //DH1KLM
+    //     drivepwr = computeOrionMkIIExciterPower();  // piecewise-linear curve
+    //
+    // Math for raw=500 via computeOrionMkIIExciterPower
+    // (PaTelemetryScaling.cpp:205-231 [v2.10.3.15]):
+    //   adcCounts=500 <= 1340, <= 580, > 60
+    //   result = (500.0 - 60.0) * 0.097656 = 42.96864
+    //   static_cast<int>(42.96864f) = 42
+    void non_hl2_scales_exciter_via_orionmkii_curve()
     {
         RadioModel model;
         model.setBoardForTest(HPSDRHW::Saturn);  // ANAN_G2 family
@@ -113,12 +135,16 @@ private slots:
         model.handlePaTelemetryForTest(
             /*fwdRaw*/      0,
             /*revRaw*/      0,
-            /*exciterRaw*/  500,   // would map to "500 mW exciter" on G2
+            /*exciterRaw*/  500,   // raw ADC count, NOT mW; curve yields 42 mW
             /*userAdc0Raw*/ 0,
             /*userAdc1Raw*/ 0,
             /*supplyRaw*/   0);
 
-        QCOMPARE(model.radioStatus().exciterPowerMw(), 500);
+        // From Thetis console.cs:26001-26014 [v2.10.3.15]:
+        // //N1GP G2E added — //DH1KLM (verbatim inline tags from upstream)
+        // ANAN_G2 family always applies computeOrionMkIIExciterPower():
+        // raw=500 → 42 mW (see math above).
+        QCOMPARE(model.radioStatus().exciterPowerMw(), 42);
         // No HL2 temp publish on non-HL2 boards.
         QCOMPARE(tempSpy.count(), 0);
     }

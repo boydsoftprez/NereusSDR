@@ -120,6 +120,11 @@ private:
     void buildStepAttGroup();
     void buildAutoAttGroup();
     void connectController();
+    // Issue #259 — pull the controller's already-restored state into the
+    // widgets at construction time so that lazy SetupDialog construction
+    // (after RadioModel::loadSliceState has triggered the controller's
+    // own loadSettings) doesn't surface stale defaults.
+    void initFromController();
 
     StepAttenuatorController* m_ctrl{nullptr};
 

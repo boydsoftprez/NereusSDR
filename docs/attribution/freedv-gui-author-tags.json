@@ -1,0 +1,75 @@
+{
+  "generated_utc": "2026-05-11T01:49:05+00:00",
+  "freedv_gui_sha": "77e793a",
+  "callsign_tags": {
+    "VK5DGR": {
+      "count": 2,
+      "first_seen": "ongui.cpp:431",
+      "files": [
+        "ongui.cpp"
+      ],
+      "name": "David Rowe",
+      "role": "FreeDV / Codec2 founder; primary upstream author of freedv-gui"
+    },
+    "K6AQ": {
+      "count": 1,
+      "first_seen": "ongui.cpp:432",
+      "files": [
+        "ongui.cpp"
+      ],
+      "name": "Mooneer Salem",
+      "role": "freedv-gui primary maintainer; FreeDV Reporter, RADE, PSK Reporter client author"
+    },
+    "KD0EAG": {
+      "count": 1,
+      "first_seen": "ongui.cpp:431",
+      "files": [
+        "ongui.cpp"
+      ],
+      "name": "David Witten",
+      "role": "freedv-gui co-creator (with David Rowe, 2012)"
+    }
+  },
+  "named_tags": {
+    "Mooneer Salem": {
+      "count": 164,
+      "first_seen": "freedv_interface.h:5",
+      "role": null
+    },
+    "David Rowe": {
+      "count": 25,
+      "first_seen": "main.h:6",
+      "role": null
+    },
+    "David Witten": {
+      "count": 23,
+      "first_seen": "main.h:6",
+      "role": null
+    },
+    "Barry Jackson": {
+      "count": 3,
+      "first_seen": "MsgListPopup.h:5",
+      "role": null
+    },
+    "Annaliese": {
+      "count": 1,
+      "first_seen": "vita.h:5",
+      "role": null
+    },
+    "Jan Paul Schmidt": {
+      "count": 1,
+      "first_seen": "band.h:30",
+      "role": null
+    },
+    "Joel Stanley": {
+      "count": 1,
+      "first_seen": "dlg_ptt.cpp:6",
+      "role": null
+    },
+    "Kenny Kerr": {
+      "count": 1,
+      "first_seen": "Win32COMPointer.h:6",
+      "role": null
+    }
+  }
+}

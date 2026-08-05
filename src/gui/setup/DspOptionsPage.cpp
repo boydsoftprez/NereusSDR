@@ -252,7 +252,7 @@ void DspOptionsPage::wireComboWithLiveApply(QComboBox* combo,
             if (!rm) {
                 return;
             }
-            const SliceModel* slice = rm->sliceAt(0);
+            const SliceModel* slice = rm->sliceById(0);
             if (!slice) {
                 return;
             }
@@ -523,9 +523,16 @@ void DspOptionsPage::buildUI()
             return;
         }
 
-        RxChannel* rxCh = (rm && rm->wdspEngine())
-            ? rm->wdspEngine()->rxChannel(0)
-            : nullptr;
+        // Phase 3F Sub-Epic J Task 11: RadioModel::rxChannelForSlice()
+        // replaces the direct wdspEngine()->rxChannel() reach -- src/gui/
+        // no longer touches WdspEngine directly. Still channel 0: containers
+        // and their MeterItems are not slice-scoped today (forEachMeterItem
+        // fans out to every container regardless of which slice, if any, it
+        // is showing), so there is no "this item's slice" to resolve yet.
+        // Whether this fan-out should instead follow the active slice
+        // (Task 4 gave the container S-meter that treatment) is a separate,
+        // larger question left for a follow-up, not a mechanical routing fix.
+        RxChannel* rxCh = rm ? rm->rxChannelForSlice(0) : nullptr;
 
         cm->forEachMeterItem([v, rxCh](MeterItem* item) {
             if (auto* fdi = qobject_cast<FilterDisplayItem*>(item)) {

@@ -42,6 +42,14 @@
 //       setAntiVoxRate so DEXP's antivox_size / antivox_rate stay
 //       aligned with the RX-side post-decimation block.
 //  14.  setAntiVoxDetectorTau pass-through to TxChannel.
+//  15.  Issue #258: stopPump moves m_txChannel back to the caller
+//       thread before run() exits.
+//  16.  onAntiVoxBlockReady OWNS the block before it crosses a thread
+//       boundary. The caller's buffer is scribbled the instant the
+//       direct call returns, and the original audio must still reach
+//       TxChannel::sendAntiVoxData.
+//  17.  onAntiVoxBlockReady gate OFF: no copy, no handoff, nothing
+//       reaches TxChannel when the operator has anti-VOX disabled.
 //
 // =================================================================
 //
@@ -55,6 +63,12 @@
 //                 setAntiVoxBlockGeometry, setAntiVoxDetectorTau) and
 //                 the m_antiVoxRun atomic gate.  Same author / same
 //                 AI tooling.
+//   2026-07-28 : Phase 3F Sub-Epic J Task 9. The anti-VOX reference is
+//                 now the mixed output of every slice rather than
+//                 slice A's audio, so onAntiVoxSamplesReady loses its
+//                 sliceId argument and gains cases 15 and 16 for the
+//                 raw-pointer entry point that copies it.  Same author
+//                 / same AI tooling.
 // =================================================================
 
 // no-port-check: NereusSDR-original test file.  No Thetis logic ported.
@@ -64,6 +78,7 @@
 #include <QObject>
 #include <QSignalSpy>
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <vector>
@@ -620,7 +635,7 @@ private slots:
 
         // Default state: setAntiVoxRun has never been called.
         QVector<float> samples{ 0.5f, 0.6f, 0.7f, 0.8f };
-        w.onAntiVoxSamplesReady(/*sliceId=*/0, samples, /*sampleCount=*/2);
+        w.onAntiVoxSamplesReady(samples, /*sampleCount=*/2);
 
         // Scratch buffer was zero-initialised on setAntiVoxSize(2).  If the
         // gate failed and sendAntiVoxData ran, scratch[0] would be 0.5.
@@ -647,7 +662,7 @@ private slots:
         w.setAntiVoxRun(true);  // flip the atomic
 
         QVector<float> samples{ 0.5f, 0.6f, 0.7f, 0.8f };
-        w.onAntiVoxSamplesReady(/*sliceId=*/0, samples, /*sampleCount=*/2);
+        w.onAntiVoxSamplesReady(samples, /*sampleCount=*/2);
 
         const auto& scratch = ch.antiVoxScratchForTest();
         QCOMPARE(static_cast<int>(scratch.size()), 4);
@@ -688,6 +703,166 @@ private slots:
         w.setAntiVoxDetectorTau(0.020);
 
         QCOMPARE(ch.antiVoxDetectorTau(), 0.020);
+    }
+
+    // ── 16. onAntiVoxBlockReady owns the block before it crosses threads ───
+    //
+    // Phase 3F Sub-Epic J Task 9.  AudioEngine::antiVoxBlockReady hands out
+    // a pointer into thread_local drain scratch that the NEXT audio period
+    // overwrites, so the reference is only valid for the duration of the
+    // synchronous call.  onAntiVoxSamplesReady, in contrast, is delivered
+    // queued onto this object's thread and therefore reads its argument
+    // long after that call has returned.
+    //
+    // onAntiVoxBlockReady is the seam that reconciles the two: it must take
+    // ownership of the audio while the pointer is still live.  This test
+    // reproduces the hazard exactly by scribbling the source buffer the
+    // instant the direct call returns.  An implementation that forwarded
+    // the pointer instead of copying reads the scribble (in a unit test) or
+    // freed stack (in the field): a use-after-free in the audio path that
+    // would land in antivox_level and drive
+    //   asig = avsig - antivox_gain * antivox_level
+    // (Thetis dexp.c:313-316 [v2.10.3.15]) off garbage, i.e. a false VOX
+    // trigger, i.e. unintended transmit.
+    void onAntiVoxBlockReady_copiesTheBlockBeforeCrossingThreads()
+    {
+        TxChannel ch(kChannelId, kBufSize, kBufSize);
+        ch.setAntiVoxSize(2);
+
+        TxWorkerThread w;
+        w.setTxChannel(&ch);
+        w.setAntiVoxRun(true);
+
+        // Stands in for AudioEngine's thread_local drain scratch.
+        std::vector<float> scratch{ 0.5f, 0.6f, 0.7f, 0.8f };
+        w.onAntiVoxBlockReady(scratch.data(), /*frames=*/2);
+
+        // The next audio period would do exactly this.
+        std::fill(scratch.begin(), scratch.end(), -9.0f);
+
+        // The handoff to onAntiVoxSamplesReady is queued, so let it deliver.
+        const auto& s = ch.antiVoxScratchForTest();
+        QTRY_COMPARE_WITH_TIMEOUT(s[0], static_cast<double>(0.5f), 1000);
+        QCOMPARE(s[1], static_cast<double>(0.6f));
+        QCOMPARE(s[2], static_cast<double>(0.7f));
+        QCOMPARE(s[3], static_cast<double>(0.8f));
+    }
+
+    // ── 17. onAntiVoxBlockReady is inert while anti-VOX is off ────────────
+    //
+    // The gate is checked here, on the DSP thread, and not only in
+    // onAntiVoxSamplesReady, so that the copy and the queued handoff are
+    // both skipped when the operator has anti-VOX disabled, which is the
+    // default.  Anti-VOX off must cost the audio path one acquire-load per
+    // period and nothing else: no allocation, no posted event.
+    void onAntiVoxBlockReady_skipsEverything_whenAntiVoxOff()
+    {
+        TxChannel ch(kChannelId, kBufSize, kBufSize);
+        ch.setAntiVoxSize(2);
+
+        TxWorkerThread w;
+        w.setTxChannel(&ch);
+        // setAntiVoxRun has never been called: m_antiVoxRun is false.
+
+        // Watching the internal handoff is what pins the gate's POSITION.
+        // Assert on TxChannel alone and the far-side gate in
+        // onAntiVoxSamplesReady would carry the test on its own, leaving the
+        // DSP-thread allocation and the posted event unnoticed.
+        QSignalSpy handoff(&w, &TxWorkerThread::antiVoxReferenceCopied);
+        QVERIFY(handoff.isValid());
+
+        const std::vector<float> block{ 0.5f, 0.6f, 0.7f, 0.8f };
+        w.onAntiVoxBlockReady(block.data(), /*frames=*/2);
+
+        QCOMPARE(handoff.count(), 0);
+
+        // Give any handoff that WAS posted every chance to deliver before
+        // asserting that none was.
+        QTest::qWait(50);
+
+        const auto& s = ch.antiVoxScratchForTest();
+        QCOMPARE(static_cast<int>(s.size()), 4);  // 2 * antiVoxSize
+        QCOMPARE(s[0], 0.0);
+        QCOMPARE(s[1], 0.0);
+        QCOMPARE(s[2], 0.0);
+        QCOMPARE(s[3], 0.0);
+    }
+
+    // ── 15. Issue #258 — stopPump moves m_txChannel back to caller thread ──
+    //
+    // Regression for the field crash where switching audio devices on
+    // Windows triggered a 0xc0000409 stack-buffer-overflow in
+    // ucrtbase.dll during disconnect.  Root cause: RadioModel::
+    // teardownConnection called m_txChannel->moveToThread(this->thread())
+    // from the main thread AFTER stopPump() had already joined the
+    // worker.  Qt6's moveToThread requires the call to be made from the
+    // object's CURRENT thread; with m_txChannel still affined to the
+    // (finished) worker, the move silently aborted with a warning and
+    // left m_txChannel with dangling thread-affinity once the worker
+    // QThread was reset().  The fix moves m_txChannel back from inside
+    // TxWorkerThread::run() before it exits.
+    //
+    // This test asserts BOTH halves of the invariant:
+    //   (a) After stopPump() returns, m_txChannel->thread() == the
+    //       creator thread (here: the test thread).
+    //   (b) No "Current thread (%p) is not the object's thread" warning
+    //       was emitted at any point during the teardown.
+    void stopPump_movesTxChannelToCallerThread_noWarning()
+    {
+        // ── Install a Qt message handler that counts moveToThread warnings.
+        static std::atomic<int> warningCount{0};
+        warningCount.store(0);
+        QtMessageHandler prev = qInstallMessageHandler(
+            [](QtMsgType type, const QMessageLogContext&, const QString& msg) {
+                Q_UNUSED(type);
+                if (msg.contains(QStringLiteral(
+                        "Current thread")) &&
+                    msg.contains(QStringLiteral(
+                        "is not the object's thread"))) {
+                    warningCount.fetch_add(1);
+                }
+            });
+
+        AudioEngine engine;
+        TxChannel ch(kChannelId, kBufSize, kBufSize);
+        MockConnection conn;
+        ch.setConnection(&conn);
+
+        TxMicSource src;
+        src.start();
+
+        TxWorkerThread w;
+        w.setTxChannel(&ch);
+        w.setAudioEngine(&engine);
+        w.setMicSource(&src);
+
+        // Mimic the production handoff: move TxChannel into the worker.
+        // This MUST be done from main (TxChannel's current thread).
+        QThread* const callerThread = QThread::currentThread();
+        ch.moveToThread(&w);
+        QCOMPARE(ch.thread(), static_cast<QThread*>(&w));
+
+        w.startPump();
+        QTRY_COMPARE_WITH_TIMEOUT(w.isRunning(), true, 500);
+
+        // Spin briefly so run() definitely enters its waitForBlock loop.
+        QTest::qWait(50);
+
+        // Tear down — this is the call sequence RadioModel uses.
+        w.stopPump();
+        QCOMPARE(w.isRunning(), false);
+
+        // (a) After stopPump returns, TxChannel must be back on the
+        //     caller thread.  Pre-fix: it stayed on the (finished) worker.
+        QCOMPARE(ch.thread(), callerThread);
+
+        // (b) No moveToThread cross-thread warning fired anywhere along
+        //     the way (neither inside run() nor at the now-defensive
+        //     call sites in RadioModel — though those aren't exercised
+        //     here; the run()-side move is enough to clear the warning).
+        QCOMPARE(warningCount.load(), 0);
+
+        qInstallMessageHandler(prev);
     }
 };
 

@@ -3,49 +3,52 @@
 **A cross-platform SDR console for OpenHPSDR radios**
 
 > [!IMPORTANT]
-> 📖 **Alpha testers, start here:** [docs/debugging/v0.4.0-alpha-tester-smoketest.md](docs/debugging/v0.4.0-alpha-tester-smoketest.md)
+> 📖 **Alpha testers, start here:** [docs/debugging/v0.5.2-alpha-tester-smoketest.md](docs/debugging/v0.5.2-alpha-tester-smoketest.md)
 >
-> v0.4.0 is a substantial minor release on top of v0.3.2 with five pieces
-> of work landing together:
+> **v0.5.2 sits on top of v0.5.1 (patch) and v0.5.0 (substantial minor).**
+> One major epic + a new SKU + a UI subsystem + a polish tail land together:
 >
-> 1. **3M-4 PureSignal arrives:** feedback DDC plumbing on Protocol 1 and
->    Protocol 2, calcc/IQC engine vendored verbatim from Thetis, PsForm
->    dialog (Tools → PureSignal), AmpView modeless dialog, two-tone IMD
->    overlay on the spectrum, bottom-banner FB+PS indicator pair. Enabled
->    on every supported P1 and P2 SKU including Hermes Lite 2 and plain
->    Hermes (with HL2 negative-ATT support, AutoAtt convergence, ATT-on-TX
->    master force-enable, and HL2 psSampleRate=0 sentinel resolution).
-> 2. **Display + DSP-Options refactor:** WDSP `avenger()` and `detector()`
->    ported. New Setup → DSP page (18 controls, RX/TX combo split, in-place
->    filter resize, Filter Impulse Cache). Spectrum gains a Thetis-faithful
->    FFT slider with 7 windows + live bin width, NF-aware grid, Hz/bin
->    auto-zoom override, SpectrumPeaksPage with PeakBlobDetector + Active
->    Peak Hold, and a new Multimeter page. SettingsSchemaVersion v5
->    migrates DSP-Options Buffer/Filter Size to per-direction.
-> 3. **Anti-VOX cancellation feed (3M-3a-iv):** closes the v0.3.2 gap so
->    the Anti-VOX gain control actually works. Setup → Transmit → DEXP/VOX
->    gains the full grpAntiVOX trio (Enable + Gain + Tau).
-> 4. **Live-apply sample rate (no disconnect):** Radio Info combo no longer
->    requires reconnect. 12-step Thetis-faithful coordinator routes through
->    WDSP's `SetXcmInrate` path. HL2 P1 384 kHz parity (mi0bot-authoritative).
-> 5. **AF Gain audio fix (KM4BLG) + VAX bus calibration:** AF slider routes
->    through WDSP `SetRXAPanelGain1`. Closes a long-standing distortion
->    bug. VAX tap inverse-scales by `1 / afGain` so digital-mode apps stay
->    calibrated regardless of speaker AF slider position.
+> 1. **Phase 3P-II: External RF accessories (PGXL + TGXL) + analog
+>    S-Meter port.** AetherSDR 1:1 baseline for 4O3A Power Genius XL
+>    amplifier telemetry and Tuner Genius XL antenna tuner control over
+>    Ethernet (TCP 9008 / 9010), plus the Thetis analog S-Meter widget
+>    on the operator banner with four RX modes (Signal / Sig Avg
+>    `RXA_S_AV` / Signal Peak / Max Bin). New Setup pages under
+>    Setup → Network (Peripherals + PGXL Advanced + TGXL Advanced) and
+>    Setup → Transmit (PGXL Interlock). Fault log, tune memory,
+>    connection diagnostics, optional TX interlock policy
+>    (Disabled / Warn / Block + SWR gate + grace).
+> 2. **ANAN-G2E (HermesC10) SKU port.** New board enum and capability
+>    row, hardware profile init verified against Thetis v2.10.3.15,
+>    codec wrappers (`SetADCSupply` + `LRAudioSwap`), discovery byte
+>    0x14 mapping, BPF1 algorithm family, PA telemetry, per-model
+>    preamp items, EXT label overrides, P2 RX unblock + crash fix.
+> 3. **Applet visibility controller.** Hamburger menu embedded in the
+>    AppletPanel banner, View → Containers → Applets show/hide section,
+>    two-way menu sync, capability-gated availability axis, RADE-aware
+>    routing, master-toggle live UI gating, persistence across launches.
+>    View → Network Applets retired.
+> 4. **Polish tail.** 4O3A integration cleanup (PGXL/TGXL handshake +
+>    route-aware FLEX discovery + master-toggle gating), TCI live-state
+>    fixes + 5 review issues, PS-A persistence, PA profile and quit
+>    handling, G2E P2 RX unblock + crash fix.
 >
-> **Existing users: no action required.** Saved radios, mic profiles, DSP
-> settings, PA cal-points, container layout, and per-band tune power carry
-> forward exactly. SettingsSchemaVersion bumps from v4 to v5 automatically
-> on first launch.
+> **Existing users: no action required.** Saved radios, mic profiles,
+> DSP settings, container layout, spectrum/waterfall settings, PA cal
+> points, per-band tune power, spot-system identity all carry forward.
+> No SettingsSchemaVersion bump in v0.5.x (the last bump was v5 in
+> v0.4.0).
 >
-> Returning testers: most of v0.3.2's surface didn't change. The v0.3.2
-> doc at [docs/debugging/v0.3.2-alpha-tester-smoketest.md](docs/debugging/v0.3.2-alpha-tester-smoketest.md)
-> is still the right reference for DEXP/VOX baseline, the HL2 mi0bot
-> RF/Tune slider rework, the PA Setup pages, and the PA-cal hotfix
-> verification. Earlier-release walkthroughs remain at
-> [docs/debugging/v0.3.1-alpha-tester-smoketest.md](docs/debugging/v0.3.1-alpha-tester-smoketest.md)
-> and [docs/debugging/v0.2.3-alpha-tester-smoketest.md](docs/debugging/v0.2.3-alpha-tester-smoketest.md)
-> for historical reference and unchanged receive-side coverage.
+> Returning testers: the v0.5.0 epic mix (Phase 3J-1 TCI v2.0 WebSocket
+> server, Phase 3J-2 spot system + FreeDV Reporter + PSK Reporter,
+> Phase 3R RADE as a peer mode RX + TX) is unchanged. The v0.4.0 doc at
+> [docs/debugging/v0.4.0-alpha-tester-smoketest.md](docs/debugging/v0.4.0-alpha-tester-smoketest.md)
+> remains the authoritative walkthrough for PureSignal, the Display +
+> DSP-Options refactor, anti-VOX, live-apply sample rate, and the
+> AF Gain + VAX calibration fix. Earlier walkthroughs at
+> [docs/debugging/v0.3.2-alpha-tester-smoketest.md](docs/debugging/v0.3.2-alpha-tester-smoketest.md)
+> and [docs/debugging/v0.3.1-alpha-tester-smoketest.md](docs/debugging/v0.3.1-alpha-tester-smoketest.md)
+> remain available for historical reference.
 >
 > J.J. Boyd ~ KG4VCF
 
@@ -101,7 +104,17 @@ sha256sum -c SHA256SUMS.txt
 
 ## Current Status
 
-**Current release: v0.4.0** (2026-05-08). Substantial minor release on top of v0.3.2 with five pieces of work landing together: **3M-4 PureSignal** (the big new feature: feedback DDC plumbing on Protocol 1 and Protocol 2, `calcc.c` + `iqc.c` vendored verbatim from Thetis, PsForm dialog at Tools → PureSignal, AmpView modeless dialog, two-tone IMD overlay on the spectrum, bottom-banner FB+PS indicator pair, enabled on every supported P1 and P2 SKU including HL2 and plain Hermes), a **Display + DSP-Options refactor** (WDSP `avenger()` and `detector()` ports, new Setup → DSP page with 18 controls and RX/TX combo split, in-place filter resize, Filter Impulse Cache, Thetis-faithful FFT slider with 7 windows, NF-aware grid, SpectrumPeaksPage, Multimeter page, SettingsSchemaVersion v5 migration), **3M-3a-iv anti-VOX cancellation feed** (closes the v0.3.2 gap so the Anti-VOX gain control actually works; full grpAntiVOX trio on Setup → Transmit → DEXP/VOX), **live-apply sample rate** (no disconnect needed; 12-step Thetis-faithful coordinator routes through WDSP's `SetXcmInrate` path; HL2 P1 384 kHz parity), and the **AF Gain rewire (KM4BLG) + VAX bus calibration** (AF slider through `SetRXAPanelGain1` closes a long-standing distortion bug; VAX tap inverse-scales by `1 / afGain` so digital-mode apps stay calibrated). **v0.3.2** (2026-05-05) shipped DEXP/VOX speech processing end-to-end for the first time, the HL2 mi0bot RF/Tune slider maturity push, full Setup → PA parity + the PA over-drive safety hotfix for high-gain finals (notably the ANAN-8000DLE), and a long tail of persistence and stability fixes. **v0.3.1** (2026-05-03) carried forward everything 0.3.0 was supposed to deliver plus per-profile TX bandwidth control, the user-editable filter preset store, TX filter overlay on the panadapter and waterfall, the per-board PA forward-power calibration system, and the Setup IA reshape. **HL2 SSB transmit is bench-cleared** since v0.3.1's ATT/filter safety audit. Earlier-shipped 3G RX-Epic, 3P-A…I antenna integration, 3O VAX + Linux PipeWire, and the v0.2.x maintenance fixes still apply. **3M-2 CW TX** is next up; **3F multi-panadapter**, **3H skins**, **3J TCI**, **3K CAT** remain not-started.
+**Current release: v0.5.2** (2026-05-24). Substantial release on top of v0.5.1 (and v0.5.0 underneath). One major epic plus a new SKU port, a new UI subsystem, and a polish tail: **Phase 3P-II External RF accessories** (AetherSDR 1:1 PGXL + TGXL baseline, Thetis analog S-Meter port with 4 RX modes, connection robustness with exponential auto-reconnect / keepalive / RTT-correlated ping / full PGXL pairing flow, advanced UI with Fault Log / Tune Memory / TX Interlock Policy / power-cap toast); **ANAN-G2E (HermesC10) SKU port** (new board enum, hardware profile verified against Thetis v2.10.3.15, codec wrappers, BPF1 algorithm, PA telemetry, P2 RX unblock + crash fix); **Applet visibility controller** (hamburger menu on AppletPanel banner, View → Containers → Applets show/hide, capability-gated availability, persistence); **polish tail** (4O3A integration cleanup, TCI live-state fixes + 5 review issues, PS-A persistence, PA profile / quit handling). v0.5.2's 3P-II bench-verification matrix (36 rows) is pending live PGXL + TGXL hardware; the ANAN-G2E matrix (12 rows) is pending live G2E hardware. **v0.5.1** (2026-05-15) was the patch before: three ship-blocking release-artifact fixes (Windows `rade.dll`, macOS x86_64 `Qt6::WebSockets`, HL2 + Win11 waterfall slider persistence), three correctness fixes (orphan `.bak` recovery, connect-state-stuck-green, VOX prime-on-connect), and two CodeQL pipeline maintenance fixes. v0.5.0 detail below.
+
+**Phase 3J-1: TCI v2.0 WebSocket server.** External programs (WSJT-X, JTDX, FreeDV, Quisk, ESDR3, N1MM, Log4OM, contest software) can now drive NereusSDR over Thetis-compatible TCI. Setup > CAT/Network > TCI Server configures bind interface, port, and sensor intervals; Tools > TCI Server opens the log viewer; the bottom-bar TCI indicator shows live state. The audio pipeline negotiates 8 / 12 / 16 / 44.1 / 48 kHz with per-stream resampling, so FreeDV 8 kHz, Quisk, and JTDX 12 kHz all work end-to-end. 15 closeout items shipped after the initial port stabilized the on-bench behaviour against real clients.
+
+**Phase 3J-2: Spot system, FreeDV Reporter, PSK Reporter.** Seven spot-source clients in one place: DX cluster, RBN, WSJT-X UDP, SpotCollector / DXLab UDP, POTA HTTPS, FreeDV Reporter Socket.IO, PSK Reporter IPFIX. Tools > Spot Hub (Ctrl+Shift+S) opens a 10-tab modeless dialog; Tools > FreeDV Reporter (Ctrl+Shift+R) opens the 14-column live station view with TX/RX highlights, QSY support, and 2-hour idle auto-removal. Spots render on the panadapter with collision-avoidance stacking and click-to-tune, coloured by a DXCC 4-tier resolver against cty.dat plus the operator's ADIF log.
+
+**Phase 3R: RADE as a true peer mode (RX + TX end-to-end).** RADE is wired as a first-class DSP mode (`DSPMode::RADE_U` / `DSPMode::RADE_L`) and not as a DIGU pretense, a virtual audio bus, or a slice-mute hack. RX decodes through a dedicated RadeChannel; the VFO flag gains a mode-aware SNR row and shows the EOO-decoded speaker callsign when known. TX is end-to-end: TxWorkerThread feeds the RADE encoder and `sendTxIq` carries the 24 kHz stereo modem output. RadeApplet docks in the right column when RADE is the active mode. Vendored `radae_nopy` (BSD-2-Clause) plus Opus with LPCNet/FARGAN add about 9 MB to the binary on every platform; neural-net weights are compiled into librade, so no external model file ships.
+
+**Bench-fix tail.** Wire / parser / UX gaps that surfaced when 3J-1 + 3J-2 + 3R drafts hit real radios, real DX clusters, real WSJT-X feeds, and real WSJT-X TCI cycles. Highlights: first-MOX audio-volume seed, ten missing spot-client lifecycle wires, the DXSpider parser, FreeDV Reporter row-highlight / Socket.IO ACK push / VFO freq-publish throttle, the RADE callsign / idle-clear timer, and cross-source spot dedup via `SpotModel::dedupIndexFor`.
+
+**Earlier releases.** **v0.4.0** (2026-05-08) shipped a substantial minor release on top of v0.3.2 with five pieces of work landing together: **3M-4 PureSignal** (the big new feature: feedback DDC plumbing on Protocol 1 and Protocol 2, `calcc.c` + `iqc.c` vendored verbatim from Thetis, PsForm dialog at Tools → PureSignal, AmpView modeless dialog, two-tone IMD overlay on the spectrum, bottom-banner FB+PS indicator pair, enabled on every supported P1 and P2 SKU including HL2 and plain Hermes), a **Display + DSP-Options refactor** (WDSP `avenger()` and `detector()` ports, new Setup → DSP page with 18 controls and RX/TX combo split, in-place filter resize, Filter Impulse Cache, Thetis-faithful FFT slider with 7 windows, NF-aware grid, SpectrumPeaksPage, Multimeter page, SettingsSchemaVersion v5 migration), **3M-3a-iv anti-VOX cancellation feed** (closes the v0.3.2 gap so the Anti-VOX gain control actually works; full grpAntiVOX trio on Setup → Transmit → DEXP/VOX), **live-apply sample rate** (no disconnect needed; 12-step Thetis-faithful coordinator routes through WDSP's `SetXcmInrate` path; HL2 P1 384 kHz parity), and the **AF Gain rewire (KM4BLG) + VAX bus calibration** (AF slider through `SetRXAPanelGain1` closes a long-standing distortion bug; VAX tap inverse-scales by `1 / afGain` so digital-mode apps stay calibrated). **v0.3.2** (2026-05-05) shipped DEXP/VOX speech processing end-to-end for the first time, the HL2 mi0bot RF/Tune slider maturity push, full Setup → PA parity + the PA over-drive safety hotfix for high-gain finals (notably the ANAN-8000DLE), and a long tail of persistence and stability fixes. **v0.3.1** (2026-05-03) carried forward everything 0.3.0 was supposed to deliver plus per-profile TX bandwidth control, the user-editable filter preset store, TX filter overlay on the panadapter and waterfall, the per-board PA forward-power calibration system, and the Setup IA reshape. **HL2 SSB transmit is bench-cleared** since v0.3.1's ATT/filter safety audit. Earlier-shipped 3G RX-Epic, 3P-A…I antenna integration, 3O VAX + Linux PipeWire, and the v0.2.x maintenance fixes still apply. **3M-2 CW TX** is next up; **3F multi-panadapter**, **3H skins**, **3K CAT** remain not-started.
 
 ### What's working end-to-end today
 

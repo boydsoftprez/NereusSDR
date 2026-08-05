@@ -309,11 +309,13 @@ warren@wpratt.com
 #include <QLineEdit>
 #include <QPointer>
 
+#include <limits>
 #include <optional>
 
 namespace NereusSDR {
 
 class VaxChannelSelector;  // forward declaration — full include in VfoWidget.cpp
+class RadioModel;          // forward declaration — Phase 3F closeout (AntennaPickerMenu wiring)
 enum class HPSDRModel : int;  // forward declaration — Phase 3P-I-b T9
 
 // Floating VFO flag widget — AetherSDR pattern.
@@ -362,6 +364,29 @@ public:
     void setAntennaList(const QStringList& ants);
     void setSmeter(double dbm);
 
+    /// This flag's own slice frequency, in Hz.
+    ///
+    /// Phase 3F: read back by SpectrumWidget::updateVfoPositions so each flag
+    /// on a shared pan is placed at ITS slice's frequency. The pan's m_vfoHz
+    /// is a single value that tracks whichever slice most recently called
+    /// setVfoFrequency, so placing from it stacked every co-hosted flag at one
+    /// x. Bench-reported 2026-07-28: "A and B are still overlaid and stuck on
+    /// top of each other."
+    double frequency() const { return m_frequency; }
+
+    /// This flag's own filter edges, as signed Hz offsets from its slice
+    /// frequency (negative on the LSB side, exactly as SliceModel carries
+    /// them).
+    ///
+    /// Phase 3F: read back by SpectrumWidget::sliceMarkerGeometry() so each
+    /// co-hosted slice shades ITS OWN passband. Filter width is per slice, so
+    /// the pan's single m_filterLowHz/m_filterHighHz pair cannot stand in for
+    /// a neighbour's: a 500 Hz CW slice next to a 2.7 kHz SSB slice would draw
+    /// two identical bands. Bench-reported 2026-07-28: "The pass band of the
+    /// second flag disappears when not active."
+    int filterLow()  const { return m_filterLowHz; }
+    int filterHigh() const { return m_filterHighHz; }
+
     // --- RIT/XIT state setters (S1.8a — guarded against re-emit) ---
     void setRitEnabled(bool v);
     void setRitHz(int hz);
@@ -402,6 +427,12 @@ public:
     // --- Slice coupling (for mode container binding only) ---
     void setSlice(SliceModel* slice);
 
+    // --- Test seams for SNR row (Phase 3R L1) ---
+    // Exposed so tst_vfo_widget_snr can verify text/colour/visibility
+    // contracts without depending on geometry-sensitive layout queries.
+    QLabel* snrLabelForTest()      const { return m_snrLabel; }
+    QLabel* snrValueLabelForTest() const { return m_snrValue; }
+
     // --- Stage C2: FilterPresetStore coupling ---
     // When set, rebuildFilterButtons reads user overrides from the store and
     // the right-click context menu on each filter button opens the edit dialog.
@@ -414,7 +445,55 @@ public:
     // specTop is the y of the spectrum widget's top edge.
     void updatePosition(int vfoX, int specTop, FlagDir dir = FlagDir::Auto);
 
+    /// Destroy the four floating buttons (close / lock / record / play).
+    ///
+    /// They are parented to the SpectrumWidget, not to this flag, so deleting
+    /// the flag alone leaves them painted on the pan forever -- visible as a
+    /// second orphaned button column after a slice is removed. The destructor
+    /// deliberately does NOT free them (issue #113: Qt's deleteChildren walked
+    /// SpectrumWidget's children in an order that freed a button before
+    /// ~VfoWidget ran, and the explicit delete then SIGSEGV'd on a dangling
+    /// pointer). Calling this BEFORE the flag is destroyed avoids that
+    /// entirely, because both objects are still alive and the order is ours.
+    ///
+    /// Idempotent; safe when the buttons were never built.
+    void destroyFloatingButtons();
+
+    /// Bring this flag, and its close/lock/record/play buttons, to the front
+    /// of the shared parent's (SpectrumWidget's) stacking order.
+    ///
+    /// The buttons are parented to the SpectrumWidget rather than to this
+    /// flag -- see destroyFloatingButtons above -- so QWidget::raise() on the
+    /// flag alone only reorders the flag body. The buttons, as separate
+    /// siblings, would stay wherever they last were, which can be behind a
+    /// flag that used to sit above this one: a flag on top with its own
+    /// button column stranded underneath a neighbour. Raising the buttons
+    /// first and the flag body last matches the order
+    /// positionFloatingButtons() already uses, so a flag brought to the
+    /// front reads as one coherent unit.
+    ///
+    /// Safe to call before the buttons exist (a flag that has never had
+    /// updatePosition() called on it yet): each pointer is guarded.
+    void raiseAboveSiblings();
+
+    // --- Test seam for floating-button z-order (Bench 2026-07-28, Sub-Epic J) ---
+    // The four buttons are otherwise anonymous QPushButtons among the
+    // SpectrumWidget's children, so a z-order test has no way to name "this
+    // flag's close button" without this. Exposed read-only, same pattern as
+    // the SNR-row seams below.
+    QPushButton* closeButtonForTest() const { return m_closeBtn; }
+
     int sliceIndex() const { return m_sliceIndex; }
+
+    // Phase 3F Sub-Epic C Task 9: test-only seam to fire the TX-badge click
+    // path without bringing up a QApplication + QPushButton event loop.
+    // Always built (no NEREUSSDR_TESTING flag); cost is one indirect call
+    // and the seam is undocumented in user-facing API.
+    void simulateTxBadgeClick() { onTxBadgeClicked(); }
+
+    // Narrow test seam for the context-menu stable-ID lookup. The returned
+    // pointer is the same one contextMenuEvent passes to AntennaPickerMenu.
+    NereusSDR::SliceModel* contextMenuSliceForTest() const;
 
 public slots:
     // Phase 3P-I-a T15 — hide Blue/Red ANT buttons when the connected
@@ -428,6 +507,14 @@ public slots:
 
     // Phase 3P-I-b T9 — reflect AlexController::rxOutOnTx state into the BYPS button.
     void setRxBypassActive(bool on);
+
+    // Phase 3F closeout — non-owning RadioModel pointer used by contextMenuEvent
+    // to construct an AntennaPickerMenu with the live slice, AlexController, and
+    // BoardCapabilities. Without this set, the antenna submenu falls back to a
+    // stub ANT1/ANT2/ANT3 list (no chain-consequence hints). MainWindow calls
+    // this in wireSliceToSpectrum (Slice A) and in the sliceAdded handler
+    // (Slice B+).
+    void setRadioModel(NereusSDR::RadioModel* model);
 
 signals:
     void frequencyChanged(double hz);
@@ -451,7 +538,6 @@ signals:
     // chkNB_MouseDown (console.cs:44447 [v2.10.3.13]) which calls
     // SetupForm.ShowSetupTab(SetupTab.NB_Tab).
     void openNbSetupRequested();
-    void nrChanged(bool enabled);
     void anfChanged(bool enabled);
     void sliceActivationRequested(int sliceIndex);
     void closeRequested(int sliceIndex);
@@ -492,16 +578,43 @@ signals:
     // --- Setup dialog request (e.g. AGC-T right-click → open settings) ---
     void openSetupRequested();
 
+    // Phase 3F Sub-Epic C Task 9: emitted when operator clicks the TX badge
+    // on this slice's flag. MainWindow forwards to
+    // RadioModel::txSliceArbiter()->requestHandoff(sliceIndex), which drops
+    // MOX (RF-safe) before flipping the TX-bound slice.
+    void txHandoffRequested(int sliceIndex);
+
+    // Phase 3F Sub-Epic E Task 4: right-click context menu intent signals.
+    // MainWindow listens and routes to SliceModel / FilterPolicyDialog /
+    // RadioModel::removeSlice. antennaChangeRequested is fired by the
+    // AntennaPickerMenu (Task 5) integration shipped in Phase 3F closeout.
+    void sampleRateRequested(int sliceIndex, int hz);
+    void filterPolicyRequested(int chainIndex);
+    void removeSliceRequested(int sliceIndex);
+    void antennaChangeRequested(int sliceIndex, const QString& antennaName);
+
+private slots:
+    // Phase 3F Sub-Epic C Task 9: TX badge click slot. Emits
+    // txHandoffRequested with the slice this flag represents.
+    void onTxBadgeClicked();
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    // Phase 3F Sub-Epic E Task 4: right-click pops the multi-pan context
+    // menu (Make TX, Antenna >, Sample rate >, Diversity >, Filter policy,
+    // Remove slice).
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     void buildUI();
     void buildHeaderRow();
     void buildFrequencyRow();
     void buildSmeterRow();
+    void buildSnrRow();        // Phase 3R L1 — RADE SNR display
+    void updateSnrVisibility();  // Phase 3R L1 — show/hide based on mode
+    void updateModeTabAccent();  // Phase 3R L3 — RADE purple chip accent
     void buildTabBar();
     void buildAudioTab();
     void buildDspTab();
@@ -528,6 +641,12 @@ private:
     // Non-owning; lifetime managed by RadioModel.  Null until MainWindow wires it.
     class FilterPresetStore* m_filterPresetStore{nullptr};
 
+    // Phase 3F closeout — non-owning RadioModel pointer used by contextMenuEvent
+    // to build a live AntennaPickerMenu. Null until MainWindow calls
+    // setRadioModel(); the contextMenuEvent falls back to a stub antenna submenu
+    // when null. See setRadioModel() above for the wiring contract.
+    NereusSDR::RadioModel* m_radioModel{nullptr};
+
     // Internal helper — update m_locked + drive Close-strip lock button + emit lockChanged.
     // Called by the floating m_lockBtn toggled lambda.  X/RIT-tab Lock removed (B7).
     // Must be called outside m_updatingFromModel.
@@ -537,6 +656,12 @@ private:
     int m_sliceIndex{0};
     int m_stepHz{100};
     double m_frequency{14225000.0};
+    // Signed Hz offsets from m_frequency. Seeded with the same LSB defaults
+    // SpectrumWidget's pan-level m_filterLowHz/m_filterHighHz carry (Thetis
+    // LSB default), so a flag that has not yet been handed a filter draws the
+    // identical band the pan drew for it before the per-slice split.
+    int m_filterLowHz{-2850};
+    int m_filterHighHz{-150};
     DSPMode m_currentMode{DSPMode::USB};
     double m_smeterDbm{-127.0};
 
@@ -570,6 +695,57 @@ private:
 
     // --- S-meter row ---
     VfoLevelBar* m_levelBar{nullptr};
+
+    // --- SNR row (Phase 3R L1) ---
+    // Surfaces SliceModel::snrDb (set by RadeChannel via I5 routing).
+    // Two labels: "SNR" (static text) + value ("+N dB" / " -   - ").
+    // Row visibility tracks m_currentMode being either RADE sideband
+    // (DSPMode::RADE_U or DSPMode::RADE_L).
+    QLabel* m_snrLabel{nullptr};
+    QLabel* m_snrValue{nullptr};
+    QWidget* m_snrRow{nullptr};  // parent row for show/hide
+    bool     m_radeActive{false};
+
+    // 2026-05-11 bench: cached EOO-decoded speaker callsign + last SNR
+    // + last sync state so setRadeCallsign / setRadeSnrLabel /
+    // setRadeSynced can each repaint the SNR row without losing the
+    // other two pieces.  Empty m_lastRadeCallsign = unknown speaker;
+    // NaN m_lastRadeSnr = no SNR snapshot yet.
+    QString m_lastRadeCallsign;
+    float   m_lastRadeSnrDb{std::numeric_limits<float>::quiet_NaN()};
+    bool    m_lastRadeSynced{false};
+
+    // Slot wired to SliceModel::snrDbChanged. Updates m_snrValue text
+    // + stylesheet color (grey/yellow/green) based on NaN-state and the
+    // 5 dB threshold.
+    void onSnrChanged(double db);
+
+    // From AetherSDR VfoWidget.cpp:3406-3445 [@0cd4559] — RADE status
+    // label setters. The single m_snrLabel combines active-state
+    // (visibility), sync indicator (filled/hollow circle), SNR value
+    // (color-coded), and freq offset (appended).
+public:
+    void setRadeActive(bool on);
+    void setRadeSynced(bool synced);
+    void setRadeSnrLabel(float snrDb);
+    void setRadeFreqOffset(float hz);
+
+    // 2026-05-11 bench: cache + render the EOO-decoded speaker callsign
+    // in the RADE status row.  When non-empty, the prefix "RADE" is
+    // replaced with the callsign so the user sees who they are
+    // copying (e.g. "KK7GWY ● 12dB").  Empty string clears the cache
+    // and the row falls back to "RADE ● 12dB".  Sourced from
+    // SliceModel::lastRadeRxCallsignChanged.  All three setters above
+    // (active/synced/snr) re-render through repaintRadeRow() so the
+    // callsign survives subsequent SNR pushes.
+    void setRadeCallsign(const QString& callsign);
+
+    // Slice color table: A=cyan, B=magenta, C=green, D=yellow.
+    // From AetherSDR SliceColors.h. Public static so the RX applet's
+    // per-slice tab row (Phase 3F Bug 3) shares the exact flag palette.
+    static QColor sliceColor(int index);
+
+private:
 
     // --- Tab bar ---
     QList<QPushButton*> m_tabButtons;
@@ -644,9 +820,6 @@ private:
     bool m_onLeft{false};  // track flag side for button placement
     void buildFloatingButtons();
     void positionFloatingButtons();
-
-    // Slice color table: A=cyan, B=magenta, C=green, D=yellow
-    static QColor sliceColor(int index);
 };
 
 } // namespace NereusSDR

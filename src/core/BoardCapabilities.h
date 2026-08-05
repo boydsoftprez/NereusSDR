@@ -229,7 +229,147 @@ struct BoardCapabilities {
     ProtocolVersion protocol;
 
     int  adcCount;
+
+    // Phase 3F: how many RX preselector filter chains this board actually
+    // drives. A chain is one independently addressable RX filter bank plus
+    // the ADC behind it, and it is the unit the two Alex words address
+    // (Alex0 / prbpfilter for chain 0, Alex1 / prbpfilter2 for chain 1).
+    // Design doc 2026-05-26-phase3f-multi-pan-multi-slice-design.md §16.1.1-2.
+    //
+    // THIS IS NOT adcCount, and it is not hasAlex2. Thetis drives a second
+    // chain for exactly one model list:
+    //   From Thetis console.cs:15435-15443 [v2.10.3.15] UpdateRX2DDSFreq:
+    //[2.10.3.13]MW0LGE
+    //     if (HardwareSpecific.Model == HPSDRModel.ORIONMKII ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN7000D ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN8000D ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN_G2 ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN_G2_1K ||
+    //         HardwareSpecific.Model == HPSDRModel.ANVELINAPRO3 ||
+    //         HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    //     {
+    //         setAlex2HPF(rx2_dds_freq_mhz);
+    //     }
+    // Resolving those seven models through clsHardwareSpecific.cs:86-190
+    // [v2.10.3.15] gives exactly HPSDRHW.OrionMKII and HPSDRHW.Saturn, and
+    // every model under those two HW values is in the list, so the count is
+    // expressible per board row.
+    //
+    // adcCount does NOT predict it. ANAN-100D (Angelia) and ANAN-200D (Orion)
+    // are both NetworkIO.SetRxADC(2) at clsHardwareSpecific.cs:123 and :137
+    // [v2.10.3.15] yet neither is in the setAlex2HPF list: two ADCs, one
+    // driven filter chain. hasAlex2 does not predict it either, being true on
+    // our HermesC10 row (SetMKIIBPF(1), a different upstream concept) for a
+    // 1-ADC board that upstream never hands a second filter word.
+    //
+    // Load-bearing since the antenna-driven ADC routing started reaching the
+    // wire: without this gate a slice on an RX-only antenna would have a
+    // chain-1 filter word composed for a chain the board does not have.
+    int  rxFilterChainCount {1};
+
+    // Does RX2 have its own front end, so that it never shares the Alex
+    // low-pass with RX1?
+    //
+    // Only one thing reads it, and it is the receive-side low-pass selection:
+    //   From Thetis console.cs:15487-15498 UpdateAlexTXFilter [v2.10.3.15]
+    //     if (!_rx2_preamp_present && chkRX2.Checked)
+    //     {
+    //         if (rx1_dds_freq_mhz > rx2_dds_freq_mhz) setAlexLPF(rx1_dds_freq_mhz, false);
+    //         else setAlexLPF(rx2_dds_freq_mhz, false);
+    //     }
+    //     else setAlexLPF(rx1_dds_freq_mhz, false);
+    // false -> the two receivers share the filter, so the HIGHER frequency
+    // picks it. true -> RX1 decides alone, however RX2 is tuned.
+    //
+    // Per-model, verbatim from the upstream switch:
+    //   From Thetis console.cs:14783-14857 SetupForHPSDRModel [v2.10.3.15]
+    // Upstream inline attribution preserved verbatim, every tag in that
+    // range:
+    //   case HPSDRModel.ANAN_G2E: //N1GP G2E added
+    //   case HPSDRModel.ANAN_G2_1K:                          // G8NJJ: likely to need further changes for PA
+    //   case HPSDRModel.REDPITAYA: //DH1KLM
+    //   RX2PreampPresent = _rx2_preamp_present; //[2.10.3.11]MW0LGE we were setting the member var above, but this was not actually having any effect/update
+    //     HERMES, ANAN10, ANAN10E, ANAN100, ANAN100B, ANAN_G2E  -> false
+    //     ANAN100D, ANAN200D, ORIONMKII, ANAN7000D, ANAN8000D,
+    //     ANAN_G2, ANAN_G2_1K, ANVELINAPRO3, REDPITAYA          -> true
+    //
+    // HERMESLITE is absent from that switch, so it keeps the field
+    // initializer and is false:
+    //   From Thetis console.cs:15068 [v2.10.3.15]
+    //     private bool _rx2_preamp_present = false;
+    //
+    // adcCount does NOT predict it, and neither does rxFilterChainCount:
+    // ANAN-100D and ANAN-200D are true here while carrying one driven filter
+    // chain, and the ANAN-G2E is false while being a 1-ADC board.
+    bool rx2PreampPresent {false};
+
     int  maxReceivers;
+
+    // Phase 3F: user-facing slice cap, distinct from maxReceivers (= total DDC count).
+    // For 2-ADC boards this is typically maxReceivers - 2 (DDC0/1 reserved for PS + diversity).
+    // For 1-ADC boards this often equals maxReceivers, except HL2 and the ANAN-G2E,
+    // where maxSlices (5) exceeds maxReceivers (4): slices sharing a DDC cost
+    // nothing, so both are capped by the project ceiling instead.
+    // See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
+    //
+    // ── This is a POLICY ceiling, not a hardware limit ──────────────────────
+    //
+    // "How many receivers does this board have" has five different answers, and
+    // every one of them is real. From the FPGA gateware for an Orion-class board
+    // (../n1gp-Anvelina_PROIII/Orion.v [@8e86a61], GPLv3 — cited for facts only,
+    // see CLAUDE.md "Gateware citations"):
+    //
+    //   14  fabric capacity            Orion.v:956  "can fit up to 14 RXs"
+    //   10  bootloader 2 MB file cap   Orion.v:957  ".rbf is over that when > 10"
+    //    8  what this build ships      Orion.v:958  "localparam NR = 8"
+    //    8 @ 192k / 2 @ 1536k          Orion.v:632  link-budget limit, N1GP's notes
+    //    5  what Thetis asks for       console.cs UpdateDDCs nddc
+    //
+    // The values in this table are currently the last row — Thetis's client
+    // policy — inherited wholesale because until 2026-07-25 every citation here
+    // pointed at Thetis client code and none at hardware.
+    //
+    // Two consequences worth keeping in mind before trusting these numbers:
+    //
+    //   1. NR is a compile-time Verilog constant that CHANGES BETWEEN FIRMWARE
+    //      RELEASES — shipped as 2, 4, 7 and 8 at different times on the same
+    //      board. So no static per-board integer can be correct for every
+    //      firmware a user might be running. The durable fix is to cap by what
+    //      the radio actually answers (a DDC that never delivers packets is
+    //      absent) rather than by a compiled-in table.
+    //   2. The usable count is RATE-DEPENDENT, because aggregate I/Q throughput
+    //      is link-bound (P2 I/Q is 24-bit I+Q = 6 bytes/sample). Eight
+    //      receivers at 192 kHz and two at 1536 kHz are the same hardware.
+    //      A single integer cannot express that.
+    //
+    // Deliberate decision 2026-07-25: hold the ceiling at 5 and get Phase 3F
+    // working there first, then revisit raising it toward NR once multi-slice is
+    // proven on a bench. Do NOT raise these values without either gateware
+    // evidence for the specific SKU or a probe against real hardware.
+    int  maxSlices {0};
+
+    // Phase 3F Sub-Epic I: DDCs available for operator slices, after the
+    // per-SKU PureSignal / diversity reservations. On 2-ADC P2 boards
+    // DDC0+DDC1 are reserved as a synced pair, so user DDCs are DDC2-6.
+    // The per-board codec's stream-to-DDC table must agree (for example
+    // P2CodecSaturn::kStreamToDdc = {2,3,4,5,6}, and P2CodecHermes putting
+    // stream 0 on DDC0 for the 1-ADC family).
+    //
+    // Design doc §2 "Resolved values per SKU" has been treated as the authority
+    // here, but note that the design doc is itself derived from Thetis, so it
+    // carries Thetis's client policy rather than hardware truth — the same
+    // caveat as maxSlices above. Where a SKU's value is contested, gateware or a
+    // hardware probe outranks both the design doc and Thetis.
+    //
+    // This is a distinct axis from maxSlices: several slices can share one
+    // DDC when their frequencies fall inside its window, so maxSlices can
+    // legitimately exceed userDdcCount.
+    int  userDdcCount {0};
+
+    // Phase 3F: number of ADCs that support the wideband (real-sample) stream.
+    // P2 boards: typically equals adcCount. P1 boards: 0 (different mechanism, deferred to 3F-W).
+    int  widebandAdcs {0};
+
     std::array<int, 6> sampleRates;  // zero-pad unused slots; up to 6 for P2 boards
     int  maxSampleRate;
 
@@ -393,6 +533,26 @@ struct BoardCapabilities {
     bool hasApollo{false};
     bool hasAlex{false};
     bool hasPennyLane{false};
+
+    // From Thetis HasVolts (clsHardwareSpecific.cs:245-254 [v2.10.3.15]).
+    // True for boards with on-board PA voltage telemetry sensor.
+    // SKU set: ANAN7000D, ANAN8000D, ANVELINAPRO3, ANAN_G2, ANAN_G2_1K, REDPITAYA, ANAN_G2E. //N1GP G2E added
+    bool hasPaVoltsTelemetry{false};
+
+    // From Thetis HasAmps (clsHardwareSpecific.cs:255-264 [v2.10.3.15]).
+    // True for boards with on-board PA current telemetry sensor.
+    // SKU set: same as HasVolts. //N1GP G2E added
+    bool hasPaAmpsTelemetry{false};
+
+    // From Thetis setup.cs:19918 [v2.10.3.15] //N1GP G2E added —
+    // chkAutoPACalibrate.Visible=false for G2E (auto-cal UI hidden).
+    // Defaults true so existing boards retain auto-cal visibility.
+    bool allowsAutoPaCalibrate{true};
+
+    // From Thetis setup.cs:19920 [v2.10.3.15] //N1GP G2E added —
+    // chkBypassANANPASettings.Visible=true for G2E ("Bypass ANAN PA Settings"
+    // checkbox visible). Defaults false; G2E opts in.
+    bool showsBypassPaSettingsUi{false};
 
     int  minFirmwareVersion;
     int  knownGoodFirmware;

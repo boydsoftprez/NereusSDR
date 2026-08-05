@@ -1,0 +1,148 @@
+<h2>Antenna selector as the ADC gate (2-ADC boards)</h2>
+<p class="subtitle">Each ADC is a complete receiver chain: ANT → Alex → ADC → DDCs. On 2-ADC boards you have 2 such chains, so the antenna choice IS what determines which chain a slice lands on.</p>
+
+<h3>The mental model</h3>
+<div style="background:#1a2030;padding:14px;border-radius:6px;font-size:13px;color:#cde;line-height:1.7">
+  Think of a 2-ADC board as having <strong>two parallel receivers</strong>, each connected to one antenna at a time:<br><br>
+
+  &nbsp;&nbsp;<strong style="color:#8aa8c0">Chain 0:</strong> &nbsp;some antenna → Alex0 (HPF + BPF + LPF) → ADC0 → DDCs 2, 4, 6<br>
+  &nbsp;&nbsp;<strong style="color:#8aa8c0">Chain 1:</strong> &nbsp;some antenna → Alex1 (HPF + BPF + LPF) → ADC1 → DDCs 3, 5<br><br>
+
+  Each chain is independent. <strong>Slices land on whichever chain is connected to the antenna they want.</strong> Codec doesn't pick the ADC arbitrarily — it picks based on antenna match.<br><br>
+
+  <strong style="color:#fc9">Antenna preference (per-slice, per-band) → drives ADC routing → determines DDC pool → determines which Alex's BPF applies.</strong>
+</div>
+
+<h3 style="margin-top:24px">Worked examples on a G2 (2-ADC)</h3>
+
+<div style="margin:16px 0">
+  <div style="background:#1a2030;border:1px solid #2a3548;border-radius:4px;padding:12px;margin-bottom:10px">
+    <div style="color:#8c8;font-size:11px;font-weight:bold;margin-bottom:6px">✓ Case 1: Two antennas, clean split</div>
+    <div style="font-family:monospace;font-size:11px;color:#cde;line-height:1.7">
+      Slice A → 20m → wants ANT1 (HF beam) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ ADC0 (Chain 0 = ANT1)<br>
+      Slice B → 80m → wants ANT2 (low-band wire) → ADC1 (Chain 1 = ANT2)<br>
+      <br>
+      Both chains active on distinct antennas. Both Alex BPFs filter their band. No WIDE badge.
+    </div>
+  </div>
+
+  <div style="background:#1a2030;border:1px solid #2a3548;border-radius:4px;padding:12px;margin-bottom:10px">
+    <div style="color:#8c8;font-size:11px;font-weight:bold;margin-bottom:6px">✓ Case 2: Two antennas, multi-band on one</div>
+    <div style="font-family:monospace;font-size:11px;color:#cde;line-height:1.7">
+      Slice A → 20m → ANT1 → ADC0 (Chain 0)<br>
+      Slice B → 80m → ANT2 → ADC1 (Chain 1)<br>
+      Slice C → 40m → ANT1 → ADC0 (Chain 0) — joins Chain 0<br>
+      <br>
+      Chain 0 now has Slices A + C on 20m + 40m → Alex0 BPF goes BYPASS → A &amp; C pans get <span style="background:#a87a3a;color:#fff;padding:1px 4px;border-radius:2px;font-size:10px;font-weight:bold">WIDE</span><br>
+      Chain 1 still single-band → Alex1 BPF = 80m → B pan stays filtered, no badge.
+    </div>
+  </div>
+
+  <div style="background:#1a2030;border:1px solid #2a3548;border-radius:4px;padding:12px;margin-bottom:10px">
+    <div style="color:#fc9;font-size:11px;font-weight:bold;margin-bottom:6px">⚠ Case 3: Three antennas requested, only 2 ADCs available</div>
+    <div style="font-family:monospace;font-size:11px;color:#cde;line-height:1.7">
+      Slice A → 20m → ANT1 → ADC0 (Chain 0 = ANT1)<br>
+      Slice B → 80m → ANT2 → ADC1 (Chain 1 = ANT2)<br>
+      Slice C → 6m → wants ANT3 → <strong style="color:#fa6">no free chain to switch to ANT3</strong><br>
+      <br>
+      <strong>This is a hard constraint.</strong> Operator must choose:<br>
+      &nbsp;&nbsp;• Reroute Chain 0 (ANT1) to ANT3 — Slice A loses its antenna (warning before commit)<br>
+      &nbsp;&nbsp;• Reroute Chain 1 (ANT2) to ANT3 — Slice B loses its antenna (warning before commit)<br>
+      &nbsp;&nbsp;• Settle Slice C on ANT1 or ANT2 (compromise antenna for 6m)<br>
+      &nbsp;&nbsp;• Cancel — don't add Slice C until an existing slice is freed<br>
+      <br>
+      UI: modal dialog when operator picks ANT3 for Slice C, "ADC capacity full" with the 4 options.
+    </div>
+  </div>
+
+  <div style="background:#1a2030;border:1px solid #2a3548;border-radius:4px;padding:12px">
+    <div style="color:#8c8;font-size:11px;font-weight:bold;margin-bottom:6px">✓ Case 4: All slices on one antenna (single-antenna operator)</div>
+    <div style="font-family:monospace;font-size:11px;color:#cde;line-height:1.7">
+      Slices A, B, C, D, E all on 20m → ANT1 → ADC0 (Chain 0)<br>
+      <br>
+      All on Chain 0, same band → Alex0 BPF = 20m → all filtered, no WIDE.<br>
+      Chain 1 (ADC1) sits idle (Alex1 BPF = idle band).<br>
+      <br>
+      <em>Codec doesn't waste capacity by splitting same-antenna single-band slices across ADCs — keeps Chain 1 free for if the operator adds a different-antenna slice later.</em>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">How the codec assignment changes</h3>
+<div class="mockup">
+  <div class="mockup-header">Codec's slice-to-ADC routing pseudocode (revised)</div>
+  <div class="mockup-body" style="font-family:monospace;font-size:11px;color:#cde;padding:12px;line-height:1.6">
+function assignSliceToChain(newSlice):<br>
+&nbsp;&nbsp;wantedAnt = newSlice.antennaForBand(newSlice.band)<br>
+&nbsp;&nbsp;<br>
+&nbsp;&nbsp;<span style="color:#888"># Find a chain already on this antenna</span><br>
+&nbsp;&nbsp;for chain in [Chain0, Chain1]:<br>
+&nbsp;&nbsp;&nbsp;&nbsp;if chain.currentAntenna == wantedAnt:<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;assignSliceToChain(newSlice, chain)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return success<br>
+&nbsp;&nbsp;<br>
+&nbsp;&nbsp;<span style="color:#888"># No chain on this antenna — find an idle chain to bring online</span><br>
+&nbsp;&nbsp;for chain in [Chain0, Chain1]:<br>
+&nbsp;&nbsp;&nbsp;&nbsp;if chain.slices.empty():<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;chain.currentAntenna = wantedAnt<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;assignSliceToChain(newSlice, chain)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return success<br>
+&nbsp;&nbsp;<br>
+&nbsp;&nbsp;<span style="color:#888"># Both chains active on other antennas — escalate to operator</span><br>
+&nbsp;&nbsp;return capacityConflict(wantedAnt, [Chain0, Chain1])<br>
+<br>
+<span style="color:#888"># When operator removes the last slice from a chain:</span><br>
+function chainBecomesIdle(chain):<br>
+&nbsp;&nbsp;chain.currentAntenna = null &nbsp; <span style="color:#888"># freed for any antenna</span><br>
+&nbsp;&nbsp;Alex[chain].bpf.state = idle &nbsp; <span style="color:#888"># last-band memory retained but not engaged</span>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">What this changes about earlier decisions</h3>
+<div style="background:#2a3548;padding:14px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  <strong style="color:#fc9">●</strong> <strong>Per-slice antenna becomes per-band per-slice persistence</strong> (matches the per-band pattern we already use). <code>SliceA_Band_20m_Antenna = "ANT1"</code>.<br><br>
+
+  <strong style="color:#fc9">●</strong> <strong>Codec DDC assignment is antenna-driven, not slice-index-driven.</strong> Earlier I said "codec assigns by slice index" — this refines that to "codec assigns by antenna match, with ADC capacity as a hard constraint."<br><br>
+
+  <strong style="color:#fc9">●</strong> <strong>Setup → DDC Routing page becomes mostly informational on 2-ADC boards.</strong> The codec handles routing automatically based on antenna preference. The Setup page still exposes per-DDC ADC override for the rare power-user case, but defaults to "auto by antenna" and operators won't touch it.<br><br>
+
+  <strong style="color:#fc9">●</strong> <strong>The capacity-conflict dialog</strong> is a new UI surface. When the operator picks an antenna that would require a 3rd ADC, the dialog explains the constraint and offers explicit choices. No silent failures.<br><br>
+
+  <strong style="color:#fc9">●</strong> <strong>1-ADC boards (HL2, Hermes, HermesII)</strong> are unaffected — they have only one chain, so antenna is per-band-but-shared-across-slices (matches today's AlexController behavior).<br><br>
+
+  <strong style="color:#fc9">●</strong> <strong>TX-bound slice's antenna</strong> still drives the TX path's antenna selection (existing AlexController.setTxAnt). Independent of RX chain logic.
+</div>
+
+<h3 style="margin-top:24px">UI surface — per-slice antenna picker</h3>
+<div style="background:#0d1218;border:1px solid #2a3548;border-radius:4px;padding:0;margin:14px auto;max-width:800px;overflow:hidden">
+  <div style="background:linear-gradient(180deg,#3a4a5a 0%,#1a2a38 100%);padding:5px 10px">
+    <span style="color:#8aa8c0;font-size:10px;font-weight:bold">SLICE B · DDC3 · 7.150 MHz LSB · 96 kHz · ANT2 · Chain 1</span>
+  </div>
+  <div style="padding:12px;background:#1a2030;font-family:monospace;font-size:11px;color:#cde;line-height:1.7">
+    Right-click VFO flag → "Antenna ▶":<br>
+    &nbsp;&nbsp;┌────────────────────────────────────────────────┐<br>
+    &nbsp;&nbsp;│ &nbsp;ANT1 (Chain 0 currently — would join Slice A) &nbsp;│<br>
+    &nbsp;&nbsp;│ <strong style="color:#5cb85c">●&nbsp;ANT2 (Chain 1 currently — your chain)</strong> &nbsp; &nbsp; &nbsp; &nbsp; │<br>
+    &nbsp;&nbsp;│ &nbsp;ANT3 (would reroute Chain 0 — Slice A migrates) │<br>
+    &nbsp;&nbsp;│ &nbsp;EXT1 (would reroute Chain 0) &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;│<br>
+    &nbsp;&nbsp;│ &nbsp;EXT2 (would reroute Chain 0) &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;│<br>
+    &nbsp;&nbsp;└────────────────────────────────────────────────┘<br>
+    <br>
+    Each option shows its consequence inline:<br>
+    &nbsp;&nbsp;• "currently — would join slice X" = no impact on other slices, joins existing chain<br>
+    &nbsp;&nbsp;• "your chain" = no change<br>
+    &nbsp;&nbsp;• "would reroute Chain N" = warns that other slices on that chain lose their antenna<br>
+    &nbsp;&nbsp;• Each capability-gated per SKU (HL2 only sees ANT1 if that's all hardware exposes)
+  </div>
+</div>
+
+<h3 style="margin-top:24px">Per-pan title bar gets one more piece of context</h3>
+<div style="background:#1a2030;padding:12px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  Pan title bar now shows: <strong>SLICE X · DDC N · &lt;freq&gt; · &lt;mode&gt; · &lt;bandwidth&gt; · ANT &lt;n&gt; · Chain &lt;0/1&gt;</strong><br><br>
+
+  The "Chain N" tag is the cue that tells the operator which Alex / ADC is in play. Hovering it reveals: "Chain 0: ANT1 → Alex0 (BPF 20m) → ADC0 → DDCs {2, 4, 6}". Click it to open the chain's Filter Policy popup (same one accessible from the WIDE badge).<br><br>
+
+  <strong>1-ADC SKUs:</strong> chain tag is hidden (only one chain, no choice). Saves clutter.
+</div>
+
+<p class="subtitle" style="margin-top:24px;text-align:center">Locking the model: <strong>on 2-ADC boards, antenna is the gate; codec routes slices to whichever ADC is already on (or can be made to be on) the slice's chosen antenna; capacity conflicts (3+ distinct antennas) raise an operator-facing dialog</strong>. Push back or refine.</p>

@@ -12,7 +12,11 @@ class TestBandPlanGuard : public QObject
     Q_OBJECT
 private slots:
     void us60m_validChannelCenter_returnsTrue();
-    void us60m_offChannel_returnsFalse();
+    void us60m_betweenChannels_returnsTrue();
+    void us60m_usbDialChannel1_returnsTrue();
+    void us60m_usbDialChannel5_returnsTrue();
+    void us60m_belowBandEdge_returnsFalse();
+    void us60m_aboveBandEdge_returnsFalse();
     void us60m_LSBmode_returnsFalse();
     void us60m_permittedModes_returnTrue();
     void uk60m_channel1_3kHz_returnsTrue();
@@ -33,21 +37,62 @@ private slots:
 
 void TestBandPlanGuard::us60m_validChannelCenter_returnsTrue()
 {
-    // US 60m channel 1: 5.3320 MHz, 2.8 kHz BW, USB only
-    // From Thetis console.cs:2657 [v2.10.3.13]
+    // US 60m channel 1 CW dial: 5.3320 MHz (channel center, FCC 47 CFR
+    // 97.303(h) CW operating frequency).
     BandPlanGuard guard;
     auto result = guard.isValidTxFreq(
         Region::UnitedStates, 5'332'000, DSPMode::USB, /*extended=*/false);
     QVERIFY(result);
 }
 
-void TestBandPlanGuard::us60m_offChannel_returnsFalse()
+void TestBandPlanGuard::us60m_betweenChannels_returnsTrue()
 {
-    // 5.340 MHz is between US 60m channels 1 and 2 — not a valid channel center
+    // Regression for issue #271: a USB dial between channel centers must still
+    // pass once the dial sits inside the broad B60M 5.1-5.5 MHz range.
+    // Thetis IsOKToTX (clsBandStackManager.cs:1063-1083 [v2.10.3.13]) accepts
+    // the entire range, gated only by the US-specific USB/CWL/CWU/DIGU mode
+    // restriction.
     BandPlanGuard guard;
     auto result = guard.isValidTxFreq(
         Region::UnitedStates, 5'340'000, DSPMode::USB, /*extended=*/false);
-    QVERIFY(!result);
+    QVERIFY(result);
+}
+
+void TestBandPlanGuard::us60m_usbDialChannel1_returnsTrue()
+{
+    // Regression for issue #271 (funsutton, ANAN-10E, macOS, 2026-05-18).
+    // FCC 47 CFR 97.303(h) puts the US 60m channel 1 USB suppressed-carrier
+    // dial at 5330.5 kHz (= channel center 5332.0 - 1.5 kHz). The previous
+    // channelized gate rejected this dial because 5330.5 < 5330.6 (the lower
+    // edge of channel_center ± 1.4 kHz). Must now pass.
+    BandPlanGuard guard;
+    QVERIFY(guard.isValidTxFreq(
+        Region::UnitedStates, 5'330'500, DSPMode::USB, /*extended=*/false));
+}
+
+void TestBandPlanGuard::us60m_usbDialChannel5_returnsTrue()
+{
+    // FCC 47 CFR 97.303(h) channel 5 USB dial: 5403.5 kHz (channel center
+    // 5405.0 - 1.5 kHz). Same regression path as channel 1.
+    BandPlanGuard guard;
+    QVERIFY(guard.isValidTxFreq(
+        Region::UnitedStates, 5'403'500, DSPMode::USB, /*extended=*/false));
+}
+
+void TestBandPlanGuard::us60m_belowBandEdge_returnsFalse()
+{
+    // 5.099 MHz is below the US B60M lower edge of 5.1 MHz (kUsBandRanges).
+    BandPlanGuard guard;
+    QVERIFY(!guard.isValidTxFreq(
+        Region::UnitedStates, 5'099'000, DSPMode::USB, /*extended=*/false));
+}
+
+void TestBandPlanGuard::us60m_aboveBandEdge_returnsFalse()
+{
+    // 5.501 MHz is above the US B60M upper edge of 5.5 MHz (kUsBandRanges).
+    BandPlanGuard guard;
+    QVERIFY(!guard.isValidTxFreq(
+        Region::UnitedStates, 5'501'000, DSPMode::USB, /*extended=*/false));
 }
 
 void TestBandPlanGuard::us60m_LSBmode_returnsFalse()

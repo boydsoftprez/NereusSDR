@@ -58,6 +58,13 @@
 //                 radio identity, sub-PR-7). Removed activity LED (state dot
 //                 encodes activity via pulse). Added signals: rttClicked(),
 //                 audioPipClicked(), contextMenuRequested(QPoint).
+//   2026-08-02 — Task A7 (bottom-banner cleanup): added a single-row UTC
+//                 clock (`utcText()`) past the MasterOutputWidget. Replaces
+//                 the two-row UTC+date/local clock deleted from the bottom
+//                 banner in the same commit; the date/local row is dropped
+//                 because local time already sits in the menu bar and the
+//                 date is not an operator-facing fact worth the pixels.
+//                 NereusSDR-original UI, not a Thetis/AetherSDR port.
 // =================================================================
 
 #include "core/AudioEngine.h"
@@ -68,6 +75,7 @@
 #include <QWidget>
 
 class QHBoxLayout;
+class QLabel;
 class QMenuBar;
 class QPushButton;
 
@@ -206,6 +214,10 @@ public:
     // and the activity LED. Phase 3Q-6.
     ConnectionSegment* connectionSegment() const { return m_connectionSegment; }
 
+    /// Single-row UTC, "23:59:59 UTC". Time lives where every OS puts it,
+    /// which also frees the banner's bottom-right corner for alarms alone.
+    QString utcText() const;
+
 signals:
     // Emitted when the 💡 feature-request button is clicked. MainWindow
     // connects this to its showFeatureRequestDialog slot.
@@ -217,6 +229,8 @@ private:
     ConnectionSegment*  m_connectionSegment{nullptr};
     MasterOutputWidget* m_master{nullptr};
     QPushButton*        m_featureBtn{nullptr};
+    QLabel*             m_utcLabel{nullptr};
+    QTimer*             m_utcTimer{nullptr};
 };
 
 } // namespace NereusSDR

@@ -1,0 +1,19 @@
+NereusSDR test ADIF fixture - Phase 3J-2 Task C2.
+Small ADIF log: 10 QSOs covering 5 callsigns / 5 DXCC entities
+(USA, Japan, Australia, England, Germany), 3 bands (20m / 40m
+/ 15m), and 2 modes (SSB / CW). All callsigns are well-known
+test fixtures (no real station logs).
+<adif_ver:5>3.1.4
+<created_timestamp:15>20260510 170000
+<programid:9>NereusSDR
+<eoh>
+<call:4>W1AW <band:3>20m <mode:3>SSB <qso_date:8>20260101 <time_on:4>1500 <eor>
+<call:4>W1AW <band:3>20m <mode:2>CW <qso_date:8>20260102 <time_on:4>1600 <eor>
+<call:4>W1AW <band:3>40m <mode:3>SSB <qso_date:8>20260103 <time_on:4>1700 <eor>
+<call:6>JA1ABC <band:3>20m <mode:3>SSB <qso_date:8>20260104 <time_on:4>0800 <eor>
+<call:6>JA1ABC <band:3>40m <mode:2>CW <qso_date:8>20260105 <time_on:4>0900 <eor>
+<call:6>VK6APH <band:3>20m <mode:3>SSB <qso_date:8>20260106 <time_on:4>0600 <eor>
+<call:6>VK6APH <band:3>20m <mode:2>CW <qso_date:8>20260107 <time_on:4>0700 <eor>
+<call:5>G3OCA <band:3>20m <mode:3>SSB <qso_date:8>20260108 <time_on:4>1200 <eor>
+<call:5>G3OCA <band:3>40m <mode:3>SSB <qso_date:8>20260109 <time_on:4>1300 <eor>
+<call:7>DL1ABCD <band:3>15m <mode:2>CW <qso_date:8>20260110 <time_on:4>1100 <eor>

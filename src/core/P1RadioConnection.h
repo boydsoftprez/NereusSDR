@@ -180,7 +180,12 @@ public slots:
 
     void setReceiverFrequency(int receiverIndex, quint64 frequencyHz) override;
     void setTxFrequency(quint64 frequencyHz) override;
+
+    // How many receivers the PANADAPTERS want. One of the two inputs to the
+    // announced count; see announceRxCount() for why there are two and how
+    // they combine. Restarts the ep6 stream when the announced count moves.
     void setActiveReceiverCount(int count) override;
+
     void setSampleRate(int sampleRate) override;
 
     // Task 1.6: live-apply a sample-rate change to a running P1 connection.
@@ -199,30 +204,12 @@ public slots:
     // [v2.10.3.13] — sendMetisStop + sendPrimingBurst(3) + sendMetisStart.
     void restartStreamWithRate(int newSampleRate);
 
-    // Task 1.7: live-apply an active-RX-count change to a running P1 connection.
-    //
-    // Updates m_activeRxCount then issues sendMetisStop() + sendPrimingBurst(3)
-    // + sendMetisStart() so the radio re-arms its EP6 sender with the new
-    // per-frame slot count encoded in bank-0 C0 bits 8-10 (nrx-1).
-    //
-    // P1 EP6 frame parsing: parseEp6Frame() takes numRx as a parameter on
-    // every call (not cached); it reads m_activeRxCount from the instance
-    // method overload.  Updating m_activeRxCount is therefore sufficient to
-    // handle the mid-stream count change — no MetisFrameParser rework needed.
-    //
-    // Must be called on the connection thread (invoke via QMetaObject::
-    // invokeMethod(Qt::QueuedConnection) from the main thread).
-    //
-    // No-op when m_running is false or when count equals m_activeRxCount.
-    //
-    // Cite: networkproto1.c WriteMainLoop bank-0 C0 nrx bits [v2.10.3.13]
-    // — same stop+prime+start cycle as restartStreamWithRate().
-    void restartStreamWithCount(int newActiveRxCount);
     void setAttenuator(int dB) override;
     void setPreamp(bool enabled) override;
     void setTxDrive(int level) override;
     void setMox(bool enabled) override;
     void setAntennaRouting(AntennaRouting routing) override;
+    void setAlexRxBpf(AlexRxBpf bpf) override;
     void setWatchdogEnabled(bool enabled) override;
     void sendTxIq(const float* iq, int n) override;
     void setTrxRelay(bool enabled) override;
@@ -236,6 +223,29 @@ public slots:
     void setPuresignalRun(bool run) override;
     void setMicPTTDisabled(bool disabled) override;
     void setMicXlr(bool xlrJack) override;
+
+    // Set the P1-only per-DDC ADC routing word (Thetis `P1_adc_cntrl`).
+    //
+    // 14 bits wide, 2 bits per DDC, layout 66554433221100 per
+    // console.cs:15120 [v2.10.3.13]:
+    //   bits  1: 0 = DDC0's ADC select  (0=ADC0, 1=ADC1, 2=ADC2)
+    //   bits  3: 2 = DDC1's ADC select
+    //   ... DDC6 = bits 13:12
+    //
+    // Bits above 13 are masked off. Wire bytes update on the next
+    // bank-4 emit (bank 4 is a steady-state round-robin slot, so the
+    // change reaches the radio within ~16 frames at default cadence).
+    //
+    // Mirrors Thetis SetADC_cntrl_P1 (netInterface.c:992-996 [v2.10.3.13])
+    // semantics: the field becomes the C1/C2 bytes of bank 4 directly.
+    //
+    // Called from:
+    //   - RadioModel after AppSettings restore on connect (per-MAC).
+    //   - The future Setup → Hardware → P1 ADC Routing page when the
+    //     user toggles a radDDC*ADC* radio button. Without that page
+    //     end users can edit `hardware/<mac>/p1AdcCntrl` in the XML
+    //     settings file directly to override the board default.
+    void setP1AdcCntrl(int bits);
 
     // Phase 3M-4 Task 17 P1 follow-up — apply per-board PS DDC config.
     //
@@ -302,6 +312,60 @@ private slots:
     void onConnectTimeout();
 
 private:
+    // ── The announced receiver count has two inputs ──────────────────────
+    //
+    // Two independent things need a say in how many receivers the wire
+    // announces, and neither can see the other:
+    //
+    //   m_codecRxCount  what the DDC configuration requires. PureSignal
+    //                   needs four (DDC0/1 as the sync pair, DDC2 feedback,
+    //                   DDC3 TX monitor -- mi0bot console.cs:8757-8762
+    //                   [v2.10.3.13-beta2] GetDDC). Written by
+    //                   applyPsDdcConfig from PsDdcConfig::p1RxCount.
+    //
+    //   m_panRxCount    what the panadapters want. Written by
+    //                   setActiveReceiverCount, which follows the operator
+    //                   adding and removing panadapters.
+    //
+    // The announced count is the max of the two, so neither axis can starve
+    // the other. Bench-caught 2026-08-01 (J.J. Boyd, KG4VCF) on a live HL2:
+    // these were a single field written by three call sites, last writer
+    // wins. Removing the second panadapter with PureSignal on dropped the
+    // announcement to one receiver, and DDC2 and DDC3 left the ep6 frame
+    // entirely until the next key-down happened to rewrite it.
+    //
+    // Latent until this branch, because the HL2 exposed one panadapter and
+    // the pan axis never moved.
+    //
+    // announceRxCount() is the single writer; restartStreamWithCount is its
+    // mechanism and is deliberately private, so no caller can set the count
+    // while knowing only one of the two axes.
+    void announceRxCount();
+
+    // Live-apply an announced-count change to a running P1 connection.
+    //
+    // Updates m_activeRxCount then issues sendMetisStop() + sendPrimingBurst(3)
+    // + sendMetisStart() so the radio re-arms its EP6 sender with the new
+    // per-frame slot count encoded in bank-0 C0 bits 8-10 (nrx-1).
+    //
+    // Both sides have to change together: a frame composed under the old
+    // layout and parsed under the new one is silently misparsed, because the
+    // 7F 7F 7F sync check does not encode the layout.
+    //
+    // P1 EP6 frame parsing: parseEp6Frame() takes numRx as a parameter on
+    // every call (not cached); it reads m_activeRxCount from the instance
+    // method overload.  Updating m_activeRxCount is therefore sufficient to
+    // handle the mid-stream count change — no MetisFrameParser rework needed.
+    //
+    // Must be called on the connection thread.
+    //
+    // Records the value without a restart when m_running is false; no-op
+    // when the count is unchanged.
+    //
+    // Cite: networkproto1.c WriteMainLoop bank-0 C0 nrx bits [v2.10.3.13]
+    // — same stop+prime+start cycle as restartStreamWithRate().
+    void restartStreamWithCount(int newActiveRxCount);
+
     // --- Wire format (networkproto1.c) — implemented in Tasks 7 & 8 ---
     void sendMetisStart(bool iqAndMic);
     void sendMetisStop();
@@ -440,9 +504,16 @@ private:
     // tick covers 100+ ms; without it one tick could dump 40+ packets into
     // the socket and overrun the radio's UDP receive buffer.
     static constexpr int kEp2MaxBurstPerTick = 16;
+    // Defaults unchanged. As of 2026-07-25 the first two are seeded into
+    // instance members so tests can compress the reconnect timeline;
+    // nothing outside the test suite calls setReconnectTimingForTest(),
+    // so production timing is bit-identical to before.
     static constexpr int kWatchdogSilenceMs    = 2000;          // silence → Error threshold
     static constexpr int kReconnectIntervalMs  = 5000;          // delay between retry attempts
     static constexpr int kMaxReconnectAttempts = 3;             // max retries before staying in Error
+
+    int m_watchdogSilenceMs{kWatchdogSilenceMs};
+    int m_reconnectIntervalMs{kReconnectIntervalMs};
 
     quint32 m_epSendSeq{0};
     quint32 m_epRecvSeqExpected{0};
@@ -504,6 +575,37 @@ private:
     // [v2.10.3.13-beta2]).
     int     m_psNDdc{2};
 
+    // Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): PureSignal DDC
+    // pair latched from applyPsDdcConfig().  Both default to -1 (no PS
+    // pair configured) so the parseEp6Frame paired-emit only fires when
+    // the codec has actually configured a pair.
+    //
+    // mi0bot networkproto1.c:549-553 [v2.10.3.13-beta2] HL2 case 4:
+    //   xrouter(0, 0, 0, spr, prn->RxBuff[0]);  // DDC0 → main RX
+    //   twist(spr, 2, 3, 1);                    // DDC2+DDC3 → PS pair
+    //   xrouter(0, 0, 2, spr, prn->RxBuff[1]);  // DDC1 → secondary RX
+    // The twist() call pairs slots 2+3 from the same RxBuff inside the
+    // same xrouter pass — mirrors what we do per-EP6-frame here.
+    //
+    // Mirrors Thetis cmaster.cs:533-534 [v2.10.3.13] SetPSRxIdx /
+    // SetPSTxIdx convention — the per-board codec is authoritative.
+    int     m_psFbDdc{-1};       // PS-feedback DDC (Thetis ps_rx_idx)
+    int     m_psTxMonDdc{-1};    // TX-monitor DDC  (Thetis ps_tx_idx)
+
+    // Rate limit for the PS stream diagnostic in parseEp6Frame. One line per
+    // second; at 192 kHz the paired emit fires roughly 750 times a second.
+    qint64  m_psDiagLastMs{0};
+
+    // A per-sample bin histogram lived here while the HL2 PureSignal stall was
+    // being chased (2026-08-01). It found the cause -- at 48 kHz a 700/1900 Hz
+    // two-tone envelope repeats every 40 samples with only 20 distinct
+    // magnitudes, and bin 5 of 16 falls in a gap, so LCOLLECT can never fill
+    // all its bins -- and was removed once answered: it cost a sqrt per sample
+    // on the connection thread at up to 192k samples/sec. The envelope
+    // min/max/mean line that remains is enough to recognise the same shape
+    // again, and is gated on MOX. Full analysis in the HL2 slice-cap design
+    // doc, PureSignal section.
+
     // Phase 3P-A: per-board codec chosen at applyBoardQuirks() time.
     // Null when m_caps is null (pre-connect) or env var
     // NEREUS_USE_LEGACY_P1_CODEC=1 forces legacy compose path.
@@ -511,7 +613,13 @@ private:
     bool m_useLegacyCodec{false};
 
     int     m_sampleRate{48000};
+
+    // The count actually on the wire, and read back by parseEp6Frame for the
+    // slot layout. Derived: announceRxCount() is its only writer. See the
+    // announceRxCount declaration above for the two axes that feed it.
     int     m_activeRxCount{1};
+    int     m_codecRxCount{1};   ///< DDC configuration axis (PureSignal, diversity)
+    int     m_panRxCount{1};     ///< panadapter axis
 
     // HL2 mic decimation state.  At sample rates above 48 kHz the radio
     // embeds one mic sample per I/Q sample group in EP6 frames (so mic
@@ -526,7 +634,19 @@ private:
 
     quint64 m_rxFreqHz[7]{};
     quint64 m_txFreqHz{0};
-    bool    m_mox{false};
+    // THREAD SAFETY: written only from the connection thread; every compose
+    // function and fillTxZone() read it there too.
+    //
+    // Atomic because of one genuine cross-thread READER, exactly as on
+    // P2RadioConnection::m_mox: sendTxIq() runs on the TX/audio producer
+    // thread and gates its producer-rate telemetry on m_mox.  A plain bool
+    // there is a data race with setMox() on the connection thread.  Codex
+    // review, PR #291.
+    //
+    // Default seq_cst ordering is deliberate: read once per sendTxIq() call,
+    // not once per sample, so the ordering cost is irrelevant next to the
+    // surrounding ring arithmetic.
+    std::atomic<bool> m_mox{false};
     int     m_antennaIdx{0};
     int     m_rxOnlyAnt{0};   // RX-only input mux (0..3). Bank 0 C3 bits 5-6.
     bool    m_rxOut{false};   // _Rx_1_Out relay. Bank 0 C3 bit 7.
@@ -540,7 +660,84 @@ private:
 
     // Alex filter state — computed from frequency
     quint8  m_alexHpfBits{0};     // Bank 10 C3: HPF select bits
-    quint8  m_alexLpfBits{0};     // Bank 10 C4: LPF select bits
+
+    // Bank 10 C4 carries ONE low-pass field, not Protocol 2's Alex0/Alex1
+    // pair, and Thetis fills it from prbpfilter, the Alex0 struct:
+    //   From Thetis ChannelMaster/networkproto1.c:587-590 [v2.10.3.15]
+    //     C4 = (prbpfilter->_30_20_LPF & 1) | ((prbpfilter->_60_40_LPF & 1) << 1) | ...
+    // and mi0bot's HL2 loop emits the same struct
+    // (networkproto1.c:1085-1088 [v2.10.3.14-beta1]), so the HL2 is not a
+    // carve-out.
+    //
+    // Alex0 is written by the `isMox || !isTX` arm, which makes the single
+    // field carry the TRANSMIT selection while keyed and the RECEIVE
+    // selection while not:
+    //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+    //     void SetAlexLPFBits(int bits, bool isTX, bool isMox)
+    //     if (isMox || isTX)   -> Alex1LPFMask (prbpfilter2, P2 only)
+    //     if (isMox || !isTX)  -> AlexLPFMask  (prbpfilter,  this byte)
+    //   Upstream comment preserved verbatim (netInterface.c:676-680):
+    //     // LPF bits can be used in older radioas as part of RX filtering too.
+    //     // Change to protocol 2 from 4.3 onwards: TX settings are encoded in
+    //     // the Alex1 word to remain comparible with older hardware, the logic
+    //     // will be:
+    //     // if MOX, write settings to alex0 and alex1
+    //     // if not MOX, write to alex1 if a TX setting else write to alex0
+    //
+    // Keeping only the transmit-derived mask was fine while one slice both
+    // transmitted and received on the same frequency. Phase 3F binds the
+    // transmitter to one slice while the operator listens on another, so a
+    // transmitter parked on 80 m put a ~4 MHz low-pass in front of a
+    // receiver listening on 10 m. These are the "older radios" the upstream
+    // comment names, so this is where it bites.
+    //
+    // Both default to 0, not to the 6 m fall-through, and that is upstream
+    // parity rather than an oversight. Thetis's AlexLPFMask is a
+    // zero-initialised C global (ChannelMaster/network.h:392 [v2.10.3.15])
+    // and setAlexLPF only ever writes it under `alexpresent && !initializing`
+    // (console.cs:7186 [v2.10.3.15]), so a board with no Alex card emits a
+    // zero C4 for the life of the session and every board emits zero until
+    // the first selection is computed. Protocol 2's AlexState seeds 0x10
+    // instead, but it seeds the frequencies alongside it in connectToRadio,
+    // so it never ships an uninitialised pair.
+    //
+    // Nothing here relies on the zero as a filter choice: RadioModel pushes
+    // setTxFrequency on Connected and queues setReceiverFrequency before
+    // connectToRadio, so both masks carry a real selection before the
+    // operator can key.
+    quint8  m_alexLpfBitsRx{0};  // from the receive frequency (unkeyed)
+    quint8  m_alexLpfBitsTx{0};  // from the transmit frequency (keyed)
+
+    // Phase 3F: AlexController's decision for the single P1 filter chain.
+    // -1 = no decision yet, use the RX0-frequency-derived m_alexHpfBits.
+    int     m_alexRxHpfOverride{-1};
+
+    // Effective bank-10 C3 HPF bits (override when set, else m_alexHpfBits).
+    quint8  effectiveAlexHpfBits() const;
+
+    // The board capabilities to filter-gate on, valid before connectToRadio.
+    //
+    // m_caps is assigned inside connectToRadio, but RadioModel queues the
+    // first setReceiverFrequency BEFORE dispatching connectToRadio so the
+    // opening C&C frame carries the persisted VFO (RadioModel.cpp, the
+    // "Now dispatch connectToRadio" comment). At that moment m_caps is still
+    // null while m_hardwareProfile has already been handed over, so gating on
+    // m_caps alone silently skipped the connect-time filter selection on
+    // every Alex board that is not the HL2. Harmless while the low-pass was
+    // written from setTxFrequency on Connected; not harmless once the
+    // receive-derived mask is the one the wire reads while unkeyed, because
+    // nothing else would write it until the operator turned the VFO.
+    const BoardCapabilities* filterCaps() const {
+        return m_caps ? m_caps : m_hardwareProfile.caps;
+    }
+
+    // Effective bank-10 C4 LPF bits: the transmit selection while keyed, the
+    // receive selection while not. The compose-time form of SetAlexLPFBits's
+    // `isMox || !isTX` guard on the Alex0 word
+    // (netInterface.c:705-717 [v2.10.3.15]); Thetis reaches the same state by
+    // re-driving on both MOX edges instead
+    // (console.cs:29083-29099 + 29140-29148 HdwMOXChanged [v2.10.3.15]).
+    quint8  effectiveAlexLpfBits() const;
 
     // ── TX I/Q ring buffer (3M-1a E.2) ───────────────────────────────────────
     // Pre-allocated to hold kTxIqBufSamples×8 bytes.  Each slot is one
@@ -578,6 +775,16 @@ private:
     std::atomic<int> m_txIqReadPos{0};   // connection thread writes; relaxed store
     std::atomic<int> m_txIqCount{0};     // both threads: fetch_add (audio, release) / fetch_sub (conn)
 
+    // TX I/Q ring pre-prime flag.  setMox(true) sets it on the connection
+    // thread; sendTxIq consumes it on the TX worker thread (single-writer
+    // invariant preserved).  When consumed, sendTxIq pushes a 20 ms
+    // cushion of zero samples (960 samples = 7680 bytes at the P1 48 kHz
+    // wire rate) into the ring BEFORE the real first-block samples, so
+    // fillTxZone's 63-sample-per-zone drain has headroom while the
+    // producer settles.  Same mechanism as the P2 cushion; see
+    // P2RadioConnection.h for the architectural rationale.
+    std::atomic<bool> m_txIqPrimePending{false};
+
     // Float→int16 + EP2 zone fill helper.
     // Returns true if 63 samples were available and written, false if underrun.
     bool fillTxZone(quint8* zone63) noexcept;
@@ -591,7 +798,39 @@ private:
     // Diagnostic: log a single line whenever the resolved ocByte changes.
     // mutable so const buildCodecContext() can update it.
     mutable int m_lastOcByteLogged{0xFFFF};
+    // Diagnostic: log the TX-deciding wire bytes on each MOX edge. Same
+    // mutable-for-const reason as above. -1 so the first edge always logs.
+    mutable int m_lastMoxLogged{-1};
     quint16 m_adcCtrl{0};          // ADC-to-DDC assignment bits
+
+    // P1-only ADC-to-DDC routing — Thetis `P1_adc_cntrl` global mirror.
+    //
+    // Source: Thetis console.cs:15120 [v2.10.3.13] declares
+    //   `private int rx_adc_ctrl_P1 = 4`. Setter at console.cs:15121-15128
+    //   invokes UpdateRXADCCtrlP1() (line 7325-7328) which calls
+    //   NetworkIO.SetADC_cntrl_P1 (netInterface.c:992-996 [v2.10.3.13])
+    //   storing into `P1_adc_cntrl`. The P1 wire reader is
+    //   networkproto1.c:519-520 [v2.10.3.13]:
+    //     C1 = P1_adc_cntrl & 0xFF;
+    //     C2 = (P1_adc_cntrl >> 8) & 0b0011111111;
+    //
+    // Distinct from `m_adcCtrl` above: that field carries the P2-side
+    // cntrl1/cntrl2 from UpdateDDCs (Thetis prn->rx[i].rx_adc fields).
+    // Before 2026-05-17 NereusSDR P1 codecs conflated the two — surfaced
+    // while diagnosing issue #263, fixed by this struct + the codec
+    // bank-4 read switching to ctx.p1AdcCntrl.
+    //
+    // Default 0 is the NereusSDR-side practical default: matches wire
+    // bytes observed on a working Thetis-driven ANAN-10E on 2026-05-09.
+    // Thetis fresh-install defaults to 4; we override based on board
+    // adcCount at connect time (applyBoardQuirks sets 4 for 2-ADC SKUs,
+    // 0 for 1-ADC SKUs). Per-MAC AppSettings under
+    //   hardware/<mac>/p1AdcCntrl
+    // overrides the board default for users who configured a specific
+    // per-DDC ADC routing via the future Setup → Hardware → P1 ADC
+    // Routing page (planned follow-up; manual AppSettings edit works
+    // today).
+    quint16 m_p1AdcCntrl{0};
 
     // Reconnect log guard
     bool    m_reconnectedLogged{false};
@@ -674,6 +913,16 @@ public:
     }
     int currentAttenForTest() const { return m_stepAttn[0]; }
     bool hl2ThrottledForTest() const { return m_hl2Throttled; }
+    // Compress the silence-watchdog and reconnect-retry timeline so
+    // tst_reconnect_on_silence does not sleep for 42 real seconds (which
+    // set the parallel floor for the whole ctest run).  Guarded rather
+    // than merely "unused in production": this object is moveToThread'd
+    // onto the connection thread (RadioModel.cpp), so a public non-atomic
+    // setter would be a data race waiting for its first caller.
+    void setReconnectTimingForTest(int watchdogSilenceMs, int reconnectIntervalMs) {
+        m_watchdogSilenceMs   = watchdogSilenceMs;
+        m_reconnectIntervalMs = reconnectIntervalMs;
+    }
     // Expose private composeCcForBank for regression-freeze capture (Task 1) and
     // byte-table assertion tests (Task 16).
     void composeCcForBankForTest(int bankIdx, quint8 out[5]) const { composeCcForBank(bankIdx, out); }
@@ -763,6 +1012,7 @@ public:
     int  psNDdcForTest() const { return m_psNDdc; }
     int  activeRxCountForTest() const { return m_activeRxCount; }
     quint16 adcCtrlForTest() const { return m_adcCtrl; }
+    quint16 p1AdcCntrlForTest() const { return m_p1AdcCntrl; }
 
     // ── 3M-1a E.2 TX I/Q test seams ─────────────────────────────────────────
     // sendTxIqAndCapture — feeds n interleaved float I/Q samples through the

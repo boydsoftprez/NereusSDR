@@ -309,6 +309,21 @@ void PaProfile::resetGainDefaultsForModel(HPSDRModel m) {
 //   }
 float PaProfile::calcDriveAdjust(Band b, int driveValue) const noexcept {
     const int nBand = static_cast<int>(b);
+
+    // Defensive clamp to Thetis's 0-100 drive-percent contract.
+    // Real callers (TransmitModel::computeAudioVolume,
+    // tst_transmit_model_compute_audio_volume safety matrix) pass
+    // slider-watts which can be up to 1000 on ANAN_G2_1K.  The
+    // m_gainAdjust table only covers indices 0..8 (10%..90% steps);
+    // driveValue > 99 produced an OOB read of
+    // m_gainAdjust[band][>=9] -- finite garbage on macOS arm64,
+    // NaN on Linux x64 (caught by Linux CI 2026-05-13).
+    // Out-of-range clamps to 0 adjust (same semantic as the
+    // existing nLIndex == 0 / nLIndex == 10 short-circuits).
+    if (driveValue < 0 || driveValue > 100) {
+        return 0.0f;
+    }
+
     const int nLIndex = driveValue / 10;
 
     if (driveValue % 10 == 0) {
@@ -390,6 +405,7 @@ QString PaProfile::dataToString() const {
 // ── dataFromString ─────────────────────────────────────────────────────────
 //
 // From Thetis setup.cs:23835-23883 [v2.10.3.13] — DataFromString. NereusSDR
+// Upstream tags preserved: //MW0LGE (from cited setup.cs:23838) [v2.10.3.15]
 // uses the 14-band layout exclusively; we accept exactly kSerializedFieldCount
 // (171) fields. Thetis tolerates 45 / 423 / 507-field inputs as legacy
 // versions; that backward-compat path is intentionally NOT ported (a fresh

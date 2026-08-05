@@ -163,7 +163,7 @@ void RadioConnection::handleSupplyRaw(quint16 raw)
     // PA volt label for that — that's what Thetis displays).
     const float v = convertSupplyVolts(raw);
     if (qAbs(v - m_lastSupplyVolts) < 0.05f) { return; }
-    m_lastSupplyVolts = v;
+    m_lastSupplyVolts.store(v, std::memory_order_relaxed);
     emit supplyVoltsChanged(v);
 }
 
@@ -171,7 +171,7 @@ void RadioConnection::handleUserAdc0Raw(quint16 raw)
 {
     const float v = convertMkiiPaVolts(raw);
     if (qAbs(v - m_lastUserAdc0Volts) < 0.05f) { return; }
-    m_lastUserAdc0Volts = v;
+    m_lastUserAdc0Volts.store(v, std::memory_order_relaxed);
     emit userAdc0Changed(v);
 }
 

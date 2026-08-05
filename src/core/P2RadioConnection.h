@@ -173,17 +173,21 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "RadioConnection.h"
 #include "BoardCapabilities.h"
+#include "WidebandFrameAccumulator.h"
 
 #include <QDateTime>
+#include <QDeadlineTimer>
 #include <QUdpSocket>
 #include <QTimer>
 #include <QVector>
 
 #include <array>
+#include <atomic>
 #include <memory>
 
 #include "codec/IP2Codec.h"
 #include "codec/CodecContext.h"
+#include "DdcAssignment.h"
 
 namespace NereusSDR { class OcMatrix; }              // forward decl — full header in .cpp
 namespace NereusSDR { class CalibrationController; } // forward decl — Phase 3P-G
@@ -207,6 +211,26 @@ public:
     // Protocol identifier — 2 for OpenHPSDR P2.  See RadioConnection::protocolVersion.
     int protocolVersion() const override { return 2; }
 
+    // primaryRxDdcForBoard — which DDC carries RX1 I/Q on the wire for this board.
+    //
+    // 2-ADC P2 boards (Angelia / Orion / OrionMKII / Saturn / SaturnMKII) place
+    // RX1 on DDC2 because DDC0 and DDC1 are reserved for the diversity /
+    // PureSignal pair. 1-ADC P2 boards (Hermes / HermesII — ANAN-10E /
+    // ANAN-100B running community P2 firmware) place RX1 on DDC0 with no
+    // such reservation.
+    //
+    // From Thetis console.cs:8554-8632 GetDDC() P2 branch [v2.10.3.13]:
+    // Upstream tags preserved: //N1GP (from cited console.cs:8612) [v2.10.3.15]
+    //   case HPSDRHW.Angelia / Orion / OrionMKII / Saturn:   rx1 = DDC2, rx2 = DDC3
+    //   case HPSDRHW.Hermes / HermesII:                       rx1 = DDC0, rx2 = DDC1
+    //
+    // Upstream inline attribution preserved verbatim (console.cs:8559):
+    //   case HPSDRHW.Saturn:        // ANAN-G2, G21K    (G8NJJ)
+    //
+    // Defaults to 2 for unknown / future boards (matches the prior NereusSDR
+    // hardcode and is the right answer for every modern Apache Labs P2 SKU).
+    static int primaryRxDdcForBoard(HPSDRHW board) noexcept;
+
 public slots:
     void init() override;
     void connectToRadio(const NereusSDR::RadioInfo& info) override;
@@ -221,6 +245,7 @@ public slots:
     void setTxDrive(int level) override;
     void setMox(bool enabled) override;
     void setAntennaRouting(AntennaRouting routing) override;
+    void setAlexRxBpf(AlexRxBpf bpf) override;
     void setWatchdogEnabled(bool enabled) override;
     void sendTxIq(const float* iq, int n) override;
     void setTrxRelay(bool enabled) override;
@@ -235,24 +260,21 @@ public slots:
     void setMicPTTDisabled(bool disabled) override;
     void setMicXlr(bool xlrJack) override;
 
-    // Phase 3M-4 Task 17 chunk B — apply per-board PS DDC config.
+    // Phase 3F Sub-Epic B Task 15: apply a multi-slice DDC assignment from
+    // the codec.  Updates m_rx[i].{enable, samplingRate, rxAdc, sync} from the
+    // struct, then re-sends CmdRx so the radio reconfigures its DDCs.
     //
-    // Receives the wire-byte map computed by the per-board codec
-    // (P2CodecOrionMkII::applyPureSignalDdcConfig and friends), translates
-    // it into m_rx[i] state, and re-sends CmdRx so the radio reconfigures
-    // its DDCs in real time.
+    // This is the sole Protocol 2 DDC wire writer. PureSignal and diversity
+    // transitions recompute this full assignment instead of dispatching a
+    // second, partial PsDdcConfig writer.
     //
-    // Mirrors Thetis console.cs:8527-8534 UpdateDDCs() [v2.10.3.13]:
+    // Mirrors Thetis console.cs:8527-8534 UpdateDDCs() [v2.10.3.15]:
     //   NetworkIO.EnableRxs(ddcEnable);
     //   NetworkIO.EnableRxSync(0, syncEnable);
     //   for (int i = 0; i < 4; i++) NetworkIO.SetDDCRate(i, rate[i]);
     //   NetworkIO.SetADC_cntrl1(cntrl1);
     //   NetworkIO.SetADC_cntrl2(cntrl2);
-    // In NereusSDR these wire bytes are emitted via the next CmdRx packet
-    // (composeCmdRx reads ctx.p2RxEnable / p2RxSamplingRate / p2RxSync from
-    // m_rx[i] state).  Wired in RadioModel::wireConnectionSignals to
-    // ReceiverManager::ddcConfigChanged.
-    void applyPsDdcConfig(const NereusSDR::PsDdcConfig& cfg);
+    void applyDdcAssignment(const DdcAssignment& assignment);
 
     // Bench fix round 3 (Issue B): P2 TX I/Q output is always at 192 kHz.
     // This rate is used by WdspEngine::createTxChannel() to open the WDSP
@@ -304,12 +326,33 @@ public slots:
     // should listen to p2CodecChanged() to know when this becomes valid.
     NereusSDR::IP2Codec* p2Codec() const { return m_codec.get(); }
 
+    // Phase 3F Sub-Epic F Task 1: enable the wideband ADC stream for the
+    // given ADC index. Bit N of m_wbEnableMask corresponds to ADCN.
+    // See Thetis network.c:879 [v2.10.3.15] for the wire format (CmdGeneral
+    // byte 23). When in Connected state, triggers a CmdGeneral send so
+    // the radio learns the new mask promptly. No-op when adcIndex is out
+    // of range (0..7) or when the resulting mask is unchanged.
+    void setWidebandEnabled(int adcIndex, bool on);
+
+    // Phase 3F Sub-Epic F Task 1: read current wideband per-ADC enable
+    // mask. Used by buildCodecContext to thread the value into CodecContext
+    // for the codec-driven composeCmdGeneral path.
+    quint8 wbEnableMask() const { return m_wbEnableMask; }
+
 signals:
     // Phase 3M-4 Task 17 chunk B/E: emitted from selectCodec() once
     // m_codec is assigned.  RadioModel::wireConnectionSignals subscribes
     // and forwards p2Codec() into ReceiverManager::setP2Codec so the
-    // ddcConfigChanged dispatch path becomes live.
+    // ddcConfigChanged observation path (for example PsccPump) becomes live.
+    // Protocol 2 wire state is written only by applyDdcAssignment().
     void p2CodecChanged();
+
+    // Phase 3F Sub-Epic F Task 3: emitted once a full 32-packet wideband
+    // frame (16384 normalized samples) has been assembled for the given
+    // ADC index by the matching per-ADC WidebandFrameAccumulator. Consumed
+    // by WidebandFftEngine (Task 4) / SpectrumWidget extended-pan view
+    // (Task 5+).
+    void widebandFrameReady(int adcIndex, QVector<float> samples);
 
 private slots:
     void onReadyRead();
@@ -361,6 +404,35 @@ private:
     static constexpr int kMaxDdc = 7;         // DDC0-DDC6
     static constexpr int kBufLen = 1444;      // Thetis BUFLEN
     static constexpr int kKeepAliveIntervalMs = 500; // network.c:1428
+
+    // Disconnect timing (2026-07-27, ANAN-G2E lockup investigation).
+    // kStopQuiesceMs: settle after stopping the command timers and before
+    //   emitting run=0, so no CmdRx/CmdTx lands on top of the stop frame.
+    //   One 100 ms heartbeat period covers the worst-case in-flight tick.
+    // kStopDrainMs: let the kernel put the run=0 datagram on the wire before
+    //   close(); Thetis keeps listenSock open across SendStop
+    //   (network.c:398-404 StopReadThread) so it needs no equivalent.
+    static constexpr int kStopQuiesceMs = 100;
+    static constexpr int kStopDrainMs   = 20;
+
+    // MOX-off grace window (2026-07-27, Codex review PR #306).  After unkey
+    // the 100 ms heartbeat keeps running this long so the MOX-off state is
+    // retransmitted ~10 times instead of once; a single lost datagram would
+    // otherwise leave the radio keyed indefinitely.  Only ever active
+    // immediately after a transmission, so it does not reintroduce RX-idle
+    // polling.  See setMox() for the full rationale.
+    //
+    // MONOTONIC, not wall-clock (Codex review, PR #306).  This was
+    // QDateTime::currentMSecsSinceEpoch() arithmetic.  An NTP step forward
+    // inside the window would make the grace read as already expired, so a
+    // lost MOX-off datagram would stop being retransmitted and the radio
+    // could stay keyed — precisely the hazard the window exists to close.
+    // A step backward would hold RX polling open far past one second.
+    // QDeadlineTimer measures against a monotonic source.  Default-constructed
+    // is already expired, which is the "never armed" state.
+    static constexpr qint64 kMoxOffGraceMs = 1000;
+    QDeadlineTimer m_moxOffGrace;
+    bool withinMoxOffGrace() const;
 
     // --- Board capabilities (set in connectToRadio, used for clamp/dispatch) ---
     const BoardCapabilities* m_caps{nullptr};
@@ -429,12 +501,75 @@ private:
     //   high_priority_buffer_to_radio[4] = P2running;   // bit 0 = run
     //   if (xmit) { high_priority_buffer_to_radio[4] |= 0x02; }  // bit 1 = MOX
     //
-    // THREAD SAFETY: m_mox must only be written from the connection thread.
-    // All compose functions read it on the connection thread.  Cross-thread
+    // THREAD SAFETY: m_mox is written only from the connection thread.  All
+    // compose functions read it on the connection thread.  Cross-thread
     // callers (e.g., MoxController on main thread post-F.1) must dispatch via
     // QMetaObject::invokeMethod with Qt::QueuedConnection, matching the
     // existing pattern for setTxFrequency / setRxFrequency.
-    bool m_mox{false};
+    //
+    // Atomic because of one genuine cross-thread READER: sendTxIq() runs on
+    // the TX/audio producer thread (it is the producer side of the SPSC ring
+    // below, using explicit acquire/release on m_txIqRingCount) and gates its
+    // producer-rate telemetry on m_mox.  A plain bool there is a data race
+    // with setMox() on the connection thread.  Review blocker [P2] on PR
+    // #291.  Matches the existing pattern for AudioEngine::m_moxActive.
+    //
+    // Default seq_cst ordering is deliberate: this is read once per
+    // sendTxIq() call, not once per sample, so the ordering cost is
+    // irrelevant next to the surrounding ring arithmetic.
+    std::atomic<bool> m_mox{false};
+
+    // --- PureSignal DDC pair (Phase 3M-4 bench-fix 2026-05-23) ───────────
+    //
+    // Latched from applyDdcAssignment() each time the per-board codec emits
+    // a full assignment. Both default to -1 (no PS pair configured) so
+    // the deinterleave loop in processIqPacket only emits the source-first
+    // paired signal psPairedIqDataReceived when the codec has actually
+    // configured a PS pair.
+    //
+    // Used to:
+    //   * map deinterleaved stream slots back to (psFbDdc, txMonDdc) for
+    //     RadioConnection::psPairedIqDataReceived emission;
+    //   * mirror Thetis cmaster.cs:533-534 [v2.10.3.13] SetPSRxIdx /
+    //     SetPSTxIdx convention — the per-board codec is authoritative.
+    //
+    // Read on the connection thread only (deinterleave runs there).
+    int m_psFbDdc{-1};       // PS-feedback DDC (Thetis ps_rx_idx); -1 = no pair
+    int m_psTxMonDdc{-1};    // TX-monitor DDC  (Thetis ps_tx_idx); -1 = no pair
+
+    // --- DDC enable-mask ownership (Phase 3F Sub-Epic I closeout) ─────────
+    //
+    // False until a per-board codec has computed a mask for this session,
+    // true from the first applyDdcAssignment() onward.
+    // While true, setActiveReceiverCount() writes no enable bits.
+    //
+    // Upstream owns the mask in exactly one place. From Thetis
+    // console.cs:8537 [v2.10.3.15]:
+    //     NetworkIO.EnableRxs(DDCEnable);
+    // and DDCEnable is produced entirely by UpdateDDCs's per-board
+    // `switch (HardwareSpecific.Model)` (console.cs:8218-8534 [v2.10.3.15]).
+    // There is no count-to-mask direction anywhere upstream; the direction
+    // runs the other way. From Thetis ChannelMaster/netInterface.c:1229-1236
+    // [v2.10.3.15], inside EnableRxs itself:
+    //     if (RadioProtocol == USB)
+    //     {
+    //         sum = 0;
+    //         for (i = 0; i < 4; i++)
+    //         {
+    //             sum += (prn->rx[i].enable);
+    //         }
+    //         nreceivers = sum;
+    // i.e. the receiver COUNT is derived from the mask. The only other
+    // writer, EnableRx(id, enable) (netInterface.c:1200-1209 [v2.10.3.15]),
+    // takes an explicit DDC id from rxa.cs:54 and setup.cs:7054-7056, never
+    // a DDC0..N-1 range.
+    //
+    // Cleared in connectToRadio() so a reconnect on the same object starts
+    // a fresh session with the board-aware primary-DDC bootstrap in charge
+    // until the codec speaks.
+    //
+    // Written and read on the connection thread only.
+    bool m_ddcMaskOwnedByCodec{false};
 
     // --- Hardware config (from Thetis _radionet) ---
     int m_numAdc{1};                 // prn->num_adc
@@ -494,6 +629,23 @@ private:
     std::atomic<int> m_txIqRingWrite{0};  // audio thread writes; relaxed store
     std::atomic<int> m_txIqRingRead{0};   // connection thread writes; relaxed store
     std::atomic<int> m_txIqRingCount{0};  // both threads: fetch_add (audio, release) / fetch_sub (conn)
+
+    // TX I/Q ring pre-prime flag.  setMox(true) sets it on the connection
+    // thread; sendTxIq consumes it on the TX worker thread (single-writer
+    // invariant preserved -- only the worker mutates the ring write index
+    // and count).  When consumed, sendTxIq pushes a 20 ms cushion of
+    // zero samples (3840 sample-pairs = 7680 floats) into the ring
+    // BEFORE the real first-block samples, so the consumer (5 ms QTimer)
+    // has ~4 ticks of headroom while the producer settles into steady
+    // state.  Bench evidence 2026-05-26: without this cushion, ~2% of
+    // a 10 s SSB TX gets zero-padded on the wire -- listeners hear it
+    // as "digital jitter".
+    //
+    // Thetis comparison: network.c:1259-1297 sendOutbound is producer-
+    // paced (no QTimer, no ring), so the equivalent failure mode does
+    // not exist upstream.  This cushion is a NereusSDR-specific patch
+    // for our QTimer-paced consumer divergence.
+    std::atomic<bool> m_txIqPrimePending{false};
 
     // --- RX state (from Thetis _radionet._rx, network.h:191-213) ---
     struct RxState {
@@ -563,6 +715,7 @@ private:
     //   bit 2 (0x04) CLEAR = PTT enabled at firmware (matches m_micPTTDisabled=false
     //     default in RadioConnection.h — direct polarity: false = 0 on wire).
     //     From Thetis console.cs:19757 [v2.10.3.13+501e3f51]:
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:19758) [v2.10.3.15]
     //       private bool mic_ptt_disabled = false;
     //   bit 5 (0x20) SET = XLR jack selected by default (matches m_micXlr=true
     //     default in RadioConnection.h — no inversion: true = 1 on wire).
@@ -586,6 +739,26 @@ private:
     int m_wbUpdateRate{70};
     int m_wbPacketsPerFrame{32};
 
+    // Phase 3F Sub-Epic F Task 1: per-ADC wideband stream enable mask.
+    // Bit N corresponds to ADCN. Default 0 (all disabled) preserves
+    // pre-Phase-3F wire behaviour (composeCmdGeneral previously hardcoded
+    // buf[23] = 0). Driven by setWidebandEnabled(); read by
+    // composeCmdGeneralLegacy and (via CodecContext::p2WbEnableMask)
+    // by P2CodecOrionMkII::composeCmdGeneral. See Thetis network.c:879
+    // [v2.10.3.15].
+    quint8 m_wbEnableMask{0};
+
+    // Phase 3F Sub-Epic F Task 3: per-ADC wideband frame accumulators
+    // (up to 8 ADCs). Constructed in the P2RadioConnection ctor and
+    // parented to this. Each entry owns the 32-packet state machine
+    // that converts raw UDP wideband packets (1028 bytes, port indices
+    // 2..9 → ADC 0..7 per Thetis network.c:550-602 [v2.10.3.15]) into
+    // 16384-sample float frames. The matching frameReady signal is
+    // re-emitted as P2RadioConnection::widebandFrameReady(adcIndex, ...)
+    // by a lambda installed in the ctor. Only ADCs whose bit is set
+    // in m_wbEnableMask will actually receive packets from the radio.
+    std::array<WidebandFrameAccumulator*, 8> m_wbAccumulators{};
+
     // --- Alex filter/antenna state ---
     // From Thetis ChannelMaster/network.h bpfilter struct
     // Each Alex register is a 32-bit value written to CmdHighPriority bytes 1428-1435.
@@ -596,7 +769,34 @@ private:
         int rxAnt{1};       // 1=ANT1, 2=ANT2, 3=ANT3
         int txAnt{1};       // 1=ANT1, 2=ANT2, 3=ANT3
         int hpfBits{0x20};  // HPF filter bits (default: bypass = 0x20)
-        int lpfBits{0x10};  // LPF filter bits (default: 6m LPF = 0x10)
+
+        // Two independent LPF masks, one per Alex word. Thetis keeps the
+        // same split (AlexLPFMask for Alex0, Alex1LPFMask for Alex1) and
+        // routes each write by whether it came from a transmit or a receive
+        // frequency:
+        //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+        //     void SetAlexLPFBits(int bits, bool isTX, bool isMox)
+        //     if (isMox || isTX)   -> Alex1LPFMask (prbpfilter2)
+        //     if (isMox || !isTX)  -> AlexLPFMask  (prbpfilter)
+        //
+        // Collapsing these into one mask is an RF-safety bug: a receive
+        // retune onto a low band drags the transmit low-pass down with it,
+        // so keying up on a high band drives full power into a low-pass
+        // well below the carrier. The two masks must stay separate.
+        //
+        // Defaults are 0x10 (6 m, the widest low-pass) rather than 0 —
+        // the LPF has no bypass encoding, and Thetis's fall-through arm
+        // picks 6 m too (console.cs:7237-7241 [v2.10.3.15]).
+        int lpfBitsRx{0x10};  // Alex0 LPF — from the receive frequency
+        int lpfBitsTx{0x10};  // Alex1 LPF — from the transmit frequency
+
+        // Phase 3F: per-ADC RX band-pass decision from AlexController, which
+        // reviews every slice band on a chain instead of taking whichever
+        // receiver was retuned last. -1 = no slice on that ADC, fall back to
+        // the frequency-derived hpfBits above. See AlexRxBpf in
+        // RadioConnection.h for the full rationale and Thetis cites.
+        int rxHpfBitsAdc0{-1};
+        int rxHpfBitsAdc1{-1};
 
         // RX-only antenna mux — from Thetis ChannelMaster/network.h:279-281
         // [v2.10.3.13 @501e3f5]. Alex0 bits 8-10:
@@ -614,6 +814,22 @@ private:
     // Build Alex0 and Alex1 32-bit register values from current state.
     quint32 buildAlex0() const;
     quint32 buildAlex1() const;
+
+    // ADC0's effective RX HPF bits — AlexController's per-ADC decision when
+    // one exists, else the frequency-derived m_alex.hpfBits. Phase 3F.
+    quint8 effectiveRxHpfBitsAdc0() const;
+
+    // Alex0's effective LPF bits. Receiving, Alex0 carries the receive
+    // selection; transmitting, it carries the transmit selection, because
+    // on pre-4.3 hardware Alex0's low-pass is the one in the TX path.
+    // This is the compose-time form of Thetis's two write guards:
+    //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+    //     if (isMox || !isTX) -> AlexLPFMask = bits
+    // Thetis reaches the same state by re-driving on the MOX edges
+    // (console.cs:29083-29099 + 29140-29148 HdwMOXChanged [v2.10.3.15]
+    // both call UpdateTXDDSFreq, and UpdateAlexTXFilter is wrapped in
+    // `if (!_mox)` at console.cs:15487-15498), so the wire bytes match.
+    quint8 effectiveLpfBitsAlex0() const;
 
     // --- DDC→ADC mapping register (from Thetis network.c rx_adc_ctrl1) ---
     quint32 m_rxAdcCtrl1{0};

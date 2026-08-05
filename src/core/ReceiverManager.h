@@ -68,6 +68,7 @@
 #include <QObject>
 #include <QVector>
 #include <QMap>
+#include <QMutex>
 
 #include "codec/CodecContext.h"   // PsDdcConfig + Q_DECLARE_METATYPE
 #include "HpsdrModel.h"           // HPSDRModel
@@ -139,13 +140,22 @@ public:
 
     // --- Receiver Configuration ---
     void setReceiverFrequency(int receiverIndex, quint64 frequencyHz);
-    // Force DDC retune even when locked (used by MainWindow CTUN pan drag)
+    // Force DDC retune even when locked (used by MainWindow CTUN pan drag).
+    // Stores the frequency as well as emitting it, so a later
+    // rebuildHardwareMapping re-emits the DDC's real centre instead of
+    // resurrecting the last allocator-driven one. Does NOT emit
+    // receiverFrequencyChanged: the DDC moved, the receiver's logical
+    // tuning did not.
     void forceHardwareFrequency(int receiverIndex, quint64 frequencyHz);
     void setReceiverSampleRate(int receiverIndex, int sampleRate);
 
     // Set explicit DDC mapping for a receiver.
     // For ANAN-G2: receiver 0 → DDC 2 (from Thetis UpdateDDCs console.cs:8216).
     // If ddcIndex = -1, sequential auto-assignment is used.
+    // No-op when the mapping is unchanged — callers republish the same
+    // assignment on every VFO tick, and rebuildHardwareMapping re-emits
+    // every active receiver's frequency (see the change gate comment in
+    // ReceiverManager.cpp).
     void setDdcMapping(int receiverIndex, int ddcIndex);
     int ddcIndex(int receiverIndex) const;
 
@@ -185,6 +195,14 @@ public:
     void setP1Codec(IP1Codec* codec);
     void setP2Codec(IP2Codec* codec);
 
+    // Phase 3F Sub-Epic I Task 7b: non-owning read-back of the injected
+    // codec.  RadioModel::computeDdcAssignment reads the codec from here
+    // when there is no RadioConnection object to ask, which is what makes
+    // the per-stream DDC mapping computable (and unit-testable) without
+    // standing up a UDP socket.  Null before connect and after reset().
+    IP1Codec* p1Codec() const noexcept { return m_p1Codec; }
+    IP2Codec* p2Codec() const noexcept { return m_p2Codec; }
+
     // The connected radio's HPSDRModel — required because the codec layer
     // dispatches on this enum (e.g. P1CodecStandard maps multiple HpsdrModel
     // values to distinct UpdateDDCs branches).
@@ -214,11 +232,17 @@ public:
     // HL2 PS-off path) is added to ddcEnable.
     void setRx2Enabled(bool on);
 
+    /// Phase 3F: whether stream 1 is live. Published by
+    /// RadioModel::invokeCodecDdcAssignment from buildStreamConfigsForCodec().
+    bool rx2Enabled() const { return m_rx2Enabled; }
+
     // ADC control register shadows.  G2-class PS-on cntrl1 formula is
     // (rx_adc_ctrl1 & 0xf3) | 0x08 — preserves caller's bits 0,1,4..7,
     // overrides bits 2-3 with 0x08.  cntrl2 is masked similarly per-codec.
     void setRxAdcCtrl1(quint8 reg);
     void setRxAdcCtrl2(quint8 reg);
+    quint8 rxAdcCtrl1() const noexcept { return m_rxAdcCtrl1; }
+    quint8 rxAdcCtrl2() const noexcept { return m_rxAdcCtrl2; }
 
 signals:
     void activeReceiverCountChanged(int count);
@@ -246,6 +270,23 @@ signals:
     // (per Thetis console.cs:8527-8534 [v2.10.3.13]).
     void ddcConfigChanged(const NereusSDR::PsDdcConfig& config);
 
+    // A per-board codec was installed or replaced. Distinct from
+    // ddcConfigChanged, which carries the PureSignal wire-byte map and is not
+    // emitted at all when the codec is being cleared.
+    //
+    // RadioModel::computeDdcAssignment reads the codec from here whenever
+    // there is no RadioConnection to ask, so the codec arriving is the moment
+    // a previously unanswerable assignment becomes answerable. connectToRadio
+    // binds the slice pool before wireConnectionSignals installs the codec, so
+    // without this the codec's first real answer waited for whatever moved a
+    // slice next -- in practice the operator's first VFO nudge, which is
+    // exactly the bench symptom in tst_connect_routes_first_iq.
+    //
+    // Deliberately not emitted from reset(), which clears both pointers by
+    // direct field write during teardown: a disconnecting radio has no use
+    // for a fresh assignment, and reset() has already dropped every receiver.
+    void ddcCodecChanged();
+
 private:
     // Rebuild hardware DDC mapping after receiver changes.
     void rebuildHardwareMapping();
@@ -268,6 +309,16 @@ private:
 
     // Mapping from hardware DDC index to logical receiver index
     QMap<int, int> m_hwToLogical;
+
+    // Audio-rate-fix 2026-05-24 (Lever 2): feedIqData runs on the radio
+    // Connection thread via Qt::DirectConnection so the I/Q packet path
+    // never touches the main thread.  Main-thread mutations of m_receivers
+    // and m_hwToLogical (createReceiver, destroyReceiver, setMaxReceivers,
+    // rebuildHardwareMapping) need to be serialized against the Connection-
+    // thread read in feedIqData.  Recursive so internal call paths like
+    // destroyReceiver -> rebuildHardwareMapping do not deadlock.  Mutable
+    // so the reader can take it.
+    mutable QRecursiveMutex m_routingMutex;
 
     // Diagnostic: one-shot logging of first successful and first dropped feedIqData
     bool m_firstForwardLogged{false};

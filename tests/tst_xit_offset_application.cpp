@@ -120,7 +120,7 @@ private slots:
         RadioModel model;
         auto* mock = buildWiredModel(model);
 
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
         QVERIFY(slice);
 
         slice->setXitEnabled(false);
@@ -152,7 +152,7 @@ private slots:
         RadioModel model;
         auto* mock = buildWiredModel(model);
 
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
         QVERIFY(slice);
 
         // Set a known VFO frequency.
@@ -186,7 +186,7 @@ private slots:
         RadioModel model;
         auto* mock = buildWiredModel(model);
 
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
         QVERIFY(slice);
 
         slice->setFrequency(7100000.0);
@@ -228,7 +228,7 @@ private slots:
         RadioModel model;
         auto* mock = buildWiredModel(model);
 
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
         QVERIFY(slice);
 
         slice->setFrequency(14200000.0);
@@ -256,7 +256,7 @@ private slots:
         RadioModel model;
         auto* mock = buildWiredModel(model);
 
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
         QVERIFY(slice);
 
         slice->setFrequency(14200000.0);

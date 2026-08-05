@@ -1,0 +1,400 @@
+// =================================================================
+// src/gui/applets/Rf2ksApplet.cpp  (NereusSDR-native)
+// =================================================================
+//   2026-05-24  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+//   Layout patterns from src/gui/applets/AmpApplet.{h,cpp} (which is
+//   an AetherSDR port). The RF-Kit-specific content is original.
+// =================================================================
+
+#include "Rf2ksApplet.h"
+#include "gui/HGauge.h"
+#include "gui/StyleConstants.h"
+#include "models/RadioModel.h"
+
+#include <QContextMenuEvent>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QMenu>
+#include <QStyle>
+#include <QVBoxLayout>
+
+namespace NereusSDR {
+
+Rf2ksApplet::Rf2ksApplet(RadioModel* model, QWidget* parent)
+    : AppletWidget(model, parent)
+{
+    auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
+
+    // Section A: header row.
+    // Device label + nickname/version on the left;
+    // status dot + OPERATE/STANDBY button on the right.
+    auto* headerWrap = new QWidget(this);
+    auto* header = new QHBoxLayout(headerWrap);
+    header->setContentsMargins(8, 6, 8, 6);
+
+    auto* leftCol = new QVBoxLayout();
+    m_deviceLabel   = new QLabel(QStringLiteral("RF-Kit RF2K-S"), headerWrap);
+    m_nicknameLabel = new QLabel(QString(), headerWrap);
+    m_deviceLabel->setStyleSheet(QStringLiteral("font-weight:600;"));
+    m_nicknameLabel->setStyleSheet(QStringLiteral("color:#7d8893; font-size:10px;"));
+    leftCol->addWidget(m_deviceLabel);
+    leftCol->addWidget(m_nicknameLabel);
+    header->addLayout(leftCol);
+    header->addStretch();
+
+    m_statusDot = new QLabel(headerWrap);
+    m_statusDot->setFixedSize(10, 10);
+    setConnectedState(false);
+    header->addWidget(m_statusDot);
+
+    m_operateBtn = new QPushButton(QStringLiteral("STANDBY"), headerWrap);
+    m_operateMode = QStringLiteral("STANDBY");
+    connect(m_operateBtn, &QPushButton::clicked, this, [this]() {
+        emit operateToggled(m_operateMode != QStringLiteral("OPERATE"));
+    });
+    header->addWidget(m_operateBtn);
+
+    root->addWidget(headerWrap);
+
+    // Section B: gauges + telemetry strip.
+    auto* gaugesWrap = new QWidget(this);
+    auto* gaugesLay  = new QVBoxLayout(gaugesWrap);
+    gaugesLay->setContentsMargins(8, 6, 8, 6);
+
+    // Gauge thresholds and tick labels mirror src/gui/applets/AmpApplet.cpp
+    // exactly so RF-Kit operators have the same visual language PGXL
+    // operators already know.  Bench feedback 2026-05-25 KG4VCF: without
+    // tick labels the bar reads as "about 1/4 scale" with no power context.
+    m_fwdGauge  = new HGauge(gaugesWrap);
+    m_fwdGauge->setRange(0.0, 2000.0);
+    m_fwdGauge->setYellowStart(1000.0);
+    m_fwdGauge->setRedStart(1500.0);
+    m_fwdGauge->setTitle(QStringLiteral("Fwd Pwr"));
+    m_fwdGauge->setUnit(QStringLiteral("W"));
+    m_fwdGauge->setTickLabels({
+        QStringLiteral("0"),
+        QStringLiteral("500"),
+        QStringLiteral("1000"),
+        QStringLiteral("1.5k"),
+        QStringLiteral("2k")
+    });
+    gaugesLay->addWidget(m_fwdGauge);
+
+    // SWR stored as x100 fixed-point (1.0 -> 100, 3.0 -> 300) so we can
+    // use the integer-friendly gauge range while still resolving to 2 d.p.
+    m_swrGauge  = new HGauge(gaugesWrap);
+    m_swrGauge->setRange(100.0, 300.0);
+    m_swrGauge->setYellowStart(200.0);
+    m_swrGauge->setRedStart(250.0);
+    m_swrGauge->setTitle(QStringLiteral("SWR"));
+    m_swrGauge->setValue(100.0);   // start at 1.0:1
+    m_swrGauge->setTickLabels({
+        QStringLiteral("1"),
+        QStringLiteral("1.5"),
+        QStringLiteral("2"),
+        QStringLiteral("2.5"),
+        QStringLiteral("3")
+    });
+    gaugesLay->addWidget(m_swrGauge);
+
+    m_tempGauge = new HGauge(gaugesWrap);
+    m_tempGauge->setRange(0.0, 100.0);
+    m_tempGauge->setYellowStart(55.0);
+    m_tempGauge->setRedStart(80.0);
+    m_tempGauge->setTitle(QStringLiteral("Temp"));
+    m_tempGauge->setUnit(QStringLiteral("°C"));
+    m_tempGauge->setTickLabels({
+        QStringLiteral("0"),
+        QStringLiteral("30"),
+        QStringLiteral("55"),
+        QStringLiteral("80"),
+        QStringLiteral("100")
+    });
+    gaugesLay->addWidget(m_tempGauge);
+
+    m_telemetryLabel = new QLabel(gaugesWrap);
+    m_telemetryLabel->setStyleSheet(QStringLiteral("color:#9aa5b1; font-size:10px;"));
+    gaugesLay->addWidget(m_telemetryLabel);
+    root->addWidget(gaugesWrap);
+
+    // Section C: antennas + tuner status + greyed TUNE/BYPASS.
+    auto* tunerWrap = new QWidget(this);
+    auto* tunerLay  = new QVBoxLayout(tunerWrap);
+    tunerLay->setContentsMargins(8, 6, 8, 6);
+
+    // 2026-05-25 KG4VCF bench fix: green-on-active styling.  Each antenna
+    // button carries a dynamic `active` property (set in setAntennas /
+    // setActiveAntenna based on what the amp reports); a QSS attribute
+    // selector on the button itself paints active=true buttons green --
+    // same palette as the band / mode / filter buttons elsewhere in the
+    // app (kGreenBg / kGreenText / kGreenBorder).  We use a property
+    // selector instead of QPushButton:checked + setCheckable() because
+    // we don't want the user's click to flip the visual state until the
+    // amp confirms via its /antennas/active response; the property is
+    // written exclusively from amp-driven setters.
+    const QString activeStyle = QStringLiteral(
+        "QPushButton[active=\"true\"] {"
+        "  background: %1; color: %2; border: 1px solid %3;"
+        "  border-radius: 3px; font-weight: bold;"
+        "}"
+    ).arg(Style::kGreenBg, Style::kGreenText, Style::kGreenBorder);
+
+    auto* antennaRow = new QHBoxLayout();
+    for (int i = 1; i <= 4; ++i) {
+        auto* btn = new QPushButton(QStringLiteral("ANT %1").arg(i), tunerWrap);
+        btn->setStyleSheet(activeStyle);
+        // Seed the property so the QSS selector has something to match
+        // before the first amp poll lands.  Defaults to inactive (no
+        // green) until setActiveAntenna() flips one on.
+        btn->setProperty("active", false);
+        connect(btn, &QPushButton::clicked, this, [this, i]() {
+            emit antennaRequested(RfKitAntenna::Type::Internal, i);
+        });
+        m_antennaButtons[i] = btn;
+        antennaRow->addWidget(btn);
+    }
+    tunerLay->addLayout(antennaRow);
+
+    m_tunerStatusLabel = new QLabel(QStringLiteral("Tuner: -"), tunerWrap);
+    tunerLay->addWidget(m_tunerStatusLabel);
+
+    auto* actionRow = new QHBoxLayout();
+    m_tuneBtn   = new QPushButton(QStringLiteral("TUNE"),   tunerWrap);
+    m_bypassBtn = new QPushButton(QStringLiteral("BYPASS"), tunerWrap);
+    const QString tip = QStringLiteral(
+        "RF2K-S firmware (G200C267) does not expose a tuner write verb.\n"
+        "Press TUNE / BYPASS on the amp's front panel.\n"
+        "Feature request to RF-Power filed; this button un-greys when firmware ships it.");
+    m_tuneBtn->setEnabled(false);
+    m_bypassBtn->setEnabled(false);
+    m_tuneBtn->setToolTip(tip);
+    m_bypassBtn->setToolTip(tip);
+    actionRow->addWidget(m_tuneBtn,   2);
+    actionRow->addWidget(m_bypassBtn, 1);
+    tunerLay->addLayout(actionRow);
+
+    root->addWidget(tunerWrap);
+}
+
+// ---------- Section A slots ----------
+
+void Rf2ksApplet::setNicknameAndVersion(const QString& nickname, const QString& version)
+{
+    m_nicknameLabel->setText(QStringLiteral("%1  %2").arg(nickname, version));
+}
+
+void Rf2ksApplet::setOperateMode(const QString& mode)
+{
+    m_operateMode = mode;
+    m_operateBtn->setText(mode);
+
+    // 2026-05-25 KG4VCF bench fix: button styling did not change on
+    // mode flip ("standby operate button does not change the color of
+    // the glowing dot on mode change").  Mirror AmpApplet::setState
+    // styling: green pill on OPERATE, neutral blue-grey on STANDBY.
+    const bool operating = (mode == QStringLiteral("OPERATE"));
+    if (operating) {
+        m_operateBtn->setStyleSheet(
+            QStringLiteral(
+                "QPushButton { background: #006030; border: 1px solid #008040; "
+                "border-radius: 3px; color: #ffffff; font-size: 10px; font-weight: bold; }"
+                "QPushButton:hover { background: #007040; }"));
+    } else {
+        m_operateBtn->setStyleSheet(
+            QStringLiteral(
+                "QPushButton { background: #1a3a5a; border: 1px solid #205070; "
+                "border-radius: 3px; color: #c8d8e8; font-size: 10px; font-weight: bold; }"
+                "QPushButton:hover { background: #204060; }"));
+    }
+}
+
+void Rf2ksApplet::setConnectedState(bool connected)
+{
+    m_connected = connected;
+    const QString color = connected
+        ? QStringLiteral("#34c759")
+        : QStringLiteral("#e64949");
+    m_statusDot->setStyleSheet(
+        QStringLiteral("background:%1; border-radius:5px;").arg(color));
+}
+
+// ---------- Section B slots ----------
+
+void Rf2ksApplet::setPower(const RfKitPowerSnapshot& snap)
+{
+    m_fwdGauge->setValue(static_cast<double>(snap.forwardW));
+    // SWR stored x100 so the gauge range (100..300) maps to 1.0..3.0.
+    m_swrGauge->setValue(static_cast<double>(snap.swr) * 100.0);
+    m_tempGauge->setValue(static_cast<double>(snap.temperatureC));
+    // Bench feedback 2026-05-25 KG4VCF: include numeric forward power +
+    // SWR in the telemetry strip so the operator has a concrete reading
+    // alongside the bar graph (the bar alone reads as "about 1/4 scale").
+    m_telemetryLabel->setText(QStringLiteral("Fwd %1 W  SWR %2  %3 V  %4 A")
+        .arg(snap.forwardW)
+        .arg(static_cast<double>(snap.swr), 0, 'f', 2)
+        .arg(snap.voltageV, 0, 'f', 0)
+        .arg(snap.currentA, 0, 'f', 1));
+}
+
+// ---------- Section C slots ----------
+
+void Rf2ksApplet::setTuner(const RfKitTunerSnapshot& snap)
+{
+    using Mode = RfKitTunerSnapshot::Mode;
+    QString text;
+    switch (snap.mode) {
+        case Mode::AutoTuning:
+            text = QStringLiteral("TUNING...");
+            break;
+        case Mode::Bypass:
+            text = QStringLiteral("BYPASS");
+            break;
+        case Mode::Auto:
+        case Mode::Manual:
+            if (snap.tunedFrequencyKHz > 0) {
+                text = QStringLiteral("TUNED %1 MHz (%2)")
+                          .arg(snap.tunedFrequencyKHz / 1000.0, 0, 'f', 3)
+                          .arg(snap.setup);
+            } else {
+                text = QStringLiteral("NOT TUNED");
+            }
+            break;
+        case Mode::Unknown:
+            text = QStringLiteral("Tuner: -");
+            break;
+    }
+    m_tunerStatusLabel->setText(text);
+}
+
+// QSS attribute selectors only re-evaluate when the widget is
+// unpolish'd + polish'd; setProperty alone is not enough to trigger
+// a repaint.  This helper bundles both so we never forget.
+static void setButtonActive(QPushButton* btn, bool active)
+{
+    if (!btn) {
+        return;
+    }
+    btn->setProperty("active", active);
+    if (auto* s = btn->style()) {
+        s->unpolish(btn);
+        s->polish(btn);
+    }
+    btn->update();
+}
+
+void Rf2ksApplet::setAntennas(const QList<RfKitAntenna>& list)
+{
+    for (const auto& a : list) {
+        if (a.type != RfKitAntenna::Type::Internal) {
+            continue;
+        }
+        auto* btn = m_antennaButtons.value(a.number, nullptr);
+        if (!btn) {
+            continue;
+        }
+        const QString label = m_antennaLabels.value(a.number,
+            QStringLiteral("ANT %1").arg(a.number));
+        btn->setText(label);
+        btn->setEnabled(a.state != RfKitAntenna::State::Disabled);
+        setButtonActive(btn, a.state == RfKitAntenna::State::Active);
+    }
+}
+
+void Rf2ksApplet::setActiveAntenna(const RfKitAntenna& a)
+{
+    // m_antennaButtons is keyed by INTERNAL antenna number (1..4).  The amp
+    // numbers its external antennas from 1 as well, so matching on number
+    // alone lit the internal ANT button whose index happened to collide with
+    // the active external antenna, telling the operator RF was routed
+    // somewhere it was not.  An external antenna owns no button here, so
+    // every internal button goes dark.  Codex review, PR #291.
+    const bool internalActive = (a.type == RfKitAntenna::Type::Internal);
+    for (auto it = m_antennaButtons.begin(); it != m_antennaButtons.end(); ++it) {
+        setButtonActive(it.value(), internalActive && it.key() == a.number);
+    }
+}
+
+void Rf2ksApplet::setAntennaLabel(int number, const QString& label)
+{
+    m_antennaLabels[number] = label;
+    if (auto* btn = m_antennaButtons.value(number, nullptr)) {
+        btn->setText(label.isEmpty()
+            ? QStringLiteral("ANT %1").arg(number)
+            : label);
+    }
+}
+
+// ---------- Section A test seams ----------
+
+QString Rf2ksApplet::deviceLabelTextForTesting()   const { return m_deviceLabel->text(); }
+QString Rf2ksApplet::nicknameLabelTextForTesting() const { return m_nicknameLabel->text(); }
+QString Rf2ksApplet::operateButtonTextForTesting() const { return m_operateBtn->text(); }
+void    Rf2ksApplet::clickOperateButtonForTesting() { m_operateBtn->click(); }
+
+// ---------- Section B+C test seams ----------
+
+int     Rf2ksApplet::fwdGaugeValueForTesting()      const { return static_cast<int>(m_fwdGauge->value()); }
+float   Rf2ksApplet::swrGaugeValueForTesting()      const { return static_cast<float>(m_swrGauge->value() / 100.0); }
+float   Rf2ksApplet::tempGaugeValueForTesting()     const { return static_cast<float>(m_tempGauge->value()); }
+QString Rf2ksApplet::telemetryStripTextForTesting() const { return m_telemetryLabel->text(); }
+
+QString Rf2ksApplet::antennaButtonTextForTesting(int number) const
+{
+    const auto* btn = m_antennaButtons.value(number, nullptr);
+    return btn ? btn->text() : QString();
+}
+
+bool Rf2ksApplet::antennaButtonIsActiveForTesting(int number) const
+{
+    const auto* btn = m_antennaButtons.value(number, nullptr);
+    return btn && btn->property("active").toBool();
+}
+
+bool Rf2ksApplet::antennaButtonIsEnabledForTesting(int number) const
+{
+    const auto* btn = m_antennaButtons.value(number, nullptr);
+    return btn && btn->isEnabled();
+}
+
+void Rf2ksApplet::clickAntennaButtonForTesting(int number)
+{
+    if (auto* btn = m_antennaButtons.value(number, nullptr)) {
+        btn->click();
+    }
+}
+
+QString Rf2ksApplet::tunerStatusTextForTesting()    const { return m_tunerStatusLabel->text(); }
+bool    Rf2ksApplet::tuneButtonIsEnabledForTesting()   const { return m_tuneBtn->isEnabled(); }
+bool    Rf2ksApplet::bypassButtonIsEnabledForTesting() const { return m_bypassBtn->isEnabled(); }
+QString Rf2ksApplet::tuneButtonTooltipForTesting()  const { return m_tuneBtn->toolTip(); }
+
+// ---------- Section D: right-click context menu ----------
+
+QMenu* Rf2ksApplet::buildContextMenu(QObject* menuParent)
+{
+    auto* menu = new QMenu(qobject_cast<QWidget*>(menuParent));
+    auto* openAdv = menu->addAction(QStringLiteral("Open RF-Kit Advanced..."));
+    menu->addSeparator();
+    auto* disco = menu->addAction(m_connected
+                                    ? QStringLiteral("Disconnect")
+                                    : QStringLiteral("Reconnect"));
+    auto* diag  = menu->addAction(QStringLiteral("Copy diagnostics to clipboard"));
+
+    connect(openAdv, &QAction::triggered, this, [this] {
+        emit navigationRequested(QStringLiteral("rfKit"));
+    });
+    connect(disco, &QAction::triggered, this, &Rf2ksApplet::connectionToggleRequested);
+    connect(diag,  &QAction::triggered, this, &Rf2ksApplet::diagnosticsCopyRequested);
+    return menu;
+}
+
+void Rf2ksApplet::contextMenuEvent(QContextMenuEvent* ev)
+{
+    auto* menu = buildContextMenu(this);
+    menu->exec(ev->globalPos());
+    delete menu;
+}
+
+} // namespace NereusSDR

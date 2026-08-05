@@ -1,0 +1,7 @@
+build/
+build_universal/
+tx.iq
+.claude/
+.vscode/
+.cache/
+Testing/Temporary/

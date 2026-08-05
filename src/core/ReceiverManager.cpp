@@ -87,6 +87,7 @@ void ReceiverManager::setMaxReceivers(int max)
 
 int ReceiverManager::createReceiver()
 {
+    QMutexLocker locker(&m_routingMutex);
     if (m_receivers.size() >= m_maxReceivers) {
         qCWarning(lcReceiver) << "Cannot create receiver: at maximum" << m_maxReceivers;
         return -1;
@@ -107,6 +108,7 @@ int ReceiverManager::createReceiver()
 
 void ReceiverManager::destroyReceiver(int receiverIndex)
 {
+    QMutexLocker locker(&m_routingMutex);
     if (!m_receivers.contains(receiverIndex)) {
         return;
     }
@@ -124,6 +126,7 @@ void ReceiverManager::destroyReceiver(int receiverIndex)
 
 void ReceiverManager::reset()
 {
+    QMutexLocker locker(&m_routingMutex);
     const int priorCount = m_receivers.size();
     const QList<int> indices = m_receivers.keys();
 
@@ -241,6 +244,21 @@ void ReceiverManager::forceHardwareFrequency(int receiverIndex, quint64 frequenc
     if (!m_receivers.contains(receiverIndex)) {
         return;
     }
+
+    // Store as well as emit. ReceiverConfig::frequencyHz is the frequency
+    // last commanded to this receiver's DDC, and rebuildHardwareMapping's
+    // re-emit loop is its only consumer -- nothing else in the tree reads
+    // it. Leaving it behind on the forced path meant a later rebuild
+    // resurrected the pre-drag centre and yanked the CTUN pan back.
+    //
+    // The lock bypass is untouched and deliberate: m_ddcFreqLocked gates
+    // setReceiverFrequency's hardware emit so a VFO move inside a pinned
+    // CTUN window does not retune the DDC, while the pan drag itself is
+    // exactly the operator asking for a retune. receiverFrequencyChanged
+    // is likewise still NOT emitted here -- the DDC moved, the receiver's
+    // logical tuning did not, and that signal belongs to the latter.
+    m_receivers[receiverIndex].frequencyHz = frequencyHz;
+
     if (m_receivers[receiverIndex].active && m_receivers[receiverIndex].hardwareRx >= 0) {
         emit hardwareFrequencyChanged(m_receivers[receiverIndex].hardwareRx, frequencyHz);
     }
@@ -259,6 +277,25 @@ void ReceiverManager::setDdcMapping(int receiverIndex, int ddcIndex)
     if (!m_receivers.contains(receiverIndex)) {
         return;
     }
+
+    // Change gate. Before Phase 3F Sub-Epic I this ran once per connect, so
+    // an unconditional rebuild cost nothing. It is now called by
+    // RadioModel::publishDdcAssignment for every active stream on every
+    // requestDdcAssignment, which fires on every slice frequencyChanged --
+    // so on every VFO tick, with the mapping unchanged in steady state.
+    //
+    // rebuildHardwareMapping re-emits every active receiver's STORED
+    // frequency, and that is what makes a redundant rebuild harmful rather
+    // than merely wasteful: on a non-CTUN pan it is a stream of duplicate
+    // P2 command frames on a spun encoder, and under CTUN it retunes the
+    // DDC away from where the operator dragged the pan (the drag goes
+    // through forceHardwareFrequency, which deliberately bypasses
+    // m_ddcFreqLocked). The spectrum jumped out from under the operator on
+    // the next VFO click.
+    if (m_receivers[receiverIndex].ddcIndex == ddcIndex) {
+        return;
+    }
+
     m_receivers[receiverIndex].ddcIndex = ddcIndex;
     if (m_receivers[receiverIndex].active) {
         rebuildHardwareMapping();
@@ -286,6 +323,15 @@ void ReceiverManager::setAdcForReceiver(int receiverIndex, int adcIndex)
 
 void ReceiverManager::feedIqData(int hwReceiverIndex, const QVector<float>& samples)
 {
+    // Lever 2 (2026-05-24): this function now runs on the Connection thread
+    // via Qt::DirectConnection from RadioConnection::iqDataReceived (see the
+    // wire-up in RadioModel.cpp).  Main-thread writers of m_hwToLogical /
+    // m_receivers (createReceiver / destroyReceiver / reset / rebuildHardwareMapping)
+    // serialize through m_routingMutex; the read here takes the same lock so
+    // the hash structure can not flip mid-lookup.  Hot-path cost: one
+    // uncontended mutex acquire per packet (~100 ns) plus the existing
+    // hash lookups + emit setup.
+    QMutexLocker locker(&m_routingMutex);
     auto it = m_hwToLogical.constFind(hwReceiverIndex);
     if (it == m_hwToLogical.constEnd()) {
         if (!m_firstDropLogged) {
@@ -321,6 +367,7 @@ void ReceiverManager::feedIqData(int hwReceiverIndex, const QVector<float>& samp
 
 void ReceiverManager::rebuildHardwareMapping()
 {
+    QMutexLocker locker(&m_routingMutex);
     m_hwToLogical.clear();
 
     // Assign hardware DDC indices to active receivers.
@@ -373,6 +420,7 @@ void ReceiverManager::setP1Codec(IP1Codec* codec)
     m_p1Codec = codec;
     qCDebug(lcReceiver) << "ReceiverManager: P1 codec" << (codec ? "set" : "cleared");
     updateDdcAssignment();
+    emit ddcCodecChanged();
 }
 
 void ReceiverManager::setP2Codec(IP2Codec* codec)
@@ -383,6 +431,7 @@ void ReceiverManager::setP2Codec(IP2Codec* codec)
     m_p2Codec = codec;
     qCDebug(lcReceiver) << "ReceiverManager: P2 codec" << (codec ? "set" : "cleared");
     updateDdcAssignment();
+    emit ddcCodecChanged();
 }
 
 void ReceiverManager::setHpsdrModel(HPSDRModel model)
@@ -501,6 +550,24 @@ void ReceiverManager::updateDdcAssignment()
         // No codec injected — nothing to emit.
         return;
     }
+
+    // BENCH DIAG (G2E PS rate-flap): log every updateDdcAssignment fire with
+    // input state + output rates so we can see what's flipping rate[0] between
+    // PS rate (192k) and user rate (768k) during MOX-active windows.  Remove
+    // once PS lock works on G2E.
+    qCInfo(lcReceiver).nospace()
+        << "DDCAssign fire: psEn=" << m_psEnabled
+        << " mox=" << m_moxState
+        << " div=" << m_diversityEnabled
+        << " rx1Rate=" << m_rx1Rate
+        << " rx2Rate=" << m_rx2Rate
+        << " rx2En=" << m_rx2Enabled
+        << " adcCtrl1=" << static_cast<int>(m_rxAdcCtrl1)
+        << " → cfg.rate[0]=" << config.rate[0]
+        << " rate[1]=" << config.rate[1]
+        << " rate[2]=" << config.rate[2]
+        << " ddcEn=" << static_cast<int>(config.ddcEnable)
+        << " syncEn=" << static_cast<int>(config.syncEnable);
 
     emit ddcConfigChanged(config);
 }

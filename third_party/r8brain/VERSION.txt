@@ -1,0 +1,34 @@
+r8brain-free-src
+================
+
+Upstream: https://github.com/avaneev/r8brain-free-src
+Pinned SHA: 5c44bebe9c477d47b1dc7037fcaae2794ff2b4e1
+Pinned date: 2026-03-12
+Vendored: 2026-05-11
+License: MIT (see LICENSE.txt)
+
+Files copied from upstream:
+  CDSPBlockConvolver.h
+  CDSPFIRFilter.h
+  CDSPFracInterpolator.h
+  CDSPHBDownsampler.h
+  CDSPHBDownsampler.inc
+  CDSPHBUpsampler.h
+  CDSPHBUpsampler.inc
+  CDSPProcessor.h
+  CDSPRealFFT.h
+  CDSPResampler.h
+  CDSPSincFilterGen.h
+  r8bbase.h
+  r8bconf.h
+  r8butil.h
+  fft/fft4g.h
+  LICENSE -> LICENSE.txt
+
+NereusSDR-added compilation anchor:
+  r8bbase.cpp (one-line #include "CDSPResampler.h" so the static
+  CSyncObject singletons in CDSPRealFFT.h get instantiated once).
+
+Do not modify the upstream headers in place. To resync, re-clone
+the upstream repo at a pinned SHA and overwrite the files above
+verbatim.

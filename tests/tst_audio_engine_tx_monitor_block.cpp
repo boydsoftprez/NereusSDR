@@ -6,8 +6,8 @@
 // of TxChannel::sip1OutputReady added in Phase 3M-1b E.3.
 //
 // Coverage:
-//   - Disabled monitor: accumulate NOT called → mixInto returns silence.
-//   - Enabled monitor: accumulate called → mixInto returns non-zero audio.
+//   - Disabled monitor: accumulate NOT called -> tryDrain returns silence.
+//   - Enabled monitor: accumulate called -> tryDrain returns non-zero audio.
 //   - Volume applied: gain stored via setSliceGain is respected by accumulate.
 //   - Null samples guard: null pointer → no-op (no crash, no output).
 //   - Zero frames guard: frames=0 → no-op.
@@ -15,7 +15,7 @@
 //   - Stereo expansion: mono input L=sample, R=sample in output.
 //
 // Test seam: masterMixForTest() (NEREUS_BUILD_TESTS) exposes m_masterMix so
-// we can call mixInto() to observe accumulated audio without needing a full
+// we can call tryDrain() to observe accumulated audio without needing a full
 // IAudioBus pipeline.
 //
 // Plan: 3M-1b E.3. Pre-code review §4.3 + §4.4.
@@ -36,11 +36,22 @@ class TstAudioEngineTxMonitorBlock : public QObject {
 
 private:
 
-    // Helper: call mixInto on the engine's MasterMixer and return the result.
+    // Helper: drain the engine's MasterMixer and return what came out.
+    //
+    // Phase 3F replaced mixInto() with tryDrain(), which returns the frame
+    // count it wrote and writes nothing at all when the readiness barrier
+    // is unsatisfied. That does not change what this test observes: the TX
+    // monitor occupies kTxMonitorSlotId, which is marked opportunistic and
+    // so is never a barrier member, meaning a queued monitor block always
+    // drains here regardless of what any RX slice is doing.
+    //
+    // out is zero-initialised and tryDrain only writes the frames it
+    // produced, so a short or empty drain leaves the remainder silent and
+    // hasAudio() still reports correctly.
     static std::vector<float> drainMix(AudioEngine& engine, int frames)
     {
         std::vector<float> out(static_cast<size_t>(frames * 2), 0.0f);
-        engine.masterMixForTest().mixInto(out.data(), frames);
+        engine.masterMixForTest().tryDrain(out.data(), frames);
         return out;
     }
 
@@ -93,8 +104,13 @@ private slots:
 
     void txMonitorBlockReady_volumeScalesOutput()
     {
-        // Full volume
+        // Ramp collapsed to a single frame so this keeps asserting the
+        // steady-state gain. Phase 3F gave MasterMixer a 240-frame (5 ms)
+        // anti-click ramp, and these blocks are 4 frames long, so both
+        // volumes would still be climbing and the ratio would read 1.0
+        // rather than 0.5. The ramp itself is covered in tst_master_mixer.
         AudioEngine full;
+        full.masterMixForTest().setRampFrames(1);
         full.setTxMonitorEnabled(true);
         full.setTxMonitorVolume(1.0f);
 
@@ -104,6 +120,7 @@ private slots:
 
         // Half volume
         AudioEngine half;
+        half.masterMixForTest().setRampFrames(1);
         half.setTxMonitorEnabled(true);
         half.setTxMonitorVolume(0.5f);
 
@@ -184,7 +201,10 @@ private slots:
 
     void txMonitorBlockReady_monoExpandedToStereo_LequalsR()
     {
+        // Steady-state gain assertion, so collapse the anti-click ramp to a
+        // single frame (see txMonitorBlockReady_volumeScalesOutput).
         AudioEngine engine;
+        engine.masterMixForTest().setRampFrames(1);
         engine.setTxMonitorEnabled(true);
         engine.setTxMonitorVolume(1.0f);
 

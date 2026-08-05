@@ -389,6 +389,18 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
         buildPhase8WarningRows(m_noPaSupportBanner, m_ganymedeWarning,
                                m_psWarning,
                                this, contentLayout());
+        // D3 test seam: create m_autoCalibrateCheck so
+        // applyCapabilityVisibility() / autoCalibrateCheckForTest() have a
+        // non-null target in the model-less path.
+        m_autoCalibrateCheck = new QCheckBox(
+            QStringLiteral("Auto-Calibrate (sweep)"), this);
+        m_autoCalibrateCheck->setVisible(true);
+        // D4 test seam: create m_bypassPaSettingsCheck so
+        // applyCapabilityVisibility() / bypassPaSettingsCheckForTest() have a
+        // non-null target in the model-less path.  Defaults hidden (standard board).
+        m_bypassPaSettingsCheck = new QCheckBox(
+            QStringLiteral("Bypass ANAN PA Settings"), this);
+        m_bypassPaSettingsCheck->setVisible(false);
         return;
     }
     m_paProfileManager = model->paProfileManager();
@@ -690,6 +702,23 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
     connect(m_autoCalibrateCheck, &QCheckBox::toggled,
             this, &PaGainByBandPage::onAutoCalibrateToggled);
 
+    // ── chkBypassANANPASettings (D4: ANAN-G2E port) ──────────────────────
+    // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added:
+    //   chkBypassANANPASettings.Visible = true;  (in ANAN_G2E case)
+    // Thetis tooltip: "BP PA" (setup.designer.cs:49245 [v2.10.3.15]).
+    // Shown only when BoardCapabilities::showsBypassPaSettingsUi is true;
+    // defaults hidden (false) here, shown by applyCapabilityVisibility().
+    m_bypassPaSettingsCheck = new QCheckBox(
+        QStringLiteral("Bypass ANAN PA Settings"), this);
+    m_bypassPaSettingsCheck->setToolTip(QStringLiteral(
+        "Bypass the board-specific PA calibration table (BP PA). "
+        "When checked, the generic Hermes gain row is used instead "
+        "of the ANAN-G2E factory row. Useful if you have not yet "
+        "calibrated PA gain for this radio."));
+    m_bypassPaSettingsCheck->setVisible(false);  // hidden until applyCapabilityVisibility
+    contentLayout()->insertWidget(contentLayout()->count() - 1,
+                                   m_bypassPaSettingsCheck);
+
     // ── Wire profile-management buttons + combo ──────────────────────────
     connect(m_profileCombo, &QComboBox::currentTextChanged,
             this, &PaGainByBandPage::onProfileSelected);
@@ -724,6 +753,22 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
     // unconditionally is safe (no spurious side effects on normal RX/TX).
     connect(&model->radioStatus(), &RadioStatus::powerChanged,
             this, &PaGainByBandPage::onFwdPowerSample);
+
+    // ── chkBypassANANPASettings ↔ TransmitModel::paSettingsBypass (D4) ───
+    // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added.
+    // Thetis has no CheckedChanged handler; NereusSDR wires the checkbox
+    // state to TransmitModel::paSettingsBypass for persistence.
+    TransmitModel& tx = model->transmitModel();
+    if (m_bypassPaSettingsCheck) {
+        m_bypassPaSettingsCheck->setChecked(tx.paSettingsBypass());
+        connect(m_bypassPaSettingsCheck, &QCheckBox::toggled,
+                &tx, &TransmitModel::setPaSettingsBypass);
+        connect(&tx, &TransmitModel::paSettingsBypassChanged,
+                m_bypassPaSettingsCheck, [this](bool bypass) {
+                    QSignalBlocker b(m_bypassPaSettingsCheck);
+                    m_bypassPaSettingsCheck->setChecked(bypass);
+                });
+    }
 
     // ── NereusSDR-original: per-SKU informational warning labels ─────────────
     //
@@ -851,6 +896,32 @@ void PaGainByBandPage::applyCapabilityVisibility(const BoardCapabilities& caps)
     // behaviour; the gate itself is dormant until the PS feedback DDC lands.
     if (m_psWarning) {
         m_psWarning->setVisible(caps.hasPureSignal);
+    }
+
+    // ── Auto-PA-Calibrate checkbox visibility (D3) ───────────────────────
+    // From Thetis setup.cs:19920 [v2.10.3.15] //N1GP G2E added:
+    //   chkAutoPACalibrate.Visible = false;  (in ANAN_G2E case)
+    // G2E sets allowsAutoPaCalibrate=false; all other boards default true.
+    // The auto-cal sub-panel inherits visibility from the checkbox.
+    if (m_autoCalibrateCheck) {
+        m_autoCalibrateCheck->setVisible(caps.allowsAutoPaCalibrate);
+    }
+    if (m_autoCalPanel) {
+        // Sub-panel hides when auto-calibrate is not available. If the
+        // checkbox is hidden, the panel must also be hidden regardless of
+        // its internal state machine (which manages show/hide during a live
+        // calibration sweep on supporting boards).
+        if (!caps.allowsAutoPaCalibrate) {
+            m_autoCalPanel->setVisible(false);
+        }
+    }
+
+    // ── Bypass ANAN PA Settings checkbox visibility (D4) ────────────────
+    // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added:
+    //   chkBypassANANPASettings.Visible = true;  (in ANAN_G2E case)
+    // G2E sets showsBypassPaSettingsUi=true; all other boards default false.
+    if (m_bypassPaSettingsCheck) {
+        m_bypassPaSettingsCheck->setVisible(caps.showsBypassPaSettingsUi);
     }
 
     // ── ATT-on-TX informational row ─────────────────────────────────────
@@ -2309,6 +2380,28 @@ void PaValuesPage::applyCapabilityVisibility(const BoardCapabilities& caps)
     if (m_resetButton) {
         m_resetButton->setVisible(caps.hasPaProfile);
     }
+
+    // ── Per-label gating for volts/amps telemetry rows (D5) ──────────────
+    // From Thetis clsHardwareSpecific.cs:245-264 [v2.10.3.15]:
+    //   HasVolts: ANAN7000D / ANAN8000D / ANVELINAPRO3 / ANAN_G2E //N1GP G2E added
+    //             / ANAN_G2 / ANAN_G2_1K / REDPITAYA
+    //   HasAmps:  same set
+    // Boards without on-board PA current/voltage sensors (e.g. ANAN100,
+    // ORIONMKII) hide these specific rows even when hasPaProfile=true.
+    // Applied after the hasPaProfile pass so the per-label gate narrows
+    // further for boards that have a PA but no volts/amps sensors.
+    if (caps.hasPaProfile) {
+        if (m_paCurrentLabel) {
+            // From Thetis clsHardwareSpecific.cs:255-264 [v2.10.3.15] HasAmps.
+            // //N1GP G2E added (line 260)
+            m_paCurrentLabel->setVisible(caps.hasPaAmpsTelemetry);
+        }
+        if (m_supplyVoltsLabel) {
+            // From Thetis clsHardwareSpecific.cs:245-254 [v2.10.3.15] HasVolts.
+            // //N1GP G2E added (line 250)
+            m_supplyVoltsLabel->setVisible(caps.hasPaVoltsTelemetry);
+        }
+    }
 }
 
 // Mirrors Thetis btnResetPAValues_Click semantic at setup.cs:16346-16357
@@ -2502,6 +2595,22 @@ void PaValuesPage::clickResetForTest()
         // didn't construct (model-less preview path).
         resetPaValues();
     }
+}
+
+// D5 (ANAN-G2E port): visibility seams for amps/volts rows.
+// From Thetis clsHardwareSpecific.cs:255-264 [v2.10.3.15] HasAmps.
+// //N1GP G2E added (line 260 [v2.10.3.15])
+bool PaValuesPage::isPaCurrentRowVisibleForTest() const
+{
+    return m_paCurrentLabel && m_paCurrentLabel->isVisibleTo(
+               const_cast<PaValuesPage*>(this));
+}
+// From Thetis clsHardwareSpecific.cs:245-254 [v2.10.3.15] HasVolts.
+// //N1GP G2E added (line 250 [v2.10.3.15])
+bool PaValuesPage::isSupplyVoltsRowVisibleForTest() const
+{
+    return m_supplyVoltsLabel && m_supplyVoltsLabel->isVisibleTo(
+               const_cast<PaValuesPage*>(this));
 }
 #endif
 

@@ -2,13 +2,28 @@
 #include "gui/styles/AppTheme.h"
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
+#include "core/BuildIdentity.h"
 #include "core/MacMicPermission.h"
+#include "core/audio/RealtimeAudioPriority.h"
 #include "core/RadioConnection.h"
 #include "core/mmio/ExternalVariableEngine.h"
 #include "core/LogCategories.h"
 
+// Generated into the build tree by cmake/NereusBuildTag.cmake, once per
+// build, so NEREUSSDR_BUILD_TAG names the commit actually being compiled
+// instead of whatever HEAD happened to be at the last cmake configure.
+//
+// This is the only translation unit that includes it, and that is on
+// purpose: it is compiled into the application target alone, so a new commit
+// rebuilds this file and relinks this binary, and leaves the test suite (which
+// links the NereusSDRObjs object library) untouched. See CMakeLists.txt
+// section "Build tag" and src/core/BuildIdentity.h.
+#include "NereusBuildTag.h"
+
 #include <QApplication>
 #include <QCommandLineOption>
+#include <QMetaObject>
+#include <csignal>
 #include <QCommandLineParser>
 #include <QIcon>
 #include <QStyleFactory>
@@ -93,6 +108,12 @@ static QString extractProfileFromArgv(int argc, char* argv[])
 
 int main(int argc, char* argv[])
 {
+    // Hand the build stamp to the core accessor before anything can build a
+    // window title from it. Empty on release artifacts, in which case the
+    // title stays exactly as it was.
+    NereusSDR::BuildIdentity::setBuildTag(
+        QString::fromUtf8(NEREUSSDR_BUILD_TAG));
+
     // Resolve profile name first — downstream path lookups (AppSettings,
     // log dir, pre-QApplication UI scale read) all consult it.
     const QString earlyProfile = extractProfileFromArgv(argc, argv);
@@ -136,13 +157,46 @@ int main(int argc, char* argv[])
     app.setOrganizationName("NereusSDR");
     app.setWindowIcon(QIcon(":/icons/NereusSDR.png"));
 
-    // v0.4.1-rc3 bench-diagnostic startup banner — explicit build identifier
-    // so support bundles can confirm WHICH RC the user is running (system-
-    // info.json's appVersion is just NEREUSSDR_VERSION which doesn't carry
-    // the rc tag).  Bumped per RC; will be removed before final v0.4.1.
-    qInfo().noquote() << "NereusSDR" << NEREUSSDR_VERSION
-                      << "(v0.4.1-rc3 bench — bank-16 ps_run flush + setPuresignalRun diagnostic)"
-                      << "starting";
+    // 2026-05-25 KG4VCF bench fix: elevate the main GUI thread to
+    // USER_INTERACTIVE QoS so heavy user-initiated background work
+    // (parallel compiles, mdworker indexing, Time Machine snapshots,
+    // etc.) does not preempt the Qt event loop and produce visibly
+    // choppy spectrum / waterfall rendering.  The audio DSP thread
+    // already gets a stronger elevation (see RxDspWorker::onThreadStarted)
+    // but the GUI thread runs the spectrum paint cycle and was still
+    // being preempted at DEFAULT QoS.  Bench symptom: "whole program
+    // stutters when a build happens".
+    //
+    // Cross-platform via src/core/audio/RealtimeAudioPriority.cpp:
+    //   macOS:   pthread_set_qos_class_self_np(USER_INTERACTIVE)
+    //   Linux:   nice(-5)  (soft-fail without privilege)
+    //   Windows: SetThreadPriority(HIGHEST)
+    NereusSDR::elevateGuiMainThreadPriority();
+
+    // 2026-05-22 bench-finding: pkill / kill / system shutdown sends SIGTERM
+    // by default; the OS terminates the process without giving Qt a chance
+    // to run aboutToQuit handlers.  Without translation, this skips
+    // RadioConnection::disconnect, the radio gateware never sees run=0, and
+    // some community P2 firmwares require power-cycle to recover.  Install
+    // POSIX signal handlers that convert SIGTERM / SIGINT into
+    // QApplication::quit, which fires aboutToQuit and runs the graceful
+    // disconnect path.  SIGKILL (kill -9, Activity Monitor "Force Quit") is
+    // uncatchable — power-cycle is still the only recovery there.
+    std::signal(SIGTERM, [](int) {
+        // Async-signal-safe: only QCoreApplication::quit() is approximately
+        // safe to call.  Internally it just sets an atomic flag the event
+        // loop polls.
+        if (QCoreApplication::instance()) {
+            QMetaObject::invokeMethod(QCoreApplication::instance(),
+                                      "quit", Qt::QueuedConnection);
+        }
+    });
+    std::signal(SIGINT, [](int) {
+        if (QCoreApplication::instance()) {
+            QMetaObject::invokeMethod(QCoreApplication::instance(),
+                                      "quit", Qt::QueuedConnection);
+        }
+    });
 
     // Trigger the macOS microphone permission dialog deterministically
     // (issue #203). The OS only prompts when something actually engages
@@ -238,9 +292,10 @@ int main(int argc, char* argv[])
     // moved to per-side millisecond time constants; v5 splits the shared
     // DspOptionsBufferSize<Mode> / DspOptionsFilterSize<Mode> keys into
     // <Mode>Rx + <Mode>Tx variants so the UI can expose Thetis-faithful
-    // per-channel combos.  See AppSettings::ensureSettingsAtVersion for the
-    // upstream Thetis cites.
-    NereusSDR::AppSettings::instance().ensureSettingsAtVersion(5);
+    // per-channel combos; v6 (Phase 3F) is additive only — new per-slice
+    // per-band keys populate lazily on first write.
+    // See AppSettings::ensureSettingsAtVersion for the upstream Thetis cites.
+    NereusSDR::AppSettings::instance().ensureSettingsAtVersion(6);
 
     // Restore logging category toggles from settings
     NereusSDR::LogManager::instance().loadSettings();

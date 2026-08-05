@@ -100,6 +100,7 @@ namespace NereusSDR {
 /// PaCalProfile (per-board cal table).
 ///
 /// From Thetis console.cs:25008 [v2.10.3.13] — computeAlexFwdPower entry
+// Upstream tags preserved: //N1GP (from cited console.cs:25007) [v2.10.3.15]
 /// point.  The full per-board switch + post-switch math (with `//DH1KLM`
 /// tag preserved on REDPITAYA) lives in PaTelemetryScaling.cpp.
 double scaleFwdPowerWatts(HPSDRModel model, quint16 raw) noexcept;
@@ -124,6 +125,27 @@ double scaleFwdPowerWatts(HPSDRModel model, quint16 raw) noexcept;
 /// inside computeAlexFwdPower (the same value Thetis writes to
 /// SetupForm.textFwdVoltage at console.cs:25068).
 double scaleFwdRevVoltage(HPSDRModel model, quint16 raw) noexcept;
+
+/// Scale a raw exciter_power AIN5 ADC reading (0..4095) to drive power in
+/// milliwatts, using the per-board-family piecewise-linear formula from Thetis.
+///
+/// Thetis has two piecewise curves:
+///   computeOrionMkIIExciterPower — OrionMKII / ANAN7000D / ANAN8000D /
+///     ANAN_G2E / ANAN_G2 / ANAN_G2_1K / ANVELINAPRO3 / REDPITAYA
+///   computeExciterPower          — all other boards (low-power default)
+///
+/// HL2 is explicitly excluded from this function: the HL2 firmware reuses
+/// the exciter_power bytes to carry FPGA temperature, so calling this
+/// function with HERMESLITE would produce a nonsensical milliwatt value.
+/// RadioModel::handlePaTelemetry gates on HPSDRModel::HERMESLITE before
+/// calling here.
+///
+/// From Thetis console.cs:25120-25178 (computeExciterPower) and
+/// console.cs:25179-25237 (computeOrionMkIIExciterPower) and the dispatch
+/// switch at console.cs:26001-26013 [v2.10.3.15].
+/// Inline tags preserved: //N1GP G2E added (console.cs:26004) //DH1KLM (console.cs:26007)
+/// //MW0LGE_[2.9.0.7] (console.cs:25126 and :25183)
+float scaleExciterPowerMw(HPSDRModel model, quint16 raw) noexcept;
 
 /// Scale a raw HL2 temperature ADC reading (0..4095) to degrees Celsius.
 ///

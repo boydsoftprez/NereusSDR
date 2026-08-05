@@ -109,7 +109,9 @@ enum class HPSDRModel : int {
     ANVELINAPRO3 = 13,
     HERMESLITE   = 14,  // MI0BOT [Thetis enums.cs:128]
     REDPITAYA    = 15,  // DH1KLM contribution — enum slot preserved, impl deferred
-    LAST         = 16
+    // From Thetis network.h:446 [v2.10.3.15] //N1GP G2E added
+    ANAN_G2E     = 16,
+    LAST         = 17,  // was 16; bumped for ANAN_G2E
 };
 
 // Physical board — what's actually on the wire.
@@ -129,7 +131,11 @@ enum class HPSDRHW : int {
     // above the Thetis-defined range (0-11) and below Unknown(999).
     HermesLiteRxOnly = 12, // HL2 RX-only kit (no TX driver). Phase 3M-0.
     // 13..19 available for future NereusSDR-original SKU slots.
-    Andromeda        = 20, // Andromeda console (Ganymede PA trip). Phase 3M-0.
+    // From Thetis network.h:425 [v2.10.3.15] //N1GP G2E added (HermesC10)
+    HermesC10        = 20, // ANAN-G2E (formerly G1) single-ADC HERMES-class RX + OrionMKII TX
+    // NereusSDR-native; relocated from 20 to 21 on 2026-05-21 (G2E port) to free Thetis byte 20.
+    // See docs/architecture/2026-05-21-anan-g2e-port-design.md §4 for rationale.
+    Andromeda        = 21, // Andromeda console (Ganymede PA trip). Phase 3M-0.
     Unknown    = 999
 };
 
@@ -151,6 +157,7 @@ constexpr HPSDRHW boardForModel(HPSDRModel m) noexcept {
         case HPSDRModel::ANVELINAPRO3: return HPSDRHW::OrionMKII;
         case HPSDRModel::HERMESLITE:   return HPSDRHW::HermesLite;
         case HPSDRModel::REDPITAYA:    return HPSDRHW::OrionMKII;
+        case HPSDRModel::ANAN_G2E:     return HPSDRHW::HermesC10;  // //N1GP G2E added
         case HPSDRModel::FIRST:
         case HPSDRModel::LAST:         return HPSDRHW::Unknown;
     }
@@ -175,6 +182,7 @@ constexpr const char* displayName(HPSDRModel m) noexcept {
         case HPSDRModel::ANVELINAPRO3: return "Anvelina Pro 3";
         case HPSDRModel::HERMESLITE:   return "Hermes Lite 2";
         case HPSDRModel::REDPITAYA:    return "Red Pitaya";
+        case HPSDRModel::ANAN_G2E:     return "ANAN-G2E";  // From Thetis setup.designer.cs:8572 [v2.10.3.15] //N1GP G2E added
         case HPSDRModel::FIRST:
         case HPSDRModel::LAST:         return "Unknown";
     }
@@ -199,7 +207,8 @@ constexpr int paMaxWattsFor(HPSDRModel m) noexcept {
         case HPSDRModel::REDPITAYA:    return  10;
         case HPSDRModel::ANAN100:
         case HPSDRModel::ANAN100B:
-        case HPSDRModel::ANAN_G2:      return 100;
+        case HPSDRModel::ANAN_G2:
+        case HPSDRModel::ANAN_G2E:     return 100;  // ANAN-G2E is a 100 W class radio (same PA tier as G2)
         case HPSDRModel::ANAN100D:
         case HPSDRModel::ANAN200D:
         case HPSDRModel::ORIONMKII:
@@ -212,6 +221,99 @@ constexpr int paMaxWattsFor(HPSDRModel m) noexcept {
         case HPSDRModel::LAST:         return 100;   // sentinel default
     }
     return 100;
+}
+
+// =============================================================================
+// Per-SKU RX meter calibration offset (Thetis-faithful port)
+// =============================================================================
+//
+// Factory default cal offset (dB) added to WDSP S-meter readings + MaxBin
+// readings to convert ADC dBFS to antenna dBm.  Without this offset, raw
+// WDSP `GetRXAMeter(RXA_S_PK/AV)` and `GetDetectMaxBin` values are in
+// dBFS relative to the ADC full-scale point, not at-antenna dBm.
+//
+// Ported byte-for-byte from Thetis clsHardwareSpecific.cs:395-411 [v2.10.3.13]:
+//   case HPSDRModel.ANAN7000D:
+//   case HPSDRModel.ANAN8000D:
+//   case HPSDRModel.ORIONMKII:
+//   case HPSDRModel.ANVELINAPRO3:
+//   case HPSDRModel.REDPITAYA:      return 4.841644f;
+//   case HPSDRModel.ANAN_G2:
+//   case HPSDRModel.ANAN_G2_1K:     return -4.476f;
+//   default:                        return 0.98f;
+//
+// Applied by MeterPoller::pollSMeter and the SignalPeak/SignalAvg loop in
+// poll(), matching Thetis console.cs:46824 and :46881 [v2.10.3.13]:
+//   _RX1MeterValues[Reading.SIGNAL_STRENGTH] =
+//       WDSP.CalculateRXMeter(...) + offset;     // offset = RXOffset(1)
+//   _RX1MeterValues[Reading.SIGNAL_MAX_BIN] =
+//       WDSP.GetDetectMaxBin(0) + offset;
+//
+// User may override via the AppSettings key "RX1_MeterCalOffsetDb" (same
+// Thetis convention as RX1MeterCalOffset, console.cs:21051).  The default
+// is hidden from the UI in 0.4.x; only Setup -> Multimeter exposes it (no
+// page yet, deferred to follow-up).
+constexpr float rxMeterCalOffsetDefaultFor(HPSDRModel m) noexcept {
+    switch (m) {
+        case HPSDRModel::ANAN7000D:
+        case HPSDRModel::ANAN8000D:
+        case HPSDRModel::ORIONMKII:
+        case HPSDRModel::ANVELINAPRO3:
+        case HPSDRModel::REDPITAYA:    return  4.841644f;  //DH1KLM
+        case HPSDRModel::ANAN_G2:
+        case HPSDRModel::ANAN_G2_1K:   return -4.476f;
+        // From clsHardwareSpecific.cs:409 [v2.10.3.13] default branch.
+        // Covers HPSDR/Atlas, all ANAN-10/100/100B/100D/200D variants, HermesLite.
+        case HPSDRModel::HPSDR:
+        case HPSDRModel::HERMES:
+        case HPSDRModel::ANAN10:
+        case HPSDRModel::ANAN10E:
+        case HPSDRModel::ANAN100:
+        case HPSDRModel::ANAN100B:
+        case HPSDRModel::ANAN100D:
+        case HPSDRModel::ANAN200D:
+        case HPSDRModel::HERMESLITE:
+        // From Thetis clsHardwareSpecific.cs:408-423 [v2.10.3.15]
+        // RXMeterCalbrationOffsetDefaults enumerates ANAN7000D, ANAN8000D,
+        // ORIONMKII, ANVELINAPRO3, REDPITAYA (//DH1KLM), ANAN_G2 and
+        // ANAN_G2_1K only.  It carries no `case HPSDRModel.ANAN_G2E`, so the
+        // G2E SKU takes `default: return 0.98f` upstream and is listed in the
+        // default group here rather than given a number of its own.  The N1GP
+        // G2E port added `case HPSDRModel.ANAN_G2E: //N1GP G2E added` at seven
+        // other sites in that same file (:129, :250, :260, :358, :385, :699,
+        // :794) and deliberately left this switch alone, so the omission is
+        // upstream intent rather than an upstream oversight.
+        // Do NOT graft the ANAN_G2 value onto G2E: -4.476f is G2 / G2-1K only.
+        case HPSDRModel::ANAN_G2E:
+        case HPSDRModel::FIRST:
+        case HPSDRModel::LAST:         return  0.98f;
+    }
+    return 0.98f;  // unreachable; matches Thetis default
+}
+
+// Per-preamp-mode RX offset (dB), applied when step-att is DISABLED.
+// Ported byte-for-byte from Thetis console.cs:1991-2001 [v2.10.3.13]:
+//   rx1_preamp_offset[(int)PreampMode.HPSDR_OFF]      = 20.0f;  // atten inline
+//   rx1_preamp_offset[(int)PreampMode.HPSDR_ON]       =  0.0f;  // no atten
+//   rx1_preamp_offset[(int)PreampMode.HPSDR_MINUS10]  = 10.0f;
+//   rx1_preamp_offset[(int)PreampMode.HPSDR_MINUS20]  = 20.0f;
+//   rx1_preamp_offset[(int)PreampMode.HPSDR_MINUS30]  = 30.0f;
+//   rx1_preamp_offset[(int)PreampMode.HPSDR_MINUS40]  = 40.0f;
+//   rx1_preamp_offset[(int)PreampMode.HPSDR_MINUS50]  = 50.0f;
+//
+// Called from RxMeterCalibration::computeOffsetDb in the
+// `!stepAttEnabled` branch of Thetis RXPreampOffset (console.cs:20989).
+constexpr float rxPreampOffsetDbFor(int preampModeIdx) noexcept {
+    switch (preampModeIdx) {
+        case 0: return 20.0f;   // PreampMode::Off       == HPSDR_OFF (atten inline)
+        case 1: return  0.0f;   // PreampMode::On        == HPSDR_ON
+        case 2: return 10.0f;   // PreampMode::Minus10
+        case 3: return 20.0f;   // PreampMode::Minus20
+        case 4: return 30.0f;   // PreampMode::Minus30
+        case 5: return 40.0f;   // PreampMode::Minus40
+        case 6: return 50.0f;   // PreampMode::Minus50
+        default: return 0.0f;
+    }
 }
 
 // =============================================================================
@@ -300,6 +402,7 @@ constexpr const char* boardCodeName(HPSDRHW hw) noexcept {
         case HPSDRHW::Saturn:           return "Saturn";
         case HPSDRHW::SaturnMKII:       return "SaturnMKII";
         case HPSDRHW::HermesLiteRxOnly: return "HL2-RX";
+        case HPSDRHW::HermesC10:       return "HermesC10";  // //N1GP G2E added (HermesC10)
         case HPSDRHW::Andromeda:        return "Andromeda";
         case HPSDRHW::Unknown:          return "Unknown";
     }

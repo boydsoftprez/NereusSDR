@@ -88,12 +88,14 @@ warren@wpratt.com
 
 */
 
-#include "WdspTypes.h"
 #include "dsp/ChannelConfig.h"
 
 #include <QObject>
 #include <QString>
+#include <QVector>
 
+#include <array>
+#include <atomic>
 #include <map>
 #include <memory>
 #include <vector>
@@ -108,6 +110,36 @@ class TestWdspEngineTxChannel;
 class TstWdspEngineDexpInit;
 // Phase 3M-4 Task 4: same pattern for the PsFeedbackChannel lifecycle test.
 class TstPsFeedbackChannel;
+// Phase 3R Task J3: same pattern for the SliceModel RADE mode-swap test;
+// needs to flip m_initialized = true so the RxChannel seed at the head of
+// the test does not bail out on the !m_initialized guard.
+class TestSliceModelRadeSwap;
+// Phase 3R Task L2: same friendship for the RadeApplet UI test which
+// constructs a real RadioModel + RadeChannel fixture.
+class TestRadeApplet;
+// Phase 3F Sub-Epic I closeout, defect H1: the per-stream drain-geometry
+// test primes the engine so createRxChannel can seed real RX channels.
+class TestStreamPoolBinding;
+// Phase 3F: the channel-id map test primes the engine so it can watch
+// which ids openRxChannelPool actually opens.
+class TestWdspChannelIdMap;
+class TestRadioModelMoxHardwareFlip;
+// TNF Task 1: the notch tune-frequency test primes the engine so
+// createRxChannel opens real RX channels. RXANBPSetTuneFrequency
+// dereferences rxa[channel].ndb.p before it compares (nbp.c:477-479), so
+// the kTestChannel = 99 never-opened-channel hatch is unavailable here.
+class TestNotchTuneFrequency;
+// TNF Task 2: the notch-wrapper test opens one real RX channel so the
+// RXANBP* entry points have an rxa[].ndb to dereference.
+class TestRxChannelNotchWrappers;
+// TNF Task 4: the notch fan-out test primes the engine so openRxChannelPool
+// opens real WDSP channels; the RXANBP* wrappers cannot be exercised on an
+// unopened id (design section 11.1 -- rxa[] is sized MAX_CHANNELS and every
+// entry point dereferences before range-checking).
+class TestNotchChannelSync;
+// TNF Task 9: the MNF Settings page test primes the engine so it can open one
+// real RX channel and check the minimum-notch-width readout against it.
+class TestMnfSetupPage;
 #endif
 
 namespace NereusSDR {
@@ -115,6 +147,7 @@ namespace NereusSDR {
 class RxChannel;
 class TxChannel;
 class PsFeedbackChannel;
+class RadeChannel;
 
 // Central WDSP manager. Owns all RxChannel instances and manages
 // system-level initialization (FFTW wisdom, impulse cache).
@@ -150,6 +183,55 @@ public:
 
     bool isInitialized() const { return m_initialized; }
 
+    // --- WDSP channel-id map (Phase 3F) --------------------------------
+    //
+    // WDSP keys every channel off one global array, `struct _ch
+    // ch[MAX_CHANNELS]` (third_party/wdsp/src/channel.c:29), and
+    // OpenChannel overwrites `ch[channel]` and starts a fresh wdspmain
+    // thread without closing whatever was there (channel.c:75-101).  Two
+    // subsystems that pick the same id therefore both "work" until the
+    // second one silently orphans the first one's thread, iobuffs,
+    // semaphores and critical sections.  The ids below are the single
+    // allocation table for the whole application.
+    //
+    // Numbering comes from upstream, not from convenience.
+    //
+    // From Thetis ChannelMaster/cmsetup.c:176-191 [v2.10.3.15] — chid():
+    //   case 0:  ch_id = pcm->cmSubRCVR * stream + subrx;          // rx
+    //   case 1:  ch_id = stream + (pcm->cmSubRCVR - 1) * pcm->cmRCVR;  // tx
+    // C# mirror, From Thetis dsp.cs:926-944 [v2.10.3.15] — WDSP.id():
+    //   case 2:  return cmaster.CMsubrcvr * cmaster.CMrcvr;        // txa
+    // Upstream's radio structure is cmRCVR = 5, cmSubRCVR = 2
+    // (From Thetis cmaster.cs:412,419 [v2.10.3.15]), cmXMTR = 1
+    // (cmaster.cs:502), so Thetis lays out ch[0..9] = RX and ch[10] = TX.
+    // Both counts are compile-time maxima: create_rcvr opens all
+    // cmRCVR * cmSubRCVR channels at CreateRadio time no matter how many
+    // receivers the connected radio actually has, so the TX id is a fixed
+    // constant rather than something that moves per radio.
+    //
+    // NereusSDR's radio structure is one WDSP channel per slice with no
+    // sub-receivers, i.e. cmSubRCVR = 1, cmRCVR = kMaxSliceChannels,
+    // cmXMTR = 1.  Substituting into chid() gives:
+    //   rx:  ch_id = 1 * slice + 0             = slice
+    //   tx:  ch_id = kMaxSliceChannels + 0     = kMaxSliceChannels
+    // The upstream formula therefore reproduces the Phase 3F invariant
+    // "WDSP channel id == slice index" exactly, and puts TX immediately
+    // above the RX block.  No reconciliation was needed.
+    //
+    // kMaxSliceChannels is the ceiling over every SKU's
+    // BoardCapabilities::maxSlices (largest today: 5, the Saturn /
+    // Angelia / Orion / HermesC10 class).  Sizing the reserved block off
+    // the maximum rather than off the connected radio is what keeps
+    // kTxChannelId a constant, exactly as cmRCVR does upstream.
+    // tst_wdsp_channel_id_map pins the ceiling against the caps table.
+    static constexpr int kMaxSliceChannels = 5;
+
+    // RX slice channels occupy [0, kMaxSliceChannels).
+    static constexpr int kFirstSliceChannelId = 0;
+
+    // TX channel id = cmSubRCVR * cmRCVR = 1 * kMaxSliceChannels.
+    static constexpr int kTxChannelId = kMaxSliceChannels;
+
     // --- RX Channel management ---
 
     // Create an RX channel with the given parameters.
@@ -173,6 +255,45 @@ public:
 
     // Look up an existing RX channel by WDSP channel ID.
     RxChannel* rxChannel(int channelId) const;
+
+    // --- External Diversity management ---------------------------------
+    //
+    // WDSP owns exactly two external-diversity slots in a process-wide
+    // pdiv[MAX_EXT_DIVS] table (third_party/wdsp/src/div.c:104-105). These
+    // IDs are independent of RXA channel IDs, so their lifecycle belongs to
+    // WdspEngine rather than RxChannel.
+    //
+    // Upstream ownership/order:
+    //   CreateRadio -> create_sync -> create_divEXT(0, 0, 2, 1024)
+    //   InboundBlock -> xdivEXT
+    //   DestroyRadio -> destroy_sync -> destroy_divEXT
+    // From Thetis ChannelMaster/cmsetup.c:89-102 and sync.c:32-51 [@501e3f5].
+    bool createExternalDiversity(int id, int inputs, int complexSamples);
+    void configureExternalDiversity(int id, int output,
+                                    const double* iRotate,
+                                    const double* qRotate,
+                                    int inputs);
+    bool processExternalDiversity(int id, int complexSamples,
+                                  double** inputs, double* output);
+    void setExternalDiversityRunning(int id, bool running);
+    void destroyExternalDiversity(int id);
+
+#ifdef NEREUS_BUILD_TESTS
+    // Injectable C-API table for lifecycle/order tests. Production builds
+    // bind the corresponding members to the real WDSP symbols in the
+    // constructor and do not expose a replacement seam.
+    struct ExternalDiversityApiForTest {
+        void (*create)(int, int, int, int);
+        void (*destroy)(int);
+        void (*process)(int, int, double**, double*);
+        void (*setRun)(int, int);
+        void (*setNr)(int, int);
+        void (*setOutput)(int, int);
+        void (*setRotate)(int, int, double*, double*);
+    };
+    void setExternalDiversityApiForTest(
+        const ExternalDiversityApiForTest& api);
+#endif
 
     // Rebuild an RX channel in-place: capture state, destroy the existing
     // WDSP channel, recreate with new config, reapply state.
@@ -202,6 +323,70 @@ public:
     // the radio data flow before calling — see RadioModel::setSampleRateLive
     // for the full Thetis-faithful sequence ported from setup.cs:7003-7159.
     bool setRxChannelRate(int channelId, int newRateHz);
+
+    // --- Per-board ChannelMaster-layer WDSP calls (Phase B4'/B5') ---
+    //
+    // These wrap ChannelMaster-exported symbols that Thetis calls at connect
+    // time from clsHardwareSpecific.cs:85-191 [v2.10.3.15].  In NereusSDR,
+    // the symbols resolve to glue stubs in netinterface_stub.c until the
+    // ChannelMaster module is ported.
+    //
+    // Call both at connect time (RadioModel::connectToRadio) using values from
+    // HardwareProfile — see the §B6' wiring block in RadioModel.cpp.
+
+    // From Thetis cmaster.SetADCSupply / txgain.c:164 [v2.10.3.15] —
+    // per-board PA over-drive protection scaling.  v is 33 or 50 (volts).
+    // txid is the transmitter index (always 0 for current OpenHPSDR boards).
+    // Skips the call when v == 0 (sentinel "not set / use WDSP default").
+    // Thread safety: call on main thread only, before DSP is running.
+    void setAdcSupply(int txid, int v);
+
+    // From Thetis NetworkIO.LRAudioSwap / netInterface.c:1409 [v2.10.3.15] —
+    // per-board L/R audio stream stereo-pair swap for the outbound P2/ETH
+    // audio path (sendOutbound()).  swap is 0 (no swap, modern boards) or
+    // 1 (swap, Hermes-family boards).
+    // Thread safety: call on main thread only, before DSP is running.
+    void setLRAudioSwap(int swap);
+
+    // --- RADE Channel management (Phase 3R Task J2) ---
+    //
+    // RADE (Radio Autoencoder) is a neural-codec digital voice mode
+    // wrapped by RadeChannel (src/core/RadeChannel.{h,cpp}, Tasks I1-I3).
+    // It is NOT a WDSP channel: WDSP has no knowledge of RADE.  The
+    // lifecycle below is pure C++ object management - no OpenChannel /
+    // CloseChannel / WDSP-side initialization.  createRadeChannel does
+    // not require m_initialized = true.
+    //
+    // Channel-ID namespace: RadeChannel IDs share the integer space
+    // with createRxChannel / createTxChannel by convention (Phase 3R
+    // Task J3 maps each slice ID 0..N to one channel at a time).
+    // WdspEngine itself does not enforce that constraint - callers
+    // (J3's setDspMode swap) are responsible for sequencing
+    // destroy-old-RxChannel then create-new-RadeChannel and vice
+    // versa.
+
+    // Create a RadeChannel for the given slice ID.  The channel is
+    // parented to the WdspEngine so QObject ownership cleans up
+    // correctly on engine destruction.  Returns the channel pointer
+    // on success.  If a channel with the same id already exists,
+    // returns the existing pointer without constructing a new one
+    // (mirrors createRxChannel's pre-existence guard at the head of
+    // WdspEngine.cpp:368-371).
+    //
+    // The returned channel is NOT auto-started; the caller (J3 mode
+    // swap) is responsible for calling RadeChannel::start(modelPath)
+    // so it can supply the right model-path / sentinel handling.
+    RadeChannel* createRadeChannel(int channelId);
+
+    // Destroy a RadeChannel by ID.  Calls RadeChannel::stop() (which
+    // is idempotent for an already-stopped channel) before erasing
+    // the wrapper.  The pointer becomes invalid after this call.
+    // Idempotent: destroying a non-existent id is a safe no-op.
+    void destroyRadeChannel(int channelId);
+
+    // Look up an existing RadeChannel by ID.  Returns nullptr if no
+    // channel with that ID is registered.
+    RadeChannel* radeChannel(int channelId) const;
 
     // --- TX Channel management ---
 
@@ -236,10 +421,17 @@ public:
 
     // Create a TX channel with the given parameters.
     //
-    // Channel ID convention: Thetis uses `chid(inid(1, 0), 0)`, which with
-    // NereusSDR's single-RX (CMsubrcvr=1, CMrcvr=1) layout resolves to
-    // channel 1.  C# equivalent: `WDSP.id(1, 0)` — dsp.cs:926-944 [v2.10.3.13]
-    // case 2 returns `CMsubrcvr * CMrcvr = 1 * 1 = 1`.
+    // Channel ID convention: pass kTxChannelId.  Thetis uses
+    // `chid(inid(1, 0), 0)`; with NereusSDR's radio structure
+    // (CMsubrcvr=1, CMrcvr=kMaxSliceChannels) that resolves to
+    // kMaxSliceChannels.  C# equivalent: `WDSP.id(1, 0)` —
+    // dsp.cs:926-944 [v2.10.3.15] case 2 returns `CMsubrcvr * CMrcvr`.
+    // See the channel-id map at the top of this class for why the RX
+    // block is sized off the ceiling rather than off the live radio.
+    //
+    // Phase 3F: this used to be a literal 1, which sat inside the RX
+    // slice pool.  On a 5-slice SKU the pool opened ch[1] as an RXA and
+    // txSetup then overwrote it with a TXA, orphaning the RX thread.
     //
     // Opens the WDSP TX channel (OpenChannel type=1) and constructs the
     // TxChannel C++ wrapper around the 31-stage TXA pipeline that WDSP built.
@@ -275,11 +467,21 @@ public:
     // --- PureSignal feedback channel management (Phase 3M-4 Task 4) ---
 
     // PS feedback channel id.  Type=0 (RX) per WDSP channel.c convention.
-    // Slot 5 per the wdsp-integration.md §11.1 documented channel-id design
-    // (0=RX1, 1-4 reserved for RX1-div / RX2 / RX2-div / TX, 5=PS feedback).
-    // Avoids collision with the current actual code (0=RX1, 1=TX) and leaves
-    // headroom for future RX2 / diversity slots without renumbering.
-    static constexpr int kPsFeedbackChannelId   = 5;
+    //
+    // Sits immediately above the TX channel.  PureSignal feedback has no
+    // WDSP-channel analogue upstream (Thetis runs it inside the TX
+    // channel via SetPSFeedbackRate(txch, ps_rate), cmaster.cs:539
+    // [v2.10.3.15]), so this is a NereusSDR extension.  Upstream's
+    // closest concept is a "special stream", and those are numbered after
+    // the transmitters — From Thetis ChannelMaster/cmsetup.c:86-89
+    // [v2.10.3.15]: `sp0id(stream) = stream - pcm->cmRCVR - pcm->cmXMTR`.
+    // Keeping the same rx / tx / special ordering puts PS at kTxChannelId
+    // + 1.
+    //
+    // Phase 3F: was a literal 5, which the RX slice pool now owns on
+    // 5-slice SKUs.  Derived from kTxChannelId so the block can never
+    // drift back into the pool.
+    static constexpr int kPsFeedbackChannelId   = kTxChannelId + 1;
     static constexpr int kPsFeedbackChannelType = 0;   // RX type (cmaster.c:184)
 
     // Default PS feedback rate for G2-class boards per cmaster.cs:424
@@ -310,12 +512,117 @@ public:
     // Rebuild a TX channel in-place: capture state, destroy the existing
     // WDSP channel, recreate with new config, reapply state.
     //
-    // Returns elapsed milliseconds (≥ 0 on success). Returns -1 if the
+    // Returns elapsed milliseconds (>= 0 on success). Returns -1 if the
     // channel ID is not found or WdspEngine is not initialized.
     //
     // Thread safety: call on main thread only. The TX worker thread must not
     // be running (setRunning(false) + thread stop before calling this).
     qint64 rebuildTxChannel(int channelId, const ChannelConfig& cfg);
+
+    // --- Metering ---
+
+    // Returns the averaged S-meter reading (dBm) from the RXA pipeline.
+    // Reads WDSP RXA_S_AV via GetRXAMeter; the value is only meaningful
+    // after the channel has been activated with SetChannelState(channel, 1).
+    // Returns -140.0 sentinel when the engine is not yet initialized.
+    // Prefer RxChannel::getMeter(RxMeterType::SignalAvg) when a channel
+    // wrapper is available -- this helper is for callers that hold only
+    // the engine and a raw WDSP channel id (e.g. the Analog S-Meter path).
+    //
+    // From Thetis Console/dsp.cs:387-388 [@501e3f5] (P/Invoke)
+    // From Thetis Console/dsp.cs:957 [@501e3f5] (RXA_S_AV selector inside
+    // CalculateRXMeter; the adjacent ADC_REAL case at dsp.cs:959 carries a
+    // //MW0LGE [2.9.0.7] inline tag that we preserve per GPL attribution.)
+    double getRxaSignalAverage(int channel) const;
+
+    // Returns the peak S-meter reading (dBm) from the RXA pipeline.
+    // Reads WDSP RXA_S_PK via GetRXAMeter (enum value 0).
+    // Used by SMeterWidget RxMode::SMeter and RxMode::SMeterPeak paths
+    // in MeterPoller::pollSMeter() (Task 41, Phase 3P-II).
+    // Returns -140.0 sentinel when the engine is not yet initialized.
+    //
+    // From Thetis Console/dsp.cs:387-388 [@501e3f5] (P/Invoke)
+    // From Thetis Console/dsp.cs:889 [@501e3f5] (rxaMeterType enum: RXA_S_PK = 0)
+    // From Thetis Console/dsp.cs:954 [@501e3f5] (RXA_S_PK selector inside
+    // CalculateRXMeter; adjacent ADC_REAL case at dsp.cs:959 carries a
+    // //MW0LGE [2.9.0.7] inline tag that we preserve per GPL attribution.)
+    double getRxaSignalPeak(int channel) const;
+
+    // Configure the strongest-bin-in-passband detector for a display channel.
+    // Pass the current DDC sample rate, the active filter edges (Hz, relative
+    // to DDC center), the smoothing tau (seconds), and the display frame rate.
+    // run is always 1 (detector enabled); call with run=0 via the raw WDSP
+    // API to disable.  Defaults match the Thetis developer example in
+    // wdsp/analyzer.c:1442 [@501e3f5]:
+    //   SetupDetectMaxBin(1, 0, 0, 0, 192000.0, -3000.0, -300.0, 0.5, 60)
+    //
+    // From Thetis Console/dsp.cs:846-847 [@501e3f5] (P/Invoke)
+    // From Thetis wdsp/analyzer.c:775 [@501e3f5] (DSP body)
+    // Call site: Thetis Console/console.cs:51150 [@501e3f5]
+    void setupMaxBinDetector(int displayChannel,
+                             int ss = 0, int LO = 0,
+                             double rateHz = 192000.0,
+                             double fLowHz = -3000.0,
+                             double fHighHz = -300.0,
+                             double tauSeconds = 0.5,
+                             int frameRate = 60);
+
+    // Returns the strongest-bin dBm value from the configured detector.
+    // Returns -400.0 (WDSP's dmb_max_dB initial value) if the detector
+    // has never processed a display frame.
+    //
+    // Algorithm ported from Thetis wdsp/analyzer.c:830 [@501e3f5].
+    // NereusSDR-native: runs against FFTEngine dBm bins; see
+    // setupMaxBinDetector docstring for the full rationale.
+    double getMaxBinDbm(int displayChannel) const;
+
+    // Set the CTUN slice-to-DDC frequency offset in Hz for a detector.
+    //
+    // FFTEngine bins are emitted in DDC baseband (bins[N/2] = DDC NCO
+    // freq).  With CTUN enabled (default), the user's tuned slice does
+    // NOT match DDC center; the slice sits at an offset within the DDC
+    // passband.  Without applying that offset to the bin scan range,
+    // MaxBin scans bins near DDC center (typically noise floor) instead
+    // of the user's signal, and the meter does not track modulation.
+    //
+    // sliceOffsetHz = sliceFreqHz - ddcCenterHz (signed; 0 when CTUN off
+    // because hardware DDC NCO follows the slice).  Re-call whenever
+    // either side moves.  Defaults to 0; thread-safe via the same
+    // m_maxBinDetectors store as setupMaxBinDetector / getMaxBinDbm.
+    //
+    // NereusSDR-only API: Thetis's WDSP analyzer subsystem (CreateAnalyzer
+    // + SetAnalyzer + Spectrum) is fed by the SHIFTED WDSP channel so its
+    // analyzer DC is always the slice DC.  NereusSDR taps FFTEngine ahead
+    // of the WDSP shift, so we apply the shift in our MaxBin scan.
+    void setMaxBinSliceOffsetHz(int displayChannel, double sliceOffsetHz);
+
+public slots:
+    // Fed by FFTEngine::fftReady.  binsDbm is FFT-shifted (negative freqs
+    // first, then positive).  Updates every active MaxBinDetector.
+    //
+    // Algorithm ported from Thetis wdsp/analyzer.c:800-822 [@501e3f5]:
+    // scan for max in configured [firstBin, lastBin] window; apply
+    // slow-release smoothing (decay = exp(-1/(tau*fps))), fast peak attack.
+    // NereusSDR-native: binsDbm already in dBm so no magnitude-to-dB step.
+    //
+    // 2026-05-22 bench fix: this path now serves as the fallback source
+    // for MaxBin. The primary source is setMaxBinDbmFromSpectrum below,
+    // which feeds the post detector + avenger pixel peak from
+    // SpectrumWidget so the meter matches what the operator sees on the
+    // spectrum trace. The raw per-bin FFT power scanned here can be
+    // ~12-17 dB below the spectrum's displayed pixel value because the
+    // detector pipeline reconstructs window-spread integrated power that
+    // a single bin can't show on its own.
+    void onSpectrumBinsForMaxBin(int receiverId, const QVector<float>& binsDbm);
+
+    // 2026-05-22 bench fix: direct override of the MaxBin detector's
+    // smoothed value from SpectrumWidget's m_renderedPixels (the post
+    // detector + avenger output that the operator sees). Called once per
+    // render frame; bypasses the per-frame peak-hold-with-decay smoothing
+    // because m_renderedPixels already includes the avenger's time
+    // smoothing. Stamps d.active=true so getMaxBinDbm returns the new
+    // value instead of the -400 sentinel before the first call.
+    void setMaxBinDbmFromSpectrum(int displayChannel, double dbm);
 
 signals:
     void initializedChanged(bool initialized);
@@ -338,11 +645,69 @@ private:
     // RX channels keyed by WDSP channel ID.
     std::map<int, std::unique_ptr<RxChannel>> m_rxChannels;
 
+    struct ExternalDiversitySlot {
+        std::atomic_bool created{false};
+        std::atomic_bool running{false};
+        int inputs{0};
+        int complexSamples{0};
+    };
+    static constexpr int kExternalDiversitySlots = 2;
+    static bool validExternalDiversityId(int id)
+    {
+        return id >= 0 && id < kExternalDiversitySlots;
+    }
+    std::array<ExternalDiversitySlot, kExternalDiversitySlots>
+        m_externalDiversity;
+
+    void (*m_extDivCreate)(int, int, int, int){nullptr};
+    void (*m_extDivDestroy)(int){nullptr};
+    void (*m_extDivProcess)(int, int, double**, double*){nullptr};
+    void (*m_extDivSetRun)(int, int){nullptr};
+    void (*m_extDivSetNr)(int, int){nullptr};
+    void (*m_extDivSetOutput)(int, int){nullptr};
+    void (*m_extDivSetRotate)(int, int, double*, double*){nullptr};
+    void destroyAllExternalDiversity();
+
+    // RADE channels keyed by slice ID (Phase 3R Task J2).  Shares the
+    // integer namespace with m_rxChannels / m_txChannels by convention;
+    // callers (J3's setDspMode mode swap) are responsible for sequencing
+    // destroy-old then create-new on transitions.  std::map is chosen to
+    // match the existing RX channel container.
+    std::map<int, std::unique_ptr<RadeChannel>> m_radeChannels;
+
     // TX channels keyed by WDSP channel ID.
     // Each entry holds a TxChannel C++ wrapper around the 31-stage TXA
     // pipeline that WDSP constructs when OpenChannel(type=1) is called.
     // destroyTxChannel's erase() runs the unique_ptr destructor automatically.
     std::map<int, std::unique_ptr<TxChannel>> m_txChannels;
+
+    // NereusSDR-native strongest-bin-in-passband detector state.
+    //
+    // Algorithm from Thetis wdsp/analyzer.c:688-830 [@501e3f5]; implemented
+    // here because the WDSP analyzer pipeline (CreateAnalyzer + SetAnalyzer
+    // + Spectrum buffer feed) is not wired in NereusSDR -- FFTEngine uses raw
+    // FFTW3 directly.  The public API (setupMaxBinDetector / getMaxBinDbm)
+    // preserves the Thetis names; the implementation runs the same scan +
+    // slow-release smoothing on the dBm bins emitted by FFTEngine::fftReady
+    // via onSpectrumBinsForMaxBin.
+    struct MaxBinDetector {
+        bool   active{false};
+        double rate{192000.0};
+        double fLow{-3000.0};
+        double fHigh{-300.0};
+        // CTUN slice offset within DDC baseband (Hz).  Added to fLow/fHigh
+        // when computing the bin scan window so MaxBin tracks the user's
+        // tuned slice, not the DDC NCO center.  See setMaxBinSliceOffsetHz
+        // for the full rationale.  Defaults to 0 (CTUN off; DDC follows
+        // slice; offset is zero).
+        double sliceOffsetHz{0.0};
+        double tau{0.5};
+        int    frameRate{60};
+        double decay{0.0};      // exp(-1.0 / (tau * frameRate))
+        double maxDb{-400.0};   // smoothed max in dBm (Thetis dmb_max_dB sentinel)
+    };
+    // Indexed by display channel (disp).  Grown on demand in setupMaxBinDetector.
+    QVector<MaxBinDetector> m_maxBinDetectors;
 
     // Per-TX-channel DEXP in/out buffer (Phase 3M-3a-iii Task 20).
     //
@@ -397,6 +762,35 @@ private:
     friend class ::TstWdspEngineDexpInit;
     // Phase 3M-4 Task 4: same friendship for the PsFeedbackChannel test.
     friend class ::TstPsFeedbackChannel;
+    // Phase 3R Task J3: same friendship for the SliceModel RADE mode-swap test.
+    friend class ::TestSliceModelRadeSwap;
+    // Phase 3R Task L2: same friendship for the RadeApplet UI test.
+    friend class ::TestRadeApplet;
+    // Phase 3F Sub-Epic I closeout, defect H1: same friendship for the
+    // per-stream drain-geometry test, which seeds one real RX channel per
+    // slice so it can watch setRxChannelRate follow a stream's rate change.
+    friend class ::TestStreamPoolBinding;
+    // Phase 3F: same friendship for the channel-id map test, which drives
+    // RadioModel::openRxChannelPool and asserts on the ids it opened.
+    friend class ::TestWdspChannelIdMap;
+    // Authoritative-TX regression: seed nonzero RX channels without the
+    // asynchronous wisdom lifecycle so MOX can prove which exact ID moves.
+    friend class ::TestRadioModelMoxHardwareFlip;
+    // TNF Task 1: same friendship for the notch tune-frequency test, which
+    // needs really opened RX channels rather than an unopened slot.
+    friend class ::TestNotchTuneFrequency;
+    // TNF Task 2: same friendship for the notch-wrapper test, which primes
+    // m_initialized so createRxChannel opens a real WDSP channel with a real
+    // notch database.
+    friend class ::TestRxChannelNotchWrappers;
+    // TNF Task 4: same friendship for the notch channel-sync test, which
+    // drives openRxChannelPool and reads the notch state back off every
+    // channel the pool opened.
+    friend class ::TestNotchChannelSync;
+    // TNF Task 9: same friendship for the MnfSetupPage readout test, which
+    // opens one real RX channel so RXANBPGetMinNotchWidth has an rxa[].nbp0
+    // to read.
+    friend class ::TestMnfSetupPage;
 #endif
 };
 

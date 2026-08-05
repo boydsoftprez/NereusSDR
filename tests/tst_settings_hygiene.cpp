@@ -41,7 +41,76 @@ static BoardCapabilities makeHl2Caps()
     return BoardCapsTable::forBoard(HPSDRHW::HermesLite);
 }
 
+// Helper: a BPF1-algorithm board (ANAN-G2 / Saturn), for the keep-the-data side
+// of the Saturn BPF1 rules.
+static BoardCapabilities makeSaturnCaps()
+{
+    return BoardCapsTable::forBoard(HPSDRHW::Saturn);
+}
+
 static const QString kTestMac = QStringLiteral("00:11:22:33:44:55");
+
+// ── Saturn BPF1 on-disk key contract ──────────────────────────────────────
+//
+// The six per-row slugs AntennaAlexAlex1Tab persists BPF1 band edges under.
+// Spelled out as literals on purpose: this is the on-disk contract with every
+// settings file already in the field, so a hygiene pass that does not use
+// these exact strings cannot see a user's stored data.  Keeping the literals
+// here (rather than importing the shared slug list) means renaming the shared
+// constant cannot quietly make these tests vacuous.
+static const QStringList kBpf1SlugsOnDisk = {
+    QStringLiteral("1_5MHz"), QStringLiteral("6_5MHz"), QStringLiteral("9_5MHz"),
+    QStringLiteral("13MHz"),  QStringLiteral("20MHz"),  QStringLiteral("6mBP"),
+};
+
+// Writes exactly what AntennaAlexAlex1Tab::onBpf1CheckChanged /
+// onBpf1SpinChanged write: setHardwareValue(mac, "alex/bpf1/<slug>/<leaf>", v),
+// which lands as hardware/<mac>/alex/bpf1/<slug>/<leaf>.
+static void writeBpf1EdgesLikeSetupTab(const QString& mac)
+{
+    auto& s = testSettings();
+    for (const QString& slug : kBpf1SlugsOnDisk) {
+        s.setHardwareValue(mac, QStringLiteral("alex/bpf1/%1/enabled").arg(slug),
+                           QStringLiteral("True"));
+        s.setHardwareValue(mac, QStringLiteral("alex/bpf1/%1/start").arg(slug), 1.5);
+        s.setHardwareValue(mac, QStringLiteral("alex/bpf1/%1/end").arg(slug), 2.099999);
+    }
+}
+
+// Every leaf AntennaAlexAlex1Tab writes under a BPF1 row.
+static const QStringList kBpf1LeavesOnDisk = {
+    QStringLiteral("enabled"), QStringLiteral("start"), QStringLiteral("end"),
+};
+
+// Counts how many of the keys writeBpf1EdgesLikeSetupTab() wrote are still present.
+static int storedBpf1KeyCount(const QString& mac)
+{
+    auto& s = testSettings();
+    int count = 0;
+    for (const QString& slug : kBpf1SlugsOnDisk) {
+        for (const QString& leaf : kBpf1LeavesOnDisk) {
+            const QString key = QStringLiteral("hardware/%1/alex/bpf1/").arg(mac)
+                                + slug + QLatin1Char('/') + leaf;
+            if (s.contains(key)) { ++count; }
+        }
+    }
+    return count;
+}
+
+// Total key count writeBpf1EdgesLikeSetupTab() lays down.
+static int expectedBpf1KeyCount()
+{
+    return static_cast<int>(kBpf1SlugsOnDisk.size() * kBpf1LeavesOnDisk.size());
+}
+
+static int bpf1IssueCount(const SettingsHygiene& h)
+{
+    int count = 0;
+    for (const auto& issue : h.issues()) {
+        if (issue.key.contains(QStringLiteral("alex/bpf1"))) { ++count; }
+    }
+    return count;
+}
 
 class TestSettingsHygiene : public QObject {
     Q_OBJECT
@@ -211,6 +280,55 @@ private slots:
             if (issue.key.contains(QStringLiteral("apollo"))) { ++apolloWarnings; }
         }
         QCOMPARE(apolloWarnings, 1);
+    }
+
+    // ── Saturn BPF1 key-naming regression ─────────────────────────────────
+    //
+    // SettingsHygiene used to probe and remove hardware/<mac>/alex/bpf1/160m/…
+    // (11 ham-band names) while AntennaAlexAlex1Tab persists BPF1 edges under
+    // hardware/<mac>/alex/bpf1/1_5MHz/… (6 crossover slugs).  The two name
+    // sets never overlapped, so both the detector and the cleanup were silent
+    // no-ops: a 7000DLE owner who downgraded to a Hermes kept stale BPF1 data
+    // forever and was never told.
+
+    void bpf1EdgesFromSetupTab_onNonBpf1Board_areReported()
+    {
+        writeBpf1EdgesLikeSetupTab(kTestMac);
+
+        SettingsHygiene h;
+        h.validate(kTestMac, makeHermesCaps());
+
+        QCOMPARE(bpf1IssueCount(h), 1);
+    }
+
+    void resetSettingsToDefaults_removesBpf1EdgesFromSetupTab()
+    {
+        writeBpf1EdgesLikeSetupTab(kTestMac);
+        QCOMPARE(storedBpf1KeyCount(kTestMac), expectedBpf1KeyCount());
+
+        SettingsHygiene h;
+        h.resetSettingsToDefaults(kTestMac, makeHermesCaps());
+
+        // Every slug, and every leaf under it, including "enabled", which the
+        // old loop never removed even for the band names it did know about.
+        QCOMPARE(storedBpf1KeyCount(kTestMac), 0);
+
+        // And the detector agrees the data is gone.
+        QCOMPARE(bpf1IssueCount(h), 0);
+    }
+
+    void bpf1EdgesFromSetupTab_onSaturnBoard_areKept()
+    {
+        writeBpf1EdgesLikeSetupTab(kTestMac);
+
+        SettingsHygiene h;
+        BoardCapabilities caps = makeSaturnCaps();
+        h.validate(kTestMac, caps);
+        QCOMPARE(bpf1IssueCount(h), 0);
+
+        // Reset must not throw away band edges the board actually uses.
+        h.resetSettingsToDefaults(kTestMac, caps);
+        QCOMPARE(storedBpf1KeyCount(kTestMac), expectedBpf1KeyCount());
     }
 };
 

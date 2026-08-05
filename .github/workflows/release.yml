@@ -132,7 +132,8 @@ jobs:
         if: matrix.use_aqt == false
         run: |
           sudo apt-get install -y qt6-base-dev qt6-multimedia-dev \
-            qt6-base-private-dev qt6-shadertools-dev qt6-svg-dev
+            qt6-base-private-dev qt6-shadertools-dev qt6-svg-dev \
+            qt6-websockets-dev
 
       - name: Install Qt 6.8 via aqtinstall (x86_64)
         if: matrix.use_aqt == true
@@ -140,7 +141,7 @@ jobs:
           pip3 install aqtinstall
           # Qt 6.8+ folds qtsvg/qttools/qttranslations into qtbase; not listable as -m modules.
           aqt install-qt linux desktop 6.8.3 linux_gcc_64 \
-            -m qtmultimedia qtshadertools \
+            -m qtmultimedia qtshadertools qtwebsockets \
             --outputdir ${{ github.workspace }}/Qt
           echo "Qt6_DIR=${{ github.workspace }}/Qt/6.8.3/gcc_64/lib/cmake/Qt6" >> $GITHUB_ENV
           echo "CMAKE_PREFIX_PATH=${{ github.workspace }}/Qt/6.8.3/gcc_64" >> $GITHUB_ENV
@@ -254,6 +255,31 @@ jobs:
           cp resources/icons/NereusSDR.iconset/icon_256x256.png   AppDir/usr/share/icons/hicolor/256x256/apps/nereussdr.png
           cp resources/icons/NereusSDR.iconset/icon_512x512.png   AppDir/usr/share/icons/hicolor/512x512/apps/nereussdr.png
 
+          # The vendored RADE library (third_party/rade/src/CMakeLists.txt
+          # ports radae_nopy at b289102) builds librade.so.0.1 as a SHARED
+          # target in the CMake build tree with no install() declaration,
+          # so the "Install to AppDir" cmake --install step does not copy
+          # it into AppDir/usr/lib. linuxdeploy traces NEEDED ELF deps via
+          # ld.so / LD_LIBRARY_PATH / RPATH and does NOT scan AppDir/usr/lib
+          # by default, so it bails with:
+          #   ERROR: Could not find dependency: librade.so.0.1
+          # The --library flag SHOULD register the lib but in the linuxdeploy
+          # continuous build (1-alpha @a9f929f) it did not — linuxdeploy
+          # errored on the NereusSDR dep trace before processing --library.
+          # Use the documented LD_LIBRARY_PATH approach instead: prepend the
+          # build-tree directory containing librade.so* to LD_LIBRARY_PATH so
+          # linuxdeploy's standard resolver finds it during dep tracing and
+          # auto-copies it into AppDir/usr/lib.
+          LIBRADE_PATH="$(find build/third_party/rade -maxdepth 4 -name 'librade.so.0.1' | head -n1)"
+          if [ -z "$LIBRADE_PATH" ]; then
+            echo "ERROR: librade.so.0.1 not found in build tree" >&2
+            find build -name 'librade.so*' >&2
+            exit 1
+          fi
+          LIBRADE_DIR="$(dirname "$LIBRADE_PATH")"
+          echo "Adding $LIBRADE_DIR to LD_LIBRARY_PATH for linuxdeploy"
+          export LD_LIBRARY_PATH="$PWD/$LIBRADE_DIR:$LD_LIBRARY_PATH"
+
           ./linuxdeploy-${{ matrix.arch }}.AppImage \
             --appdir AppDir \
             --plugin qt \
@@ -303,11 +329,17 @@ jobs:
 
       - name: Install dependencies (arm64 native)
         if: matrix.arch == 'arm64'
-        run: brew install qt@6 ninja create-dmg fftw ccache
+        # autoconf/automake/libtool/wget required by third_party/rade
+        # vendored Opus (autotools + wget DRED model download). Not in
+        # default macOS runner image.
+        run: brew install qt@6 ninja create-dmg fftw ccache autoconf automake libtool wget
 
       - name: Install non-Qt brew packages (x86_64 cross-compile)
         if: matrix.arch == 'x86_64'
-        run: brew install ninja create-dmg ccache
+        # autoconf/automake/libtool/wget required by third_party/rade
+        # vendored Opus (autotools + wget DRED model download). Not in
+        # default macOS runner image.
+        run: brew install ninja create-dmg ccache autoconf automake libtool wget
 
       - name: Install Qt 6.8 for x86_64 macOS via aqtinstall
         if: matrix.arch == 'x86_64'
@@ -317,7 +349,7 @@ jobs:
           host: 'mac'
           target: 'desktop'
           arch: 'clang_64'
-          modules: 'qtmultimedia qtshadertools'
+          modules: 'qtmultimedia qtshadertools qtwebsockets'
           cache: true
 
       - name: Build FFTW from source for x86_64 (both precisions)
@@ -712,6 +744,20 @@ jobs:
             Copy-Item $dfnrDll deploy\
           } else {
             Write-Error "deepfilter.dll missing from third_party\deepfilter\lib\windows-x86_64\ — Windows artifact would ship broken (DFNR will crash at load)"
+            exit 1
+          }
+          # rade.dll: librade SHARED library produced by third_party/rade.
+          # NereusSDR.exe load-time imports it via __declspec(dllimport),
+          # so without rade.dll on the DLL search path the .exe fails to
+          # launch with "rade.dll was not found". windeployqt only resolves
+          # Qt DLLs, so this non-Qt dep must be staged by hand. v0.5.0
+          # shipped without this stanza and the Windows installer was
+          # broken; never again.
+          $radeDll = "build\third_party\rade\src\rade.dll"
+          if (Test-Path $radeDll) {
+            Copy-Item $radeDll deploy\
+          } else {
+            Write-Error "rade.dll missing from build\third_party\rade\src\ (Windows artifact would ship broken: NereusSDR.exe will fail to launch with 'rade.dll was not found')"
             exit 1
           }
           # Copy third-party license notices + both root license files

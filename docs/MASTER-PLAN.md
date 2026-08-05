@@ -176,12 +176,82 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 **RxApplet Tier 1 wired:** mode, AGC, AF gain, and filter presets fully wired to SliceModel
 
-### Up Next (post-v0.4.0)
-- **Phase 3M-2 — CW TX** (next major epic). Sidetone, firmware keyer, QSK / break-in. Absorbs the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-1252 [@c26a8a4]`). Detail in §"Phase 3M-2".
+### Up Next (after v0.5.2)
+- **Phase 3M-2 - CW TX** (next up). Sidetone, firmware keyer, QSK / break-in. Absorbs the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-1252 [@c26a8a4]`). Detail in §"Phase 3M-2".
 - **Phase 3M-3b — FM pre-emphasis** (de-scoped from 3M-3a-ii during v0.3.1; runs after 3M-2).
 - **Phase 3F — Multi-panadapter** (after 3M-2). Re-exposes the Active RX count widget (hidden in v0.4.0 because it was stuck-at-1 in single-RX) and finally exercises `RadioModel::setActiveRxCountLive`. Also lands the aamix anti-VOX path that the v0.4.0 single-RX direct pump deferred.
 - **Phase 3M-5 (TX Display Refactor)**, parallel-track to 3M-2. Mirrors 3G-9 RX Display Refactor symmetrically on the TX side. 7 sub-phases (3M-5a foundation + 3M-5b colormap fix landing v0.4.2; 3M-5c custom gradient picker widget; 3M-5d FFT / detector / averaging reusing RX widgets; 3M-5e grid scale; 3M-5f appearance colors; 3M-5g cal offset apply gap). Master plan + mockup at `docs/architecture/tx-display-settings-master-plan.md` and `docs/architecture/mockups/tx-display-tab.html`.
 - **Phase 3H — Skin system**, **Phase 3J — TCI + Spots**, **Phase 3K — CAT / rigctld**, **Phase 3M-recording — WAV + I/Q recording** all remain not-started.
+- **Phase 3F (Multi-panadapter)**, after 3M-2. Re-exposes the Active RX count widget (hidden in v0.4.0 because it was stuck-at-1 in single-RX) and finally exercises `RadioModel::setActiveRxCountLive`. Also lands the aamix anti-VOX path that the v0.4.0 single-RX direct pump deferred. Also unblocks RADE-on-A while SSB-on-B multi-slice scenarios (currently a known limitation per Row 12 of the Phase 3R bench matrix).
+- **HL2 RADE bench follow-up**, gated on closure of the HL2 ATT/filter safety audit. Tracked by Row 9 of `docs/architecture/phase3r-verification/README.md`.
+- **Phase 3H (Skin system)**, **Phase 3K (CAT / rigctld)**, **Phase 3M-recording (WAV + I/Q recording)** all remain not-started.
+
+### Shipped in v0.5.2 (2026-05-24)
+
+**One major epic + a new SKU port + a new UI subsystem + a polish tail, landing on top of v0.5.1.** 268 commits since v0.5.1.
+
+- **Phase 3P-II (External RF accessories + analog S-Meter port).** Four-phase epic shipped (slotted before 3M-2 per `docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-design.md` §13). Phase 1 PGXL/TGXL baseline (AetherSDR 1:1: `PgxlConnection` TCP 9008 V/R/S parser, `TgxlConnection` TCP 9010 V/R/S parser, `TunerModel` 13 Q_PROPERTYs, `LanDiscovery` UDP broadcast on 9008/9010, `AmpApplet`, `TunerApplet` rewire, `RelayBar`, Setup → Network → Peripherals with Scan LAN dialog). Phase 2 analog S-Meter port from Thetis (`SMeterWidget` 180° needle arc + S-unit scale, four RX modes: Signal / Sig Avg `RXA_S_AV` / Signal Peak / Max Bin `SetupDetectMaxBin`+`GetDetectMaxBin`, right-click context menu replaces inline strip, PGXL 2 kW snap, peak hold Fast/Medium/Slow, AppSettings round-trip). Phase 3 connection robustness (exponential auto-reconnect 1/2/5/10/30/60 s, keepalive 30 s, RTT-correlated ping 10 s, full PGXL pairing flow `amplifier create` + `flexradio pair` with paired-serial capture, band-change notifications, `ConnectionDiagnostics` 10 Q_PROPERTYs at 1 Hz coalesce, PeripheralsPage live status). Phase 4 advanced UI (`PgxlAdvancedPage` + `TgxlAdvancedPage` Setup pages, `FaultLog` 10-entry ring buffer with likelyCause heuristic, `TuneMemoryStore` per-(antenna, band) auto-recall, `TxInterlockPolicy` Disabled/Warn/Block + SWR gate + grace, `PgxlInterlockPage` under Setup → Transmit, antenna label persistence, power-cap soft-alert toast, applet right-click navigation). Bench verification matrix at `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md` (36 rows pending live PGXL + TGXL hardware; Row 18 HL2 gated on ATT/filter audit).
+
+- **ANAN-G2E (HermesC10) SKU port.** New board enum + capability row, hardware profile init verified against Thetis v2.10.3.15, codec wrappers (`SetADCSupply` + `LRAudioSwap`), discovery byte 0x14 → `HPSDRHW::HermesC10`, BPF1 algorithm family (`setAlex1HPF`), Hermes-class DDC4 + DDC0 + PS-DDC, PA telemetry (fwd-power triplet, current / supply-volts), per-model preamp items, `SkuUiProfile` EXT label overrides, `AddCustomRadioDialog` wiring. 12 ANAN-G2E bench tasks (A3 / A4 / B4'-B7' / D1-D5 / E1-E5 / F1-F6). G2E P2 RX unblock (mask dither/random for HermesC10, zero rate on disabled DDCs, retry SendStop + bounds-check I/Q batch) + Thetis-faithful disconnect (CmdGeneral winddown, no `run=0` frame). Bench-verification matrix at `docs/architecture/2026-05-21-anan-g2e-verification/README.md` (12 rows; F2/F3/F4/F6 documented as `DONE_WITH_CONCERNS`; pending live G2E hardware).
+
+- **Applet visibility controller.** New `AppletVisibilityController` + AppSettings round-trip, hamburger menu embedded in the AppletPanel banner / S-Meter title bar, View → Containers → Applets show/hide section, two-way menu sync, capability-gated `setAvailable` axis, RADE-aware routing, master-toggle live UI gating via `RadioModel::fourO3AEnabledChanged`. Retires View → Network Applets. `setAppletVisible` preserves stack order so reordering survives visibility toggles. Sweep across all applets dedupes the double-header bug from the prior banner row.
+
+- **4O3A integration polish tail.** PGXL bar-graph zero-on-post-TX, TGXL identity labels populate, PGXL pre-standby on TGXL hardware TUNE (pcap-canonical), event-driven FlexAPI interlock chain + MOX RF-flow gate (PTT_REQUESTED → ready ACK → TRANSMITTING), PGXL/TGXL TUNE end-to-end + `operate=1` wire format + LAN PTT bridge, route-aware FLEX discovery (computed subnet address, not 255.255.255.255), canonical FlexRadio-format 16-digit serial from MAC, PGXL SmartSDR API responder explicit-IPv4 bind (macOS IPv6 default blocked PGXL connect), AmpApplet renamed "AMP" → "Power Genius", master-toggle auto-connect gating, distinguish user-initiated disconnect from network drop.
+
+- **TCI live-state + 5 review-issue fixes** (six-commit tail on Phase 3J-1). Init burst defaults wire-aligned with Thetis (P1), broadcast slice state changes to connected clients, ChangedHandlers port, af/mon roundtrip in-spec, sliceAdded hook restored after stop/start, setFilterBand single-emit, live VFO broadcast reads `rx2Enabled`, agc_mode wire-token conversion. Plus spectrum / meter fixes: setDbmCalOffset triggers VBO re-render, meters forward Thetis RXOffset to spectrum, MaxBin reads rendered pixels.
+
+- **PS-A persistence + bench tail.** PS-A direct AppSettings save (three-bug stack fixed end-to-end), per-packet PS pairing source-first ported from Thetis `sync.c InboundBlock(id=1)`, PsForm live `info[]` / FB readout / autoCal persistence, TwoTone power defaults bumped to 10 W.
+
+- **PA profile + quit handling.** Manifest backfill on factory-profile lookup, disconnect-on-quit, SIGTERM handler.
+
+**Build + packaging:** no new vendored dependencies. CMakeLists.txt project VERSION 0.5.1 → 0.5.2. Artifact build matrix on `release.yml` is unchanged from v0.5.1.
+
+**Deferred / known limitations in v0.5.2:**
+- Live PGXL + TGXL hardware bench (36-row matrix at `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md`).
+- Live ANAN-G2E hardware bench (12-row matrix at `docs/architecture/2026-05-21-anan-g2e-verification/README.md`; 4 documented `DONE_WITH_CONCERNS` gaps F2/F3/F4/F6).
+- HL2 RADE bench verification still gated on HL2 ATT/filter audit closure (Row 9 of the Phase 3R bench matrix).
+- RADE multi-slice (RADE on A while SSB on B); Phase 3F future.
+
+### Shipped in v0.5.1 (2026-05-15)
+
+**Patch release on top of v0.5.0.** Eight fix-only PRs.
+
+- **Three release-artifact ship-blockers fixed:** Windows installer + portable ZIP were missing `rade.dll` (PR #250); macOS x86_64 DMG silently shipped without `Qt6::WebSockets` so FreeDV Reporter / PSK Reporter / TCI were disabled (PR #251; also promotes `Qt6::WebSockets` to REQUIRED in `CMakeLists.txt`); HL2 + Windows 11 waterfall sliders did not stick across launches (PR #243 closes issue #230 reported by Chris W4ORS); root-caused to `m_wfLow/HighThreshold` doing double duty as both persisted user setting and per-frame runtime AGC/Clarity output. Source-first re-aligned with Thetis `display.cs:2522 + 2536 + 6575-6594 [v2.10.3.13]`.
+- **Three persistence / connection-state correctness fixes:** VOX needed juggling to prime on radio connect (PR #253; `MoxController::primeWdspState` re-emits load-time signals after late-wired TxChannel connect); connection state stuck `Connected` on failed initial connect (PR #242 closes #239; both P1 and P2 now stay `Connecting` until first frame promotes to `Connected`); orphan `.bak` data-loss gap closed (PR #249 follow-up to #241; `AppSettings::load` falls through `Missing` to `.bak` if `.bak` exists, no longer silently goes to defaults).
+- **Two CodeQL pipeline maintenance fixes:** CodeQL required Qt 6.8 + `qt6-websockets-dev` (PRs #252 / #254). Replaces apt `qt6-*` with `jurplel/install-qt-action@v4` matching `ci.yml` and `release.yml`. Drops the stale `-DNEREUS_GPU_SPECTRUM=OFF` workaround (Qt 6.8 has `QRhiWidget`).
+
+### Shipped in v0.5.0 (2026-05-13)
+
+**Three major epics + an extended bench-fix tail landing together in a single minor release on top of v0.4.0:**
+
+- **Phase 3J-1 (TCI v2.0 WebSocket server).** Thetis-faithful port of the TCI server so external programs (WSJT-X, JTDX, FreeDV, Quisk, ESDR3, N1MM, Log4OM, contest software) can drive NereusSDR over a WebSocket (Setup > CAT/Network > TCI Server). 8 new core classes (`TciServer`, `TciProtocol`, `TciClientSession`, `TciBinaryFrame`, `TciSensorManager`, `TciVfoCoalescer`, `TciSendQueue`, `TciVolume`), 2 new applets (`TciApplet` + `ClientChainApplet`), Tools > TCI Server + View > Network Applets menu entries, 4-state bottom-bar TCI indicator. Init burst is byte-for-byte parity with Thetis (~98 wire frames) modulo a documented typo divergence. 62 dispatch commands across 8 families, 3-priority send queue (status > sensor > spectrum), Layer-3 VFO coalescer for wheel-acceleration spins. Binary RX audio pipeline with per-stream WDSP resampler lifecycle (8 / 12 / 16 / 44.1 / 48 kHz client rates; FreeDV 8 kHz / Quisk / JTDX 12 kHz round-trip end-to-end). TX audio gated by single-client mutex + ring buffer so burst producers match the WDSP steady consumer. IQ stream with IQSwap + AlwaysStreamIQ. 18 ctest binaries + matrix-driven verification harness (~80 rows in `tests/data/tci/matrix.csv`). 15 closeout items shipped after the initial port stabilized the on-bench behaviour against real clients (WSJT-X TX cycles, FreeDV 8 kHz audio, ESDR3 / N1MM / Log4OM `Q_INVOKABLE` long tail of 56 production shims, bind-interface dropdown, TciLogWindow viewer, per-(band, mode) `LastFilter` persistence, MOX-gated TX sensor broadcast, real RX S-meter + TX power/SWR sensor wiring, HL2 bandwidth-monitor startup grace). 9 documented divergences from Thetis (init-burst typo fix, Qt6 `QWebSocketServer` replacing hand-rolled RFC 6455 framing, Slice A/B/C/D in UI vs `trx:N` on wire, UTF-8 outbound text, single-class `ClientChainApplet`, sensor-interval aggregation, broadcast-to-all-clients, bind-interface dropdown, DIGU/DIGL F5 default restoration).
+- **Phase 3J-2 (Spot system + FreeDV Reporter + PSK Reporter).** Full client-side ingest for DX cluster (telnet to e.g. `dxc.k1ttt.net:7300`), RBN (`telnet.reversebeacon.net:7000` with per-spot SNR), WSJT-X UDP (port 2237), SpotCollector / DXLab UDP, POTA HTTPS auto-poll, FreeDV Reporter (`qso.freedv.org` Socket.IO), and PSK Reporter IPFIX. SpotHubDialog (Tools > Spot Hub, Ctrl+Shift+S) with 9 tabs: per-source tabs, unified Spot List with band + source pill filters, and a Display tab whose knobs (ShowSpotsOnSpectrum / MaxSpotsPerSpectrum / font size / per-source toggles) round-trip through AppSettings. FreeDVReporterDialog (Tools > FreeDV Reporter, Ctrl+Shift+R) with a 14-column live station view, TX-station red highlight + RX-station green highlight + 6-second clear, QSY to remote station, MRU status messages, and 2-hour idle auto-removal. SpotModel + SpotTableModel + BandFilterProxy + FreeDVStationModel + RxDecodeModel own the data tier. DxccColorProvider integrates a 4-tier worked-status resolver against cty.dat (in-tree quarterly refresh) and an operator-supplied ADIF log (e.g. WSJT-X's `wsjtx_log.adi`). Panadapter overlay renders spots with collision-avoidance multi-level stacking and `+N` cluster badges; click-to-tune snaps the active slice to the spot frequency. Auto-connect restore on launch via `RadioModel::restoreSpotClientAutoStartState`. RadioModel owns 7 spot clients (DxClusterClient telnet, WsjtxClient UDP, SpotCollectorClient UDP, PotaClient HTTPS, FreeDVReporterClient Socket.IO, PskReporterClient IPFIX, plus the RBN client driven through DxClusterClient on the RBN host).
+- **Phase 3R (RADE as a true peer mode).** Vendored `radae_nopy` (BSD-2-Clause, pinned to SHA b289102) and Opus (LPCNet + FARGAN) under `third_party/rade/`. Neural-net weights are compiled into the librade binary, so no external model file ships. Added approximately 9 MB to the binary on every platform. `RadeChannel` (RX + TX paths, hybrid port from AetherSDR's structure + freedv-gui's DSP pipeline) wired to WdspEngine via a mode-aware channel swap on `DSPMode::RADE_U` / `DSPMode::RADE_L` (sideband split landed in `0928d88d` to give RADE the correct 1700 Hz bandpass). Adopted the Task I4 Option B decision (per upstream review BLOCKED): use third_party/rade's native callsign-over-EOO API directly through a thin `RadeText` wrapper instead of porting freedv-gui's `rade_text.c` + roughly 1500 lines of codec2 dependencies. RADE TX shipped end-to-end (the earlier draft K-bench deferral has been retired): `TxWorkerThread` semaphore-wake pump feeds the RADE encoder, `sendTxIq` carries the 24 kHz stereo modem output, and TUNE in RADE mode routes through the WDSP modulator. Mode menu surfaces RADE entries; VFO flag gains a mode-aware SNR row (grey / yellow / green by SliceModel::snrDb) plus a speaker-callsign prefix when the EOO decoder extracts one; RadeApplet docks in the right column when RADE is the active mode (profile combo + sync indicator + Reset Vocoder button). `MicProfileManager` ships a new RADE factory profile (22 total, was 21): Leveler enabled, ALC + CFC + CESSB + Phase Rotator all bypassed. `RxDecodeModel` now sources from both WSJT-X UDP decodes and RADE callsign-over-EOO decodes.
+- **Bench-fix tail (2026-05-11 → 2026-05-12).** Sixteen wire / parser / UX gaps that surfaced when the 3J-2 + 3R drafts hit a real radio + a real DX cluster + a real WSJT-X feed:
+  - **First-MOX modulation fix (audio_volume seed at connect).** `RadioModel::m_lastAudioVolume` started at 0 and only updated when the user moved the power slider OR engaged TUNE (which incidentally pushed an audioVolume value). First MOX without prior TUNE produced no RF — wire byte and `setTxFixedGain` IQ scalar both stayed at zero. Seed `setPowerUsingTargetDbm(bFromTune=false, bSetPower=true)` once in the WDSP-init `txSetup` lambda after the existing `pushTxModeAndBandpass` seed (same shape as issue #153 sub-bug 2); MOX now keys with full drive on the first press whether or not the user has touched TUNE.
+  - **Spot system: 10 missing client-lifecycle wires.** `MainWindow::openSpotHub` only forwarded the FreeDV Reporter Start/Stop signals to the client. The other 10 lifecycle signals (`connectRequested`, `disconnectRequested`, `rbnConnectRequested`, `rbnDisconnectRequested`, `wsjtxStartRequested`, `wsjtxStopRequested`, `spotCollectorStartRequested`, `spotCollectorStopRequested`, `potaStartRequested`, `potaStopRequested`) emitted from the SpotHubDialog per-tab buttons fell on the floor — the clients themselves were correct, just disconnected from the dialog. Auto-start path via `restoreSpotClientAutoStartState` bypassed the broken UI wire entirely, which is why launch-time auto-connect appeared to work but every manual Connect / Start did nothing. Adds the 10 missing connects in `openSpotHub`.
+  - **Spot system: DX cluster DXSpider format parser.** `DxClusterClient::parseDxSpotLine` only knew the AetherSDR-ported classic format (`DX de SPOTTER: FREQ CALL ... TIMEZ`). The default cluster host shipped in defaults (NG7M-1 running DXSpider V1.57) sends spots in DXSpider format (`FREQ CALL DD-MMM-YYYY TIMEZ COMMENT <SPOTTER>`) which never matched — every spot was dropped at the parser, even though the TCP login + welcome banner worked. Adds a second regex with fall-through; both formats now parse.
+  - **Spot system: SpotModel → SpectrumWidget overlay bridge (`refreshSpots` lambda).** `SpectrumWidget::setSpotMarkers()` was defined but never called from anywhere — the entire panadapter spot overlay had no data source. AetherSDR's `refreshSpots` lambda on MainWindow that translates SpotModel state into SpectrumWidget markers never carried over in the port. Adds the lambda in MainWindow ctor; subscribes to `SpotModel::spotAdded`/`Updated`/`Removed`/`Cleared`/`Refreshed`; rebuilds the marker vector per change. DxCC-aware coloring via `DxccColorProvider::colorForSpot`.
+  - **Spot system: SpotTableModel ownership moved RadioModel-side.** `SpotTableModel` was owned by `SpotHubDialog` and constructed only when the user opened Tools → Spot Hub for the first time. The `wireClient` lambdas connecting `client.spotReceived → SpotTableModel::addSpot` lived inside the dialog construction — so auto-connected sources flowed past with nothing listening for the Spot List table. Symptom: launching with auto-connect on left the list empty until the user manually disconnected+reconnected each source AFTER opening the dialog (the workaround that worked because at that point the dialog was open and wires were live). Move ownership to RadioModel as a sibling to SpotModel; wire client.spotReceived → SpotTableModel in RadioModel ctor; dialog takes a non-owning pointer.
+  - **Spot system: connect / start / stop UI feedback wired on all source tabs.** Status labels and button text never updated on DX Cluster, RBN, WSJT-X, SpotCollector, POTA, or PSK Reporter tabs because the dialog never subscribed to the corresponding `connected`/`listening`/`started`/`stopped` signals on each client. Adds the matching slot blocks per tab; button flips Start ↔ Stop, status label flips Stopped ↔ Connected / "Listening on …" / "Polling api.pota.app" / "Auto-send every 5 minutes"; console widget on each tab also gets the raw-line stream now.
+  - **Spot system: PSK Reporter source-first port from freedv-gui.** PSK Start button was wired to nothing. Maps Start to `setAutoSendIntervalSec(PskReporterClient::kReportingIntervalSec)` where the constant = 300 s (= freedv-gui `main.cpp:2597 [@77e793a]` `5 * 60 * 1000`). Stop disarms the timer. Dropped the NereusSDR-specific `FreeDvReporter/ReportToPsk` gate; replaced with `isAutoSendActive()` (matches upstream's "PSK is in m_reporters[] iff enabled" semantics). Added WSJT-X spot fan-out into `m_pskReporter->reportDecode` matching freedv-gui's `main.cpp:1959-1966 [@77e793a]` `addReceiveRecord` loop. `restoreSpotClientAutoStartState` now actually arms the 5-min timer when `PskReporterAutoStart=True` (it previously only set identity, which is why auto-start did nothing).
+  - **Spot overlay: 10-gap closure against AetherSDR audit.** Source-first adversarial audit against AetherSDR `@0cd4559` identified 10 gaps in the panadapter spot overlay; this release closes all 10. (1) Hover tooltip with callsign / freq / mode / source / spotter / comment / timestamp. (2) `Qt::PointingHandCursor` over spot labels and cluster badges. (3) Right-click context menu (Tune to / Copy Callsign / Lookup on QRZ / Remove Spot) — new `spotRemoveRequested(int)` signal wired to `SpotModel::removeSpot`. (4) Cluster popup verified as already a verbatim port. (5) Memory-spot variant ("Apply <call>" instead of "Tune to <call>"). (6) Spot List ↔ panadapter bidirectional hover sync — new `spotHoverIndexChanged(int)` from spectrum + `spotListHoverChanged(int)` from dialog; `setMouseTracking(true)` on the spot table; matching key callsign + freq + source; halo paint around matched label. (7) Per-source panadapter visibility toggles — new "Show on panadapter" group on Display tab with 7 checkboxes; persists under `SpotSourceVisible/<source>`; `drawSpotMarkers` skips hidden sources entirely. (8) `leaveEvent` override hides tooltip + clears hover state. (9) Hover-halo paint in `drawSpotMarkers` driven by `setHoverSpotIndexExternal`. (10) Per-source visibility mask gate at the top of the `drawSpotMarkers` loop.
+  - **FreeDV Reporter: 4 missing-features port from upstream.** (a) `FreeDVReporterClient::setHiddenFromView(bool)` — Socket.IO `hide_self` / `show_self` events (port from freedv-gui `pskreporter.cpp:704-729 [@77e793a]`); on hide-to-show re-emits cached freq/tx/message; on Socket.IO ACK re-asserts hidden state. New "Hide my station from the dashboard" checkbox in the FreeDV Preferences group. (b) Frequency display in kHz toggle — `FreeDvReporter/FrequencyAsKhz` setting toggles both column header (MHz ↔ kHz) and cell format (4-dec MHz ↔ 1-dec kHz) matching upstream `freedv_reporter.cpp:108, 3180-3194 [@77e793a]`. (c) Sort persistence — `FreeDvReporter/SortColumn` + `FreeDvReporter/SortAscending` per upstream `FreeDVConfiguration.cpp:52-53 [@77e793a]`. (d) Column-width persistence — `FreeDvReporter/ColumnWidths` as comma-joined CSV; restore loop runs before the persist connect wire so initial defaults don't loop back.
+  - **FreeDV Reporter: distance/heading were always zero.** `FreeDVStationModel::setOurGridSquare()` was defined but no code path called it — `m_ourGrid` stayed empty, `applyDistanceHeading` short-circuited at `m_ourGrid.size() < 4`, every Distance + Hdg column read 0 / dash. Wires `User/GridSquare` → `setOurGridSquare` in RadioModel ctor; also forwards on `SpotHubDialog::identitySaved` so the columns recompute live when the user saves identity.
+  - **FreeDV Reporter: row highlight wins over selection.** Delegate paint was filling the highlight rect BEFORE `QStyledItemDelegate::paint`, which then called `drawControl(CE_ItemViewItem)` → `drawPrimitive(PE_PanelItemViewItem)` and overwrote the row with the selection brush. Fix: stash the bg color into `opt.backgroundBrush` and re-point `QPalette::Highlight` at the same color so for selected rows the selection overlay coincides with the highlight color instead of competing with it. Matches freedv-gui's `wxDataViewListCtrl` semantics where `reportData->backgroundColor` survives selection.
+  - **FreeDV Reporter: messages weren't pushing on connect.** The qso.freedv.org server doesn't always emit `connection_successful` after `role=report` auth (observed on bench 2026-05-11 — auth went out but the event never arrived, so the `onConnectionSuccessful` handler never fired and the cached `m_statusMessage` never reached the dashboard). Belt-and-braces: also push the cached message on the Socket.IO Connect ACK (`'0'` frame) which is unconditionally emitted by the client. Idempotent if `connection_successful` does later fire.
+  - **FreeDV Reporter: VFO-spin no longer DoS'es qso.freedv.org.** Every sub-Hz frequency change fired a Socket.IO `freq_change` event — wheel acceleration could push 100+ packets/sec at the server. New throttle policy: 7 s trailing dwell (single-shot timer, restarted on every change) + 100 kHz band-jump fast-path (delta from last-published bypasses dwell) + MoxController force-flush on `txAboutToBegin` (TX never reports a stale freq). Three named constants on `RadioModel`: `kFreedvFreqDwellMs`, `kFreedvFreqJumpHz`.
+  - **VFO flag: RADE speaker callsign display.** SNR row now shows `<callsign> ● <snr>dB` instead of `RADE ● <snr>dB` when the RADE decoder pulls a callsign from the EOO text channel. New `SliceModel::lastRadeRxCallsign` Q_PROPERTY (sticky-while-in-RADE, cleared on mode-off-RADE / RADE_U↔RADE_L sideband swap / debounced sync rise). The sync-rise debounce uses `kRadeSyncDropClearDebounceMs = 2000` so flickery sync on marginal copy doesn't lose the callsign mid-over; only sync drops ≥ 2 s clear the cache on re-acquire (new-transmission heuristic). `VfoWidget::setRadeCallsign` slot composed alongside `setRadeSynced` + `setRadeSnrLabel` + `setRadeFreqOffset` through a unified renderer; cached state lets each setter repaint without losing the others.
+  - **First-time setup UX.** Settings tab on SpotHub gains a first-time-setup banner (orange-on-dark, warning palette) shown only when `User/Callsign` is empty: "First-time setup — enter your callsign and grid square below. Spot sources stay disconnected until your callsign is set." All callsign / grid placeholder text rewritten from passive ("your callsign") to action ("Enter Callsign Here — set under Settings tab"). The banner disappears the moment a callsign saves; existing users never see it.
+
+**Build + packaging:** `third_party/rade/` and `third_party/r8brain/` (MIT-licensed 24-bit polyphase resampler) added to the vendored dependency set. CMake glue builds RADE + Opus + LPCNet via ExternalProject; CI cold build adds approximately 90 s on first job, incremental builds cached. AppImage, DMG, and Windows installer artifacts all carry the embedded weights without any post-install model-download step. New attribution scaffolding: `FREEDV-GUI-PROVENANCE.md` registry + `scripts/discover-freedv-gui-author-tags.py` + integration into `verify-inline-tag-preservation.py`.
+
+**Architecture-level changes:** `MicProfileManager` factory profile count 21 -> 22 (added RADE). `RxDecodeModel` now sources from RADE callsign decodes in addition to WSJT-X. `SpectrumWidget` extended with `loadSpotDisplaySettings` and spot test seams. `SpotTableModel` ownership now lives on `RadioModel` (sibling to `SpotModel`). AppSettings gains the spot-source connection identity keys, the Display-tab knobs, the DXCC color tracking keys, the per-slice RADE state, the FreeDV Reporter Hidden / FrequencyAsKhz / SortColumn / SortAscending / ColumnWidths keys, and the per-source `SpotSourceVisible/<source>` panadapter-visibility keys.
+
+**Deferred / known limitations in v0.5.0:**
+
+- HL2 RADE bench verification is gated on the HL2 ATT/filter safety audit closure (Row 9 of the Phase 3R bench matrix).
+- RADE-on-A while SSB-on-B multi-slice is exploratory; full coverage waits on Phase 3F.
 
 ### Shipped in v0.4.0 (2026-05-05 → 2026-05-08)
 
@@ -663,7 +733,39 @@ Thetis source: `console.cs:29311-29650`, `cmaster.cs:491-540`, `network.c:1250-1
 
 Verification: Key MOX, see RF output on ANAN-G2, hear SSB on another receiver.
 
-### Phase 3M-2: CW TX  **[Next major TX epic — after 3M-3a-iii ships]**
+### Phase 3P-II: External RF accessories (PGXL + TGXL) + analog S-Meter port  **[Feature-complete, bench verification pending]**
+**Status:** Feature-complete; bench verification pending. All 4 phases implemented on branch `claude/jolly-golick-11c3c3`. Bench matrix at `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md` (36 rows). Spec at `docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-design.md` (1688 lines); plan at `docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-plan.md` (3112 lines, 4 phases, ~100 tasks, 289 actionable checkboxes).
+
+**Why this slot.** v0.5.0 shipped 3J-2 + 3R; the 3M-3 TX-processing tail is closed; HL2 ATT/filter audit is closed. The remaining big-ticket TX work (3M-2 CW TX) wants HL2 bench time, so pulling PGXL/TGXL forward gets the amplifier story shipped against an ANAN-G2 in parallel without blocking 3M-2.
+
+**Goal:** Wire NereusSDR to FlexRadio / 4O3A PGXL amplifier and TGXL tuner over Ethernet with PGXL-aware analog S-Meter, full FlexRadio API command surface, and operator-facing device-config UI.
+
+**Two upstreams:**
+- **AetherSDR** (GPLv3) is the 1:1 baseline for PgxlConnection / TgxlConnection / TunerModel / AmpApplet / TunerApplet rewire / RelayBar / SMeterWidget. Verified against the AetherSDR HEAD at the time of port (sha captured in `.aether-sha` scratch file per plan Task 1).
+- **Thetis** (`v2.10.3.13-7-g501e3f51`, cite `[@501e3f5]`) for the two new SMeterWidget RX modes (Sig Avg + Max Bin) and the WDSP `SetupDetectMaxBin` / `GetDetectMaxBin` + `GetRXAMeter(RXA_S_AV)` calls.
+- **FlexRadio's published PowerGenius Ethernet API wiki** is the documentation-of-truth (not an attribution source) for the Tier 2-4 command verbs AetherSDR doesn't call: `amplifier create`, `flexradio ampslice=...`, `keepalive enable`, `ping`, `interlock create / disable`, `setup read` + write, `ifconf read` + write, `save`. These additions exist because NereusSDR is the exciter in this topology, not a peer client like AetherSDR.
+
+**Scope (per spec, four phases):**
+1. **PGXL/TGXL baseline** (~1200 LOC). Port the AetherSDR command set + UI. Setup -> Network -> Peripherals page with manual IP + Scan LAN (UDP listener on 9008 / 9010 with the official FlexRadio regex). MainWindow auto-connect, bottom-status TGXL chip.
+2. **Analog S-Meter port** (~900 LOC). SMeterWidget replaces the composite header. Settings move to a right-click context menu (TX Mode / RX Mode / Peak Hold submenus). RX modes: Signal / Sig Avg / Signal Peak / Max Bin (last two ported from Thetis). PGXL-aware power scale snaps to 2 kW with a red 1.5 kW threshold when the amp is in OPERATE; falls back to barefoot 120 W / Aurora 600 W otherwise. Standby-aware feed switch routes from PGXL `peakfwd` when paired + operating, exciter `FWDPWR` otherwise.
+3. **Connection robustness** (~600 LOC). `amplifier create` on connect; attempt `flexradio` pairing with graceful fallback (PGXL may reject an ANAN serial format - the spec is honest about that risk). `keepalive enable` + `ping` watchdog; auto-reconnect with 1 / 2 / 5 / 10 / 30 / 60 s backoff. Band notify on SliceModel `bandChanged`. ConnectionDiagnostics (uptime / RTT / frame counts) bound to the Advanced page.
+4. **Advanced UI + UX wins** (~700 LOC). Setup -> Network -> PGXL Advanced (6 sections: Identity, Hardware, Network, Pairing, Diagnostics, Fault history) + Setup -> Network -> TGXL Advanced (5 sections, parallel structure, plus antenna labels and tune-memory management). Setup -> Transmit -> PGXL Interlock policy (Disabled / Warn / Block + grace period + optional SWR gate). Save & Reboot modal with reconnect-after-reboot recovery. Right-click context menus on AmpApplet (-> PGXL Advanced) and TunerApplet (-> TGXL Advanced + memory shortcuts). FaultLog (ring buffer of 10, JSON-persisted, `likelyCause` heuristic). TuneMemoryStore (per-band per-antenna relay cache).
+
+**NereusSDR-native UX divergences from AetherSDR** (intentional, called out in the spec):
+- S-Meter settings live behind a right-click context menu, not an always-visible inline strip.
+- Right-click on either accessory applet opens the corresponding Advanced page.
+- Two extra RX meter modes (Sig Avg, Max Bin) from Thetis.
+- Per-antenna user-defined labels on TGXL ANT 1/2/3 buttons.
+- Frequency-keyed tune memory store (TGXL has internal memory but AetherSDR doesn't surface it; NereusSDR manages this client-side).
+- Optional TX interlock policy (Disabled default, opt-in).
+
+**Out of scope:** OpenHPSDR-native amp/tuner abstraction (future epic); per-MAC scoping of PGXL/TGXL settings; PGXL chip in bottom status bar (AetherSDR has none); Antenna Genius integration; SO2R 3WAY variant; CAT-serial pairing path (`catradio` command, requires 3K rigctld); PGXL `message` verb (debug-only).
+
+**Verification:** 14 unit tests (parsing, applyStatus, scale, peak hold, context menu, MaxBin smoothing, pairing accept/reject, keepalive miss, reconnect schedule, ping RTT, diagnostics aggregation, fault log ring buffer, tune memory recall, interlock modes). 36-row bench matrix at `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md` (created with the implementation PR), covering ANAN-G2 happy-path rows + HL2 rows gated on the existing ATT/filter audit precedent.
+
+**Estimated tenure:** ~3000 LOC of production code + ~30 new unit tests + ~20 new bench-matrix rows. Single PR per operator direction; expect the branch to live 2-3 weeks before merge.
+
+### Phase 3M-2: CW TX  **[After Phase 3P-II]**
 **Status:** Originally scheduled before 3M-3.  Schedule swapped 2026-04-29
 because (a) 3M-3 didn't need the HL2 hardware bench (DSP stages are
 introspectable on ANAN-G2), letting the HL2 ATT/filter safety audit run in
@@ -835,17 +937,61 @@ Key design reference: `docs/architecture/skin-compatibility.md`
 Verification: Load a Thetis skin, see colors/images applied, 4 pans still work.
 
 ### Phase 3J: TCI Protocol + Spot System
-**Goal:** TCI v2.0 WebSocket server + DX spot overlay system.
 
-Scope:
+**Goal:** TCI v2.0 WebSocket server + DX spot overlay system. **Split into two sub-phases:**
+
+- **Phase 3J-1 (TCI WebSocket server)** shipped in v0.5.0 (see entry above). The TCI-specific server work, separated from the spot system because TCI depends on the Phase 3O `IAudioBus` contract.
+- **Phase 3J-2 (Spot system + FreeDV Reporter + PSK Reporter)** shipped in v0.5.0 (see entry below).
+
+Phase 3J-1 scope:
 - TCI WebSocket server (~50 commands, scope v2.0 command set)
-- TCI spot ingestion path — external programs push spots via TCI
-- Built-in DX Cluster telnet client (AetherSDR-style `DxClusterClient`)
-- Built-in RBN client (AetherSDR-style `RbnClient`)
-- `SpotModel` (AetherSDR pattern, batched at 1Hz)
-- Spectrum overlay rendering for spots (callsign + frequency on panadapter)
-- Country/prefix database for callsign → country lookup
+- TCI spot ingestion path (external programs push spots via TCI)
 - Verify against Thetis `SpotManager2.cs` for completeness
+
+### Phase 3J-2: Spot System + FreeDV Reporter + PSK Reporter (shipped in v0.5.0)
+
+**Goal:** Standalone client-side spot pipeline (DX cluster, RBN, WSJT-X UDP, SpotCollector, POTA, FreeDV Reporter, PSK Reporter) + DXCC color provider + panadapter overlay, **not** gated on TCI.
+
+Design / plan / verification:
+- Design: `docs/architecture/phase3j2-3r-spots-and-rade-design.md`
+- Plan: `docs/architecture/phase3j2-3r-spots-and-rade-plan.md`
+- Verification: `docs/architecture/phase3j2-verification/README.md`
+
+Scope (all shipped):
+- 7 spot-source clients: DxClusterClient (telnet), WsjtxClient (UDP), SpotCollectorClient (DXLab UDP), PotaClient (HTTPS poll), FreeDVReporterClient (Socket.IO), PskReporterClient (IPFIX). RBN is handled through DxClusterClient against the RBN telnet host.
+- 5 models: SpotModel (TCI-keyed sink, ported from AetherSDR), SpotTableModel (QAbstractTableModel for the Spot List tab), BandFilterProxy, FreeDVStationModel (14-field live station map, NereusSDR-native), RxDecodeModel (local decode ring buffer, sources WSJT-X + RADE).
+- DXCC color stack: CtyDatParser (cty.dat), AdifParser (ADIF log), DxccWorkedStatus (worked-before tracker), DxccColorProvider (4-tier color resolver), all ported from AetherSDR.
+- 2 dialogs: SpotHubDialog (9-tab AetherSDR-faithful: per-source tabs + unified Spot List + Display knobs), FreeDVReporterDialog (Qt6 port from freedv-gui's wx UI with 14-column live view, menu bar, per-column filters, idle-sweep timer, status message bar).
+- SpectrumWidget extension: drawSpotMarkers overlay + click hit-test (ported from AetherSDR) with collision-avoidance multi-level stacking and `+N` cluster badge.
+- RadioModel: owns the 7 spot clients + 4 models (SpotModel, FreeDVStationModel, RxDecodeModel, SpotTableModel) + adapter slots; restoreSpotClientAutoStartState on launch.
+- Tools menu: Spot Hub (Ctrl+Shift+S), FreeDV Reporter (Ctrl+Shift+R). Both modeless singletons.
+- AppSettings: per-source connection identity (host, port, login callsign, AutoConnect), Display tab knobs (ShowSpotsOnSpectrum, MaxSpotsPerSpectrum, font size, per-source toggles), DXCC color tracking keys.
+- Attribution: byte-for-byte freedv-gui headers + new FREEDV-GUI-PROVENANCE.md registry + `discover-freedv-gui-author-tags.py` + integration into `verify-inline-tag-preservation.py`.
+
+Bench verification: matrix at `docs/architecture/phase3j2-verification/README.md` (11 rows). All non-deferred rows verified for v0.5.0.
+
+### Phase 3R: RADE as a True Peer Mode (shipped in v0.5.0)
+
+**Goal:** Add RADE (Radio Autoencoder) as a first-class peer DSP mode. Not implemented as a DIGU pretense, not a virtual audio bus, not a slice-mute hack: `DSPMode::RADE` routes I/Q through a dedicated `RadeChannel` exactly as `SSB` routes through `RxChannel`.
+
+Design / plan / verification:
+- Design: `docs/architecture/phase3j2-3r-spots-and-rade-design.md`
+- Plan: `docs/architecture/phase3j2-3r-spots-and-rade-plan.md`
+- Verification: `docs/architecture/phase3r-verification/README.md`
+
+Scope (all shipped):
+- Vendored RADE library: `third_party/rade/` (radae_nopy at SHA b289102, BSD-2-Clause + Opus with LPCNet/FARGAN). Neural-net weights compiled into librade; no external model file ships. Approximately 9 MB added per platform.
+- Vendored r8brain: `third_party/r8brain/` (MIT, 24-bit polyphase resampler for the RADE audio chain and general future use).
+- `RadeChannel` (RX + TX paths): hybrid port. AetherSDR for the Qt6-native channel structure + freedv-gui for the DSP pipeline truth.
+- `RadeText` wrapper: Task I4 Option B per upstream review. Uses third_party/rade's native callsign-over-EOO API directly instead of porting freedv-gui's `rade_text.c` + roughly 1500 lines of codec2 dependencies.
+- Mode dispatch: new `DSPMode::RADE` enum entry. WdspEngine swaps RxChannel <-> RadeChannel on mode change (destroy-and-recreate by design); band changes inside RADE keep the channel alive.
+- TX scaffolding: TxPath enum on TxWorkerThread + `RadeTxHpf80` HPF + `RadeTx48to16` resampler + modem-output connect plumbing (commits 34a9f14c / 181d3ee5 / 7beacdc5). Full real-time integration into the semaphore-wake TX pump deferred to K-bench follow-up after on-air RX verification.
+- UI surfaces: Mode menu RADE entry, VFO flag mode-aware SNR row (grey/yellow/green by SliceModel::snrDb), RadeApplet right-column docked when RADE is active (profile combo, sync indicator, Reset Vocoder button).
+- TX preset: MicProfileManager ships a new RADE factory profile (22 total, was 21). Leveler enabled; ALC + CFC + CESSB + Phase Rotator all bypassed.
+- RxDecodeModel: now sources from RADE callsign-over-EOO decodes in addition to WSJT-X UDP decodes.
+- Audio: route RADE rxSpeechReady to AudioEngine; SliceModel snrDb Q_PROPERTY for VFO flag SNR row.
+
+Bench verification: matrix at `docs/architecture/phase3r-verification/README.md` (12 rows). Row 2 (RADE TX bench) confirmed end-to-end on ANAN-G2 via on-air decode; Rows 9 (HL2 RADE bench) and 12 (multi-slice) remain explicitly deferred in v0.5.0. The 10 non-deferred rows passed.
 
 ### Phase 3K: CAT/rigctld + TCP Server
 **Goal:** External radio control for logging and contest software.
@@ -987,7 +1133,7 @@ The next meaningful steps:
 - **3G-RX-Epic v0.2.3 (dBm strip + NB family + 7-filter NR + PipeWire)** — ✅ Sub-A AetherSDR-style dBm scale strip with wheel-zoom range and hover crosshair; Sub-B full Thetis NB/NB2/SNB family port via `NbFamily` wrapper; Sub-C-1 7-filter NR stack on VFO flag DSP grid (NR1/NR2/NR3 RNNR rnnoise / NR4 SBNR libspecbleach / DFNR DeepFilterNet3 / MNR Apple Accelerate MMSE-Wiener / ANF) with `DspParamPopup` right-click quick controls; Phase 3O Linux PipeWire-native audio bridge supersedes 0.2.2 pactl fallback.
 - **3M-1 (Basic SSB TX)** (formerly 3I-1; renumbered after Phase 3I became the radio connector port) — **NEXT.** TxChannel WDSP wrapper, mic input, MOX state machine, TX I/Q output. Proves the TX path end-to-end and unblocks 3M-2..4, 3F, 3H.
 
-Execution order: **3M-1..4 → 3F → 3H → 3J+** (all 3G-* RX prep and 3P all-board parity have shipped; TX epic is the next major milestone)
+Execution order: **3M-1..4 -> 3J-2 + 3R (shipped in v0.5.0) -> 3M-2 -> 3F -> 3H -> 3K -> ...** (all 3G-* RX prep and 3P all-board parity shipped; 3J-2 spot system and 3R RADE peer mode shipped in v0.5.0; 3M-2 CW TX is the next major epic)
 
 ### Phase Dependencies
 

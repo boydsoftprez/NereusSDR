@@ -118,6 +118,36 @@ private slots:
         QCOMPARE(int(items.size()), 7);
     }
 
+    // HermesC10 (ANAN-G2E) → anan100d_preamp_settings (4 items), always.
+    // From Thetis console.cs:40871-40879 [v2.10.3.15] //N1GP G2E added:
+    //   case HPSDRModel.ANAN7000D:
+    //   case HPSDRModel.ANAN8000D:
+    //   case HPSDRModel.ORIONMKII:
+    //   case HPSDRModel.ANAN_G2E: //N1GP G2E added
+    //   case HPSDRModel.ANAN_G2:
+    //   case HPSDRModel.ANAN_G2_1K:
+    //   case HPSDRModel.ANVELINAPRO3:
+    //       // case HPSDRModel.REDPITAYA: // DH1KLM: removed for compatibility reasons
+    //       comboPreamp.Items.AddRange(anan100d_preamp_settings);
+    // NereusSDR dispatches by HPSDRHW; HermesC10 is the board for ANAN_G2E.
+    void hermes_c10_anan_g2e_four_items()
+    {
+        auto items = BoardCapsTable::preampItemsForBoard(HPSDRHW::HermesC10, /*alexPresent=*/false);
+        QCOMPARE(int(items.size()), 4);
+        QCOMPARE(QLatin1String(items[0].label), QLatin1String("0dB"));
+        QCOMPARE(QLatin1String(items[1].label), QLatin1String("-10dB"));
+        QCOMPARE(QLatin1String(items[2].label), QLatin1String("-20dB"));
+        QCOMPARE(QLatin1String(items[3].label), QLatin1String("-30dB"));
+    }
+
+    // HermesC10 with alexPresent=true → still 4 items (ANAN_G2E always
+    // uses anan100d; the alexPresent flag is irrelevant for this board family).
+    void hermes_c10_anan_g2e_alex_still_four_items()
+    {
+        auto items = BoardCapsTable::preampItemsForBoard(HPSDRHW::HermesC10, /*alexPresent=*/true);
+        QCOMPARE(int(items.size()), 4);
+    }
+
     // ─── PreampMode enum has 7 distinct values ───────────────────────────────
     // From Thetis enums.cs:246 [@501e3f5] — PreampMode enum.
     void preamp_mode_enum_seven_values()
