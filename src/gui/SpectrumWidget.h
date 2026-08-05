@@ -319,6 +319,23 @@ public:
 
     // ---- Frequency range ----
     void setFrequencyRange(double centerHz, double bandwidthHz);
+
+    /// Re-aim the display window WITHOUT touching waterfall history.
+    ///
+    /// setFrequencyRange treats any bandwidth change as a large shift and
+    /// clears the scrollback (SpectrumWidget.cpp:1238-1249). That is right
+    /// for a band jump and wrong for the MOX edge, which changes the window
+    /// twice per transmission: using it there deleted the receive
+    /// scrollback on every key-up and again on every un-key. The 2026-05-08
+    /// handoff called for exactly the opposite -- "on MOX-down, RX1
+    /// spectrum returns to the panadapter without losing waterfall
+    /// scrollback continuity".
+    ///
+    /// No reprojection either. Transmit rows and receive rows describe
+    /// different windows, and mapping one onto the other and back is lossy
+    /// in both directions; leaving the plane alone keeps the receive
+    /// history exactly as it was. Found by Codex on PR #317.
+    void setDisplayWindowPreservingHistory(double centerHz, double bandwidthHz);
     void setCenterFrequency(double centerHz);
     double centerFrequency() const { return m_centerHz; }
     double bandwidth() const { return m_bandwidthHz; }

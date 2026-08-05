@@ -1222,6 +1222,19 @@ void SpectrumWidget::scheduleSettingsSave()
     });
 }
 
+void SpectrumWidget::setDisplayWindowPreservingHistory(double centerHz,
+                                                       double bandwidthHz)
+{
+    if (bandwidthHz <= 0.0) { return; }
+    if (qFuzzyCompare(m_centerHz, centerHz)
+        && qFuzzyCompare(m_bandwidthHz, bandwidthHz)) {
+        return;
+    }
+    m_centerHz    = centerHz;
+    m_bandwidthHz = bandwidthHz;
+    update();
+}
+
 void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
 {
     const bool bwChanged = !qFuzzyCompare(m_bandwidthHz, bandwidthHz);

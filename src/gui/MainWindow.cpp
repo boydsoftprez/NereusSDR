@@ -3751,11 +3751,14 @@ void MainWindow::buildUI()
                     // If no slice (shouldn't happen during MOX, but guard
                     // anyway) reuse the RX DDC center as a best-effort
                     // fallback so the bins still render somewhere sane.
-                    SliceModel* slice = m_radioModel
-                        ? m_radioModel->activeSlice() : nullptr;
-                    const double carrierHz = slice
-                        ? static_cast<double>(slice->frequency())
-                        : m_savedSpectrumDdcHz;
+                    // The TRANSMITTING slice, not the active one. The pan
+                    // was already resolved from txBoundSlice above; centring
+                    // the bin mapping on activeSlice would put the trace at
+                    // the receive-focused slice's frequency whenever TX has
+                    // been handed to a different slice. Found by Codex on
+                    // PR #317.
+                    const double carrierHz =
+                        static_cast<double>(txSlice->frequency());
 
                     // Reconfigure the bin-frequency mapping.  centerHz /
                     // bandwidth are LEFT ALONE — the user's zoom window
@@ -3831,8 +3834,8 @@ void MainWindow::buildUI()
                     // span handed to visibleBinRange is the window width.
                     sw->setTxCenterFrequency(carrierHz);
                     sw->setTxSampleRate(2.0 * kTxDisplayHalfSpanHz);
-                    sw->setFrequencyRange(carrierHz,
-                                          2.0 * kTxDisplayHalfSpanHz);
+                    sw->setDisplayWindowPreservingHistory(
+                        carrierHz, 2.0 * kTxDisplayHalfSpanHz);
 
                     // PR #212 follow-up bench fix (KG4VCF, 2026-05-10):
                     // disable Clarity so the waterfall AGC takes over for
@@ -3955,8 +3958,8 @@ void MainWindow::buildUI()
                     sw->setTxCenterFrequency(0.0);
                     m_txAnalyzer->setSpectrumWindow(0, 0);
                     if (m_savedSpectrumBandwidth > 0.0) {
-                        sw->setFrequencyRange(m_savedSpectrumCenterHz,
-                                              m_savedSpectrumBandwidth);
+                        sw->setDisplayWindowPreservingHistory(
+                            m_savedSpectrumCenterHz, m_savedSpectrumBandwidth);
                     }
                     // Keep whatever the operator settled on as THE transmit
                     // grid, before putting receive back. This is what makes
