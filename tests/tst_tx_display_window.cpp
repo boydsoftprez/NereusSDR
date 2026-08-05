@@ -1,25 +1,27 @@
 // =================================================================
 // tst_tx_display_window.cpp — TX panadapter frequency window
 //
-// Covers the two pure Thetis ports behind the transmit display's
-// frequency axis:
+// Covers TxAnalyzer::spanClipBins, the pure Thetis port that decides how
+// much of the baseband the transmit analyzer emits:
 //
-//   TxAnalyzer::txDisplayWindowHz  <- console.cs:8024-8056  [v2.10.3.15]
-//                                     UpdateTXDisplayVars
-//   TxAnalyzer::spanClipBins       <- specHPSDR.cs:762-775  [v2.10.3.15]
-//                                     CalcSpectrum
+//   specHPSDR.cs:762-775 [v2.10.3.15] — CalcSpectrum, whose results become
+//   SetAnalyzer's fscLin / fscHin.
 //
-// Why these matter, from the bench on 2026-08-04 (J.J. Boyd, KG4VCF):
-// keying up put the TUNE tone at the wrong dial frequency while the RF
-// left the radio on the correct one. The analyzer was emitting the whole
-// +/-48 kHz baseband with no span clip, the pan kept its much wider RX
-// window, and SpectrumWidget stretched the one across the other -- so the
-// frequency axis lied. Thetis avoids this by deriving a narrow window from
-// the TX filter edges and clipping the analyzer to exactly that window.
-// These two functions are that derivation.
+// Why it matters, from two bench sessions (J.J. Boyd, KG4VCF):
+//   2026-08-04 — keying up put the TUNE tone at the wrong dial frequency
+//   while the RF was correct. The analyzer emitted the whole +/-48 kHz
+//   baseband, the pan kept its much wider receive window, and
+//   SpectrumWidget stretched one across the other, so the axis lied.
+//   2026-08-05 — with the window landing correctly the trace was still a
+//   broad blob, because 8 kHz sliced out of an unclipped 96 kHz leaves
+//   about a hundred real points to smear across a thousand pixels.
 //
-// Both are pure and need no WDSP channel, so unlike most of the TX display
-// they are fully testable here rather than only at a bench.
+// Thetis avoids both by deriving analyzer span and display window from one
+// zoom state (initAnalyzer), so its pixels always cover exactly what is on
+// screen. This function is how we do the same.
+//
+// Pure, so unlike the rest of the transmit display it needs no WDSP channel
+// and no bench.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -41,77 +43,6 @@ class TestTxDisplayWindow : public QObject {
     Q_OBJECT
 
 private slots:
-
-    // ── UpdateTXDisplayVars: the three sign cases ──────────────────────────
-
-    void usbFilterGivesCarrierUpwardWindow()
-    {
-        // USB in IQ space is entirely positive, e.g. [+150, +2850].
-        // Thetis: low = 0, high = 1.1 * h.
-        const auto [low, high] = TxAnalyzer::txDisplayWindowHz(150, 2850);
-        QCOMPARE(low, 0);
-        QCOMPARE(high, static_cast<int>(2850 * 1.1));  // 3135
-    }
-
-    void lsbFilterGivesCarrierDownwardWindow()
-    {
-        // LSB is the mirror: [-2850, -150] -> high = 0, low = 1.1 * l.
-        const auto [low, high] = TxAnalyzer::txDisplayWindowHz(-2850, -150);
-        QCOMPARE(high, 0);
-        QCOMPARE(low, static_cast<int>(-2850 * 1.1));  // -3135
-    }
-
-    void straddlingFilterIsSymmetricOnTheWiderEdge()
-    {
-        // AM / DSB straddle zero. Thetis takes the WIDER edge and mirrors
-        // it, so an asymmetric filter still yields a symmetric window.
-        const auto [low, high] = TxAnalyzer::txDisplayWindowHz(-1000, 2850);
-        QCOMPARE(high, static_cast<int>(2850 * 1.1));
-        QCOMPARE(low, static_cast<int>(2850 * -1.1));
-        QCOMPARE(low, -high);
-    }
-
-    // ── The 910 Hz floor ───────────────────────────────────────────────────
-    //
-    // A narrow filter (CW) would otherwise collapse the window to a few
-    // hundred Hz and leave nothing to look at. Thetis floors it at 1 kHz.
-
-    void narrowUsbFilterIsFlooredAtOneKilohertz()
-    {
-        // h = 500 is under the 910 threshold, so the 1.1 factor does NOT
-        // apply and the window opens to a flat 1000 Hz.
-        const auto [low, high] = TxAnalyzer::txDisplayWindowHz(0, 500);
-        QCOMPARE(low, 0);
-        QCOMPARE(high, 1000);
-    }
-
-    void narrowLsbFilterIsFlooredAtOneKilohertz()
-    {
-        const auto [low, high] = TxAnalyzer::txDisplayWindowHz(-500, 0);
-        QCOMPARE(high, 0);
-        QCOMPARE(low, -1000);
-    }
-
-    void justOverTheFloorUsesTheScaleFactorInstead()
-    {
-        // 911 is the first value above the threshold, so 1.1 applies and
-        // the result must NOT be the flat 1000. Pins the boundary in the
-        // right place: an off-by-one here would silently widen every CW
-        // window.
-        const auto [low, high] = TxAnalyzer::txDisplayWindowHz(0, 911);
-        QCOMPARE(low, 0);
-        QCOMPARE(high, static_cast<int>(911 * 1.1));  // 1002
-        QVERIFY(high != 1000);
-    }
-
-    void invertedFilterYieldsNoWindow()
-    {
-        // l >= 0 with h <= 0 matches none of Thetis's three branches, so
-        // its `int low = 0, high = 0;` initialisation survives untouched.
-        const auto [low, high] = TxAnalyzer::txDisplayWindowHz(100, -100);
-        QCOMPARE(low, 0);
-        QCOMPARE(high, 0);
-    }
 
     // ── CalcSpectrum: window to bin clips ──────────────────────────────────
 
@@ -191,72 +122,84 @@ private slots:
 
     // ── WDSP must be left with bins to work with ───────────────────────────
     //
-    // Bench 2026-08-05: with the span clip landing correctly, TUNE on a
-    // 7000DLE still showed a completely black pan. The span clips are not
-    // applied to the raw FFT; WDSP subtracts them from a span ALREADY
-    // reduced by the symmetric clip:
+    // Bench 2026-08-05: the span clips are not applied to the raw FFT. WDSP
+    // subtracts them from a span ALREADY reduced by the symmetric clip:
     //
     //   From wdsp/analyzer.c:1283 [TAPR v1.29]:
     //     a->pix_per_bin = (double)a->num_pixels /
     //       ((double)(a->num_stitch * (a->out_size - 1 - 2 * a->clip))
     //        - a->fsclipL - a->fsclipH - 1.0);
     //
-    // Carrying the 0.04 CLIP_FRACTION through drives that denominator
-    // negative for any narrow window and the analyzer emits nothing.
     // Thetis sets `int sclip = 0;` in CalcSpectrum for exactly this reason
-    // (specHPSDR.cs:776-777 [v2.10.3.15]).
+    // (specHPSDR.cs:776-777 [v2.10.3.15]), and TxAnalyzer does the same
+    // whenever a window is set.
     //
-    // This test asserts the arithmetic that has to hold. It cannot reach
-    // into TxAnalyzer's private clip choice, so it checks the property that
-    // choice exists to satisfy: with sclip = 0 there is room, and with the
-    // 0.04 clip there is not.
-    void wdspIsLeftWithBinsAfterSpanClipping()
+    // What that buys is measured against the PIXELS, not against zero. On a
+    // narrow window the 0.04 CLIP_FRACTION drives the surviving count
+    // negative outright and the analyzer emits nothing at all; on the
+    // shipped +/-4 kHz window it stays positive but collapses to a double
+    // handful, which upsamples into the blob the bench reported. Both are
+    // the same failure, so assert the useful property rather than the sign.
+    void symmetricClipWouldStarveTheTransmitWindow()
     {
-        constexpr int    fftSize = 32768;
-        constexpr double rateHz  = 96000.0;
+        constexpr int    fftSize   = 32768;
+        constexpr double rateHz    = 96000.0;
+        constexpr int    kPixels   = 1202;   // observed n_pix at the bench
 
-        // The bench filter: LSB 100..2900 Hz -> IQ [-2900, -100].
-        const auto [low, high]   = TxAnalyzer::txDisplayWindowHz(-2900, -100);
         const auto [clipL, clipH] =
-            TxAnalyzer::spanClipBins(low, high, rateHz, fftSize);
+            TxAnalyzer::spanClipBins(-4000, 4000, rateHz, fftSize);
 
-        auto denominator = [&](int sclip) {
+        auto surviving = [&](int sclip) {
             return static_cast<double>(fftSize - 1 - 2 * sclip)
                    - clipL - clipH - 1.0;
         };
 
-        QVERIFY2(denominator(0) > 0.0,
-                 "no bins survive even with symmetric clipping off");
+        // What ships: comfortably more bins than pixels, so every pixel is
+        // backed by real data.
+        QVERIFY2(surviving(0) > kPixels,
+                 qPrintable(QStringLiteral("only %1 bins for %2 pixels")
+                                .arg(surviving(0)).arg(kPixels)));
 
-        // And the state that produced the black pan: the 0.04 fraction is
-        // simply too expensive to combine with a 3 kHz window.
+        // What the 0.04 fraction would leave: nowhere near enough, which is
+        // an upsampled trace no window or detector setting can sharpen.
         const int clipFraction = static_cast<int>(0.04 * fftSize);
-        QVERIFY2(denominator(clipFraction) < 0.0,
-                 "expected the 0.04 clip to overrun the span; if this ever "
-                 "stops holding, re-check why TxAnalyzer zeroes clp when a "
-                 "window is set");
+        QVERIFY2(surviving(clipFraction) < kPixels / 4,
+                 qPrintable(QStringLiteral("expected the 0.04 clip to starve "
+                                           "the window; it left %1 bins")
+                                .arg(surviving(clipFraction))));
     }
 
-    // ── End to end: the bench case ─────────────────────────────────────────
-
-    void benchUsbFilterProducesAWindowMatchingTheFilter()
+    // ── End to end: the shipped transmit window ────────────────────────────
+    //
+    // MainWindow clips the analyzer to Thetis's fixed +/-4 kHz transmit
+    // window (display.cs:1284-1295 [v2.10.3.15]). Pin the arithmetic that
+    // window depends on, since a clip pair that leaves too few bins is the
+    // difference between a sharp trace and a blob.
+    void shippedTransmitWindowLeavesOnePointPerPixel()
     {
-        // The filter the bench was running: TX BW 100..2900 Hz, USB.
-        const auto [low, high] = TxAnalyzer::txDisplayWindowHz(100, 2900);
+        constexpr int    fftSize = 32768;
+        constexpr double rateHz  = 96000.0;
+        constexpr int    lowHz   = -4000;
+        constexpr int    highHz  = +4000;
+
         const auto [clipL, clipH] =
-            TxAnalyzer::spanClipBins(low, high, 96000.0, 4096);
+            TxAnalyzer::spanClipBins(lowHz, highHz, rateHz, fftSize);
+        const int surviving = fftSize - clipL - clipH;
 
-        const double binWidth  = 96000.0 / 4096.0;
-        const int    surviving = 4096 - clipL - clipH;
+        // A panadapter is order-1000 pixels wide. The surviving bins must
+        // exceed that or the trace is upsampled and no window, detector or
+        // averaging setting can sharpen it -- the 2026-08-05 "shoulders".
+        QVERIFY2(surviving > 1500,
+                 qPrintable(QStringLiteral("only %1 bins survive the transmit "
+                                           "window; trace would be upsampled")
+                                .arg(surviving)));
 
-        // The pan must end up showing roughly 3.2 kHz starting at the
-        // carrier, NOT the 96 kHz it was showing when the tone appeared at
-        // the wrong dial frequency.
-        QVERIFY2(surviving * binWidth < 4000.0,
-                 "TX window is still wide enough to mis-place the trace");
-        QCOMPARE(low, 0);
-        QVERIFY(high > 2900);        // 1.1 factor leaves the skirt visible
-        QVERIFY(high < 3300);
+        // And the surviving span must actually be the window we asked for.
+        const double binWidth = rateHz / fftSize;
+        const double spanHz   = surviving * binWidth;
+        QVERIFY2(std::abs(spanHz - 8000.0) < binWidth * 2.0,
+                 qPrintable(QStringLiteral("surviving span %1 Hz, wanted 8000")
+                                .arg(spanHz)));
     }
 };
 

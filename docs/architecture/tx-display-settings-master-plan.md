@@ -60,6 +60,43 @@ Discovered during the audit prior to writing this plan:
 
 ---
 
+## Status as of 2026-08-05 (branch `claude/tx-display-revive`)
+
+This plan was written in May 2026 and parked mid-Phase-3. It has since been
+revived onto current main. Read this block before the table below, which
+still reflects the May state for phases it does not mention.
+
+- **Phases 1 and 2 shipped** (waterfall colormap, gradient picker), bench
+  passed May 2026, carried across the revive merge unchanged.
+- **Phase 3 (TX FFT / detector / averaging) is functionally complete.** The
+  9 controls were wired in May but could not work: `SetAnalyzer`'s `bf_sz`
+  carried the FFT size instead of the DSP block size, so WDSP transformed
+  whatever followed the buffer in memory and every setting looked identical.
+  Fixed 2026-08-05.
+- **Four further defects fixed at the same bench**, none of which were in
+  this plan because none were known: the transmit window (the pan kept its
+  receive span), waterfall banding (two writers), span clipping (an
+  unclipped analyzer upsampled twelvefold), and the transmit graticule
+  (inherited the receive dB range, with no control and no persistence).
+- **A correction to this plan's own sourcing.** Phase 3 and the surrounding
+  notes lean on `UpdateTXDisplayVars` / `CalcSpectrum` for the display
+  window. `UpdateTXDisplayVars` returns immediately unless the display mode
+  is SPECTRUM / HISTOGRAM / SPECTRASCOPE (`console.cs:8026-8029`) and never
+  governs a panadapter; the panadapter uses a fixed +/-4 kHz window
+  (`display.cs:1284-1295`). `TxAnalyzer.cpp`'s file header already warned
+  about this trap after the same mistake in May, and it was made again on
+  2026-08-04 before being caught at the bench. Span clipping from
+  `CalcSpectrum` is still correct and is used; only the window source was
+  wrong.
+- **Phases 4-6 not started.** Phase 4 (TX Grid Scale) is partly obviated:
+  the graticule now switches and persists automatically, so the Setup
+  controls are a second way to set two values that already work.
+
+Bench matrix: `tx-display-verification/README.md`. One known open defect
+there (row 15, a residual skirt in WDSP's raw output).
+
+---
+
 ## Phase plan summary
 
 | Phase | Scope | Hours | New files | Modified files |

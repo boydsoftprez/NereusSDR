@@ -728,18 +728,6 @@ public:
     /// TXFilterLow / TXFilterHigh setters.
     void setTxBandpass(int lowHz, int highHz);
 
-    /// The IQ-space bandpass edges last handed to setTxBandpass. Signed, so
-    /// LSB reads negative and AM straddles zero, exactly as WDSP took them.
-    ///
-    /// Added for the TX display: Thetis derives the transmit panadapter's
-    /// frequency window from these two numbers
-    /// (console.cs:8024-8060 [v2.10.3.15] UpdateTXDisplayVars), and until
-    /// now they were only observable through the txFilterApplied signal,
-    /// which fires on change and so cannot tell a late subscriber -- such as
-    /// the MOX rise edge -- what the current filter is.
-    int txFilterLowIq()  const noexcept { return m_filterLowHz;  }
-    int txFilterHighIq() const noexcept { return m_filterHighHz; }
-
     /// Complex samples the TXA chain processes per mainstream DSP buffer,
     /// read live from WDSP (`ch[id].dsp_size`, channel.h:40). 0 when the
     /// channel is not open.

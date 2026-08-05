@@ -80,23 +80,6 @@ public:
     explicit TxAnalyzer(int dispId = kTxDispId, QObject* parent = nullptr);
     ~TxAnalyzer() override;
 
-    /// The display window, in Hz either side of the carrier, that a TX
-    /// filter of `lowIq`..`highIq` should be shown over.
-    ///
-    /// Verbatim port of Thetis console.cs:8024-8056 [v2.10.3.15]
-    /// UpdateTXDisplayVars. Three cases, keyed on the filter's sign:
-    ///   LSB-like (l < 0, h <= 0)  -> high = 0, low = 1.1*l, floored at -1000
-    ///   USB-like (l >= 0, h > 0)  -> low  = 0, high = 1.1*h, floored at +1000
-    ///   straddling (l < 0, h > 0) -> symmetric about zero on the wider edge
-    /// The 1.1 factor is Thetis's, and it is what leaves the filter skirts
-    /// visible rather than clipping exactly at the passband edge.
-    ///
-    /// Returned as {low, high} in Hz relative to the carrier. A filter that
-    /// matches none of the three cases (l >= 0 and h <= 0, i.e. inverted or
-    /// empty) yields {0, 0}, matching Thetis's `int low = 0, high = 0;`
-    /// initialisation falling through untouched.
-    static std::pair<int, int> txDisplayWindowHz(int lowIq, int highIq);
-
     /// Bins to clip from the low and high ends of the FFT so the analyzer
     /// emits only `lowHz`..`highHz` around the carrier.
     ///
@@ -303,9 +286,9 @@ private:
     double m_sampleRate{96000.0};   // matches WdspEngine::kTxDspSampleRate
 
     // Display window around the carrier, in Hz, from
-    // txDisplayWindowHz(). Both zero means "no clipping, full span", which
-    // is the pre-bench behaviour and the state before the first MOX edge
-    // configures a filter-derived window.
+    // MainWindow's transmit window. Both zero means "no clipping, full
+    // span", which is the state before the first MOX edge and after the
+    // fall edge clears it.
     // SetAnalyzer's bf_sz. Zero means "not told yet", in which case
     // applySetAnalyzer falls back to the FFT size to preserve the
     // pre-2026-08-05 behaviour rather than pass a nonsense zero.
