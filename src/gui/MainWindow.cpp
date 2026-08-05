@@ -350,10 +350,12 @@ warren@wpratt.com
 #endif
 #include "widgets/MasterOutputWidget.h"
 #include "widgets/StationBlock.h"
-#include "widgets/MetricLabel.h"
 #include "widgets/StatusBadge.h"
 #include "widgets/AdcOverloadBadge.h"
 #include "widgets/OverflowChip.h"
+#include "widgets/SystemTile.h"
+#include "gui/chrome/ChromeBarController.h"
+#include "gui/chrome/ChromeBarItems.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
 #include "core/audio/VirtualCableDetector.h"
@@ -378,6 +380,7 @@ warren@wpratt.com
 #include <QActionGroup>
 #include <QStatusBar>
 #include <QLabel>
+#include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QSplitter>
@@ -2222,6 +2225,15 @@ void MainWindow::wirePanBadgeHandlers()
         connect(applet, &PanadapterApplet::txBadgeClicked,
                 this, &MainWindow::onPanTxBadgeClicked,
                 Qt::UniqueConnection);
+        // Task B5: add-slice / float, both carrying the applet's own panId().
+        // Member-pointer targets, same reasoning as the three connects above:
+        // this function re-runs on every countChanged.
+        connect(applet, &PanadapterApplet::addSliceRequested,
+                this, &MainWindow::onPanAddSliceRequested,
+                Qt::UniqueConnection);
+        connect(applet, &PanadapterApplet::floatRequested,
+                this, &MainWindow::onPanFloatRequested,
+                Qt::UniqueConnection);
         // Phase 3F: clicking a pan makes it the active pan. Straight to the
         // stack's setter, exactly as AetherSDR MainWindow.cpp:12964 [@6a142807]
         // does it:
@@ -2294,6 +2306,20 @@ void MainWindow::onPanTxBadgeClicked(const QString& panId)
     auto* applet = m_panStack->panadapter(panId);
     if (!applet) { return; }
     m_radioModel->requestTxHandoffToSlice(applet->activeSliceIndex());
+}
+
+// Task B5: straight forwarders. panId is the emitting applet's own id (see
+// PanadapterApplet::buildContextMenu), never resolved through
+// m_panStack->activePanId() -- see MainWindow.h for why that distinction
+// matters here.
+void MainWindow::onPanAddSliceRequested(const QString& panId)
+{
+    if (m_radioModel) { m_radioModel->addSliceOnPan(panId); }
+}
+
+void MainWindow::onPanFloatRequested(const QString& panId)
+{
+    if (m_panStack) { m_panStack->floatPanadapter(panId); }
 }
 
 void MainWindow::wireSliceStatusOverlayTriggers(SliceModel* slice)
@@ -2927,10 +2953,17 @@ void MainWindow::buildUI()
     // does not have.
     // Upstream inline attribution preserved verbatim (console.cs:15441):
     //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    // Registered with m_chromeBar at rung 4 (design §6); the >=2 fact is
+    // reported via setItemAvailable, not a direct setVisible call, per
+    // ChromeBarController::setItemAvailable's own doc comment.
     auto updateChain1Visibility = [this]() {
         if (!m_chain1IndicatorWidget) { return; }
         const auto caps = m_radioModel->boardCapabilities();
-        m_chain1IndicatorWidget->setVisible(caps.rxFilterChainCount >= 2);
+        if (m_chromeBar && m_chromeBarWidget) {
+            m_chromeBar->setItemAvailable(m_chain1IndicatorWidget,
+                                          caps.rxFilterChainCount >= 2);
+            m_chromeBar->relayout(m_chromeBarWidget->width());
+        }
     };
     connect(m_radioModel, &RadioModel::currentRadioChanged, this,
             updateChain1Visibility);
@@ -2953,6 +2986,22 @@ void MainWindow::buildUI()
                 lbl->setStyleSheet(
                     QStringLiteral("color: %1; font-size: 9px; font-weight: bold;")
                         .arg(color));
+
+                // reasonText ranges from "idle" to
+                // "BYPASS (multi-band: 160m + 80m + 40m + 20m + 10m)", so the
+                // owning chain widget's sizeHint (registered with m_chromeBar
+                // at rung 4) just went stale. Report it so folding stays a
+                // pure function of width rather than overflowing on the next
+                // band change (final-fix-wave finding 1).
+                if (m_chromeBar && m_chromeBarWidget) {
+                    QWidget* chainWidget = (adc == 0) ? m_chain0IndicatorWidget
+                                                       : m_chain1IndicatorWidget;
+                    if (chainWidget) {
+                        m_chromeBar->setNaturalWidth(
+                            chainWidget, chainWidget->sizeHint().width());
+                        m_chromeBar->relayout(m_chromeBarWidget->width());
+                    }
+                }
             });
 
     // Phase 3F: and drive the per-pan WIDE pill from the same signal.
@@ -3102,22 +3151,28 @@ void MainWindow::buildUI()
         }
     });
 
-    // Phase 3Q Sub-PR-6 (F.1): bind RxDashboard to slice(0) once it exists.
-    // buildStatusBar() runs before connectToRadio() so slices().isEmpty() at
-    // construction time; defer binding to sliceAdded.
-    // Resolved by id, not list position. sliceAdded carries the stable slice
-    // id and addSlice reuses the lowest free one, so after Slice A is closed
-    // and a new slice takes id 0 it is APPENDED to m_slices -- id 0 at some
-    // other position. slices().at(0) then bound the dashboard to whichever
-    // slice happened to be first. Same class of defect as the one closed in
-    // requestSliceSampleRate (Sub-Epic I closeout, defect G2).
-    connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int sliceId) {
-        if (sliceId == 0 && m_rxDashboard) {
-            if (SliceModel* s = m_radioModel->sliceById(0)) {
-                m_rxDashboard->bindSlice(s);
-            }
-        }
-    });
+    // The dashboard follows the ACTIVE slice, not slice 0. It was pinned to
+    // id 0 and never rebound, so after multi-pan landed (#312) an operator
+    // working Slice B was shown Slice A's mode, filter, AGC and NR as
+    // current. See design §4.2.
+    auto rebindDashboard = [this]() {
+        if (!m_rxDashboard || !m_radioModel) { return; }
+        SliceModel* s = m_radioModel->activeSlice();
+        if (!s) { return; }
+        m_rxDashboard->bindSlice(s);
+        // Use SliceModel::sliceLetter(), do NOT derive the letter here.
+        // It is already derived from sliceIndex() upstream. It previously
+        // returned a stored member defaulting to 'A', so every slice
+        // reported 'A' and three call sites mislabelled their slices; see
+        // the comment at SliceModel.h:503. Deriving locally would
+        // reintroduce a second source of truth for the same fact.
+        m_rxDashboard->setSliceLetter(s->sliceLetter());
+    };
+    connect(m_radioModel, &RadioModel::sliceAdded, this,
+            [rebindDashboard](int) { rebindDashboard(); });
+    connect(m_radioModel, &RadioModel::activeSliceChanged, this,
+            [rebindDashboard]() { rebindDashboard(); });
+    rebindDashboard();
 
     // Phase 3F: the status overlay's per-slice triggers. Topology changes
     // reach the overlay through rebuildFftRouting, but a retune or a mode
@@ -5432,21 +5487,25 @@ void MainWindow::buildMenuBar()
 
     // Phase 3F Sub-Epic D Task 14: live Pan Layout / Add slice / Float
     // entries. Replace the NYI submenu and disabled Add/Remove placeholders
-    // with the working stack actions. The bottom-bar +PAN dropdown
-    // (Task 10) is kept as the operator-facing primary; these menu items
-    // are for operators who prefer the menubar / keyboard shortcuts.
+    // with the working stack actions. The bottom-bar +PAN icon (a drawn
+    // pixmap since Task B4, not a dropdown menu) is kept as the operator-
+    // facing primary and shares showPanLayoutDialog() with the menu action
+    // below it; these menu items are for operators who prefer the menubar
+    // / keyboard shortcuts.
     {
         QAction* panLayoutAct = viewMenu->addAction(QStringLiteral("Pan &Layout…"));
         panLayoutAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
         panLayoutAct->setToolTip(QStringLiteral(
-            "Pick a panadapter layout template (1 / 2v / 2h / 12h / 2x2)"));
-        connect(panLayoutAct, &QAction::triggered, this, [this]() {
-            if (!m_panStack) { return; }
-            PanLayoutDialog dialog(this);
-            if (dialog.exec() == QDialog::Accepted) {
-                applyPanLayout(dialog.selectedLayout());
-            }
-        });
+            "Pick a panadapter layout template"));
+        // Delegates to showPanLayoutDialog() rather than duplicating dialog
+        // construction here: this call site used to build its own
+        // PanLayoutDialog inline with no isConnected() guard, so with no
+        // radio it opened a dialog gated on a stale maxSlices()-only
+        // fallback (final-fix-wave finding 12). showPanLayoutDialog() is
+        // already connection-gated and DDC-axis-correct (finding 2); the
+        // bottom-bar +PAN icon uses the same method.
+        connect(panLayoutAct, &QAction::triggered, this,
+                &MainWindow::showPanLayoutDialog);
     }
 
     {
@@ -6360,6 +6419,45 @@ void MainWindow::buildMenuBar()
     }
 }
 
+// Reserved safety slot dim helper (design §4.5). Static so both
+// buildStatusBar()'s construction-time state and setTxInhibited() (a
+// separately-wired Task 17 slot outside buildStatusBar()) can drive the
+// same badge through the same opacity-only state change -- a plain
+// setVisible() no longer represents "inactive" once a badge lives in a
+// permanently allocated slot.
+void MainWindow::dimSafetyBadge(QWidget* w, bool active)
+{
+    auto* fx = qobject_cast<QGraphicsOpacityEffect*>(w->graphicsEffect());
+    if (!fx) {
+        fx = new QGraphicsOpacityEffect(w);
+        w->setGraphicsEffect(fx);
+    }
+    fx->setOpacity(active ? 1.0 : 0.14);
+}
+
+// Task B4 (design §8.2): AetherSDR's connection gate on the +PAN affordance
+// is a silent early return, which reads as a dead click. Ours dims the icon
+// and names the reason in the tooltip BEFORE the click, so unavailability
+// is visible ahead of time rather than discovered by clicking and getting
+// nothing. Called at construction (buildStatusBar) and on every
+// connectionStateChanged transition.
+void MainWindow::updateAddPanButtonState()
+{
+    if (!m_addPanButton) { return; }
+    const bool connected = m_radioModel && m_radioModel->isConnected();
+    m_addPanButton->setEnabled(connected);
+    auto* fx = qobject_cast<QGraphicsOpacityEffect*>(
+        m_addPanButton->graphicsEffect());
+    if (!fx) {
+        fx = new QGraphicsOpacityEffect(m_addPanButton);
+        m_addPanButton->setGraphicsEffect(fx);
+    }
+    fx->setOpacity(connected ? 1.0 : 0.35);
+    m_addPanButton->setToolTip(connected
+        ? tr("Change panadapter layout")
+        : tr("Connect a radio to change pan layout"));
+}
+
 // ── TNF operator controls (design sections 7, 7.5, 10.2) ──────────────────
 //
 // Four pure statics behind the status-bar light, the DSP-menu chord and the
@@ -6453,7 +6551,7 @@ void MainWindow::buildStatusBar()
         "QStatusBar::item { border: none; }"));
 
     // Wrapper widget for the full-width custom layout. Stored as a
-    // member so reapplyRightStripDropPriority() can read its width.
+    // member so resizeEvent can read its width for m_chromeBar->relayout().
     m_chromeBarWidget = new QWidget(sb);
     m_chromeBarWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     QWidget* barWidget = m_chromeBarWidget;   // local alias keeps existing code below tidy
@@ -6470,7 +6568,10 @@ void MainWindow::buildStatusBar()
 
     // ── Left section ──────────────────────────────────────────────────────────
 
-    // Band Stack: three grey circles (NYI — clickable placeholder)
+    // Band Stack: three grey circles (NYI — clickable placeholder). Added to
+    // m_placeholderGroup below rather than hbox directly, so it folds
+    // together with TNF/CWX/DVK/FDX at rung 10 (design §6) instead of
+    // sitting at its own fixed early position.
     auto* bandStackLabel = new QLabel(barWidget);
     bandStackLabel->setFixedSize(10, 22);
     {
@@ -6488,27 +6589,48 @@ void MainWindow::buildStatusBar()
     }
     bandStackLabel->setToolTip(QStringLiteral("Band Stack (NYI)"));
     bandStackLabel->setCursor(Qt::PointingHandCursor);
-    hbox->addWidget(bandStackLabel);
 
-    // Phase 3F Sub-Epic D Task 10: activated +PAN button. Replaces the
-    // long-dormant grey "NYI" label with a real dropdown that drives the
-    // PanadapterStack (add slice on active pan, pick layout template, or
-    // float the active pan into its own top-level window). The actual
-    // PanadapterStack instance is wired by Task 12; until then,
-    // showPanMenu's m_panStack-dependent actions no-op safely.
-    auto* panBtn = new QPushButton(QStringLiteral("+PAN"), barWidget);
-    panBtn->setFlat(true);
+    // +PAN icon. From AetherSDR MainWindow.cpp:4368-4396 [@c6481cb]: a jagged
+    // spectrum polyline with a plus in the upper right. An icon reads as a
+    // control where a text pill reads as a label, and the trace says what
+    // kind of thing it adds.
+    auto* panBtn = new QLabel(barWidget);
+    panBtn->setObjectName(QStringLiteral("addPanButton"));
+    panBtn->setAccessibleName(tr("Add panadapter"));
+    QPixmap pm(36, 28);
+    {
+        pm.fill(Qt::transparent);
+        QPainter pp(&pm);
+        pp.setRenderHint(QPainter::Antialiasing);
+        const QColor stroke(255, 255, 255, 210);
+        pp.setPen(QPen(stroke, 1.6));
+        const QPointF pts[] = {
+            { 0, 22}, { 1, 21}, { 2, 22}, { 3, 19}, { 4, 22},
+            { 5, 21}, { 6, 18}, { 7, 12}, { 8, 17}, { 9, 22},
+            {10, 21}, {11, 22}, {12, 16}, {13, 22},
+            {14, 21}, {15, 19}, {16, 22},
+            {17, 20}, {18, 12}, {19,  4}, {20, 11}, {21, 21},
+            {22, 22}, {23, 21}, {24, 17}, {25, 22},
+            {26, 21}, {27, 22}, {28, 18}, {29, 22}, {30, 22}
+        };
+        pp.drawPolyline(pts, sizeof(pts) / sizeof(pts[0]));
+        pp.setPen(QPen(stroke, 2.2));
+        pp.drawLine(30, 4, 30, 14);
+        pp.drawLine(25, 9, 35, 9);
+        pp.end();
+    }
+    panBtn->setPixmap(pm);
     panBtn->setCursor(Qt::PointingHandCursor);
-    panBtn->setStyleSheet(QStringLiteral(
-        "QPushButton { color: %1; font-weight: bold; font-size: 11px;"
-        " border: 1px solid %2; border-radius: 3px; padding: 2px 7px;"
-        " background: %3; }"
-        "QPushButton:hover { background: %4; }")
-        .arg(Style::kAccent, Style::kBorder, Style::kButtonBg,
-             Style::kButtonAltHover));
-    panBtn->setToolTip(QStringLiteral("Add slice / change layout / float pan"));
-    connect(panBtn, &QPushButton::clicked, this, &MainWindow::showPanMenu);
+    panBtn->installEventFilter(this);
+    panBtn->setProperty("isAddPanButton", true);
+    // Band-stack dots lead the bar, ahead of +PAN, as they did before the
+    // bottom-banner epic. Folding them is rung 10's job; where they sit is
+    // this layout's job, and the two are independent.
+    hbox->addWidget(bandStackLabel);
     hbox->addWidget(panBtn);
+    m_addPanButton = panBtn;
+    m_bandStackLabel = bandStackLabel;
+    updateAddPanButtonState();
 
     // Phase 3F Sub-Epic D Task 11: per-chain (ADC) BPF state indicators
     // in the bottom status bar. Two stacked labels per chain ("CH N"
@@ -6539,7 +6661,9 @@ void MainWindow::buildStatusBar()
         return w;
     };
 
-    hbox->addWidget(makeChainIndicator(0));
+    auto* chain0Widget = makeChainIndicator(0);
+    hbox->addWidget(chain0Widget);
+    m_chain0IndicatorWidget = chain0Widget;
     auto* chain1Widget = makeChainIndicator(1);
     chain1Widget->setVisible(false);  // shown only on 2-ADC SKUs
     hbox->addWidget(chain1Widget);
@@ -6576,6 +6700,12 @@ void MainWindow::buildStatusBar()
     m_tnfLabel->setCursor(Qt::PointingHandCursor);
     m_tnfLabel->setProperty("isTnfToggle", true);
     m_tnfLabel->installEventFilter(this);
+    // TNF is NOT part of m_placeholderGroup. It was an inert NYI label when
+    // the bottom-banner epic classified it as fold-last chrome, but the
+    // tunable-notch-filter work that landed on main (#313) made it a live
+    // toggle that turns amber when notches exist and are being bypassed.
+    // That is an operationally meaningful warning, so it is registered as
+    // its own item and folds with live state, not with the stubs.
     hbox->addWidget(m_tnfLabel);
 
     if (NotchModel* notches = m_radioModel->notchModel()) {
@@ -6602,7 +6732,6 @@ void MainWindow::buildStatusBar()
         "QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
     cwxLabel->setToolTip(QStringLiteral("CW Keyer (NYI)"));
     cwxLabel->setCursor(Qt::PointingHandCursor);
-    hbox->addWidget(cwxLabel);
 
     // DVK
     auto* dvkLabel = new QLabel(QStringLiteral("DVK"), barWidget);
@@ -6610,7 +6739,6 @@ void MainWindow::buildStatusBar()
         "QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
     dvkLabel->setToolTip(QStringLiteral("Digital Voice Keyer (NYI)"));
     dvkLabel->setCursor(Qt::PointingHandCursor);
-    hbox->addWidget(dvkLabel);
 
     // FDX
     auto* fdxLabel = new QLabel(QStringLiteral("FDX"), barWidget);
@@ -6618,42 +6746,54 @@ void MainWindow::buildStatusBar()
         "QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
     fdxLabel->setToolTip(QStringLiteral("Full Duplex (NYI)"));
     fdxLabel->setCursor(Qt::PointingHandCursor);
-    hbox->addWidget(fdxLabel);
 
-    hbox->addWidget(makeSep());
+    // Rung 10, last resort (design §6). Grouped so the ladder folds them as
+    // one unit rather than dribbling them out one label at a time. Each
+    // label is reparented here; the group owns them.
+    //
+    // Two members that used to be here are deliberately NOT:
+    //
+    //   bandStackLabel  -- it leads the bar, ahead of +PAN, and moving it
+    //   into this group silently reordered the left section. Restored to
+    //   its original position below; it still folds at rung 10 with the
+    //   rest of the stubs, because rung governs visibility and the layout
+    //   governs position, which are independent.
+    //
+    //   m_tnfLabel      -- no longer a stub. The tunable-notch-filter work
+    //   on main (#313) made it a live toggle that turns amber when notches
+    //   exist and are being bypassed, so it folds later than the stubs.
+    m_placeholderGroup = new QWidget(barWidget);
+    auto* phRow = new QHBoxLayout(m_placeholderGroup);
+    phRow->setContentsMargins(0, 0, 0, 0);
+    phRow->setSpacing(6);
+    phRow->addWidget(cwxLabel);
+    phRow->addWidget(dvkLabel);
+    phRow->addWidget(fdxLabel);
+    hbox->addWidget(m_placeholderGroup);
 
-    // Radio info: stacked model + firmware labels
-    auto* radioInfoWidget = new QWidget(barWidget);
-    QVBoxLayout* radioVbox = new QVBoxLayout(radioInfoWidget);
-    radioVbox->setContentsMargins(0, 0, 0, 0);
-    radioVbox->setSpacing(0);
+    // Trailing separator, paired with m_placeholderGroup so it folds
+    // alongside the group (design §6) instead of dangling on its own.
+    m_placeholderSep = makeSep();
+    hbox->addWidget(m_placeholderSep);
 
-    m_radioModelLabel = new QLabel(QStringLiteral("—"), radioInfoWidget);
-    m_radioModelLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #8aa8c0; font-size: 11px; }"));
-    radioVbox->addWidget(m_radioModelLabel);
-
-    m_radioFwLabel = new QLabel(QStringLiteral("—"), radioInfoWidget);
-    m_radioFwLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #607080; font-size: 11px; }"));
-    radioVbox->addWidget(m_radioFwLabel);
-
-    // Keep m_connStatusLabel pointing at model label (legacy compat)
-    m_connStatusLabel = m_radioModelLabel;
-
-    hbox->addWidget(radioInfoWidget);
+    // Design §4.1: the old left-section model+firmware pair
+    // (radioInfoWidget / m_radioModelLabel / m_radioFwLabel) is retired.
+    // It had no click affordance and sat in the banner's unprotected left
+    // section, so its width changes were what shoved its neighbours.
+    // Radio identity now renders once, on StationBlock's second row
+    // (Task A4's setHardwareLine), wired from onConnectionStateChanged()
+    // below. m_connStatusLabel's legacy alias is retired with it — grep
+    // confirms nothing else in the tree reads it.
 
     // ── Phase 3Q Sub-PR-6 (F.1): RxDashboard ────────────────────────────────
     // Replaces the Phase 3Q-7 verbose connection-info strip (those fields now
     // live in the segment tooltip / NetworkDiagnosticsDialog).
-    // Bound to slice(0); when disconnected the badges show placeholder "—"
-    // until the slice receives live values from the radio.
-    hbox->addWidget(makeSep());
+    // Follows the ACTIVE slice (Task A5's rebindDashboard lambda, wired
+    // below to RadioModel::sliceAdded / activeSliceChanged) rather than a
+    // fixed slice(0); no slice exists yet at construction time so there is
+    // nothing to bind here. When disconnected the badges show placeholder
+    // "—" until the slice receives live values from the radio.
     m_rxDashboard = new RxDashboard(barWidget);
-    const auto& slices = m_radioModel->slices();
-    if (!slices.isEmpty()) {
-        m_rxDashboard->bindSlice(slices.at(0));
-    }
     hbox->addWidget(m_rxDashboard);
 
     // ── Phase 3M-4 Task 10: PSA bottom-banner pair (FB + PS) ──────────────────
@@ -6715,24 +6855,40 @@ void MainWindow::buildStatusBar()
         const bool connected =
             (m_radioModel->connectionState() == ConnectionState::Connected);
         m_stationBlock->setRadioName(connected ? info.name : QString());
+        // setRadioName(QString()) also clears the hardware row
+        // (StationBlock.cpp:57-59), so sizeHint may have changed either
+        // way. Report it (final-fix-wave finding 3) so the fold budget
+        // does not keep charging the connected width after this label
+        // shrinks back to "Click to connect".
+        if (m_chromeBar && m_chromeBarWidget) {
+            m_chromeBar->setNaturalWidth(
+                m_stationBlock, m_stationBlock->sizeHint().width());
+            m_chromeBar->relayout(m_chromeBarWidget->width());
+        }
     });
     connect(m_radioModel, &RadioModel::connectionStateChanged, this,
             [this](ConnectionState s) {
         if (s != ConnectionState::Connected) {
             m_stationBlock->setRadioName(QString());
+            if (m_chromeBar && m_chromeBarWidget) {
+                m_chromeBar->setNaturalWidth(
+                    m_stationBlock, m_stationBlock->sizeHint().width());
+                m_chromeBar->relayout(m_chromeBarWidget->width());
+            }
         }
     });
 
-    // ── ADC Overload alarm: lives in the right-side strip ──────────────────
+    // ── ADC Overload alarm: lives in the reserved safety group ─────────────
     // Earlier revisions of the Phase 3Q chrome work parked the alarm
     // between the dashboard and STATION block. That violated layout-
     // stability rule §278.4 ("STATION sits between two flex:1 spacers.
     // Activity in the middle or right sections never moves it.")
     // because the label's text width grew when overload fired and
-    // pushed STATION sideways. The alarm is now an AdcOverloadBadge
-    // built further down with the other right-side status badges,
-    // between PA OK and TX, where its size changes consume the right-
-    // side strip's stretch space rather than the STATION anchor.
+    // pushed STATION sideways. The alarm is now an AdcOverloadBadge built
+    // further down as one of the four permanently-allocated 50 px safety
+    // slots (design doc §4.5: INH / PA / OVL / TX) -- an inactive slot
+    // dims rather than collapsing, so its appearance changes opacity, not
+    // width, and nothing else on the bar moves when it lights up.
 
     hbox->addWidget(m_stationBlock);
 
@@ -6778,7 +6934,7 @@ void MainWindow::buildStatusBar()
     m_tciSep = makeSep();
     hbox->addWidget(m_tciSep);
 
-    // ── PA telemetry tile (volts + temperature, vertically stacked) ───────
+    // ── System tile: PA telemetry + CPU, merged (design §4.3) ────────────
     // Earlier revisions showed only a single "PSU" widget driven by the
     // supply_volts (AIN6) channel.  Source-first audit against Thetis
     // [v2.10.3.13] proved that channel is never displayed in Thetis —
@@ -6800,52 +6956,26 @@ void MainWindow::buildStatusBar()
     //       ...
     //   }
     //
-    // NereusSDR splits this into a 2-row stacked tile so MKII boards keep
-    // their PA-V row, HL2 gets a dedicated PA-T row, and a future
-    // PureSignal-feedback board (Phase 3M-4) can surface temp on
-    // non-HL2 hardware without crowding the volts slot.  Both rows hide
-    // independently based on data source; the container hides when
-    // neither has data so non-MKII non-HL2 boards (Atlas, plain Hermes,
-    // Angelia, Orion) get no tile.
-    m_paStackWidget = new QWidget(barWidget);
-    {
-        QVBoxLayout* paStack = new QVBoxLayout(m_paStackWidget);
-        paStack->setContentsMargins(0, 0, 0, 0);
-        paStack->setSpacing(0);
+    // Bottom-banner cleanup Task A3 merged the 2-row PA stack (PA-V over
+    // PA-T, mutually exclusive per board) with the standalone CPU
+    // MetricLabel into one 2-row SystemTile: row one carries whichever PA
+    // reading(s) the board publishes (both share row one when a board
+    // publishes both, rather than evicting CPU per design §4.3), row two
+    // is always CPU. The tile itself never hides — a board with neither
+    // PA reading still shows CPU-only, matching design §4.3's degenerate
+    // case ("shows a CPU-only tile, not an empty one").
+    m_systemTile = new SystemTile(barWidget);
+    hbox->addWidget(m_systemTile);
+    m_systemTileSep = makeSep();
+    hbox->addWidget(m_systemTileSep);
 
-        m_paVoltLabel = new MetricLabel(QStringLiteral("PA"),
-                                        QStringLiteral("—"), m_paStackWidget);
-        m_paVoltLabel->setVisible(false);
-        paStack->addWidget(m_paVoltLabel);
-
-        m_paTempLabel = new MetricLabel(QStringLiteral("PA T"),
-                                        QStringLiteral("—"), m_paStackWidget);
-        m_paTempLabel->setVisible(false);
-        m_paTempLabel->setCursor(Qt::PointingHandCursor);
-        m_paTempLabel->setToolTip(tr("Click to toggle °C / °F"));
-        // Click anywhere on the PA-T row toggles the persisted unit
-        // preference; PaTempUnitNotifier::unitChanged is wired below to
-        // re-format every PA-temperature surface app-wide.
-        m_paTempLabel->installEventFilter(this);
-        m_paTempLabel->setProperty("isPaTempToggle", true);
-        // MetricLabel has child QLabels that would otherwise eat the
-        // mouse press before it reaches our event filter on the parent.
-        // WA_TransparentForMouseEvents on each child makes the click
-        // pass through to m_paTempLabel itself.
-        for (QLabel* child : m_paTempLabel->findChildren<QLabel*>()) {
-            child->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-        }
-        paStack->addWidget(m_paTempLabel);
-    }
-    m_paStackWidget->setVisible(false);
-    hbox->addWidget(m_paStackWidget);
-    m_paVoltLabelSep = makeSep();
-    m_paVoltLabelSep->setVisible(false);
-    hbox->addWidget(m_paVoltLabelSep);
-
-    // Phase 3P-II Task 21: TGXL presence chip.
-    // Hidden until TunerModel::presenceChanged fires true; text reflects
-    // operate/bypass/standby state via stateChanged.
+    // Phase 3P-II Task 21: TGXL presence chip. Registered with m_chromeBar
+    // at rung 2 (design §6), so it folds under width pressure, but
+    // presence is not a fold concept -- it is reported to the controller
+    // via setItemAvailable, straight from the signal that changes it, per
+    // ChromeBarController::setItemAvailable's own doc comment. Hidden
+    // (available=false) until TunerModel::presenceChanged fires true;
+    // text reflects operate/bypass/standby state via stateChanged.
     m_tgxlChip = new QLabel(QStringLiteral("TGXL"), barWidget);
     m_tgxlChip->setStyleSheet(QStringLiteral(
         "QLabel { background:#1a3a5a; border:1px solid #205070; "
@@ -6854,7 +6984,11 @@ void MainWindow::buildStatusBar()
     hbox->addWidget(m_tgxlChip);
 
     connect(m_radioModel->tunerModel(), &TunerModel::presenceChanged,
-            m_tgxlChip, &QWidget::setVisible);
+            this, [this](bool present) {
+        if (!m_chromeBar || !m_chromeBarWidget) { return; }
+        m_chromeBar->setItemAvailable(m_tgxlChip, present);
+        m_chromeBar->relayout(m_chromeBarWidget->width());
+    });
     connect(m_radioModel->tunerModel(), &TunerModel::stateChanged,
             this, [this]() {
         TunerModel* t = m_radioModel->tunerModel();
@@ -6863,30 +6997,34 @@ void MainWindow::buildStatusBar()
                                      : QStringLiteral("OPER"))
                     : QStringLiteral("SBY");
         m_tgxlChip->setText(QStringLiteral("TGXL ") + s);
+        // TGXL / TGXL OPER / TGXL BYPS / TGXL SBY are different widths
+        // (Task A8 fix round 1 finding 4); report the new one.
+        if (m_chromeBar && m_chromeBarWidget) {
+            m_chromeBar->setNaturalWidth(m_tgxlChip,
+                                         m_tgxlChip->sizeHint().width());
+            m_chromeBar->relayout(m_chromeBarWidget->width());
+        }
     });
 
-    // Helper: reflect current row visibility back onto the container, so
-    // when both rows are hidden the trailing separator collapses too.
-    auto refreshPaStackVisibility = [this]() {
-        const bool anyRow = (m_paVoltLabel && m_paVoltLabel->isVisible()) ||
-                            (m_paTempLabel && m_paTempLabel->isVisible());
-        const bool wasShown = m_paStackWidget->isVisible();
-        m_paStackWidget->setVisible(anyRow);
-        if (m_paVoltLabelSep) { m_paVoltLabelSep->setVisible(anyRow); }
-        if (wasShown != anyRow) {
-            // Tile width changed — drops may need to unwind / re-apply.
-            // force=true: budget hasn't moved but content width has.
-            reapplyRightStripDropPriority(/*force=*/true);
-        }
+    // Helper: SystemTile's content just changed width (a reading gained or
+    // lost digits, a row appeared/disappeared). Report the new width to
+    // m_chromeBar and let it re-decide — content-change sites call
+    // setNaturalWidth then relayout() instead of the old force-refresh
+    // drop-priority pattern (design §5.2).
+    auto refreshChromeBarForSystemTile = [this]() {
+        if (!m_chromeBar || !m_chromeBarWidget || !m_systemTile) { return; }
+        m_chromeBar->setNaturalWidth(m_systemTile,
+                                     m_systemTile->sizeHint().width());
+        m_chromeBar->relayout(m_chromeBarWidget->width());
     };
 
     // Wire voltage signals: re-bind on every new connection, reset on disconnect.
     connect(m_radioModel, &RadioModel::connectionStateChanged, this,
-            [this, refreshPaStackVisibility](ConnectionState s) {
+            [this, refreshChromeBarForSystemTile](ConnectionState s) {
         if (s != ConnectionState::Connected) {
-            m_paVoltLabel->setVisible(false);
-            m_paTempLabel->setVisible(false);
-            refreshPaStackVisibility();
+            m_systemTile->clearPaVolts();
+            m_systemTile->clearPaTemp();
+            refreshChromeBarForSystemTile();
         }
         if (auto* conn = m_radioModel->connection()) {
             // conn is a new object on each reconnect — no deduplication needed.
@@ -6910,8 +7048,7 @@ void MainWindow::buildStatusBar()
             // model at each signal emission, when it is guaranteed to be
             // set (status frames only arrive after the Connected handler
             // has populated the profile).
-            connect(conn, &RadioConnection::userAdc0Changed, this,
-                    [this, refreshPaStackVisibility](float v) {
+            auto onUserAdc0 = [this, refreshChromeBarForSystemTile](float v) {
                 const auto model = m_radioModel->hardwareProfile().model;
                 if (model == HPSDRModel::ANAN_G2E) {
                     return;  // G2E uses supply_volts; ignore user_adc0.
@@ -6927,24 +7064,46 @@ void MainWindow::buildStatusBar()
                         QStringLiteral("HardwareAnan8000DleShowVoltsAmps"),
                         QStringLiteral("True")).toString() == QStringLiteral("True");
                 if (!showVolts) { return; }
-                m_paVoltLabel->setLabel(QStringLiteral("PA"));
-                m_paVoltLabel->setValue(QString::asprintf("%.1fV", static_cast<double>(v)));
-                m_paVoltLabel->setVisible(true);
-                refreshPaStackVisibility();
+                m_systemTile->setPaLabel(QStringLiteral("PA"));
+                m_systemTile->setPaVolts(static_cast<double>(v));
+                refreshChromeBarForSystemTile();
                 qInfo() << "PA tile updated via userAdc0:" << v << "V";
-            });
-            connect(conn, &RadioConnection::supplyVoltsChanged, this,
-                    [this, refreshPaStackVisibility](float v) {
+            };
+            connect(conn, &RadioConnection::userAdc0Changed, this, onUserAdc0);
+
+            auto onSupplyVolts = [this, refreshChromeBarForSystemTile](float v) {
                 const auto model = m_radioModel->hardwareProfile().model;
                 if (model != HPSDRModel::ANAN_G2E) {
                     return;  // Non-G2E uses user_adc0 path.
                 }
-                m_paVoltLabel->setLabel(QStringLiteral("PSU"));
-                m_paVoltLabel->setValue(QString::asprintf("%.1fV", static_cast<double>(v)));
-                m_paVoltLabel->setVisible(true);
-                refreshPaStackVisibility();
+                m_systemTile->setPaLabel(QStringLiteral("PSU"));
+                m_systemTile->setPaVolts(static_cast<double>(v));
+                refreshChromeBarForSystemTile();
                 qInfo() << "PSU tile updated via supplyVolts:" << v << "V";
-            });
+            };
+            connect(conn, &RadioConnection::supplyVoltsChanged, this, onSupplyVolts);
+
+            // 2026-08-03 KG4VCF G2E bench finding: neither qInfo above ever
+            // printed against a live G2E, although it stayed Connected for
+            // minutes. Root cause: P2RadioConnection starts parsing
+            // High-Priority status frames (and calling handleSupplyRaw /
+            // handleUserAdc0Raw) as soon as its UDP socket is live -- the
+            // bench log's first "P2: UDP packet: port 1025 ... size 60"
+            // trace lands about 19 ms BEFORE RadioModel reaches Connected.
+            // The connect() calls just above cannot exist before this exact
+            // lambda runs, so that first sample's userAdc0Changed /
+            // supplyVoltsChanged emission fires with nobody listening.
+            // handleSupplyRaw/handleUserAdc0Raw then suppress every later
+            // re-emit of an unchanged value (identical-raw suppression), so
+            // a steady supply never gives the tile a second chance. Pull
+            // whatever the connection already computed instead of waiting
+            // on a change that will never come.
+            if (conn->lastUserAdc0Volts() >= 0.0f) {
+                onUserAdc0(conn->lastUserAdc0Volts());
+            }
+            if (conn->lastSupplyVolts() >= 0.0f) {
+                onSupplyVolts(conn->lastSupplyVolts());
+            }
         }
     });
 
@@ -6954,41 +7113,52 @@ void MainWindow::buildStatusBar()
     // formatting respects PaTempUnitNotifier::currentUnit() so a
     // °C / °F toggle reformats live.
     connect(&m_radioModel->radioStatus(), &RadioStatus::paTemperatureChanged,
-            this, [this, refreshPaStackVisibility](double celsius) {
-        m_paTempLabel->setValue(PaTempUnitNotifier::format(celsius));
-        m_paTempLabel->setVisible(true);
-        refreshPaStackVisibility();
+            this, [this, refreshChromeBarForSystemTile](double celsius) {
+        m_systemTile->setPaTempCelsius(celsius);
+        refreshChromeBarForSystemTile();
     });
 
     // Live re-format on °C / °F toggle without waiting for the next
-    // telemetry sample.  Reads the cached °C value out of RadioStatus.
+    // telemetry sample. There is no toggle(); flip explicitly, matching
+    // the SystemTile::paTempClicked handler just below.
     connect(&PaTempUnitNotifier::instance(),
             &PaTempUnitNotifier::unitChanged, this,
-            [this](PaTempUnit /*unit*/) {
-        const double cachedC = m_radioModel->radioStatus().paTemperatureCelsius();
-        m_paTempLabel->setValue(PaTempUnitNotifier::format(cachedC));
+            [this, refreshChromeBarForSystemTile](PaTempUnit) {
+        m_systemTile->refreshPaRow();
+        refreshChromeBarForSystemTile();
+    });
+    connect(m_systemTile, &SystemTile::paTempClicked, this, []() {
+        const PaTempUnit cur = PaTempUnitNotifier::currentUnit();
+        PaTempUnitNotifier::setUnit(cur == PaTempUnit::Celsius
+                                        ? PaTempUnit::Fahrenheit
+                                        : PaTempUnit::Celsius);
     });
 
-    // ── sub-PR-8: CPU MetricLabel ─────────────────────────────────────────
-    // Replaces the old stacked "CPU: —" / "Mem: —" makeIndicator pair.
-    m_cpuMetric = new MetricLabel(QStringLiteral("CPU"),
-                                  QStringLiteral("—"), barWidget);
-    hbox->addWidget(m_cpuMetric);
-    m_cpuMetricSep = makeSep();
-    hbox->addWidget(m_cpuMetricSep);
+    // ── sub-PR-8: CPU, now SystemTile's row two ──────────────────────────
+    // Replaces the old standalone CPU MetricLabel.
+    m_systemTile->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_systemTile, &QWidget::customContextMenuRequested,
+            this, &MainWindow::onCpuMenuRequested);
+    // No whole-tile tooltip set here (unlike the old m_cpuMetric): the
+    // merge means m_systemTile's tooltip is already owned by
+    // SystemTile::refreshPaRow(), which sets it to the °C/°F click hint
+    // whenever a temperature reading is present and clears it otherwise.
+    // Setting a second, competing tooltip here would just get clobbered
+    // by the next PA reading, unpredictably.
 
-    // ── Phase 3M-0 Task 14: TX Inhibit indicator ─────────────────────────
-    // Red "TX INHIBIT" pill — hidden by default; shown when
-    // TxInhibitMonitor::inhibited() asserts. Signal wiring to the monitor
-    // lands in Task 17 (final integration pass).
-    m_txInhibitLabel = new QLabel(QStringLiteral("TX INHIBIT"), barWidget);
-    m_txInhibitLabel->setObjectName(QStringLiteral("txInhibitLabel"));
-    m_txInhibitLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #ff6060; font-weight: bold; font-size: 11px;"
-        "         padding: 2px 6px; border: 1px solid #ff6060; border-radius: 3px; }"));
-    m_txInhibitLabel->setToolTip(tr("External TX Inhibit asserted — TX is blocked"));
-    m_txInhibitLabel->setVisible(false);  // hidden until inhibit asserts
-    hbox->addWidget(m_txInhibitLabel);
+    // TX Inhibit has no slot of its own any more.
+    //
+    // It used to be an "INH" pill dimmed to 14%. Two problems, both found on
+    // a bench: the abbreviation meant nothing to the operator, and the pill
+    // carried a 1 px #ff6060 border that survived the dimming while its text
+    // did not, so the safety corner sat there showing an empty alarm-red
+    // outline while nothing was wrong. That is the opposite of what the
+    // corner is for.
+    //
+    // Inhibit is a property OF transmit, not a peer indicator beside it, so
+    // it now paints onto the TX badge itself: a prohibition symbol replaces
+    // the TX dot and a toast names the reason at the moment it asserts. See
+    // setTxInhibited(). That reclaims a whole reserved slot as well.
 
     // ── sub-PR-8: PA Status StatusBadge ──────────────────────────────────
     // Variant::On (green ✓ PA OK) / Variant::Tx (red ✓ PA FAULT).
@@ -7005,16 +7175,11 @@ void MainWindow::buildStatusBar()
     m_paStatusBadge->setLabel(QStringLiteral("PA"));
     m_paStatusBadge->setVariant(StatusBadge::Variant::On);
     m_paStatusBadge->setToolTip(tr("PA Status — OK"));
-    hbox->addWidget(m_paStatusBadge);
-    m_paStatusBadgeSep = makeSep();
-    hbox->addWidget(m_paStatusBadgeSep);
 
-    // ── ADC overload alarm — stacked badge between PA OK and TX ───────────
-    // Hidden by default; shown when StepAttenuatorController emits an
-    // overload event, hidden again 2 s after the latest event by the
-    // timer below. The trailing separator is captured + toggled with
-    // the badge so the strip closes seamlessly when the alarm clears
-    // (otherwise we'd leave a dangling "··" run).
+    // ── ADC overload alarm: reserved slot between PA and TX ──────────────
+    // Dimmed by default; shown at full opacity when StepAttenuatorController
+    // emits an overload event, dimmed again 2 s after the latest event by
+    // the timer below.
     //
     // Source-first port of Thetis pollOverloadSyncSeqErr + ucInfoBar.Warning
     // [@501e3f5]:
@@ -7026,11 +7191,7 @@ void MainWindow::buildStatusBar()
     //                            Visible=true; _warningTimer.Start()
     m_adcOvlBadge = new AdcOverloadBadge(barWidget);
     m_adcOvlBadge->setObjectName(QStringLiteral("adcOvlBadge"));
-    m_adcOvlBadge->setVisible(false);
-    hbox->addWidget(m_adcOvlBadge);
-    m_adcOvlSep = makeSep();
-    m_adcOvlSep->setVisible(false);
-    hbox->addWidget(m_adcOvlSep);
+    dimSafetyBadge(m_adcOvlBadge, false);
 
     // Auto-hide timer mirrors Thetis ucInfoBar._warningTimer — single-shot
     // 2000 ms, restarts on each overload event so a single hit keeps the
@@ -7041,11 +7202,11 @@ void MainWindow::buildStatusBar()
     m_adcOvlHideTimer->setSingleShot(true);
     m_adcOvlHideTimer->setInterval(2000);
     connect(m_adcOvlHideTimer, &QTimer::timeout, this, [this]() {
-        if (m_adcOvlBadge) { m_adcOvlBadge->setVisible(false); }
-        if (m_adcOvlSep)   { m_adcOvlSep->setVisible(false); }
-        // Required width of the strip just shrank — recompute drops.
-        // force=true: budget hasn't moved but content width has.
-        reapplyRightStripDropPriority(/*force=*/true);
+        if (m_adcOvlBadge) { dimSafetyBadge(m_adcOvlBadge, false); }
+        // No relayout() needed: m_safetyGroup is registered with
+        // m_chromeBar as one rung-0 item at its pinned 4x50 px sizeHint
+        // (design §4.5), so dimming a badge inside it never changes the
+        // group's own required width (finding routed from Task A6).
     });
 
     connect(m_stepAttController, &StepAttenuatorController::overloadStatusChanged,
@@ -7083,13 +7244,10 @@ void MainWindow::buildStatusBar()
         m_adcOvlBadge->setVariant(anyRed ? AdcOverloadBadge::Variant::Tx
                                          : AdcOverloadBadge::Variant::Warn);
         m_adcOvlBadge->setToolTip(tip);
-        m_adcOvlBadge->setVisible(true);
-        if (m_adcOvlSep) { m_adcOvlSep->setVisible(true); }
+        dimSafetyBadge(m_adcOvlBadge, true);
 
-        // Required width of the strip just grew — drop something else
-        // if the new total exceeds budget.
-        // force=true: budget hasn't moved but content width has.
-        reapplyRightStripDropPriority(/*force=*/true);
+        // No relayout() needed here either -- same reasoning as the
+        // auto-hide timer above.
 
         // Restart auto-hide — Thetis: _warningTimer.Stop(); .Start();
         // (ucInfoBar.cs:927+932 [@501e3f5]).
@@ -7107,8 +7265,38 @@ void MainWindow::buildStatusBar()
     m_txStatusBadge->setLabel(QStringLiteral("TX"));
     m_txStatusBadge->setVariant(StatusBadge::Variant::Off);
     m_txStatusBadge->setToolTip(tr("Receive (MOX off)"));
-    hbox->addWidget(m_txStatusBadge);
-    hbox->addWidget(makeSep());
+
+    // ── Reserved safety slots (design §4.5) ──────────────────────────────
+    // Every slot is permanently allocated. Only the badge inside changes.
+    // The old code inserted the overload badge BETWEEN the PA and TX badges
+    // and made it visible on overload, so TX slid sideways at the exact
+    // moment something went wrong. Reserving the slot fixes that: an alarm
+    // now lights up in a pixel the operator has already learned.
+    m_safetyGroup = new QWidget(barWidget);
+    m_safetyGroup->setObjectName(QStringLiteral("safetyGroup"));
+    m_safetyGroup->setStyleSheet(QStringLiteral(
+        "QWidget#safetyGroup { border-left: 1px solid #203040; }"));
+    auto* safetyRow = new QHBoxLayout(m_safetyGroup);
+    safetyRow->setContentsMargins(8, 0, 0, 0);
+    safetyRow->setSpacing(6);
+
+    auto addSlot = [&](QWidget* badge, int widthPx = kSafetySlotWidthPx) {
+        auto* slot = new QWidget(m_safetyGroup);
+        slot->setObjectName(QStringLiteral("safetySlot"));
+        slot->setFixedWidth(widthPx);
+        auto* sl = new QHBoxLayout(slot);
+        sl->setContentsMargins(0, 0, 0, 0);
+        sl->addWidget(badge);
+        badge->setParent(slot);
+        safetyRow->addWidget(slot);
+    };
+
+    addSlot(m_paStatusBadge);
+    // The alarm gets a slot sized to its own content, not to its
+    // neighbours. PA and TX stay narrow and learnable by position.
+    addSlot(m_adcOvlBadge, kOverloadSlotWidthPx);
+    addSlot(m_txStatusBadge);
+    hbox->addWidget(m_safetyGroup);
 
     // Wire TX badge to MoxController. MoxController lives on m_radioModel;
     // both are created before buildStatusBar() runs.
@@ -7116,6 +7304,11 @@ void MainWindow::buildStatusBar()
         // Qt::UniqueConnection is not supported for lambda connects — this
         // connect runs once at construction so no deduplication is needed.
         connect(mox, &MoxController::moxStateChanged, this, [this](bool tx) {
+            // While inhibited the badge is showing the prohibition symbol and
+            // must keep showing it; a MOX transition underneath must not
+            // repaint over an active interlock.
+            if (m_txInhibited) { return; }
+            m_txStatusBadge->setSvgIcon(QStringLiteral(":/icons/badge-dot.svg"));
             m_txStatusBadge->setVariant(tx ? StatusBadge::Variant::Tx
                                            : StatusBadge::Variant::Off);
             m_txStatusBadge->setToolTip(tx ? tr("Transmitting (MOX engaged)")
@@ -7123,56 +7316,16 @@ void MainWindow::buildStatusBar()
         });
     }
 
-    // ── OverflowChip — surfaces drop-list contents when the strip is tight
-    // Sits just before the clock so the "…" appears at the right end of
-    // the strip whenever ≥ 1 right-strip item has been dropped to fit.
-    // Hidden when the drop list is empty.
+    // ── OverflowChip: surfaces folded-item contents when the strip is tight
+    // Sits at the right end of the strip; the "…" appears whenever
+    // m_chromeBar has folded >= 1 item to fit the bar width. Hidden
+    // (unavailable) when nothing is folded. The clock lives on TitleBar
+    // now (Task A7), not here.
     m_overflowChip = new OverflowChip(barWidget);
     hbox->addWidget(m_overflowChip);
 
-    // Time display: stacked UTC + date / local
-    // Top row: UTC time (hh:mm:ss UTC)
-    // Bottom row: date + local time
-    {
-        m_timeWidget = new QWidget(barWidget);
-        m_timeWidget->setMinimumWidth(130);
-        QVBoxLayout* tvl = new QVBoxLayout(m_timeWidget);
-        tvl->setContentsMargins(0, 0, 0, 0);
-        tvl->setSpacing(0);
-
-        m_utcTimeLabel = new QLabel(m_timeWidget);
-        m_utcTimeLabel->setStyleSheet(QStringLiteral(
-            "QLabel { color: #8aa8c0; font-size: 11px; }"));
-        m_utcTimeLabel->setToolTip(QStringLiteral("UTC time"));
-        tvl->addWidget(m_utcTimeLabel);
-
-        auto* localDateLabel = new QLabel(m_timeWidget);
-        localDateLabel->setStyleSheet(QStringLiteral(
-            "QLabel { color: #607080; font-size: 11px; }"));
-        localDateLabel->setToolTip(QStringLiteral("Local date/time"));
-        tvl->addWidget(localDateLabel);
-
-        hbox->addWidget(m_timeWidget);
-
-        // Combined clock timer — 1s updates for UTC+date+local
-        m_clockTimer = new QTimer(this);
-        connect(m_clockTimer, &QTimer::timeout, this, [this, localDateLabel]() {
-            QDateTime utcNow = QDateTime::currentDateTimeUtc();
-            QDateTime localNow = QDateTime::currentDateTime();
-            m_utcTimeLabel->setText(utcNow.toString(QStringLiteral("hh:mm:ss UTC")));
-            localDateLabel->setText(
-                localNow.toString(QStringLiteral("yyyy-MM-dd  hh:mm")));
-        });
-        // Fire once immediately so labels are populated before first tick
-        QDateTime utcNow = QDateTime::currentDateTimeUtc();
-        QDateTime localNow = QDateTime::currentDateTime();
-        m_utcTimeLabel->setText(utcNow.toString(QStringLiteral("hh:mm:ss UTC")));
-        localDateLabel->setText(localNow.toString(QStringLiteral("yyyy-MM-dd  hh:mm")));
-        m_clockTimer->start(1000);
-    }
-
     // ── CPU usage timer ──────────────────────────────────────────────────────
-    // Two sources, user-toggleable via right-click on m_cpuMetric:
+    // Two sources, user-toggleable via right-click on m_systemTile:
     //   System  (default) — host_processor_info / whole-machine CPU,
     //                       mirrors Thetis _total_cpu_usage PerformanceCounter.
     //   App     — getrusage(RUSAGE_SELF), this process only,
@@ -7182,16 +7335,12 @@ void MainWindow::buildStatusBar()
     // Restore persisted toggle (default System per Thetis default).
     // Wired on every supported platform — readSystemCpuPercent /
     // readProcessCpuPercent are cross-platform (macOS / Linux / Windows).
+    // The context-menu policy + connect are wired above, next to
+    // m_systemTile's construction.
     m_cpuShowSystem = (AppSettings::instance()
                           .value(QStringLiteral("CpuShowSystem"),
                                  QStringLiteral("True"))
                           .toString() == QStringLiteral("True"));
-
-    m_cpuMetric->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(m_cpuMetric, &QWidget::customContextMenuRequested,
-            this, &MainWindow::onCpuMenuRequested);
-    m_cpuMetric->setToolTip(
-        tr("Right-click to switch between System and App CPU usage"));
 
     m_cpuTimer = new QTimer(this);
     connect(m_cpuTimer, &QTimer::timeout, this, [this]() {
@@ -7199,9 +7348,16 @@ void MainWindow::buildStatusBar()
                                            : readProcessCpuPercent();
         // Thetis smoothing: smoothed = smoothed*0.8 + new*0.2
         m_cpuSmoothedPct = m_cpuSmoothedPct * 0.8 + pct * 0.2;
-        if (m_cpuMetric) {
-            m_cpuMetric->setValue(QString::asprintf("%.0f%%",
-                                                    m_cpuSmoothedPct));
+        if (m_systemTile) {
+            m_systemTile->setCpuPercent(m_cpuSmoothedPct);
+            // CPU's digit count varies (0-100%), so its row can change
+            // width tick to tick. Cheap: relayout() no-ops unless the
+            // computed rung actually changes (ChromeBarController::relayout).
+            if (m_chromeBar && m_chromeBarWidget) {
+                m_chromeBar->setNaturalWidth(m_systemTile,
+                                             m_systemTile->sizeHint().width());
+                m_chromeBar->relayout(m_chromeBarWidget->width());
+            }
         }
     });
     // Task 3.6: restore persisted rate (default 1 Hz = 1000 ms interval).
@@ -7211,6 +7367,119 @@ void MainWindow::buildStatusBar()
         const int clampedHz = qBound(1, savedHz, 30);
         m_cpuTimer->start(1000 / clampedHz);
     }
+
+    // ── Layout authority (design §5) ───────────────────────────────────
+    // One controller replaces RxDashboard's internal ladder, the old
+    // right-strip drop-priority pass, and Qt's squeeze in the left section.
+    // The rung assignments live in registerChromeBarItems so they can be
+    // tested without constructing MainWindow; do not inline them here.
+    m_chromeBar = new ChromeBarController(this);
+
+    ChromeBarWidgets bar;
+    bar.panButton        = panBtn;
+    bar.panelToggle      = panelToggleLabel;
+    bar.stationBlock     = m_stationBlock;
+    bar.safetyGroup      = m_safetyGroup;
+    bar.psaIndicator     = m_psaIndicator;
+    bar.overflowChip     = m_overflowChip;
+    bar.systemTile       = m_systemTile;
+    bar.systemTileSep    = m_systemTileSep;
+    bar.tgxlChip         = m_tgxlChip;
+    bar.catIndicator     = m_catIndicator;
+    bar.catSep           = m_catSep;
+    bar.tciIndicator     = m_tciIndicator;
+    bar.tciSep           = m_tciSep;
+    bar.chain0           = m_chain0IndicatorWidget;
+    // chain1 is always constructed (below), never null; single-ADC SKUs
+    // are gated via setItemAvailable on rxFilterChainCount, not by
+    // omitting this widget.
+    bar.chain1           = m_chain1IndicatorWidget;
+    bar.rxDashRow        = m_rxDashboard;
+    bar.placeholderGroup = m_placeholderGroup;
+    bar.placeholderSep   = m_placeholderSep;
+    bar.bandStackLabel   = m_bandStackLabel;
+    bar.tnfLabel         = m_tnfLabel;
+    for (int rung = 5; rung <= 9; ++rung) {
+        bar.pillByRung[rung] = m_rxDashboard->badgeForRung(rung);
+    }
+
+    registerChromeBarItems(*m_chromeBar, bar);
+
+    // registerChromeBarItems just measured w.rxDashRow's raw sizeHint(),
+    // which at this point in construction happens to equal tag + mode +
+    // filter + AGC (the four badges visible before any slice binds) --
+    // wrong on two counts: it double-counts AGC (registered separately at
+    // rung 9 above) and it would go stale the moment any pill's
+    // visibility changes. Override with the pill-independent residual
+    // immediately (final-fix-wave finding 5).
+    if (m_rxDashboard) {
+        m_chromeBar->setNaturalWidth(m_rxDashboard,
+                                     m_rxDashboard->residualWidth());
+    }
+
+    // Items that start unavailable until their owning signal says
+    // otherwise (Task A8 fix round 1, findings 1-3). No radio has
+    // connected and no slice has bound yet at this point in construction,
+    // so nothing is known to be present, armed or DSP-active. Without
+    // this, availability defaults to true (addItem's default) and the
+    // FIRST relayout() -- which always runs a full pass, since
+    // m_foldedThrough starts at -1 -- would force-show a blank PSA
+    // indicator and stray "TGXL" / "CH 1" tiles, and RxDashboard's four
+    // toggle pills would pop up empty on every cold launch.
+    m_chromeBar->setItemAvailable(m_psaIndicator, false);
+    m_chromeBar->setItemAvailable(m_tgxlChip, false);
+    m_chromeBar->setItemAvailable(m_chain1IndicatorWidget, false);
+    m_chromeBar->setItemAvailable(m_overflowChip, false);
+    for (int rung = 5; rung <= 8; ++rung) {  // SQL, APF, NB, NR
+        m_chromeBar->setItemAvailable(m_rxDashboard->badgeForRung(rung), false);
+    }
+    // AGC (rung 9) has no off state and keeps the default available=true.
+
+    // RxDashboard's on*Changed handlers report DSP-active state (and
+    // hence width, since StatusBadge::setLabel changes minimum width
+    // live) through this signal instead of calling setVisible directly
+    // (RxDashboard.h doc comment).
+    connect(m_rxDashboard, &RxDashboard::badgeAvailabilityChanged,
+            this, [this](int rung, bool available) {
+        if (!m_chromeBar || !m_chromeBarWidget) { return; }
+        StatusBadge* badge = m_rxDashboard->badgeForRung(rung);
+        if (!badge) { return; }
+        m_chromeBar->setItemAvailable(badge, available);
+        m_chromeBar->setNaturalWidth(badge, badge->sizeHint().width());
+        m_chromeBar->relayout(m_chromeBarWidget->width());
+    });
+
+    // The slice tag, mode or filter content changed, so the residual
+    // registered above is stale (final-fix-wave finding 5). Mirrors the
+    // badgeAvailabilityChanged handler just above, minus the availability
+    // half -- the row itself never folds.
+    connect(m_rxDashboard, &RxDashboard::residualWidthChanged, this, [this]() {
+        if (!m_chromeBar || !m_chromeBarWidget || !m_rxDashboard) { return; }
+        m_chromeBar->setNaturalWidth(m_rxDashboard,
+                                     m_rxDashboard->residualWidth());
+        m_chromeBar->relayout(m_chromeBarWidget->width());
+    });
+
+    // m_overflowChip is registered with m_chromeBar at rung 0 (final-fix-
+    // wave finding 4), so the controller is the sole writer of its
+    // visibility; setDroppedItems() no longer calls setVisible() itself.
+    // This handler feeds it content AND reports the resulting
+    // available/unavailable fact back through setItemAvailable, same
+    // shape as updatePsaIndicatorVisibility(). The nested relayout() call
+    // is safe: the chip's width can only ever push the required rung UP
+    // (never down), so once its availability flips true the folded set
+    // stays a superset and the chain settles in one extra pass; the
+    // reverse direction (labels empty -> chip goes unavailable) is
+    // self-consistent at rung 0, which never has anything folded, so no
+    // pass beyond that one is triggered either.
+    connect(m_chromeBar, &ChromeBarController::foldStateChanged, this,
+            [this](const QStringList& labels) {
+        m_overflowChip->setDroppedItems(labels);
+        if (m_chromeBar && m_chromeBarWidget) {
+            m_chromeBar->setItemAvailable(m_overflowChip, !labels.isEmpty());
+            m_chromeBar->relayout(m_chromeBarWidget->width());
+        }
+    });
 
     // Add the full-width bar widget to the status bar.
     //
@@ -7232,8 +7501,9 @@ void MainWindow::buildStatusBar()
 // QStatusBar::showMessage hides every non-permanent widget while a
 // message is up, and buildStatusBar adds the entire bar as one such
 // widget. So any notice cost the operator the CH pill, the PureSignal
-// indicator, the radio name, CAT and TCI state, the PA and TX badges
-// and the clock, all at once, mid-transmit.
+// indicator, the radio name, CAT and TCI state, the PA and TX badges,
+// and the clock (which lived on this bar at the time; it has since
+// moved to TitleBar, Task A7), all at once, mid-transmit.
 //
 // The notices themselves are worth keeping. They move here instead.
 StatusToast* MainWindow::showToast(const QString& message,
@@ -7301,13 +7571,52 @@ void MainWindow::setPaTripped(bool tripped)
     }
 }
 
-// ── Phase 3M-0 Task 14: TX Inhibit label visibility ─────────────────────────
+// ── Phase 3M-0 Task 14: TX Inhibit label state ───────────────────────────────
 // Called by Task 17 wiring when TxInhibitMonitor::txInhibitedChanged fires.
-// Shows or hides the red "TX INHIBIT" pill in the status bar.
+// The "INH" pill lives in a permanently allocated safety slot (design
+// §4.5) -- dims to 14% opacity when inactive rather than hiding, so this
+// never resizes the slot. setVisible() would be a no-op here in the wrong
+// direction: the label stays Qt-visible at all times once inside its slot.
 void MainWindow::setTxInhibited(bool inhibited)
 {
-    if (!m_txInhibitLabel) { return; }
-    m_txInhibitLabel->setVisible(inhibited);
+    if (!m_txStatusBadge) { return; }
+    if (m_txInhibited == inhibited) { return; }
+    m_txInhibited = inhibited;
+
+    if (inhibited) {
+        // A prohibition symbol over TX, not a separate "INH" pill. Inhibit is
+        // a property of transmit, so it belongs on the transmit indicator;
+        // and the pill's abbreviation meant nothing to an operator who had
+        // not read the source (bench report, 2026-08-03).
+        m_txStatusBadge->setSvgIcon(QStringLiteral(":/icons/badge-prohibited.svg"));
+        m_txStatusBadge->setVariant(StatusBadge::Variant::Tx);
+        m_txStatusBadge->setToolTip(
+            tr("Transmit blocked by an external TX Inhibit signal."));
+
+        // The symbol says transmit is blocked; the toast says why, once, at
+        // the moment it happens. Error severity because an interlock is
+        // actively refusing the operator, which is what that level means.
+        // Held so it can be taken down the instant inhibit clears rather
+        // than aging out and leaving a stale notice on screen.
+        m_txInhibitToast = showToast(
+            tr("Transmit blocked: external TX Inhibit asserted."),
+            ToastSeverity::Error, 8000);
+        return;
+    }
+
+    // Cleared. Hand the badge back to whatever MOX currently says, so the
+    // operator does not have to key up to get a truthful indicator again.
+    if (m_txInhibitToast) {
+        m_txInhibitToast->close();
+        m_txInhibitToast = nullptr;
+    }
+    const bool tx = m_radioModel && m_radioModel->moxController()
+                    && m_radioModel->moxController()->isMox();
+    m_txStatusBadge->setSvgIcon(QStringLiteral(":/icons/badge-dot.svg"));
+    m_txStatusBadge->setVariant(tx ? StatusBadge::Variant::Tx
+                                   : StatusBadge::Variant::Off);
+    m_txStatusBadge->setToolTip(tx ? tr("Transmitting (MOX engaged)")
+                                   : tr("Receive (MOX off)"));
 }
 
 // ── Phase 23: TCI indicator update + Setup navigation ────────────────────────
@@ -7372,6 +7681,13 @@ void MainWindow::updateTciIndicator()
         QStringLiteral("QLabel { color: %1; font-size: 11px; }").arg(color));
     if (m_tciIndicator) {
         m_tciIndicator->setToolTip(tooltip);
+        // Bottom row text ranges from "Off" to "On · 3 ▸TX" -- a real
+        // width change (Task A8 fix round 1 finding 4).
+        if (m_chromeBar && m_chromeBarWidget) {
+            m_chromeBar->setNaturalWidth(m_tciIndicator,
+                                         m_tciIndicator->sizeHint().width());
+            m_chromeBar->relayout(m_chromeBarWidget->width());
+        }
     }
 }
 
@@ -7510,29 +7826,26 @@ void MainWindow::setCpuTimerIntervalHz(int hz)
 // ── Task 3.6: ANAN-8000DLE volts/amps visibility ────────────────────────────
 // Called when the "Show volts/amps in title bar" checkbox on Hardware →
 // Radio Info is toggled.  Only has visible effect for ANAN-8000D radios
-// (m_paVoltLabel is already hidden for non-MKII boards by the hardware gate
-// in buildStatusBar(); this gives the user an additional opt-out).
+// (SystemTile's PA row is already hidden for non-MKII boards by the
+// hardware gate in buildStatusBar(); this gives the user an additional
+// opt-out).
 void MainWindow::setVoltsAmpsVisible(bool visible)
 {
-    if (!m_paVoltLabel) { return; }
-    // Only change visibility when the widget is already populated (i.e. a
-    // MKII-class radio is connected and has sent at least one userAdc0Changed
-    // signal). If not yet shown, the user preference is stored in AppSettings
-    // and consulted by the userAdc0Changed lambda in buildStatusBar().
-    if (!visible && m_paVoltLabel->isVisible()) {
-        m_paVoltLabel->setVisible(false);
-        // Container + trailing separator only collapse if the PA-T row
-        // is also hidden. HL2's temp row keeps the tile alive even when
-        // the user opts out of volts display on a (hypothetical) board
-        // that surfaces both rows; today no single board does, but the
-        // logic is symmetric with refreshPaStackVisibility() in
-        // buildStatusBar().
-        const bool anyRow = m_paTempLabel && m_paTempLabel->isVisible();
-        if (m_paStackWidget) { m_paStackWidget->setVisible(anyRow); }
-        if (m_paVoltLabelSep) { m_paVoltLabelSep->setVisible(anyRow); }
-        reapplyRightStripDropPriority(/*force=*/true);
+    if (!m_systemTile) { return; }
+    // SystemTile::clearPaVolts() clears only the volts flag; if a
+    // temperature reading is also present (HL2-class row-sharing, design
+    // §4.3) it keeps the tile's PA row alive, same intent as the old
+    // refreshPaStackVisibility() symmetry. Idempotent, so no isVisible()
+    // guard is needed the way the old m_paVoltLabel check had.
+    if (!visible) {
+        m_systemTile->clearPaVolts();
+        if (m_chromeBar && m_chromeBarWidget) {
+            m_chromeBar->setNaturalWidth(m_systemTile,
+                                         m_systemTile->sizeHint().width());
+            m_chromeBar->relayout(m_chromeBarWidget->width());
+        }
     }
-    // Note: toggling back to visible=true does not force-show the widget;
+    // Note: toggling back to visible=true does not force-show the reading;
     // the next userAdc0Changed will re-show it. This avoids showing a stale
     // "—" value before the first ADC reading arrives.
 }
@@ -8152,133 +8465,14 @@ void MainWindow::wireSliceToSpectrum()
     }
 }
 
-void MainWindow::reapplyRightStripDropPriority(bool force)
-{
-    // No work if the chrome bar isn't built yet (called pre-construction
-    // from a stray signal) or the OverflowChip is missing.
-    if (!m_chromeBarWidget || !m_overflowChip) { return; }
-
-    // Hysteresis: if the strip width hasn't moved past a 30 px window
-    // since our last decision and no content-change site flagged
-    // force=true, return early. Without this gate, resizeEvent fires on
-    // every pixel of a manual drag, and at boundary widths the
-    // setVisible() toggles below re-fire resize at a slightly different
-    // width, looping. Content-change call sites (voltage handler, ADC
-    // overload timer) pass force=true since the budget hasn't moved but
-    // the required width has — the deadband would otherwise skip work
-    // we genuinely need.
-    constexpr int kDeadbandPx = 30;
-    const int gateBudget = m_chromeBarWidget->width();
-    if (!force && m_rightStripSettled
-        && qAbs(gateBudget - m_rightStripLastBudget) < kDeadbandPx) {
-        return;
-    }
-
-    // Drop priority — spec §286-290:
-    //   PA OK → CAT/TCI → PSU/PA → CPU → time
-    // Each entry pairs the primary widget with its trailing separator
-    // so they hide + show together (no dangling "··" runs). Time has
-    // no trailing separator. CAT and TCI are listed as a pair per spec
-    // ("CAT/TCI") and we drop them together to avoid the "TCI but no
-    // CAT" half-state.
-    struct DropEntry {
-        QWidget* primary{nullptr};
-        QWidget* sep{nullptr};
-        QString  name;
-    };
-    const QVector<QVector<DropEntry>> priorityGroups = {
-        // 1. PA OK badge — drops first (least operationally critical
-        //    among the right-strip items per spec; user can still see
-        //    fault state via the dialog or dashboard).
-        {{ m_paStatusBadge, m_paStatusBadgeSep, tr("PA OK") }},
-        // 2. CAT + TCI — drop together as a pair.
-        {
-            { m_catIndicator, m_catSep, tr("CAT") },
-            { m_tciIndicator, m_tciSep, tr("TCI") },
-        },
-        // 3. PA telemetry tile (volts + temp stack; container is hidden
-        //    when both rows are hidden, so this is a no-op for boards
-        //    with no PA-V and no PA-T data — Atlas / Hermes / Angelia /
-        //    Orion).
-        {{ m_paStackWidget, m_paVoltLabelSep, tr("PA telemetry") }},
-        // 4. CPU.
-        {{ m_cpuMetric, m_cpuMetricSep, tr("CPU") }},
-        // 5. Time — drops last; if it goes the strip is essentially empty.
-        {{ m_timeWidget, nullptr, tr("Clock") }},
-    };
-
-    // Phase 1: restore everything (the window may have grown since the
-    // last pass). Iterate every entry and force visible. The
-    // OverflowChip itself drops its contents to start fresh.
-    for (const auto& group : priorityGroups) {
-        for (const auto& e : group) {
-            if (e.primary) { e.primary->setVisible(true); }
-            if (e.sep)     { e.sep->setVisible(true); }
-        }
-    }
-    m_overflowChip->setDroppedItems({});
-
-    // Force layout to recompute sizeHints with the new visibility state.
-    if (auto* lay = m_chromeBarWidget->layout()) { lay->activate(); }
-
-    auto* hbox = qobject_cast<QHBoxLayout*>(m_chromeBarWidget->layout());
-    if (!hbox) { return; }
-
-    // Helper: total width of all currently-visible non-stretch widgets +
-    // their separators + the layout's spacings + content margins.
-    auto requiredWidth = [hbox]() -> int {
-        int w = 0;
-        const int spacing = hbox->spacing();
-        int visibleCount = 0;
-        for (int i = 0; i < hbox->count(); ++i) {
-            QLayoutItem* it = hbox->itemAt(i);
-            if (auto* widget = it->widget()) {
-                if (widget->isVisibleTo(widget->parentWidget())) {
-                    w += widget->sizeHint().width();
-                    ++visibleCount;
-                }
-            } else if (auto* sp = it->spacerItem()) {
-                // Stretches don't add to required width; fixed spacers do.
-                if (sp->expandingDirections() == Qt::Orientations()) {
-                    w += sp->sizeHint().width();
-                }
-            }
-        }
-        if (visibleCount > 1) {
-            w += spacing * (visibleCount - 1);
-        }
-        const auto m = hbox->contentsMargins();
-        w += m.left() + m.right();
-        return w;
-    };
-
-    const int budget = gateBudget;
-    QStringList dropped;
-
-    // Phase 2: drop priority groups in order until the strip fits.
-    for (const auto& group : priorityGroups) {
-        if (requiredWidth() <= budget) { break; }
-        for (const auto& e : group) {
-            if (e.primary) { e.primary->setVisible(false); }
-            if (e.sep)     { e.sep->setVisible(false); }
-            if (!e.name.isEmpty()) { dropped << e.name; }
-        }
-        if (auto* lay = m_chromeBarWidget->layout()) { lay->activate(); }
-    }
-
-    m_overflowChip->setDroppedItems(dropped);
-    m_rightStripLastBudget = budget;
-    m_rightStripSettled = true;
-}
-
 // ── CPU usage source toggle ──────────────────────────────────────────────────
-// Right-click menu on the CPU MetricLabel — System / App radio choice.
+// Right-click menu on m_systemTile — System / App radio choice.
 // Mirrors Thetis's toolStripDropDownButton_CPU with systemToolStripMenuItem
 // and thetisOnlyToolStripMenuItem (console.cs:44230-44247). Persists the
 // choice in AppSettings under "CpuShowSystem".
 void MainWindow::onCpuMenuRequested(const QPoint& localPos)
 {
-    if (!m_cpuMetric) { return; }
+    if (!m_systemTile) { return; }
 
     QMenu menu(this);
     QAction* sysAct = menu.addAction(tr("System"));
@@ -8288,7 +8482,7 @@ void MainWindow::onCpuMenuRequested(const QPoint& localPos)
     appAct->setCheckable(true);
     appAct->setChecked(!m_cpuShowSystem);
 
-    QAction* chosen = menu.exec(m_cpuMetric->mapToGlobal(localPos));
+    QAction* chosen = menu.exec(m_systemTile->mapToGlobal(localPos));
     if (!chosen) { return; }
 
     const bool newSys = (chosen == sysAct);
@@ -8306,7 +8500,12 @@ void MainWindow::onCpuMenuRequested(const QPoint& localPos)
     m_cpuProcPrevSysUs = 0;
     m_cpuSysPrevTotal = 0;
     m_cpuSysPrevIdle = 0;
-    m_cpuMetric->setValue(QStringLiteral("—"));
+    // SystemTile's CPU row does start with a "—" placeholder
+    // (SystemTile.cpp constructor), but setCpuPercent() only takes a
+    // numeric value and there's no way to ask for that placeholder again
+    // once the timer is running; 0% is the closest equivalent to a
+    // reset-to-placeholder display until the next timer tick.
+    m_systemTile->setCpuPercent(0.0);
 }
 
 double MainWindow::readProcessCpuPercent()
@@ -8476,9 +8675,14 @@ void MainWindow::resizeEvent(QResizeEvent* event)
         }
     }
 
-    // Re-run progressive drop on the right-side strip. Window grew →
-    // restore items; window shrank → drop more. Spec §286-294.
-    reapplyRightStripDropPriority();
+    // Single layout authority for the banner (design §5). One relayout()
+    // call per resize; no re-measure mid-decision, no deadband. Presence/
+    // DSP-active facts (TGXL, CH1, PSA, RX pills) are reported to the
+    // controller via setItemAvailable at the signal that changes them,
+    // not re-derived here -- see ChromeBarController::setItemAvailable.
+    if (m_chromeBar && m_chromeBarWidget) {
+        m_chromeBar->relayout(m_chromeBarWidget->width());
+    }
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
@@ -8494,21 +8698,6 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
                            m_radioModel->buildConnectionTooltip(),
                            m_titleBar->connectionSegment());
         return true;
-    }
-
-    // PA-T row click → toggle persisted °C / °F preference. The widget
-    // we watch is a MetricLabel (not a QLabel), so use the property
-    // marker rather than a qobject_cast to a single concrete class.
-    if (event->type() == QEvent::MouseButtonPress) {
-        auto* w = qobject_cast<QWidget*>(watched);
-        if (w && w->property("isPaTempToggle").toBool()) {
-            const PaTempUnit cur = PaTempUnitNotifier::currentUnit();
-            const PaTempUnit next = (cur == PaTempUnit::Celsius)
-                                      ? PaTempUnit::Fahrenheit
-                                      : PaTempUnit::Celsius;
-            PaTempUnitNotifier::setUnit(next);
-            return true;  // event consumed
-        }
     }
 
     // Phase 23: m_tciIndicator click → open Setup → TCI Server.
@@ -8551,6 +8740,22 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
         }
     }
 
+    // Task B4: +PAN icon click; label has property "isAddPanButton".
+    // updateAddPanButtonState() disables the label while disconnected, so
+    // this fires only when a layout change is actually possible; the
+    // showPanLayoutDialog() body re-checks the same guard defensively.
+    // Left button only (final-fix-wave finding 12): a bare
+    // QEvent::MouseButtonPress check fires on right-click and middle-
+    // click too, which is not how every other clickable icon on this bar
+    // behaves (compare StationBlock::mousePressEvent's explicit button
+    // check).
+    if (watched->property("isAddPanButton").toBool()
+        && event->type() == QEvent::MouseButtonPress
+        && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
+        showPanLayoutDialog();
+        return true;
+    }
+
     // Status-bar TNF light: click toggles every notch at once.
     // From AetherSDR MainWindow_Shortcuts.cpp:612-614 [@c6481cbf], which
     // flips the model flag straight from the indicator's mouse press. The
@@ -8567,6 +8772,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             return true;  // event consumed
         }
     }
+
     return QMainWindow::eventFilter(watched, event);
 }
 
@@ -9008,35 +9214,41 @@ void MainWindow::openFreeDVReporter()
     m_freeDVReporterDialog->activateWindow();
 }
 
-// Phase 3F Sub-Epic D Task 10: build and exec the +PAN dropdown menu.
-// Three sections, top to bottom:
+// panIdsForLayout(): synthesize a "pan-0" .. "pan-(N-1)" id list sized to
+// a layout template's pan count. Two callers: applyPanLayout() below,
+// reached from PanLayoutDialog's thumbnail-grid accept path (Task B3/B4),
+// and the launch-time restoredLayout call near the top of this file.
 //
-//   1. "Add slice on active pan" -- one row per Slice letter (A..N) up
-//      to maxSlices(); the next-available row triggers addSliceOnPan
-//      on m_panStack's currently active pan id. Already-active letters
-//      are greyed out so the operator can read at a glance which slice
-//      is "next".
-//   2. "Layout" -- one row per supported template (1 / 2v / 2h /
-//      12h / 2x2). Current layout is checkmarked. Selecting one calls
-//      PanadapterStack::applyLayout with a synthesized pan-id list
-//      sized to that template's pan count.
-//   3. "Float active pan..." -- detaches the active pan into its own
-//      top-level window via PanadapterStack::floatPanadapter.
-//
-// All m_panStack-dependent actions guard on null so the menu opens
-// cleanly even before Task 12 wires the stack. Add-slice's first
-// triggerable row uses "pan-0" as a fallback active pan id pre-Task-12,
-// matching the convention PanadapterStack uses for its bootstrap pan.
+// This used to also carry a 20-line doc block for showPanMenu(), the old
+// +PAN dropdown that built the same table inline across three sections
+// (add-slice on the active pan / layout / float the active pan).
+// showPanMenu() was replaced by PanLayoutDialog's thumbnail grid
+// (Task B3), and its two per-pan actions moved to each pan's own
+// right-click menu so they carry that pan's own id instead of routing
+// through activePanId() (Task B5, design doc §8.5); neither reads this
+// function's five-template comment any more, and the table itself has
+// grown to the current nine layouts (design doc §8.3).
 // Codex review round 3, PR #293. The template-to-pan-count table had three
 // copies; this is the only one now.
 QStringList MainWindow::panIdsForLayout(const QString& layoutId)
 {
-    // Pan-count per template: 1=1, 2v/2h=2, 12h=3, 2x2=4.
-    const int needed = (layoutId == QStringLiteral("1"))   ? 1
-                     : (layoutId == QStringLiteral("12h")) ? 3
-                     : (layoutId == QStringLiteral("2x2")) ? 4
-                                                           : 2;
+    // One table, so a new layout is a one-line addition here and a branch in
+    // PanadapterStack::applyLayout, rather than a chain of ternaries that
+    // silently defaults new ids to 2. Counts match design §8.3.
+    static const QHash<QString, int> kPanCount = {
+        {QStringLiteral("1"),   1},
+        {QStringLiteral("2v"),  2},
+        {QStringLiteral("2h"),  2},
+        {QStringLiteral("2h1"), 3},
+        {QStringLiteral("12h"), 3},
+        {QStringLiteral("3v"),  3},
+        {QStringLiteral("2x2"), 4},
+        {QStringLiteral("4v"),  4},
+        {QStringLiteral("3h2"), 5},
+    };
+    const int needed = kPanCount.value(layoutId, 1);
     QStringList ids;
+    ids.reserve(needed);
     for (int i = 0; i < needed; ++i) {
         ids << QStringLiteral("pan-%1").arg(i);
     }
@@ -9134,71 +9346,47 @@ void MainWindow::populateEmptyPans()
     }
 }
 
-void MainWindow::showPanMenu()
+// Task B4: replaces the showPanMenu() context menu. Its layout section
+// listed ids as bare strings and is superseded by PanLayoutDialog's
+// thumbnail grid (Task B3); its two per-pan actions (add slice on active
+// pan, float active pan) move to each pan's own right-click menu in
+// Task B5, since both routed through activePanId() and a control drawn on
+// a pan should target that pan, not "whichever one is active."
+void MainWindow::showPanLayoutDialog()
 {
-    QMenu menu(this);
-
-    // -- Add slice section --------------------------------------------
-    menu.addSection(QStringLiteral("Add slice on active pan"));
-    if (m_radioModel) {
-        const int currentSlices = m_radioModel->slices().size();
-        const int maxS          = m_radioModel->maxSlices();
-        for (int i = 0; i < maxS; ++i) {
-            const QChar letter = QChar(QLatin1Char('A' + i));
-            QAction* act = menu.addAction(QStringLiteral("Slice %1").arg(letter));
-            // Already-active letters: grey. Next-available letter:
-            // wired. Beyond next-available: also grey (one click ->
-            // one slice).
-            act->setEnabled(i == currentSlices);
-            if (i == currentSlices) {
-                connect(act, &QAction::triggered, this, [this]() {
-                    if (!m_radioModel) { return; }
-                    const QString activePan = m_panStack
-                                                 ? m_panStack->activePanId()
-                                                 : QStringLiteral("pan-0");
-                    m_radioModel->addSliceOnPan(activePan);
-                });
-            }
-        }
+    if (!m_radioModel || !m_radioModel->isConnected()) {
+        return;
     }
-
-    // -- Layout section -----------------------------------------------
-    menu.addSeparator();
-    menu.addSection(QStringLiteral("Layout"));
-    const QStringList layouts = {
-        QStringLiteral("1"),
-        QStringLiteral("2v"),
-        QStringLiteral("2h"),
-        QStringLiteral("12h"),
-        QStringLiteral("2x2"),
-    };
-    for (const QString& layoutId : layouts) {
-        QAction* act = menu.addAction(layoutId);
-        if (m_panStack && m_panStack->currentLayoutId() == layoutId) {
-            act->setCheckable(true);
-            act->setChecked(true);
-        }
-        connect(act, &QAction::triggered, this, [this, layoutId]() {
-            applyPanLayout(layoutId);
-        });
+    // Gate on the DDC-derived ceiling, not raw maxSlices: opening a NEW
+    // pan always claims its own DDC (SliceStreamAllocator::placeSlice,
+    // preferOwnStream=true; see the ruling comment at
+    // SliceStreamAllocator.cpp:81-86), so a board like HL2 (maxSlices=5,
+    // userDdcCount=2) can never fill more than 2 independent pans even
+    // though it can host 5 slices total. Gating on maxSlices alone showed
+    // tiles the board could paint but never fill (final-fix-wave finding 2).
+    const auto& caps = m_radioModel->boardCapabilities();
+    const int maxPanCount = qMin(caps.maxSlices, caps.userDdcCount);
+    const QString boardName = m_radioModel->name();
+    PanLayoutDialog dlg(maxPanCount,
+                        m_panStack ? m_panStack->currentLayoutId()
+                                   : QStringLiteral("1"),
+                        boardName, this);
+    if (dlg.exec() == QDialog::Accepted && !dlg.selectedLayout().isEmpty()) {
+        applyPanLayout(dlg.selectedLayout());
     }
-
-    // -- Float active pan section -------------------------------------
-    menu.addSeparator();
-    QAction* floatAct = menu.addAction(QStringLiteral("Float active pan..."));
-    floatAct->setEnabled(m_panStack != nullptr);
-    connect(floatAct, &QAction::triggered, this, [this]() {
-        if (!m_panStack) { return; }
-        m_panStack->floatPanadapter(m_panStack->activePanId());
-    });
-
-    menu.exec(QCursor::pos());
 }
 
 // Phase 3M-4 bench-fix: PSA bottom-banner indicator visibility
 // gated on (caps.hasPureSignal && PureSignal::isAutoCalEnabled).
 // Centralised so onConnectionStateChanged + autoCalEnabledChanged +
 // pureSignalCoordinatorReady can all share one truth-source.
+//
+// m_psaIndicator is registered with m_chromeBar at rung 0 so its width
+// (two QLabel minimumWidth pins, ~154 px) is counted in the fold budget
+// on every PS-capable, PS-armed board (Task A8 fix round 1 finding 2).
+// The armed fact itself is reported via setItemAvailable, not a direct
+// setVisible call, per ChromeBarController::setItemAvailable's own doc
+// comment.
 void MainWindow::updatePsaIndicatorVisibility()
 {
     if (!m_psaIndicator) { return; }
@@ -9208,7 +9396,10 @@ void MainWindow::updatePsaIndicatorVisibility()
         && m_radioModel->boardCapabilities().hasPureSignal;
     auto* ps = m_radioModel ? m_radioModel->pureSignal() : nullptr;
     const bool armed = ps && ps->isAutoCalEnabled();
-    m_psaIndicator->setVisible(caps && armed);
+    if (m_chromeBar && m_chromeBarWidget) {
+        m_chromeBar->setItemAvailable(m_psaIndicator, caps && armed);
+        m_chromeBar->relayout(m_chromeBarWidget->width());
+    }
 }
 
 void MainWindow::showAudioDiagnoseDialog()
@@ -9239,30 +9430,39 @@ void MainWindow::onConnectionStateChanged()
     // which is a separate widget with its own handlers.
     pushConnectionStateToPans();
 
+    // Task B4: +PAN dims (and its tooltip explains why) on every
+    // connection-state transition, connected or not.
+    updateAddPanButtonState();
+
     if (m_radioModel->isConnected()) {
-        // Board widget top line: show model code ("Saturn") not marketing name
-        // ("ANAN-G2 (Saturn)") — the marketing name truncates at status-bar widths.
-        // boardCodeName() returns the HPSDRHW enum label which is short and unambiguous.
+        // Board code ("Saturn") not marketing name ("ANAN-G2 (Saturn)") —
+        // the marketing name truncates at status-bar widths. boardCodeName()
+        // returns the HPSDRHW enum label which is short and unambiguous.
+        // Design §4.1: rendered on StationBlock's second row (Task A4)
+        // instead of the retired left-section model+firmware pair.
         {
             const HPSDRHW board = m_radioModel->connection()->radioInfo().boardType;
             const QString code  = QString::fromLatin1(boardCodeName(board));
-            m_radioModelLabel->setText(code);
+            m_stationBlock->setHardwareLine(
+                code, QStringLiteral("v%1").arg(m_radioModel->version()));
+            // The second row's text (and hence StationBlock's sizeHint)
+            // just changed (Task A8 fix round 1 finding 4).
+            if (m_chromeBar && m_chromeBarWidget) {
+                m_chromeBar->setNaturalWidth(
+                    m_stationBlock, m_stationBlock->sizeHint().width());
+                m_chromeBar->relayout(m_chromeBarWidget->width());
+            }
         }
-        m_radioModelLabel->setStyleSheet(QStringLiteral(
-            "QLabel { color: #c8d8e8; font-size: 12px; }"));
-        // Firmware: "v27" not "FW 27" — shorter, fits the compact status bar.
-        m_radioFwLabel->setText(QStringLiteral("v%1").arg(m_radioModel->version()));
-        m_radioFwLabel->setStyleSheet(QStringLiteral(
-            "QLabel { color: #8aa8c0; font-size: 12px; }"));
 
         // Phase 3Q-6/D.1: setRadio() removed — radio identity moves to the
         // STATION block (sub-PR-7). Segment state is already driven by
         // connectionStateChanged → ConnectionSegment::setState (see D.2 wiring
         // block in the constructor).
 
-        // Phase 3Q Sub-PR-6 (F.1): RxDashboard is always bound to slice(0)
-        // from buildStatusBar(). No per-connect rebind needed — the slice
-        // stays the same object across connect/disconnect cycles.
+        // RxDashboard follows the ACTIVE slice (Task A5's rebindDashboard
+        // lambda, wired to RadioModel::sliceAdded / activeSliceChanged
+        // below), not a fixed slice(0), so no per-connect rebind is needed
+        // here specifically -- the rebind already happens on sliceAdded.
         // (Connection details moved to segment tooltip / NetworkDiagnosticsDialog.)
 
         // Wire step attenuator controller to the live radio connection
@@ -9532,12 +9732,10 @@ void MainWindow::onConnectionStateChanged()
                     Qt::UniqueConnection);
         }
     } else {
-        m_radioModelLabel->setText(QStringLiteral("—"));
-        m_radioModelLabel->setStyleSheet(QStringLiteral(
-            "QLabel { color: #8aa8c0; font-size: 12px; }"));
-        m_radioFwLabel->setText(QStringLiteral("—"));
-        m_radioFwLabel->setStyleSheet(QStringLiteral(
-            "QLabel { color: #607080; font-size: 12px; }"));
+        // No explicit hardware-line reset needed here: StationBlock clears
+        // its own second row automatically whenever setRadioName(QString())
+        // runs (Task A4), which the connectionStateChanged handler wired in
+        // buildStatusBar() already does on every non-Connected transition.
 
         // Save step attenuator settings before disconnecting.
         if (m_radioModel->connection()) {

@@ -45,7 +45,6 @@ void OverflowChip::setDroppedItems(const QStringList& items)
 
     if (items.isEmpty()) {
         setToolTip(QString());
-        setVisible(false);
         return;
     }
 
@@ -54,7 +53,13 @@ void OverflowChip::setDroppedItems(const QStringList& items)
         tip += QStringLiteral("\n  • ") + item;
     }
     setToolTip(tip);
-    setVisible(true);
+    // No setVisible() here (final-fix-wave finding 4): this chip is now
+    // registered with ChromeBarController at rung 0, which makes the
+    // controller the sole writer of visibility, via the availability axis
+    // (MainWindow wires !items.isEmpty() through setItemAvailable right
+    // after calling this). That also means its own ~26 px is finally
+    // counted in the fold width budget, instead of popping up unbudgeted
+    // exactly when folding starts.
 }
 
 } // namespace NereusSDR

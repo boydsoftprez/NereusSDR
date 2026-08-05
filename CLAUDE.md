@@ -550,6 +550,9 @@ preferences. OpenHPSDR radios don't store per-slice state.
 | [phase-pgxl-tgxl-smeter-verification/README.md](docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md) | 3P-II: 36-row bench verification matrix | Matrix drafted (pending live PGXL + TGXL hardware) |
 | [2026-05-21-anan-g2e-verification/README.md](docs/architecture/2026-05-21-anan-g2e-verification/README.md) | ANAN-G2E SKU port: 12-row bench verification matrix | Matrix drafted (4 documented gaps; pending live G2E hardware) |
 | [phase3f-multi-panadapter-plan.md](docs/architecture/phase3f-multi-panadapter-plan.md) | 3F: Multi-Panadapter + DDC Assignment | Planning (after 3I-4) |
+| [2026-08-02-bottom-banner-and-pan-menu-design.md](docs/architecture/2026-08-02-bottom-banner-and-pan-menu-design.md) | Bottom Banner Cleanup + AetherSDR-Shaped Pan Menu design spec: single `ChromeBarController` layout authority replacing 3 competing responsive systems, 9-layout pan menu thumbnail grid | **Complete (pending PR merge)** |
+| [2026-08-02-bottom-banner-and-pan-menu-plan.md](docs/architecture/2026-08-02-bottom-banner-and-pan-menu-plan.md) | Bottom Banner Cleanup + Pan Menu: 14-task implementation plan (Phase A ChromeBarController + fold ladder, Phase B pan-menu thumbnail grid) plus a final fix wave closing the merge-blocking audit findings | **Complete (14/14 tasks + fix wave; pending PR merge)** |
+| [2026-08-02-bottom-banner-and-pan-menu-verification/README.md](docs/architecture/2026-08-02-bottom-banner-and-pan-menu-verification/README.md) | Bottom Banner + Pan Menu: 7-row bench verification matrix | Matrix drafted (pending live G2 + HL2 hardware) |
 
 ### Protocol Reference (`docs/protocols/`)
 

@@ -177,6 +177,57 @@ void PanadapterStack::applyLayout(const QString& layoutId, const QStringList& pa
         m_rootSplitter->addWidget(topRow);
         m_rootSplitter->addWidget(bottomRow);
     }
+    else if (layoutId == QStringLiteral("2h1") && panIds.size() >= 3) {
+        m_rootSplitter->setOrientation(Qt::Vertical);
+
+        auto* topRow = new QSplitter(Qt::Horizontal, m_rootSplitter);
+        auto* tl = addPanadapter(panIds[0]);
+        auto* tr = addPanadapter(panIds[1]);
+        topRow->addWidget(tl);
+        topRow->addWidget(tr);
+        tl->show();
+        tr->show();
+        m_rootSplitter->addWidget(topRow);
+
+        auto* bottom = addPanadapter(panIds[2]);
+        m_rootSplitter->addWidget(bottom);
+        bottom->show();
+    }
+    else if (layoutId == QStringLiteral("3v") && panIds.size() >= 3) {
+        m_rootSplitter->setOrientation(Qt::Vertical);
+        for (int i = 0; i < 3; ++i) {
+            auto* p = addPanadapter(panIds[i]);
+            m_rootSplitter->addWidget(p);
+            p->show();
+        }
+    }
+    else if (layoutId == QStringLiteral("4v") && panIds.size() >= 4) {
+        m_rootSplitter->setOrientation(Qt::Vertical);
+        for (int i = 0; i < 4; ++i) {
+            auto* p = addPanadapter(panIds[i]);
+            m_rootSplitter->addWidget(p);
+            p->show();
+        }
+    }
+    else if (layoutId == QStringLiteral("3h2") && panIds.size() >= 5) {
+        m_rootSplitter->setOrientation(Qt::Vertical);
+
+        auto* topRow = new QSplitter(Qt::Horizontal, m_rootSplitter);
+        for (int i = 0; i < 3; ++i) {
+            auto* p = addPanadapter(panIds[i]);
+            topRow->addWidget(p);
+            p->show();
+        }
+        m_rootSplitter->addWidget(topRow);
+
+        auto* bottomRow = new QSplitter(Qt::Horizontal, m_rootSplitter);
+        for (int i = 3; i < 5; ++i) {
+            auto* p = addPanadapter(panIds[i]);
+            bottomRow->addWidget(p);
+            p->show();
+        }
+        m_rootSplitter->addWidget(bottomRow);
+    }
 }
 
 PanadapterApplet* PanadapterStack::panadapter(const QString& id) const { return m_pans.value(id, nullptr); }

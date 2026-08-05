@@ -71,6 +71,41 @@ private slots:
         rc.handleSupplyRaw(2700);
         QCOMPARE(spy.count(), 1);
     }
+
+    // 2026-08-03 KG4VCF G2E bench finding: a listener that binds
+    // supplyVoltsChanged/userAdc0Changed AFTER the first High-Priority
+    // status frame already ran through handleSupplyRaw/handleUserAdc0Raw
+    // never sees a value -- the identical-raw suppression above means a
+    // steady reading never re-emits. lastSupplyVolts()/lastUserAdc0Volts()
+    // let a late-binding listener pull the already-known value instead of
+    // waiting on a change that will never come.
+    void lastValueAccessorsStartAtSentinel() {
+        NullRadioConnection rc;
+        QVERIFY(rc.lastSupplyVolts() < 0.0f);
+        QVERIFY(rc.lastUserAdc0Volts() < 0.0f);
+    }
+
+    void lastValueAccessorsReflectMostRecentSample() {
+        NullRadioConnection rc;
+        rc.handleSupplyRaw(2700);
+        QVERIFY2(qAbs(rc.lastSupplyVolts() - 14.65f) < 0.5f,
+                 qPrintable(QStringLiteral("got %1 V, expected ~14.65")
+                            .arg(rc.lastSupplyVolts())));
+
+        rc.handleUserAdc0Raw(2400);
+        QVERIFY(rc.lastUserAdc0Volts() > 30.0f && rc.lastUserAdc0Volts() < 70.0f);
+    }
+
+    void lastValueAccessorsSurviveSuppressedReEmit() {
+        NullRadioConnection rc;
+        rc.handleSupplyRaw(2700);
+        const float first = rc.lastSupplyVolts();
+        // Second call with the same raw value is suppressed at the signal
+        // level (identicalRawDoesNotReEmit above), but the cached accessor
+        // must still report the known value, not regress to the sentinel.
+        rc.handleSupplyRaw(2700);
+        QCOMPARE(rc.lastSupplyVolts(), first);
+    }
 };
 
 QTEST_APPLESS_MAIN(TstRadioConnectionSupplyVolts)

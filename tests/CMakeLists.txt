@@ -1253,6 +1253,13 @@ nereus_add_test(tst_master_output_widget)
 # the menu-re-parent + in-window render on macOS.
 nereus_add_test(tst_title_bar)
 
+# ── Task A7 (bottom-banner cleanup): TitleBar::utcText() ─────────────────────
+# Single-row UTC clock moved from the bottom banner into TitleBar. Verifies
+# the label is populated before the first timer tick, matches the exact
+# "HH:MM:SS UTC" single-row shape (fully anchored, so a reintroduced
+# second date/local-time row would fail it), and contains no hyphen.
+nereus_add_test(tst_title_bar_clock)
+
 # ── Shell-Chrome Redesign sub-PR-4 D.1: ConnectionSegment v2 ─────────────────
 # 5 tests: state queries, rates+RTT round-trip, RTT-region left-click emits
 # rttClicked(), right-click emits contextMenuRequested(), audio flow-state
@@ -4205,6 +4212,11 @@ nereus_add_test(tst_status_badge)
 # 4 tests: ctor stores label+value, setLabel/setValue round-trip, idempotent.
 nereus_add_test(tst_metric_label)
 
+# ── Bottom-banner cleanup A3: SystemTile ──────────────────────────────────
+# 7 tests: CPU-only default, volts-only, temp-only, both-share-row-one,
+# CPU survives PA updates, clearing both hides row one, PA label override.
+nereus_add_test(tst_system_tile)
+
 # ── Shell-Chrome Redesign sub-PR-1: StationBlock widget ───────────────────
 # 5 tests: default/setRadioName/empty-name appearance switching, click +
 # right-click signal emission gated on appearance.
@@ -4232,6 +4244,33 @@ nereus_add_test(tst_audio_engine_flow_state)
 # 4 tests: null-safe construction, refresh on disconnected model, reset
 # clears counters, signal-wire safety. QTEST_MAIN — needs QApplication.
 nereus_add_test(tst_network_diagnostics_dialog)
+
+# ── Bottom-banner cleanup Task A1: ChromeFoldPlan pure fold math ─────────
+# 9 tests: required-width gap/padding accounting, per-rung folding,
+# same-rung grouping, rung-0 anchor immunity, planFold fit/stop/monotonic/
+# deterministic behavior, folded-label ordering. QTEST_MAIN but no QWidget
+# construction; the whole ladder is testable without a GUI.
+nereus_add_test(tst_chrome_fold_plan)
+
+# ── Bottom-banner cleanup Task A2: ChromeBarController ────────────────────
+# 8 tests: wide bar shows everything, narrow bar folds rung 1, separator
+# folds with its item, relayout is idempotent, no oscillation across
+# neighbouring widths, foldStateChanged only fires on an actual change,
+# setNaturalWidth changes the decision, width cached at registration is not
+# re-read on relayout after content grows. QTEST_MAIN, constructs real
+# QLabels.
+nereus_add_test(tst_chrome_bar_controller)
+
+# ── Bottom-banner cleanup Task A8: ChromeBarItems registration sweep ─────
+# 7 tests: wide bar shows everything, fold rung never regresses as width
+# shrinks, one width always yields one layout (idempotent + no history),
+# never-fold items survive every width, ladder folds in designed order
+# (system tile -> TGXL -> CAT/TCI -> chain0 -> RX pill -> placeholders),
+# CAT and TCI fold together, null widgets skipped not crashed. Exercises
+# the SAME registerChromeBarItems() buildStatusBar() calls, via a plain
+# ChromeBarWidgets struct filled with sized stand-ins -- MainWindow cannot
+# be constructed in this harness (see file header for why).
+nereus_add_test(tst_chrome_bar_items)
 
 # -- Phase 3M-3a-ii follow-up Batch 1: ParametricEqWidget skeleton --
 nereus_add_test(tst_parametric_eq_widget_skeleton)
@@ -6063,6 +6102,29 @@ nereus_add_test(tst_pan_flag_positions)
 # constrains QMenu, so the right-click waterfall panel opened below the bottom
 # edge on the lower pan of a 2v layout. Bench-reported 2026-07-28.
 nereus_add_test(tst_popup_placement)
+
+# Phase 3F Task B2: painted pan-layout preview tile (ported from AetherSDR
+# PanLayoutDialog.cpp LayoutThumbnail [@c6481cb]). Geometry tests guard
+# cellRects() against a would-be empty-vector stub by asserting the exact
+# rect count before checking overlap/containment.
+nereus_add_test(tst_layout_thumbnail)
+
+# Phase 3F Task B3: PanLayoutDialog gates the nine-layout grid on the
+# connected board's real slice capacity (design doc §8.4). Unavailable
+# layouts are HIDDEN, not greyed, and a footer names the board and count.
+# fiveSliceBoardSeesEverything asserts the exact id list in grid order
+# rather than a bare count, so a wrong-nine or out-of-order regression
+# still fails. See task-B3-brief.md "Test rigour".
+nereus_add_test(tst_pan_layout_dialog_gating)
+
+# Phase 3F Task B4: the +PAN status-bar affordance becomes a drawn icon
+# (AetherSDR MainWindow.cpp:4368-4396 [@c6481cb]) instead of a "+PAN" text
+# pill, dims with an explanatory tooltip while disconnected instead of
+# AetherSDR's silent no-op click, and carries no source cite in that
+# user-visible tooltip text. MainWindow is not constructible in this
+# harness (see file header); the tests mirror buildStatusBar()'s panBtn
+# block and updateAddPanButtonState() against a standalone QLabel.
+nereus_add_test(tst_pan_menu_routing)
 
 # ── TNF build-order step 8: +TNF button, status-bar light, menu action ─────
 # The operator-facing TNF controls that live outside the panadapter:

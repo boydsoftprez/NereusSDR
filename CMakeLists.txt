@@ -730,14 +730,16 @@ set(GUI_SOURCES
     src/gui/widgets/VfoWidget.cpp
     src/gui/widgets/MetricLabel.cpp
     src/gui/widgets/MetricLabel.h
+    src/gui/widgets/SystemTile.cpp
+    src/gui/chrome/ChromeFoldPlan.cpp
+    src/gui/chrome/ChromeBarController.cpp
+    src/gui/chrome/ChromeBarItems.cpp
     src/gui/widgets/StatusBadge.cpp
     src/gui/widgets/StatusBadge.h
     src/gui/widgets/AdcOverloadBadge.cpp
     src/gui/widgets/AdcOverloadBadge.h
     src/gui/widgets/OverflowChip.cpp
     src/gui/widgets/OverflowChip.h
-    src/gui/widgets/BadgePair.cpp
-    src/gui/widgets/BadgePair.h
     src/gui/widgets/RxDashboard.cpp
     src/gui/widgets/RxDashboard.h
     src/gui/widgets/StationBlock.cpp
@@ -750,6 +752,7 @@ set(GUI_SOURCES
     src/gui/widgets/AntennaPickerMenu.h
     src/gui/widgets/AntennaSwitchToast.cpp
     src/gui/widgets/AntennaSwitchToast.h
+    src/gui/widgets/LayoutThumbnail.cpp
     src/gui/widgets/StatusToast.cpp
     src/gui/widgets/StatusToast.h
     src/gui/widgets/DiversityRadarWidget.cpp

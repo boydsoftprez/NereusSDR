@@ -1,5 +1,5 @@
 // no-port-check: AetherSDR-derived NereusSDR file. Pan layout manager
-// (5-template QSplitter tree, active-pan tracking, float-pan signal) is
+// (9-template QSplitter tree, active-pan tracking, float-pan signal) is
 // adapted structurally from AetherSDR src/gui/PanadapterStack.{h,cpp}
 // [@0cd4559]. Registered in
 // docs/attribution/aethersdr-reconciliation.md.
@@ -50,8 +50,11 @@ class PanadapterApplet;
 class PanFloatingWindow;
 class SpectrumWidget;
 
-/// 5-template pan layout manager. Templates: "1", "2v", "2h", "12h", "2x2".
-/// Ported structurally from AetherSDR PanadapterStack (12 templates; we use 5 of them).
+/// 9-template pan layout manager. Templates: "1", "2v", "2h", "12h", "2h1",
+/// "3v", "2x2", "4v", "3h2" (design doc
+/// 2026-08-02-bottom-banner-and-pan-menu-design.md §8.3, which grew this
+/// from the original 5).
+/// Ported structurally from AetherSDR PanadapterStack (12 templates; we use 9 of them).
 /// See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §11.
 class PanadapterStack : public QWidget {
     Q_OBJECT
@@ -63,7 +66,8 @@ public:
     void removePanadapter(const QString& panId);
     void removeAll();
 
-    /// Apply one of the 5 templates: "1", "2v", "2h", "12h", "2x2"
+    /// Apply one of the 9 templates: "1", "2v", "2h", "12h", "2h1", "3v",
+    /// "2x2", "4v", "3h2"
     void applyLayout(const QString& layoutId, const QStringList& panIds);
 
     PanadapterApplet* panadapter(const QString& panId) const;
