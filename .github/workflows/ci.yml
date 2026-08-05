@@ -319,7 +319,7 @@ jobs:
         # -DNEREUS_GPU_SPECTRUM=OFF on Linux.
         #
         # mold (the apt mold package) is the fast linker. With 451 test
-        # executables linking against NereusSDRObjs + Qt6 the default
+        # executables linking against NereusSDRLib + Qt6 the default
         # ld linker dominated Linux build time at ~33 minutes. The
         # Configure (Linux) step below selects mold via -fuse-ld=mold.
         if: runner.os == 'Linux'
@@ -340,7 +340,7 @@ jobs:
       # SDK / .NET / GHC / unused hosted-tool-cache entries.  Phase
       # 3J-1 closeout pushed the total link-time on-disk footprint
       # past the remaining free budget: 451 test executables each
-      # linking against NereusSDRObjs (~700 MB stripped, much larger
+      # linking against NereusSDRLib (~700 MB stripped, much larger
       # with debug info) plus the vendored RADE neural-codec tree.
       # Run #25835957362 died mid-link with "No space left on
       # device" and the log blob got truncated before upload finished.
@@ -612,11 +612,20 @@ jobs:
         if: github.event_name == 'pull_request' && (matrix.shard == 0 || matrix.shard == '')
         id: locate
         shell: bash
+        # The app is a thin executable over the NereusSDRLib shared library,
+        # so the library has to travel with it or the artifact cannot start.
+        # macOS needs no extra entry: the .app already carries its own copy in
+        # Contents/Frameworks, staged by the CMake POST_BUILD step.
+        #
+        # These artifacts were never fully standalone (they still expect Qt,
+        # librade and friends from the build environment). The point here is
+        # only to keep them exactly as usable as they were before the app
+        # became a shared library.
         run: |
           case "${{ runner.os }}" in
-            Linux)   echo "binary=build/NereusSDR" >> "$GITHUB_OUTPUT" ;;
+            Linux)   printf 'binary<<EOF\nbuild/NereusSDR\nbuild/libNereusSDRLib.so\nEOF\n' >> "$GITHUB_OUTPUT" ;;
             macOS)   echo "binary=build/NereusSDR.app" >> "$GITHUB_OUTPUT" ;;
-            Windows) echo "binary=build/NereusSDR.exe" >> "$GITHUB_OUTPUT" ;;
+            Windows) printf 'binary<<EOF\nbuild/NereusSDR.exe\nbuild/NereusSDRLib.dll\nEOF\n' >> "$GITHUB_OUTPUT" ;;
           esac
 
       - name: Upload PR build artifact

@@ -118,7 +118,7 @@ public:
     void restoreSettings(const QString& macAddress);
 
     // Test seam — returns whether the Saturn BPF1 groupbox is visible.
-    // Always compiled (NEREUS_BUILD_TESTS is set on NereusSDRObjs globally). Used by
+    // Always compiled (NEREUS_BUILD_TESTS is set on NereusSDRLib globally). Used by
     // tst_alex1_filters_tab to verify the Saturn/non-Saturn capability gate.
     bool isSaturnBpf1Visible() const;
 

@@ -193,7 +193,7 @@ public:
 
     // #272 / #301 lazy-construction seams. Defined inline because
     // NEREUS_BUILD_TESTS is set on the test targets only, not on
-    // NereusSDRObjs -- an out-of-line body in SetupDialog.cpp would never be
+    // NereusSDRLib -- an out-of-line body in SetupDialog.cpp would never be
     // compiled and the test link would fail.
 
     // Number of navigation leaves registered by buildTree().

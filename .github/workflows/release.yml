@@ -280,11 +280,34 @@ jobs:
           echo "Adding $LIBRADE_DIR to LD_LIBRARY_PATH for linuxdeploy"
           export LD_LIBRARY_PATH="$PWD/$LIBRADE_DIR:$LD_LIBRARY_PATH"
 
+          # libNereusSDRLib.so is the application itself, built SHARED so the
+          # ~514 test executables stop each embedding a private 22 MB copy.
+          # Unlike librade it DOES have an install() rule, so cmake --install
+          # has already placed it in AppDir/usr/lib, and usr/bin/NereusSDR
+          # carries RPATH $ORIGIN/../lib. Belt and braces anyway: the librade
+          # experience above shows linuxdeploy's resolver is the fragile part
+          # of this step, and a missing application library is not a degraded
+          # AppImage, it is one that cannot start at all.
+          if [ ! -f AppDir/usr/lib/libNereusSDRLib.so ]; then
+            echo "ERROR: libNereusSDRLib.so missing from AppDir/usr/lib after cmake --install" >&2
+            find AppDir build -name 'libNereusSDRLib.so*' >&2
+            exit 1
+          fi
+          export LD_LIBRARY_PATH="$PWD/AppDir/usr/lib:$LD_LIBRARY_PATH"
+
           ./linuxdeploy-${{ matrix.arch }}.AppImage \
             --appdir AppDir \
             --plugin qt \
             --desktop-file AppDir/usr/share/applications/NereusSDR.desktop \
             --output appimage
+
+          # v0.5.0 shipped a Windows artifact whose .exe could not launch
+          # because rade.dll was absent. Adding a second shared library
+          # doubles that surface, so assert rather than trust.
+          if [ ! -f AppDir/usr/lib/libNereusSDRLib.so ]; then
+            echo "ERROR: libNereusSDRLib.so vanished from AppDir during linuxdeploy" >&2
+            exit 1
+          fi
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
@@ -495,6 +518,28 @@ jobs:
             MACDEPLOYQT="$(brew --prefix qt@6)/bin/macdeployqt"
           fi
           "$MACDEPLOYQT" build/NereusSDR.app -verbose=1 -always-overwrite
+
+          # libNereusSDRLib.dylib is the application itself, built SHARED so
+          # the ~514 test executables stop each embedding a private 22 MB
+          # copy. CMake's POST_BUILD stages it into Contents/Frameworks before
+          # this step runs, precisely so macdeployqt sees it in place and
+          # rewrites its Qt references along with everything else.
+          DYLIB="build/NereusSDR.app/Contents/Frameworks/libNereusSDRLib.dylib"
+          if [ ! -f "$DYLIB" ]; then
+            echo "::error::libNereusSDRLib.dylib missing from the app bundle; the .app cannot launch" >&2
+            exit 1
+          fi
+
+          # macdeployqt reaches the dylib by following an @rpath dependency of
+          # the executable. If that traversal ever silently fails, the dylib
+          # keeps build-machine-absolute Qt paths, the bundle still builds and
+          # signs cleanly, and the failure only shows up as a launch crash on
+          # a machine with no Qt installed. Catch it here instead.
+          if otool -L "$DYLIB" | grep -qE '/(opt/homebrew|usr/local)/.*Qt|/Qt/6\.'; then
+            echo "::error::libNereusSDRLib.dylib still references Qt outside the bundle:" >&2
+            otool -L "$DYLIB" | grep -E '/(opt/homebrew|usr/local)/.*Qt|/Qt/6\.' >&2
+            exit 1
+          fi
 
       - name: Copy license notices into app bundle
         run: |
@@ -758,6 +803,18 @@ jobs:
             Copy-Item $radeDll deploy\
           } else {
             Write-Error "rade.dll missing from build\third_party\rade\src\ (Windows artifact would ship broken: NereusSDR.exe will fail to launch with 'rade.dll was not found')"
+            exit 1
+          }
+          # NereusSDRLib.dll is the application itself, built SHARED so the
+          # ~514 test executables stop each embedding a private 22 MB copy.
+          # windeployqt resolves only Qt DLLs, so like rade.dll it must be
+          # staged by hand. This is the single most load-bearing file in the
+          # artifact: without it NereusSDR.exe does not start at all.
+          $appDll = "build\NereusSDRLib.dll"
+          if (Test-Path $appDll) {
+            Copy-Item $appDll deploy\
+          } else {
+            Write-Error "NereusSDRLib.dll missing from build\ (Windows artifact would ship broken: NereusSDR.exe will fail to launch with 'NereusSDRLib.dll was not found')"
             exit 1
           }
           # Copy third-party license notices + both root license files

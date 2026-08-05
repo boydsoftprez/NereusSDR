@@ -166,7 +166,7 @@ private slots:
     }
 
     // Note: setAudioPan() is NOT tested with a live call here because
-    // NereusSDRObjs compiles with HAVE_WDSP (PUBLIC), and SetRXAPanelPan(99)
+    // NereusSDRLib compiles with HAVE_WDSP (PUBLIC), and SetRXAPanelPan(99)
     // would dereference an unallocated WDSP channel array slot → segfault.
     // The conversion arithmetic is fully verified by the three pan*() tests above.
     // See tst_rxchannel_squelch.cpp for the same rationale applied to squelch setters.

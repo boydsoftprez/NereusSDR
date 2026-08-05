@@ -944,7 +944,7 @@ void AntennaAlexAlex1Tab::onMasterCheckChanged(bool checked, const QString& sett
 
 // ── Test seam ─────────────────────────────────────────────────────────────────
 
-// Always compiled — NEREUS_BUILD_TESTS is set on NereusSDRObjs globally.
+// Always compiled — NEREUS_BUILD_TESTS is set on NereusSDRLib globally.
 // Used by tst_alex1_filters_tab to verify the Saturn/non-Saturn capability gate.
 // isVisible() returns false if the widget itself is not shown (e.g. in tests
 // where no parent window is displayed). Use !isHidden() which reflects only

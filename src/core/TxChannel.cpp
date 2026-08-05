@@ -714,7 +714,7 @@ void TxChannel::pumpDexp(const double* interleavedIn)
 //   1. WDSP not compiled in (!HAVE_WDSP).
 //   2. WDSP compiled in but the channel was never opened (txa[] uninitialized).
 //      This occurs in unit-test builds that link WDSP but don't call
-//      OpenChannel (the HAVE_WDSP define propagates via NereusSDRObjs PUBLIC).
+//      OpenChannel (the HAVE_WDSP define propagates via NereusSDRLib PUBLIC).
 // ---------------------------------------------------------------------------
 static bool stageRunningDefault(TxChannel::Stage s)
 {
@@ -768,7 +768,7 @@ static bool stageRunningDefault(TxChannel::Stage s)
 //
 // With HAVE_WDSP but uninitialized channel (txa[] pointers are null because
 // OpenChannel was never called — typical in unit-test builds that link WDSP
-// via NereusSDRObjs PUBLIC but don't initialize the engine): falls through to
+// via NereusSDRLib PUBLIC but don't initialize the engine): falls through to
 // stageRunningDefault(), which returns compile-time defaults matching
 // create_txa()'s run arguments.
 //

@@ -1,8 +1,9 @@
 # NereusSDR test suite. Opt-in via -DNEREUS_BUILD_TESTS=ON.
 #
-# Test targets compile against NereusSDRObjs (the OBJECT library that backs
-# the main executable) so behavior under test is byte-identical to shipped
-# code. Each test gets its own thin executable + add_test() registration.
+# Test targets link NereusSDRLib (the shared library that backs the main
+# executable) so behavior under test is byte-identical to shipped code:
+# tests and the app run the same library image, not two separate builds of
+# it. Each test gets its own thin executable + add_test() registration.
 #
 # CI parallel sharding (added 2026-05-13, Linux speed-alignment epic):
 # When -DNEREUS_TEST_SHARDS=N -DNEREUS_TEST_SHARD=I is passed (0 ≤ I < N)
@@ -101,7 +102,7 @@ endfunction()
 # guarantee that keeps ctest runs from overwriting the developer's real
 # NereusSDR.settings (see the header comment in TestSandboxInit.cpp).
 #
-# Deliberately does NOT reuse the NereusSDRObjs PCH.  This is one 50-line
+# Deliberately does NOT reuse the NereusSDRLib PCH.  This is one 50-line
 # TU whose only include is <QStandardPaths>, so the PCH buys nothing, and
 # reusing it means compiling with a different -D set than the PCH was
 # built with (this target links only Qt6::Core, not the HAVE_WDSP /
@@ -162,18 +163,18 @@ function(nereus_add_test name)
     # this file from a global property each nereus_add_test() call
     # appends to.
     add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox> ${ARGN})
-    target_link_libraries(${name} PRIVATE NereusSDRObjs Qt6::Test)
+    target_link_libraries(${name} PRIVATE NereusSDRLib Qt6::Test)
     set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS ${name})
 
-    # Reuse the NereusSDRObjs precompiled header (CMakeLists.txt §PCH).
+    # Reuse the NereusSDRLib precompiled header (CMakeLists.txt §PCH).
     # 451 test executables × per-target PCH compile would burn the wins;
-    # REUSE_FROM means the PCH is built once on NereusSDRObjs and shared
+    # REUSE_FROM means the PCH is built once on NereusSDRLib and shared
     # across every test target. Save 5 to 10 minutes of test compile
     # time on Linux CI. Gated on NEREUS_USE_PCH so users who turn the
     # PCH off (e.g. for header-hygiene auditing) don't get a broken
     # link.
     if(NEREUS_USE_PCH)
-        target_precompile_headers(${name} REUSE_FROM NereusSDRObjs)
+        target_precompile_headers(${name} REUSE_FROM NereusSDRLib)
     endif()
 
     add_test(NAME ${name} COMMAND ${name})
@@ -186,6 +187,20 @@ function(nereus_add_test name)
     set_tests_properties(${name} PROPERTIES
         LABELS "${_test_labels}"
         TIMEOUT 120)
+
+    # Windows resolves DLLs relative to the executable's own directory, and
+    # test executables land in build/tests/ while NereusSDRLib.dll lands in
+    # build/. Without this every test would fail to start once the app became
+    # a shared library. Unix needs nothing equivalent: CMake bakes a build-tree
+    # RPATH into each test binary automatically.
+    #
+    # ENVIRONMENT_MODIFICATION needs CMake 3.22 and this project's floor is
+    # 3.20, so guard rather than raise the floor for a platform that does not
+    # currently build tests in CI at all.
+    if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
+        set_tests_properties(${name} PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:NereusSDRLib>")
+    endif()
 
     # Per-label build aggregates, so `ctest -L core` has a matching
     # `tests_core` target that actually builds what it is about to run.
@@ -275,7 +290,7 @@ nereus_add_test(tst_puresignal_caps)
 # Smoke test: confirms calcc.c (1,164 LOC) + iqc.c (315 LOC) are picked up
 # by the third_party/wdsp/CMakeLists.txt GLOB and that the SetPS* public
 # API exported by calcc.c is reachable through wdsp_static (which is
-# PUBLIC-linked into NereusSDRObjs). Does NOT exercise DSP behavior;
+# PUBLIC-linked into NereusSDRLib). Does NOT exercise DSP behavior;
 # that requires an opened channel and is covered by Tasks 3+.
 # Source: Thetis wdsp/calcc.c:891-1132 [v2.10.3.13] @501e3f51.
 nereus_add_test(tst_wdsp_ps_smoke)
@@ -4884,7 +4899,7 @@ nereus_add_test(tst_tci_init_burst_regen TestMockRadioModel.cpp)
 # ── Phase 3J-1 closeout Item 2: TciLogWindow append + filter + clear + pause ──
 # Verifies the log view widget honors direction filter, pause toggle, and
 # clear button.  Headless: never show()s the dialog -- Qt's off-screen
-# platform exercises QPlainTextEdit just fine.  Source comes from NereusSDRObjs
+# platform exercises QPlainTextEdit just fine.  Source comes from NereusSDRLib
 # (which the macro already links) so no extra source arg is needed.
 nereus_add_test(tst_tci_log_window)
 

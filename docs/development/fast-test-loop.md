@@ -1,12 +1,47 @@
 # Fast Test Loop
 
-The suite has **513 registered tests** (517 `tst_*.cpp` files; four are
-Linux/PipeWire-only and register only on Linux).
+The suite has **598 registered tests** (four are Linux/PipeWire-only and
+register only on Linux).
 
-Every test executable statically links the entire application, so each one
-costs about **38 CPU-seconds to link** and lands at roughly 35 MB. Building
-all of them costs about **32 minutes**, and running them cold adds about
-5 more. Almost nothing you do day to day needs that.
+The application is built as a single shared library (`NereusSDRLib`) that
+every test links dynamically, so a test executable is about **90 KB**, not a
+private 40 MB copy of the whole app. Re-measured 2026-08-02 on an Apple
+Silicon dev machine (6 performance + 12 efficiency cores), `RelWithDebInfo`,
+ninja, ccache warm, `ctest -j10`:
+
+| | Value | Before the shared library |
+| --- | --- | --- |
+| Touch one `src/core` file, rebuild `all_tests` | **24 s** | 5 min 10 s |
+| ninja steps for that rebuild | **602** | 2,914 |
+| `build/tests` on disk | **2.0 GB** | 24 GB |
+| `tst_smoke` | **88,760 B** | 41,778,776 B |
+| Full suite, cold | **109 s** | not re-measured |
+
+Load average was 3.75 entering the shared run and 14.75 entering the OBJECT
+run, so the 13x is not exact. It is far outside what that gap explains.
+
+"Cold" means the binaries were just relinked, which is the normal case after
+any edit. It is slower than warm because macOS malware-scans every freshly
+linked Mach-O the first time it runs.
+
+### Why the incremental case improved so much
+
+Not link time, and not the malware scan. As an OBJECT library, the
+application's object files were **direct sources of every test target**, so
+touching one `src/core` file invalidated all 598 targets' AUTOMOC and forced
+a moc re-run plus a test-TU recompile before any linking started:
+
+```
+597  timestamp               AUTOMOC, per test target
+598  mocs_compilation.cpp.o  moc recompile, per test target
+609  .cpp.o                  test TU recompile
+598  links
+```
+
+As a shared library it is a link-time dependency only. AUTOMOC never fires,
+no test TU recompiles, and the rebuild is one dylib plus 598 stub relinks.
+
+Almost nothing you do day to day needs the full suite anyway.
 
 ## Everyday commands
 
@@ -53,14 +88,14 @@ blocking forever.
 ### Labels narrow the run, not the dependency
 
 Labels are derived from each test's **direct** includes, so they are a
-triage aid, not a blast-radius calculation. **85 of the 513 tests carry no
-`core` label but still statically link all of `NereusSDRObjs`**, so a
-`src/core` edit genuinely affects them even though `ctest -L core` will not
-run them.
+triage aid, not a blast-radius calculation. **85 of the 514 tests carry no
+`core` label but still link all of `NereusSDRLib`**, so a `src/core` edit
+genuinely affects them even though `ctest -L core` will not run them.
 
-Until the Phase 1 library split lands, every test depends on every source
-file. Use `-L` to get fast feedback while iterating; use the full suite
-before you call something done.
+Every test depends on every source file, and the shared library does not
+change that: it makes each dependency cheap, not narrower. Use `-L` to get
+fast feedback while iterating; use the full suite before you call something
+done.
 
 ## Building tests is opt-in
 
@@ -76,7 +111,7 @@ Everything that runs tests must therefore name a target first:
 ```bash
 cmake --build build --target tst_slice_auto_agc   # one test
 cmake --build build --target tests_core           # one subsystem
-cmake --build build --target all_tests            # the lot (~32 min cold)
+cmake --build build --target all_tests            # the lot (~271 s warm tree)
 ```
 
 Then run `ctest`. **Skipping the build step is the one real footgun here**:
@@ -160,13 +195,40 @@ on macOS it resolves elsewhere (see `src/core/AppSettings.cpp:112-118`):
 If you are verifying that a test did not touch it, check the right one. A
 check against the wrong path silently "passes" while proving nothing.
 
-## Why the suite is slow, structurally
+## Why the suite costs what it does
 
-Linking dominates: about 32 minutes of the 37 is the linker, not the tests.
-The cause is that `NereusSDRObjs` is one all-or-nothing OBJECT library
-spanning `core`, `models`, and `gui`, so every source file is a transitive
-input to every test binary and the build graph cannot tell that a
-`SpectrumWidget` edit is irrelevant to a protocol test.
+Two structural facts, in order of how much they cost:
+
+**Every source file is a transitive input to every test binary.**
+`NereusSDRLib` is one all-or-nothing library spanning `core`, `models`, and
+`gui`, so the build graph cannot tell that a `SpectrumWidget` edit is
+irrelevant to a protocol test. Touching any library source relinks all 514
+tests. Building it shared made each of those relinks cheap; it did not make
+the graph narrower. A subsystem split would, but 83% of tests include a
+`core/` header, so even a perfect split leaves a `src/core` edit relinking
+most of the suite. That is why the split was rejected.
+
+**macOS rescans every freshly linked binary.** XProtect malware-scans each
+new Mach-O on first execution, which is the entire gap between the cold
+(109 s) and warm (43 s) figures above. Measured directly: XProtect burns
+62 CPU-seconds during a cold run today, and burned 189 before the app
+became a shared library, when the scan had 13 GB of test binaries to chew
+through instead of 1.2 GB.
+
+The Developer Tools exemption under System Settings -> Privacy & Security
+is supposed to remove this. On the machine these figures came from it did
+not: XProtect kept scanning after the exemption was enabled and the parent
+app restarted. If you get it working, cold runs should approach warm ones.
+
+### Measuring anything here
+
+Record the load average next to every timing. An earlier version of this
+page carried a warm-suite regression that turned out not to exist: the
+machine had a `clangd` indexing run at 500% CPU and a second worktree
+running its own suite, and nothing in the measurement recorded that. A
+timing without its machine state is not evidence.
 
 Measurements and the phased fix are in
-[docs/architecture/2026-07-25-test-execution-speed-design.md](../architecture/2026-07-25-test-execution-speed-design.md).
+[docs/architecture/2026-07-25-test-execution-speed-design.md](../architecture/2026-07-25-test-execution-speed-design.md)
+and
+[docs/architecture/2026-07-25-test-execution-speed-phase1-design.md](../architecture/2026-07-25-test-execution-speed-phase1-design.md).
