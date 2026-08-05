@@ -3751,14 +3751,23 @@ void MainWindow::buildUI()
                     // If no slice (shouldn't happen during MOX, but guard
                     // anyway) reuse the RX DDC center as a best-effort
                     // fallback so the bins still render somewhere sane.
-                    // The TRANSMITTING slice, not the active one. The pan
-                    // was already resolved from txBoundSlice above; centring
-                    // the bin mapping on activeSlice would put the trace at
-                    // the receive-focused slice's frequency whenever TX has
-                    // been handed to a different slice. Found by Codex on
-                    // PR #317.
-                    const double carrierHz =
-                        static_cast<double>(txSlice->frequency());
+                    // The TRANSMITTING slice, not the active one, and its
+                    // TRANSMIT frequency, not its dial frequency.
+                    //
+                    // Two distinct mistakes were possible here and both were
+                    // made. Centring on activeSlice puts the trace at the
+                    // receive-focused slice's frequency whenever TX has been
+                    // handed elsewhere; centring on slice->frequency() puts
+                    // it at the RX VFO whenever XIT is on, while the radio
+                    // transmits at the shifted carrier.
+                    //
+                    // txFrequencyForSlice is the helper that owns that
+                    // arithmetic (RadioModel.cpp:9109-9117, dial + XIT when
+                    // enabled), so the display and the transmitter cannot
+                    // disagree about where the carrier is. Both found by
+                    // Codex on PR #317.
+                    const double carrierHz = static_cast<double>(
+                        m_radioModel->txFrequencyForSlice(txSlice));
 
                     // Reconfigure the bin-frequency mapping.  centerHz /
                     // bandwidth are LEFT ALONE — the user's zoom window
