@@ -2,7 +2,7 @@
 
 **Branch:** `claude/tx-display-revive`
 **Status:** rows 1-8 verified on an ANAN-7000DLE (OrionMkII) 2026-08-05.
-Rows 9-14 pending. Row 15 is a known open defect, not a test.
+Rows 9-14 pending. Rows 15 and 16 are known open items, not tests.
 
 Verified by J.J. Boyd (KG4VCF). AI-assisted implementation via Anthropic
 Claude Code.
@@ -52,6 +52,7 @@ is not evidence.** Rows below check numbers, not vibes.
 | 12 | Correct pan on multi-pan | Two pans, slices on both, transmit on the second | Transmit trace and MOX overlay both land on the pan hosting the TX-bound slice, not on the active pan | PENDING |
 | 13 | HERMES-class key-up | On a G2E with PureSignal armed, key TUNE | Transmit trace appears. Note the receiver is genuinely gone on this class (`console.cs:8387-8390`), so nothing should fall back to receive | PENDING |
 | 14 | Restore after a mid-transmit layout change | Key up, change pan layout while keyed, un-key | No crash, no pan left stuck showing transmit. Restore is by the pan id recorded on the rise edge, so a moved TX binding cannot strand it | PENDING |
+| 16 | XIT while keyed | Key up, nudge XIT mid-transmission | **Known limitation:** the display does NOT follow. Centre, window and grid are all computed once on the MOX rise edge, so the trace stays where it started until the next key-up. Raised by Codex on PR #317; fixing it properly means a live-update path for the whole rise-edge set, not a special case for XIT | OPEN |
 | 15 | **Known open:** residual skirt | Key TUNE, read the raw pixel profile | ~35 dB down at 66 Hz from the peak, which is far worse than Blackman-Harris 4T should give (>90 dB). Present in WDSP's raw `GetPixels` output, so it is upstream of everything this branch fixes | OPEN |
 
 ---
