@@ -336,6 +336,25 @@ public:
     /// in both directions; leaving the plane alone keeps the receive
     /// history exactly as it was. Found by Codex on PR #317.
     void setDisplayWindowPreservingHistory(double centerHz, double bandwidthHz);
+
+    /// Render already-detected transmit pixels, bypassing the receive
+    /// detector and avenger.
+    ///
+    /// TxAnalyzer's output has ALREADY had a detector and averaging applied
+    /// by WDSP, using the TX Display controls. Feeding it through
+    /// updateSpectrumLinear ran applySpectrumDetector and m_spectrumAvenger
+    /// over it a second time using the RECEIVE controls, so the transmit
+    /// settings only behaved as labelled while receive happened to sit at
+    /// Peak / None. Found by Codex on PR #317.
+    ///
+    /// Input is dBm, matching TxAnalyzer::txFftReady, so there is no
+    /// linear round trip either: the previous path raised each pixel to a
+    /// power and took its log again purely to satisfy a signature.
+    ///
+    /// This is the trace-plane twin of setTxExternalWaterfall, which
+    /// already stands the receive path down for the waterfall plane.
+    void updateSpectrumFromTxPixels(int receiverId,
+                                    const QVector<float>& binsDbm);
     void setCenterFrequency(double centerHz);
     double centerFrequency() const { return m_centerHz; }
     double bandwidth() const { return m_bandwidthHz; }

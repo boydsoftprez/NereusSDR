@@ -91,7 +91,22 @@ TxAnalyzer::TxAnalyzer(int dispId, QObject* parent)
                     emptyPath);
     if (success == 0) {
         m_analyzerCreated = true;
-        applySetAnalyzer();
+        // Deliberately NOT applySetAnalyzer() here.
+        //
+        // SetAnalyzer builds FFTW_PATIENT plans the first time a size is set
+        // (analyzer.c:1221-1224), and at the 32768-point default that is not
+        // cheap. This constructor runs from buildUI(), before any radio
+        // connection has started WdspEngine::initialize() and its background
+        // wisdom path, so planning here happens synchronously on the GUI
+        // thread before the connection UI is even on screen -- a cold launch
+        // would appear to hang. Deferred to the first start(), which is
+        // behind the MOX edge and therefore behind the connection flow.
+        // Found by Codex on PR #317.
+        //
+        // Every setter below still records its state; applySetAnalyzer is a
+        // no-op until armed, so the analyzer comes up with all of it applied
+        // at once on the first key-up.
+        m_deferSetAnalyzer = true;
         // 3M-5d: SetAnalyzer alone does not push the per-pixout detector /
         // averaging / normalize state — those need their own WDSP calls so
         // pixout 0 + 1 carry the user's persisted choices on cold boot.
@@ -169,6 +184,22 @@ void TxAnalyzer::setOutputFps(int fps)
 
 void TxAnalyzer::start()
 {
+    // First key-up is where the deferred FFTW planning happens: behind the
+    // connection flow, and behind WdspEngine's wisdom path, rather than on
+    // the GUI thread during buildUI().
+    if (m_deferSetAnalyzer) {
+        m_deferSetAnalyzer = false;
+        if (m_analyzerCreated) {
+            applySetAnalyzer();
+            applyDetectorMode(/*pixout=*/0, m_panDetector);
+            applyDetectorMode(/*pixout=*/1, m_wfDetector);
+            applyAverageMode (/*pixout=*/0, m_panAveraging);
+            applyAverageMode (/*pixout=*/1, m_wfAveraging);
+            applyAvTau       (/*pixout=*/0, m_panAvTimeMs);
+            applyAvTau       (/*pixout=*/1, m_wfAvTimeMs);
+            applyNormalizePan();
+        }
+    }
     if (!m_pollTimer.isActive()) {
         m_pollTimer.start();
     }
@@ -287,6 +318,11 @@ void TxAnalyzer::setSpectrumWindow(int lowHz, int highHz)
 
 void TxAnalyzer::applySetAnalyzer()
 {
+    // Held off until the first start(); see the constructor.
+    if (m_deferSetAnalyzer) {
+        return;
+    }
+
     // From Thetis specHPSDR.cs:529 + :534-643 [v2.10.3.13+501e3f51] —
     // initAnalyzer case 1 (complex FFT) + the SetAnalyzer call at :624.
     //

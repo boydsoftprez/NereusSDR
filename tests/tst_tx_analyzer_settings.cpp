@@ -204,6 +204,35 @@ private slots:
         QCOMPARE(a.wfAvTauSeconds(), 0.250);
     }
 
+    // 6b. setAnalyzer_deferred_until_started — construction must not push
+    //     SetAnalyzer, because that builds FFTW_PATIENT plans
+    //     (analyzer.c:1221-1224) and TxAnalyzer is constructed from
+    //     buildUI(), ahead of the connection flow and WdspEngine's
+    //     background wisdom path. A cold launch would plan a 32768-point
+    //     transform on the GUI thread before the connection UI appeared.
+    //     Found by Codex on PR #317.
+    void setAnalyzer_deferred_until_started()
+    {
+        TxAnalyzer a;
+        const int atConstruction = a.analyzerConfigCount();
+
+        // Setters before the first start() record state without pushing.
+        a.setFftSize(8192);
+        a.setWindowType(1);
+        QCOMPARE(a.analyzerConfigCount(), atConstruction);
+
+        // ...and the first start() applies the accumulated state at once.
+        a.start();
+        a.stop();
+        QVERIFY2(a.analyzerConfigCount() > atConstruction,
+                 "first start() must arm the analyzer with the settings "
+                 "recorded while it was deferred");
+
+        // State survived the deferral rather than being dropped.
+        QCOMPARE(a.fftSize(), 8192);
+        QCOMPARE(a.windowType(), 1);
+    }
+
     // 7. setAnalyzer_called_on_each_setter — every setter on the 9-control
     //    state surface triggers at least one analyzer-side reconfiguration
     //    (SetAnalyzer for full re-init, or SetDisplayDetectorMode /
@@ -214,6 +243,15 @@ private slots:
     void setAnalyzer_called_on_each_setter()
     {
         TxAnalyzer a;
+
+        // SetAnalyzer is deferred until the first start(), so that FFTW
+        // plan construction does not land on the GUI thread during
+        // buildUI() before a radio is even connected (Codex, PR #317).
+        // Setters record state either way; arm the analyzer first so this
+        // test observes the push-through contract it is about.
+        a.start();
+        a.stop();
+
         const int base = a.analyzerConfigCount();
 
         a.setFftSize(8192);

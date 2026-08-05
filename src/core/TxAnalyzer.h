@@ -292,6 +292,11 @@ private:
     // SetAnalyzer's bf_sz. Zero means "not told yet", in which case
     // applySetAnalyzer falls back to the FFT size to preserve the
     // pre-2026-08-05 behaviour rather than pass a nonsense zero.
+    /// True until the first start(). Holds off SetAnalyzer, and with it
+    /// FFTW plan construction, so a cold launch does not plan a 32768
+    /// point transform on the GUI thread inside buildUI().
+    bool m_deferSetAnalyzer{false};
+
     int m_blockSize {0};
 
     int m_spanLowHz {0};

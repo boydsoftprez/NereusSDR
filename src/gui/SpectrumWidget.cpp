@@ -1222,6 +1222,47 @@ void SpectrumWidget::scheduleSettingsSave()
     });
 }
 
+void SpectrumWidget::updateSpectrumFromTxPixels(int receiverId,
+                                                const QVector<float>& binsDbm)
+{
+    Q_UNUSED(receiverId);
+    if (binsDbm.isEmpty()) { return; }
+
+    const int displayWidth = qMax(width() - effectiveStripW(), 800);
+
+    // Same window slice the trace path uses, so the transmit trace and the
+    // transmit waterfall agree about the X axis.
+    auto [firstBin, lastBin] = visibleBinRange(binsDbm.size());
+    const int sliceCount = lastBin - firstBin + 1;
+    if (sliceCount <= 0) { return; }
+
+    if (m_renderedPixels.size() != displayWidth) {
+        m_renderedPixels.resize(displayWidth);
+    }
+
+    // Straight resample, deliberately NOT a detector. WDSP already reduced
+    // bins to pixels using the TX Display detector and averaging; running a
+    // second detector here is the defect this method exists to remove. With
+    // the analyzer clipped to the display window, n_pix and displayWidth are
+    // within a few percent of each other, so this is close to 1:1 and there
+    // is nothing left to decimate.
+    const double step = static_cast<double>(sliceCount)
+                      / static_cast<double>(displayWidth);
+    for (int x = 0; x < displayWidth; ++x) {
+        const double src = static_cast<double>(firstBin) + step * x;
+        const int    i0  = static_cast<int>(src);
+        const int    i1  = qMin(i0 + 1, lastBin);
+        const double f   = src - static_cast<double>(i0);
+        const float  a   = binsDbm[qBound(firstBin, i0, lastBin)];
+        const float  b   = binsDbm[qBound(firstBin, i1, lastBin)];
+        m_renderedPixels[x] = static_cast<float>(a + (b - a) * f);
+    }
+
+    m_hasNewSpectrum = true;
+    emit spectrumFrameRendered();
+    update();
+}
+
 void SpectrumWidget::setDisplayWindowPreservingHistory(double centerHz,
                                                        double bandwidthHz)
 {

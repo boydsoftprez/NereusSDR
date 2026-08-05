@@ -3865,21 +3865,22 @@ void MainWindow::buildUI()
                     // disables additional ENB correction (already baked into WDSP's
                     // dBm output); dbmOffset=0 because tx_display_cal_offset = 0 per
                     // Display.cs:1407 [v2.10.3.13+501e3f51].
-                    // Context object is `sw`, so Qt tears these down by
+                    // Context object is `sw`, so Qt tears this down by
                     // itself if the pan is destroyed mid-transmission (a
-                    // layout change while keyed). Capturing sw by value in
-                    // the lambda is safe for the same reason: the lambda
-                    // cannot outlive its context object.
-                    connect(m_txAnalyzer, &TxAnalyzer::txFftReady,
-                            sw,
-                            [sw](int rid, const QVector<float>& binsDbm) {
-                        QVector<float> binsLinear(binsDbm.size());
-                        for (int i = 0; i < binsDbm.size(); ++i) {
-                            binsLinear[i] = static_cast<float>(
-                                std::pow(10.0, static_cast<double>(binsDbm[i]) / 10.0));
-                        }
-                        sw->updateSpectrumLinear(rid, binsLinear, 1.0, 0.0);
-                    });
+                    // layout change while keyed). Capturing sw by value is
+                    // safe for the same reason: the connection cannot
+                    // outlive its context object.
+                    //
+                    // Straight to the TX pixel path. TxAnalyzer's output has
+                    // already had the TX Display detector and averaging
+                    // applied by WDSP; updateSpectrumLinear would run the
+                    // RECEIVE detector and avenger over it a second time, so
+                    // the transmit controls only behaved as labelled while
+                    // receive sat at Peak / None. That also removes a dBm ->
+                    // linear -> dBm round trip that existed purely to match
+                    // a signature. Found by Codex on PR #317.
+                    connect(m_txAnalyzer, &TxAnalyzer::txFftReady, sw,
+                            &SpectrumWidget::updateSpectrumFromTxPixels);
                     // 3M-5d: with TxAnalyzer's n_pixout bumped to 2, the
                     // waterfall plane is driven by pixout=1 (DetTypeWF +
                     // AverageModeWF applied inside WDSP) rather than by
