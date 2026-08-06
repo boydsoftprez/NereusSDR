@@ -2025,6 +2025,37 @@ private:
     bool  m_gridEnabled{true};
     bool  m_showZeroLine{false};
     bool  m_showFps{false};
+    // ── Two grids, one live ─────────────────────────────────────────────
+    //
+    // From Thetis display.cs:1782-1804 + :1887-1905 [v2.10.3.15]:
+    //     private static int tx_spectrum_grid_max =  20;
+    //     private static int tx_spectrum_grid_min = -80;
+    //     public static int SpectrumGridMaxMoxModified {
+    //         get { return localMox(1) ? tx_spectrum_grid_max
+    //                                  : spectrum_grid_max; }
+    //     }
+    // Receive and transmit each keep their own range, and the renderer picks
+    // which to read. Nothing is saved and restored across the MOX edge.
+    //
+    // NereusSDR keeps m_refLevel / m_dynamicRange as the LIVE pair so the
+    // ~60 render sites that read them stay untouched, and stores the two
+    // inactive halves here. setMoxOverlay is the only swap point.
+    //
+    // This replaces a save-and-restore around the MOX edges, which was
+    // fragile in a way this design cannot be: with one variable plus a
+    // capture on un-key, ANY writer between the edges silently redefines
+    // what the operator "chose". The receive noise-floor tracker did exactly
+    // that on an ORION-class radio, whose receiver keeps running through
+    // transmit, and the captured range came back on the next key-up with no
+    // drawable labels. With two stores a receive-side tracker cannot reach
+    // the transmit grid at all, whether or not anyone remembered to gate it.
+    // Bench 2026-08-05, JJ KG4VCF: "we need a dynamic range for transmit and
+    // a dynamic range for receive just like Thetis has".
+    float m_rxRefLevel{-48.0f};
+    float m_rxDynamicRange{68.0f};
+    float m_txRefLevel{20.0f};      // Thetis tx_spectrum_grid_max
+    float m_txDynamicRange{100.0f}; // tx_spectrum_grid_max - tx_spectrum_grid_min
+
     bool  m_dbmScaleVisible{true};  // right-edge dBm strip; false → spectrum fills full width
     bool  m_showCursorFreq{true};   // B8 Task 21: cursor frequency readout; default on
     FreqLabelAlign m_freqLabelAlign{FreqLabelAlign::Center};

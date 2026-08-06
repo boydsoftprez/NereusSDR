@@ -29,6 +29,7 @@ private slots:
     void setMoxOverlay_idempotent();
     void setTxAttenuatorOffsetDb_storesValue();
     void setTxFilterVisible_storesState();
+    void grids_are_independent_across_mox();
 };
 
 // 1. Fresh widget has MOX overlay off
@@ -96,6 +97,51 @@ void TestSpectrumWidgetMoxOverlay::setTxFilterVisible_storesState()
 
     w.setTxFilterVisible(false);
     QVERIFY(!w.txFilterVisible());
+}
+
+// 7. Receive and transmit keep independent dBm grids.
+//
+// From Thetis display.cs:1782-1804 [v2.10.3.15] — SpectrumGridMaxMoxModified
+// returns tx_spectrum_grid_max while MOX is asserted and spectrum_grid_max
+// otherwise. Two stores, one selector, nothing saved and restored.
+//
+// The version this replaced saved the receive grid on the MOX rise edge and
+// captured whatever was live on the fall edge. That made the transmit range
+// equal to "whatever the widget happened to be showing at un-key", so ANY
+// writer between the edges silently redefined it -- the receive noise-floor
+// tracker did exactly that on an ORION-class radio, whose receiver keeps
+// running through transmit, and the next key-up came up unusable. Bench
+// 2026-08-05.
+void TestSpectrumWidgetMoxOverlay::grids_are_independent_across_mox()
+{
+    SpectrumWidget w;
+
+    w.setDbmRange(-120.0f, -40.0f);          // a receive range
+    const float rxRef   = w.refLevel();
+    const float rxRange = w.dynamicRange();
+
+    w.setMoxOverlay(true);
+    // Transmit comes up on its own grid, not the receive one.
+    QVERIFY2(!qFuzzyCompare(w.refLevel(), rxRef)
+             || !qFuzzyCompare(w.dynamicRange(), rxRange),
+             "transmit inherited the receive grid instead of its own");
+
+    w.setDbmRange(-80.0f, 20.0f);            // adjust while transmitting
+    const float txRef   = w.refLevel();
+    const float txRange = w.dynamicRange();
+
+    w.setMoxOverlay(false);
+    // Receive is exactly what it was. The transmit edit did not leak.
+    QCOMPARE(w.refLevel(), rxRef);
+    QCOMPARE(w.dynamicRange(), rxRange);
+
+    // And a receive-side change cannot reach the transmit grid -- this is
+    // the property the save/restore version could not hold.
+    w.setDbmRange(-130.0f, -30.0f);
+
+    w.setMoxOverlay(true);
+    QCOMPARE(w.refLevel(), txRef);
+    QCOMPARE(w.dynamicRange(), txRange);
 }
 
 QTEST_MAIN(TestSpectrumWidgetMoxOverlay)

@@ -3631,30 +3631,6 @@ void MainWindow::buildUI()
         // Qt::QueuedConnection mirrors the pattern established by the
         // hardwareFlipped + setMoxOverlay connects above.  Capture
         // shouldn't outlive MainWindow (this), so the lambda is safe.
-        // Hydrate the persisted transmit grid before the first key-up, so a
-        // relaunch comes back to the operator's scale rather than the
-        // Thetis seed. Missing keys leave the member initialisers alone.
-        {
-            auto& st = AppSettings::instance();
-            bool okRef = false, okRange = false;
-            const float ref = st.value(QStringLiteral("DisplayTxGridRefLevel"),
-                                       QString()).toString().toFloat(&okRef);
-            const float rng = st.value(QStringLiteral("DisplayTxGridDynamicRange"),
-                                       QString()).toString().toFloat(&okRange);
-            // Same bounds the fall-edge capture enforces. A range outside
-            // them cannot have come from a deliberate drag, and loading one
-            // back would resurrect an unusable graticule that the operator
-            // cannot drag their way out of -- so a bad stored value heals
-            // itself to the Thetis seed on next launch rather than
-            // persisting forever. Bench 2026-08-05.
-            if (okRef && ref >= -160.0f && ref <= 20.0f) {
-                m_txGridRefLevel = ref;
-            }
-            if (okRange && rng >= 10.0f && rng <= 200.0f) {
-                m_txGridDynamicRange = rng;
-            }
-        }
-
         if (m_txAnalyzer) {
             connect(mox, &MoxController::moxStateChanged, this,
                     [this](bool isTx) {
@@ -3731,32 +3707,14 @@ void MainWindow::buildUI()
                     m_savedSpectrumCenterHz   = sw->centerFrequency();
                     m_savedSpectrumBandwidth  = sw->bandwidth();
 
-                    // ── The transmit grid ────────────────────────────────
-                    //
-                    // From Thetis display.cs:1887-1905 [v2.10.3.15]:
-                    //     private static int tx_spectrum_grid_max  =  20;
-                    //     private static int tx_spectrum_grid_min  = -80;
-                    //     public static int SpectrumGridMaxMoxModified {
-                    //         get { return localMox(1) ? tx_spectrum_grid_max
-                    //                                  : spectrum_grid_max; }
-                    //     }
-                    // Thetis swaps the whole graticule on the MOX edge and
-                    // swaps it back on un-key. Nothing about the receive
-                    // range suits transmit: a scale picked for signals near
-                    // the noise floor is being asked to show something at
-                    // about -9 dBm, so the trace leaves the top of the
-                    // graticule and its skirt fills the screen.
-                    //
-                    // Bench 2026-08-05: this is what made the display look
-                    // "goofy" and unadjustable. Unadjustable literally --
-                    // the TX Grid Scale group in Setup is still a
-                    // placeholder (3M-5e), so there was no control to reach
-                    // for and no automatic switch either.
-                    m_savedSpectrumRefLevel     = sw->refLevel();
-                    m_savedSpectrumDynamicRange = sw->dynamicRange();
-                    sw->setDbmRange(m_txGridRefLevel - m_txGridDynamicRange,
-                                    m_txGridRefLevel);
-
+                    // The transmit grid is SpectrumWidget's own business now.
+                    // setMoxOverlay(true) below parks the receive pair and
+                    // loads the transmit one, mirroring Thetis's
+                    // SpectrumGridMaxMoxModified (display.cs:1782-1804
+                    // [v2.10.3.15]). Saving and restoring it from here was
+                    // the fragile version: it made the transmit range
+                    // whatever happened to be live at un-key, so any writer
+                    // between the edges redefined the operator's choice.
                     // TX FFT is centered on the active slice's carrier.
                     // If no slice (shouldn't happen during MOX, but guard
                     // anyway) reuse the RX DDC center as a best-effort
@@ -3980,38 +3938,6 @@ void MainWindow::buildUI()
                     if (m_savedSpectrumBandwidth > 0.0) {
                         sw->setDisplayWindowPreservingHistory(
                             m_savedSpectrumCenterHz, m_savedSpectrumBandwidth);
-                    }
-                    // Keep whatever the operator settled on as THE transmit
-                    // grid, before putting receive back. This is what makes
-                    // the strip usable during transmit: drag it once, and
-                    // the next key-up comes up where you left it instead of
-                    // snapping back to the Thetis defaults.
-                    //
-                    // Guarded, because a range this captures is a range every
-                    // future key-up inherits. An unusable one persists and
-                    // there is no obvious way for the operator to get back
-                    // out: the strip they would drag to fix it is the thing
-                    // that stopped drawing. Belt and braces alongside the
-                    // MOX gate now on the noise-floor grid follow.
-                    const float capturedRange = sw->dynamicRange();
-                    if (capturedRange >= 10.0f && capturedRange <= 200.0f) {
-                        m_txGridRefLevel     = sw->refLevel();
-                        m_txGridDynamicRange = capturedRange;
-                        AppSettings::instance().setValue(
-                            QStringLiteral("DisplayTxGridRefLevel"),
-                            QString::number(m_txGridRefLevel));
-                        AppSettings::instance().setValue(
-                            QStringLiteral("DisplayTxGridDynamicRange"),
-                            QString::number(m_txGridDynamicRange));
-                    }
-
-                    // Grid back to what receive was using. Guarded on a
-                    // positive range so a fall edge that never had a
-                    // matching rise cannot flatten the graticule to zero.
-                    if (m_savedSpectrumDynamicRange > 0.0f) {
-                        sw->setDbmRange(
-                            m_savedSpectrumRefLevel - m_savedSpectrumDynamicRange,
-                            m_savedSpectrumRefLevel);
                     }
                     // Symmetric AGC reset on un-key so the waterfall
                     // snaps back to the RX dynamic range without the

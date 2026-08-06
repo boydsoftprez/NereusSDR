@@ -756,43 +756,6 @@ private:
     /// a single tracker fed from stream 0 would mis-set every other slice.
     QMap<int, class NoiseFloorTracker*> m_streamNoiseFloors;
     QThread*            m_fftThread{nullptr};
-    /// Transmit graticule, swapped in on the MOX rise edge and out on the
-    /// fall edge.
-    ///
-    /// From Thetis display.cs:1887-1898 [v2.10.3.15]:
-    ///     private static int tx_spectrum_grid_max =  20;
-    ///     private static int tx_spectrum_grid_min = -80;
-    /// selected by SpectrumGridMaxMoxModified / SpectrumGridMinMoxModified
-    /// (display.cs:1782-1804), which return the TX pair whenever local MOX
-    /// is asserted. Constants here rather than settings because the TX Grid
-    /// Scale group in Setup is still a placeholder (3M-5e); when it is
-    /// built these become its defaults.
-    static constexpr float kTxGridMaxDbm =  20.0f;
-    static constexpr float kTxGridMinDbm = -80.0f;
-
-    /// Receive graticule saved across a transmission. dynamicRange is the
-    /// sentinel: 0 means nothing was saved, so a fall edge without a
-    /// matching rise cannot collapse the scale.
-    float               m_savedSpectrumRefLevel{0.0f};
-    float               m_savedSpectrumDynamicRange{0.0f};
-
-    /// The transmit graticule the operator actually wants, persisted.
-    ///
-    /// Seeded from the Thetis constants above, then REPLACED by whatever
-    /// the operator leaves on screen at un-key. Without this the display
-    /// is unadjustable in practice: the rise edge re-imposed the defaults
-    /// every transmission and the fall edge restored the receive grid over
-    /// the top, so a drag made during transmit was discarded twice before
-    /// the next one. Bench 2026-08-05, "still cant move the range and
-    /// floor down enough ... for it to look correct" -- the range was
-    /// moving, it just never survived.
-    ///
-    /// Direct manipulation of the strip is the control surface here; the
-    /// TX Grid Scale group in Setup is still a placeholder (3M-5e), and
-    /// when it is built it should read and write these two.
-    float               m_txGridRefLevel{kTxGridMaxDbm};
-    float               m_txGridDynamicRange{kTxGridMaxDbm - kTxGridMinDbm};
-
     /// Pan currently showing the transmit spectrum instead of its receiver,
     /// or empty when not transmitting. Set on the MOX rise edge from the
     /// TX-bound slice's panKey(), cleared on the fall edge.

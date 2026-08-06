@@ -914,6 +914,24 @@ void SpectrumWidget::loadSettings()
     // B8 Task 21: cursor frequency readout persists across restarts.
     m_showCursorFreq = readBool(QStringLiteral("DisplayShowCursorFreq"), true);
     m_dbmScaleVisible = readBool(QStringLiteral("DisplayDbmScaleVisible"), true);
+
+    // Transmit grid. Bounded on load so a value that cannot have come from a
+    // deliberate drag heals to the Thetis seed instead of persisting: an
+    // unusable transmit grid is self-trapping, because the strip the
+    // operator would drag to fix it is the thing that stopped drawing.
+    {
+        bool okRef = false, okRange = false;
+        const float ref = s.value(QStringLiteral("DisplayTxGridRefLevel"),
+                                  QString()).toString().toFloat(&okRef);
+        const float rng = s.value(QStringLiteral("DisplayTxGridDynamicRange"),
+                                  QString()).toString().toFloat(&okRange);
+        if (okRef && ref >= -160.0f && ref <= 20.0f)   { m_txRefLevel     = ref; }
+        if (okRange && rng >= 10.0f && rng <= 200.0f)  { m_txDynamicRange = rng; }
+    }
+    // The receive store mirrors whatever the live pair loaded above, since
+    // the widget always comes up in receive.
+    m_rxRefLevel     = m_refLevel;
+    m_rxDynamicRange = m_dynamicRange;
     m_bandPlanFontSize = s.value(QStringLiteral("BandPlanFontSize"),
                                  QStringLiteral("6")).toInt();
     const int alignRaw = readInt(QStringLiteral("DisplayFreqLabelAlign"),
@@ -1139,6 +1157,13 @@ void SpectrumWidget::saveSettings()
               m_showCursorFreq ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(settingsKey(QStringLiteral("DisplayDbmScaleVisible"), m_panIndex),
               m_dbmScaleVisible ? QStringLiteral("True") : QStringLiteral("False"));
+    // Transmit grid persists independently of receive. While transmitting the
+    // LIVE pair is the transmit one, so read the store that is not currently
+    // live rather than the member directly.
+    s.setValue(QStringLiteral("DisplayTxGridRefLevel"),
+               QString::number(m_moxOverlay ? m_refLevel : m_txRefLevel));
+    s.setValue(QStringLiteral("DisplayTxGridDynamicRange"),
+               QString::number(m_moxOverlay ? m_dynamicRange : m_txDynamicRange));
     s.setValue(QStringLiteral("BandPlanFontSize"),
                QString::number(m_bandPlanFontSize));
     writeInt(QStringLiteral("DisplayFreqLabelAlign"), static_cast<int>(m_freqLabelAlign));
@@ -5523,6 +5548,23 @@ void SpectrumWidget::setMoxOverlay(bool isTx)
     if (m_moxOverlay == isTx) {
         return;  // idempotent
     }
+    // Park the live grid in the store it belongs to, then load the other.
+    // Doing it here rather than in MainWindow means the widget can never be
+    // caught holding the wrong grid: there is exactly one place the swap
+    // happens and it is the same flag every renderer already branches on.
+    if (isTx) {
+        m_rxRefLevel     = m_refLevel;
+        m_rxDynamicRange = m_dynamicRange;
+        m_refLevel       = m_txRefLevel;
+        m_dynamicRange   = m_txDynamicRange;
+    } else {
+        m_txRefLevel     = m_refLevel;
+        m_txDynamicRange = m_dynamicRange;
+        m_refLevel       = m_rxRefLevel;
+        m_dynamicRange   = m_rxDynamicRange;
+    }
+    scheduleSettingsSave();
+
     m_moxOverlay = isTx;
     markOverlayDirty();
     update();   // ensure QPainter path repaints immediately on MOX flip;
