@@ -556,8 +556,14 @@ Requirements, all landing in the same commits that introduce the ported logic:
 1. NereusSDR header block on every new file naming the AetherSDR project URL,
    primary author, and the specific upstream source files.
 2. Inline cites on every tier 1 lift, stamped `[@1872028c]`.
-3. Bucket A rows in `docs/attribution/aethersdr-reconciliation.md` for all
-   seven files (five new, two modified).
+3. Bucket A rows in `docs/attribution/aethersdr-reconciliation.md` for the
+   five C++ files: `DssGeometry.h`, `DssRenderer.{h,cpp}`,
+   `DssMeshGeometry.h`, plus the modified `SpectrumWidget.{h,cpp}` and
+   `SpectrumOverlayMenu.{h,cpp}`. The two shaders are covered by item 4
+   instead, not by this table.
+   Each row lands in the commit that introduces its file, never batched at
+   the end: `check-new-ports.py` scans the full tree, so an unregistered
+   file blocks every commit on the branch rather than only its own.
 4. `docs/attribution/ASSETS.md` entries for `dss_mesh.vert` and
    `dss_mesh.frag`. Shader attribution lives there because AetherSDR ships no
    per-file shader headers; `waterfall.frag`'s existing entry is the template.
