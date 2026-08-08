@@ -37,6 +37,7 @@ Every task's requirements implicitly include this section.
 - **Do not "clean up" em-dashes inside lifted upstream comments.** Several verbatim comments in `DssGeometry.h`, `DssRenderer.cpp` and both shaders contain them. Verbatim means verbatim; the house style applies to text you author, not to text you are preserving for attribution.
 - **Build:** `cmake --build build -j$(sysctl -n hw.ncpu)`. Test executables are `EXCLUDE_FROM_ALL`; always build the named target before running ctest, or you will run a stale binary and get a false green.
 - **Register every new test** with `nereus_add_test(tst_<name>)` in `tests/CMakeLists.txt`, keeping the list alphabetically sorted.
+- **Cover interior branches, not just boundaries.** Where a function has early-return guards around a computation, assert at least two points inside the computed range as well as the guards. Task 1's review caught exactly this: a two-assertion test hit both of `dssWedgeFreeDepth`'s guard clauses and never once reached its interpolation, so an inverted numerator would have passed. If the test code given in a task only checks boundaries on a function that computes something in between, add the interior assertions rather than transcribing the gap.
 - **ATTRIBUTION LANDS IN THE SAME COMMIT AS THE FILE, NEVER DEFERRED.** The pre-commit hook runs `check-new-ports.py` in **full-tree** mode, so any file on disk carrying AetherSDR tells and lacking a PROVENANCE row blocks *every* commit in the repository, including commits that have nothing to do with it. An unregistered file does not merely fail its own task; it wedges the whole branch. CLAUDE.md requires the same thing independently: the verbatim header and the PROVENANCE row go in the commit that introduces the ported logic.
   - Any task creating a file with an AetherSDR header or a `// From AetherSDR` cite MUST add its row to `docs/attribution/aethersdr-reconciliation.md` under "Bucket A" in that same commit.
   - Row format is four columns: `| <NereusSDR file> | <AetherSDR counterpart> | <evidence: which lines cite what> | "<one-sentence mod-history wording>" |`
@@ -207,6 +208,13 @@ private slots:
         const DssShape s = kDssUpstreamShape;
         QCOMPARE(dssWedgeFreeDepth(1.0f, s), 0.0f);
         QCOMPARE(dssWedgeFreeDepth(dssMaxRowSpanFactor(s), s), 1.0f);
+        // Interior points. The two boundary cases above short-circuit before
+        // reaching the interpolation, so without these an inverted numerator
+        // would pass unnoticed. Tasks 3 and 9 both consume this formula.
+        // (1 - 1/1.25) / (1 - 0.60) = 0.2 / 0.4 = 0.5
+        QVERIFY(std::abs(dssWedgeFreeDepth(1.25f, s) - 0.5f)  < 1e-6f);
+        // (1 - 1/1.50) / (1 - 0.60) = 0.3333... / 0.4 = 0.8333...
+        QVERIFY(std::abs(dssWedgeFreeDepth(1.50f, s) - 0.8333333f) < 1e-6f);
     }
 
     void rowFrequencyUnit_isDepthIndependent() {
@@ -464,7 +472,9 @@ inline QPointF dssProjectSurface(float frequencyUnit, float depth, float dbm,
 cmake --build build --target tst_dss_geometry && ctest --test-dir build -R '^tst_dss_geometry$' --output-on-failure
 ```
 
-Expected: PASS, 8 test functions.
+Expected: PASS. The class declares 7 `private slots`; Qt's runner adds
+`initTestCase` and `cleanupTestCase`, so the output reports 9. Do not read
+the slot count as a failure.
 
 - [ ] **Step 6b: Register the file's provenance**
 
