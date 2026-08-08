@@ -20,6 +20,15 @@ Every task's requirements implicitly include this section.
 - **New file headers:** copy the attribution block from `src/gui/SpectrumOverlayMenu.h:1-24` verbatim, changing only the file path on line 3 and the Modification-history date and description. Do not retype it from memory.
 - **No `QSettings`.** Use `AppSettings::instance()`. Booleans persist as the strings `"True"` / `"False"`.
 - **C++ style:** braces on all control flow, no raw `new`/`delete` outside Qt parent ownership, `constexpr` not `#define`, members `m_camelCase`, constants `kPascalCase`.
+- **Existing NereusSDR names this plan depends on, all verified 2026-08-08.** Use these exactly; do not invent neighbours.
+  - Noise floor: `m_nfLerpAverage` (smoothed, use this) and `m_nfFftBinAverage` (per-frame, do not use for the surface anchor).
+  - dBm range: `m_refLevel` (top, dBm) plus `m_dynamicRange` (depth, dB). There is no floor/ceiling pair.
+  - View: `m_centerHz`, `m_bandwidthHz`, `m_ddcCenterHz`, `m_sampleRateHz`.
+  - Waterfall colour: `m_wfColorScheme`, `m_wfColorGain`, `m_wfBlackLevel`.
+  - Logging: `qCWarning(lcSpectrum)`, declared in `src/core/LogCategories.h`. Include it.
+  - Shader loading: `loadShader(const QString&)`, a static free function at `SpectrumWidget.cpp:7619`, callable from members in that TU.
+  - Slices: `sliceMarkerGeometry()` returning `QVector<SliceMarkerGeometry>` with fields `centreHz`, `filterLowHz`, `filterHighHz`, `flag`. Driven in tests by `addVfoWidget(index)` then `setFrequency` / `setFilter`.
+- **Test seams follow the file's existing convention.** `SpectrumWidget.h` already carries 33 `...ForTest()` accessors, including `drawSpotMarkersForTest(QPainter&, const QRect&)` with the same shape this plan uses. Adding more is consistent with the file, not a new pattern.
 - **Commits are GPG-signed** (`commit.gpgsign=true` is already set; never pass `--no-gpg-sign`). No `Co-Authored-By: Claude` trailer. No em-dash characters in commit messages or in prose you write.
 - **Do not "clean up" em-dashes inside lifted upstream comments.** Several verbatim comments in `DssGeometry.h`, `DssRenderer.cpp` and both shaders contain them. Verbatim means verbatim; the house style applies to text you author, not to text you are preserving for attribution.
 - **Build:** `cmake --build build -j$(sysctl -n hw.ncpu)`. Test executables are `EXCLUDE_FROM_ALL`; always build the named target before running ctest, or you will run a stale binary and get a false green.
@@ -2125,7 +2134,7 @@ bool SpectrumWidget::initDssMeshPipeline()
     // channel keeps zoom-created floor spans colour-stable without hiding
     // their lines. From AetherSDR SpectrumWidget.cpp:12793-12798 [@1872028c].
     if (!r->isTextureFormatSupported(QRhiTexture::RGBA16F, {})) {
-        qCWarning(lcGui) << "SpectrumWidget: RGBA16F unsupported -- "
+        qCWarning(lcSpectrum) << "SpectrumWidget: RGBA16F unsupported -- "
                             "stacked-trace mesh disabled (CPU fallback)";
         return false;
     }
@@ -2135,7 +2144,7 @@ bool SpectrumWidget::initDssMeshPipeline()
     QShader fs = loadShader(QStringLiteral(
         ":/shaders/resources/shaders/dss_mesh.frag.qsb"));
     if (!vs.isValid() || !fs.isValid()) {
-        qCWarning(lcGui) << "SpectrumWidget: dss_mesh shader load failed -- "
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh shader load failed -- "
                             "stacked-trace mesh disabled";
         return false;
     }
@@ -2154,7 +2163,7 @@ bool SpectrumWidget::initDssMeshPipeline()
                             kDssMeshUboFloats * sizeof(float));
     if (!m_dssMeshVbo->create() || !m_dssMeshLineVbo->create()
         || !m_dssUbo->create()) {
-        qCWarning(lcGui) << "SpectrumWidget: dss_mesh buffer create failed";
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh buffer create failed";
         return false;
     }
 
@@ -2162,7 +2171,7 @@ bool SpectrumWidget::initDssMeshPipeline()
                                    QSize(m_dss.cols(), m_dss.rows()));
     m_dssPaletteTex = r->newTexture(QRhiTexture::RGBA8, QSize(256, 1));
     if (!m_dssHeightTex->create() || !m_dssPaletteTex->create()) {
-        qCWarning(lcGui) << "SpectrumWidget: dss_mesh texture create failed";
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh texture create failed";
         return false;
     }
 
@@ -2178,7 +2187,7 @@ bool SpectrumWidget::initDssMeshPipeline()
         QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::None,
         QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge);
     if (!m_dssHeightSampler->create() || !m_dssPaletteSampler->create()) {
-        qCWarning(lcGui) << "SpectrumWidget: dss_mesh sampler create failed";
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh sampler create failed";
         return false;
     }
 
@@ -2195,7 +2204,7 @@ bool SpectrumWidget::initDssMeshPipeline()
             m_dssPaletteTex, m_dssPaletteSampler),
     });
     if (!m_dssSrb->create()) {
-        qCWarning(lcGui) << "SpectrumWidget: dss_mesh SRB create failed";
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh SRB create failed";
         return false;
     }
 
@@ -2224,7 +2233,7 @@ bool SpectrumWidget::initDssMeshPipeline()
     m_dssFillPipeline = makePipeline();
     m_dssLinePipeline = makePipeline();
     if (!m_dssFillPipeline->create() || !m_dssLinePipeline->create()) {
-        qCWarning(lcGui) << "SpectrumWidget: dss_mesh pipeline create failed";
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh pipeline create failed";
         return false;
     }
 
@@ -2263,7 +2272,7 @@ void SpectrumWidget::rebuildDssMeshIfNeeded(QRhiResourceUpdateBatch* batch)
         m_dssMeshLineVbo->destroy();
         m_dssMeshLineVbo->setSize(lineBytes);
         if (!m_dssMeshVbo->create() || !m_dssMeshLineVbo->create()) {
-            qCWarning(lcGui) << "SpectrumWidget: dss_mesh resize failed";
+            qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh resize failed";
             m_dssMeshReady = false;
             return;
         }
@@ -2790,12 +2799,19 @@ Add `nereus_add_test(tst_dss_floor_and_span)` to `tests/CMakeLists.txt`, then bu
 // downward by the 3D Floor control to expose more or less noise texture.
 float SpectrumWidget::dssFloorDbm() const
 {
-    return m_measuredNoiseFloorDbm - static_cast<float>(m_dssFloorDepth);
+    // m_nfLerpAverage is this widget's smoothed measured noise floor, the
+    // same quantity NoiseFloorTracker::noiseFloor() exposes (both are the
+    // Thetis display.cs:4628 lerp average). m_nfFftBinAverage is the
+    // per-frame value and would make the surface jitter every frame.
+    return m_nfLerpAverage - static_cast<float>(m_dssFloorDepth);
 }
 
 float SpectrumWidget::dssSpanDb() const
 {
-    return std::max(1.0f, m_dbmCeiling - m_dbmFloor);
+    // The dBm display span. This widget stores the range as a top
+    // (m_refLevel) plus a depth (m_dynamicRange), not as a floor/ceiling
+    // pair, so the span is m_dynamicRange directly.
+    return std::max(1.0f, m_dynamicRange);
 }
 
 // Build the wide channel from the off-screen DDC bins of the SAME FFT frame.
@@ -2879,7 +2895,7 @@ void SpectrumWidget::pushDssRow(const QVector<float>& wfPixelsDbm)
 
 ```cpp
     void setMeasuredNoiseFloorForTest(float dbm) {
-        m_measuredNoiseFloorDbm = dbm;
+        m_nfLerpAverage = dbm;
     }
     QVector<float> buildDssWideRow(const QVector<float>& fullBins,
                                    double& wideCenterMhzOut,
@@ -3275,19 +3291,46 @@ surface whose baseline moves with conditions."
 - Modify: `tests/CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: `writeDssMeshUbo` (Task 9), `SliceOverlay` (existing).
+- Consumes: `writeDssMeshUbo` (Task 9); `SpectrumWidget::sliceMarkerGeometry()` returning `QVector<SliceMarkerGeometry>` where `SliceMarkerGeometry { double centreHz; int filterLowHz; int filterHighHz; const VfoWidget* flag; }` (existing, declared at `SpectrumWidget.h:989-1003`). That accessor is already built to be reachable without a live painter or a shown QRhiWidget, which is exactly what this task's test needs, so no new test seam is required for the slice source.
 - Produces:
   - `struct SpectrumWidget::DssShadowBand { float lowUnit; float highUnit; float centreUnit; float alpha; QColor cue; float centreAlpha; }`
   - `QVector<DssShadowBand> SpectrumWidget::buildDssShadowBands() const`
 
 - [ ] **Step 1: Write the failing test**
 
+Slices reach the widget through `addVfoWidget(index)` plus `setFrequency` /
+`setFilter` on the returned flag, exactly as `tests/tst_pan_flag_positions.cpp`
+drives them. Use that, not a new test seam.
+
 ```cpp
 #include <QTest>
+#include <cmath>
 
 #include "gui/SpectrumWidget.h"
+#include "gui/VfoWidget.h"
 
 using namespace NereusSDR;
+
+namespace {
+
+// Give the widget a real geometry and view before asking for slice markers.
+void placePan(SpectrumWidget& w)
+{
+    w.resize(800, 400);
+    w.setFrequencyRange(14200000.0, 96000.0);
+}
+
+VfoWidget* addSlice(SpectrumWidget& w, int index, double hz, int lo, int hi)
+{
+    VfoWidget* flag = w.addVfoWidget(index);
+    if (flag) {
+        flag->setFrequency(hz);
+        flag->setFilter(lo, hi);
+    }
+    return flag;
+}
+
+}  // namespace
 
 class TestDssSliceShadow : public QObject {
     Q_OBJECT
@@ -3295,43 +3338,46 @@ class TestDssSliceShadow : public QObject {
 private slots:
     void disabled_producesNoBands() {
         SpectrumWidget w;
+        placePan(w);
+        QVERIFY(addSlice(w, 0, 14200000.0, -3000, 3000));
         w.setThreeDSliceDepth(false);
-        w.addSliceOverlayForTest(14200000.0, -3000.0, 3000.0, QColor(0, 180, 216));
         QVERIFY(w.buildDssShadowBands().isEmpty());
     }
 
     void enabled_mapsPassbandToViewportUnits() {
         SpectrumWidget w;
-        w.setFrequencyRange(14200000.0, 96000.0);
+        placePan(w);
+        QVERIFY(addSlice(w, 0, 14200000.0, -3000, 3000));
         w.setThreeDSliceDepth(true);
-        w.addSliceOverlayForTest(14200000.0, -3000.0, 3000.0, QColor(0, 180, 216));
         const auto bands = w.buildDssShadowBands();
         QCOMPARE(bands.size(), 1);
-        // Centre slice sits at 0.5 across the viewport.
+        // A slice on the view centre sits at 0.5 across the viewport.
         QVERIFY(std::abs(bands[0].centreUnit - 0.5f) < 1e-4f);
-        // 6 kHz of a 96 kHz view is 1/16 wide, centred.
-        QVERIFY(std::abs((bands[0].highUnit - bands[0].lowUnit) - 0.0625f) < 1e-4f);
+        // 6 kHz of a 96 kHz view is 1/16 of the width.
+        QVERIFY(std::abs((bands[0].highUnit - bands[0].lowUnit) - 0.0625f)
+                < 1e-4f);
         QVERIFY(bands[0].lowUnit < bands[0].highUnit);
     }
 
-    // The shader's shadowBands array is fixed at 8; more slices than that
-    // must be truncated, not overrun.
+    // The shader's shadowBands array is fixed at 8, so more slices than that
+    // must be truncated by the builder rather than overrunning the UBO.
     void moreThanEightSlices_areTruncated() {
         SpectrumWidget w;
+        w.resize(800, 400);
         w.setFrequencyRange(14200000.0, 500000.0);
-        w.setThreeDSliceDepth(true);
         for (int i = 0; i < 12; ++i) {
-            w.addSliceOverlayForTest(14100000.0 + i * 10000.0,
-                                     -1500.0, 1500.0, QColor(0, 180, 216));
+            addSlice(w, i, 14100000.0 + i * 10000.0, -1500, 1500);
         }
+        w.setThreeDSliceDepth(true);
+        QVERIFY(w.sliceMarkerGeometry().size() > 8);   // precondition
         QCOMPARE(w.buildDssShadowBands().size(), 8);
     }
 
     void offscreenSlice_isDropped() {
         SpectrumWidget w;
-        w.setFrequencyRange(14200000.0, 96000.0);
+        placePan(w);
+        QVERIFY(addSlice(w, 0, 21000000.0, -3000, 3000));
         w.setThreeDSliceDepth(true);
-        w.addSliceOverlayForTest(21000000.0, -3000.0, 3000.0, QColor(0, 180, 216));
         QVERIFY(w.buildDssShadowBands().isEmpty());
     }
 };
@@ -3339,6 +3385,12 @@ private slots:
 QTEST_MAIN(TestDssSliceShadow)
 #include "tst_dss_slice_shadow.moc"
 ```
+
+If `addVfoWidget` cannot produce more than a handful of flags in a headless
+test, drop `moreThanEightSlices_areTruncated` to whatever count it does
+support and assert the clamp against `std::min(geometry.size(), 8)` instead.
+The property under test is that the builder never exceeds eight, not the
+specific number twelve.
 
 - [ ] **Step 2: Implement**
 
