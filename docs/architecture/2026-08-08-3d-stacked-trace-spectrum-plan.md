@@ -41,6 +41,7 @@ Every task's requirements implicitly include this section.
 - **Build:** `cmake --build build -j$(sysctl -n hw.ncpu)`. Test executables are `EXCLUDE_FROM_ALL`; always build the named target before running ctest, or you will run a stale binary and get a false green.
 - **Register every new test** with `nereus_add_test(tst_<name>)` in `tests/CMakeLists.txt`, keeping the list alphabetically sorted.
 - **The 1e-6 tolerance rule applies to TEST assertions you write, never to constants lifted from upstream.** `frequencyFramesMatch` carries a `1.0e-9` epsilon in upstream source; that is a lifted constant and preserving it exactly is required. Changing it to 1e-6 would be an unauthorised deviation. The rule exists because float32 geometry comparisons in *our tests* cannot achieve 1e-9, not because 1e-9 is wrong wherever it appears.
+- **A test for a defensive fix must be shown to FAIL without the fix.** Reasoning that it would is not enough, and has already been wrong once here: a reviewer hand-traced that `clear_resetsEverything` covered a restored wipe, but disabling the wipe left it passing 13/13, because `clear()` resets `m_head` to 0 and the assertion read a never-written, already-zero slot. When a task adds guard or reset behaviour, mutate it out, run the test, and confirm it goes red before you claim coverage. State that you did so in your report.
 - **Cover interior branches, not just boundaries.** Where a function has early-return guards around a computation, assert at least two points inside the computed range as well as the guards. Task 1's review caught exactly this: a two-assertion test hit both of `dssWedgeFreeDepth`'s guard clauses and never once reached its interpolation, so an inverted numerator would have passed. If the test code given in a task only checks boundaries on a function that computes something in between, add the interior assertions rather than transcribing the gap.
 - **ATTRIBUTION LANDS IN THE SAME COMMIT AS THE FILE, NEVER DEFERRED.** The pre-commit hook runs `check-new-ports.py` in **full-tree** mode, so any file on disk carrying AetherSDR tells and lacking a PROVENANCE row blocks *every* commit in the repository, including commits that have nothing to do with it. An unregistered file does not merely fail its own task; it wedges the whole branch. CLAUDE.md requires the same thing independently: the verbatim header and the PROVENANCE row go in the commit that introduces the ported logic.
   - Any task creating a file with an AetherSDR header or a `// From AetherSDR` cite MUST add its row to `docs/attribution/aethersdr-reconciliation.md` under "Bucket A" in that same commit.
@@ -1171,13 +1172,32 @@ private slots:
         r.clear();
         QVERIFY(!r.hasData());
         QCOMPARE(r.rowCount(), 0);
-        // hasData() and rowCount() both reduce to m_count == 0, so the two
-        // assertions above pass whether or not clear() actually wipes the
-        // per-row frame stamps. Query an age accessor as well: ringAtAge()
-        // clamps to ring bounds without an m_count guard, so a clear() that
-        // skipped the fills would hand back the stale 14.2 MHz stamp here.
-        QCOMPARE(r.rowCenterMhzAtAge(0),    0.0);
-        QCOMPARE(r.rowBandwidthMhzAtAge(0), 0.0);
+    }
+
+    // clear() must also wipe the per-row frequency stamps, because
+    // ringAtAge() clamps to ring bounds WITHOUT the m_count guard that
+    // upstream's age accessors carry. Without the wipe, a post-clear read
+    // hands back a stale stamp.
+    //
+    // Filling the whole ring first is what makes this test bind, and it is
+    // not optional. m_head walks BACKWARD on push and clear() resets it to 0,
+    // so after a single push the written slot is index kDssRows-1 while
+    // ringAtAge(0) reads index 0 -- a slot that was never written and is
+    // already value-initialised to 0.0. The assertions would then pass
+    // against a clear() that wipes nothing at all. Verified by mutation:
+    // with the fills commented out, the single-push form still reported
+    // 13/13 passing. Push kDssRows rows so every slot carries the stamp and
+    // index 0 is genuinely dirty.
+    void clear_wipesFrameStampsAcrossTheWholeRing() {
+        DssRenderer r;
+        for (int i = 0; i < kDssRows; ++i) {
+            r.pushRowWithWide(flatRow(768, -130.0f), 14.2, 0.192,
+                              flatRow(768, -140.0f), 14.2, 0.500);
+        }
+        QCOMPARE(r.rowCenterMhzAtAge(0), 14.2);   // precondition: slot is dirty
+        r.clear();
+        QCOMPARE(r.rowCenterMhzAtAge(0),        0.0);
+        QCOMPARE(r.rowBandwidthMhzAtAge(0),     0.0);
         QCOMPARE(r.rowWideCenterMhzAtAge(0),    0.0);
         QCOMPARE(r.rowWideBandwidthMhzAtAge(0), 0.0);
         QCOMPARE(r.rowWideCoverageRing(r.headRing())[0], quint8(0));
