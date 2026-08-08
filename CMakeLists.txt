@@ -763,6 +763,7 @@ set(GUI_SOURCES
     src/gui/NetworkDiagnosticsDialog.h
     src/gui/DiversityDialog.cpp
     src/gui/DiversityDialog.h
+    src/gui/DssRenderer.cpp
     src/gui/SpotHubDialog.cpp
     src/gui/SpotHubDialog.h
     src/gui/FreeDVReporterDialog.cpp

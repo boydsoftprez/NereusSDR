@@ -6178,6 +6178,19 @@ nereus_add_test(tst_dss_geometry)
 # :13136-13200 and src/gui/DssRenderer.h:66-82 [@1872028c].
 nereus_add_test(tst_dss_mesh_geometry)
 
+# ── 3D stacked-trace spectrum plan, Task 4: DssRenderer ring store ────────
+# Pins the row ring store: peak-preserving downsample survives a single-bin
+# carrier, median-of-3 rejects a one-frame broadband impulse, the ring wraps
+# and bounds rowCount()/visibleRowCount(), pushed rows stamp their frequency
+# frame, a retune (frame change) drops the temporal blend rather than
+# smearing signals across the pan, the wide (off-screen) channel records
+# coverage independently of the exact FFT channel, newestWideBandwidthMhz()
+# looks past bare front rows rather than collapsing to 0 the instant one
+# push omits a wide slice, clear() resets everything, and rowGeneration()
+# advances on every push. Source: AetherSDR src/gui/DssRenderer.cpp:28-30,
+# :49-61, :182-215, :217-252 [@1872028c].
+nereus_add_test(tst_dss_renderer_ring)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
