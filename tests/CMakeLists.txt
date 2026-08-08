@@ -6152,6 +6152,14 @@ nereus_add_test(tst_tnf_ui_wiring)
 #         section 8.3 + section 11.
 nereus_add_test(tst_notch_visual_does_not_perturb_noise_floor_or_maxbin)
 
+# ── 3D stacked-trace spectrum plan, Task 2: Angle mapping safety properties
+# Pins the 3D Angle mapping's safety guarantees: slider 50 reproduces
+# upstream's geometry exactly, no angle can push a full-scale back-row ridge
+# off the top of the plot, spread and convergence move together as a real
+# camera would, and the widest row span falls at the edge-on end (which
+# Task 3's mesh sizing relies on).
+nereus_add_test(tst_dss_angle)
+
 # ── 3D stacked-trace spectrum plan, Task 1: DssGeometry ───────────────────
 # Golden test asserting kDssUpstreamShape reproduces AetherSDR DssRenderer.h's
 # constants exactly, and that dssDepthScale / dssProjectPerspective /
