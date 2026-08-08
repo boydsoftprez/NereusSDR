@@ -369,17 +369,36 @@ texel per on-screen column. Upstream computes this once at compile time via
 With a variable angle, `kMeshCols` must be sized for the **widest** span across
 the whole slider travel, which occurs at the minimum `backWidthFrac`:
 
-| | `backWidthFrac` | `kMaxRowSpanFactor` | `kMeshCols` |
-|---|---|---|---|
-| Upstream fixed | 0.60 | 1.667 | 1281 |
-| NereusSDR at `t=0` | 0.35 | 2.857 | 2195 |
+| | `backWidthFrac` | `kMaxRowSpanFactor` | mesh columns | mesh VBO cost |
+|---|---|---|---|---|
+| Upstream fixed | 0.60 | 1.667 | 1281 | 33.8 MiB |
+| NereusSDR at `t=0.5` | 0.60 | 1.667 | 1281 | 33.8 MiB |
+| NereusSDR at `t=0` | 0.35 | 2.857 | 2195 | 57.9 MiB |
 
-That is 1.71x upstream's mesh column count, and the vertex buffer scales with
-it. The compile-time `static_assert` is replaced by a runtime sweep test
-(section 8). **The actual byte cost per panadapter must be measured before the
-low end of the slider travel is fixed**; if it is unacceptable at four
-panadapters, the low clamp moves up from 0.35 and the lerp endpoints are
-re-solved to keep `t = 0.5` on upstream's constants.
+**Measured, 2026-08-08.** Upstream states 33.7 MiB per panadapter at its fixed
+1281 columns (`SpectrumWidget.cpp:150-157 [@1872028c]`), and the figure
+reproduces exactly:
+`(1281 - 1) x 6 x 2 verts/row x 96 rows x 3 floats x 4 bytes x 2 VBOs`.
+Sizing unconditionally for the widest angle would cost 57.9 MiB per panadapter
+and 232 MiB across four, which is not acceptable.
+
+**Resolution: size the mesh for the current angle, not the worst case.** The
+mesh VBOs hold only static `(u, v, edge)` geometry. They are rebuilt when the
+column count changes, which happens on an angle-slider commit, never per frame.
+So `meshColsFor(maxRowSpanFactor)` is evaluated from the live
+`backWidthFrac` and the VBOs are reallocated only when the resulting column
+count actually differs. The default angle therefore costs exactly what upstream
+costs, and the extra is charged only while the operator is sitting at a
+dramatic angle.
+
+This keeps the full angle travel rather than moving the low clamp up, and it
+preserves the density invariant at every setting because the mesh is always
+sized for the angle currently in force.
+
+The compile-time `static_assert` upstream relies on is replaced by a runtime
+sweep test (section 8), which now also asserts the rebuild actually happens:
+the density invariant must hold after an angle change, not merely at
+construction.
 
 ---
 
@@ -492,8 +511,12 @@ All headless. No graphics context required.
    0.60, 0.58 and 0.46 exactly.
 3. **Angle safety sweep.** Step the slider across its whole travel and assert
    at every step that the tallest possible ridge top stays inside the plot and
-   that the mesh column density invariant holds. This replaces the compile-time
-   `static_assert` that promoting the constants to runtime values removes.
+   that the mesh column density invariant holds **after** the mesh has been
+   resized for that angle. This replaces the compile-time `static_assert` that
+   promoting the constants to runtime values removes, and additionally guards
+   the dynamic resize in section 5.5: an implementation that computed the new
+   column count but failed to rebuild the VBOs would pass a construction-time
+   assert and fail this.
 4. **Ring store.** A single-bin carrier must survive the peak-preserving
    downsample from full FFT width to 768 columns; ring wrap at the
    `kRows` boundary; coverage bytes correct on zoom-created gaps; temporal
@@ -562,10 +585,13 @@ explicit human review item on every PR in this epic.**
    band and comparing. This requires operator eyes and is a named bench task.
 2. **The angle slider has no upstream reference for its extremes.** Expect to
    clamp its travel narrower than the math permits after looking at it.
-3. **Vertex count at maximum span combined with maximum angle is unmeasured.**
-   1.71x upstream's mesh columns is arithmetic; the byte cost per panadapter,
-   and at four panadapters, is not. Measure before fixing the low clamp
-   (section 5.5).
+3. **Mesh memory is measured and mitigated, but the mitigation is untested on
+   hardware.** 33.8 MiB per panadapter at the default angle, 57.9 MiB at the
+   most dramatic, resolved by sizing the mesh for the live angle (section 5.5).
+   What remains unproven is the reallocation itself: rebuilding two VBOs of
+   tens of MiB on a slider commit must not stall the render thread visibly.
+   If it does, the fallback is to debounce the rebuild until the slider is
+   released, and failing that to move the low clamp up.
 4. **The `RGBA16F` fallback path is inherited and sound but unproven here**,
    particularly on Windows and Intel graphics, until somebody runs it there.
 5. **DC-centre ridge wall (bench-watch).** The DDC's DC bin sits at the centre
