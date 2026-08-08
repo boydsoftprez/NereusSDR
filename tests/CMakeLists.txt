@@ -6167,6 +6167,17 @@ nereus_add_test(tst_dss_angle)
 # for bit. Source: AetherSDR src/gui/DssRenderer.h:36-187 [@1872028c].
 nereus_add_test(tst_dss_geometry)
 
+# ── 3D stacked-trace spectrum plan, Task 3: DssMeshGeometry ───────────────
+# Pins the GPU mesh vertex generation: the default angle reproduces
+# upstream's ~33.7 MiB mesh size exactly, the widest angle costs materially
+# more and is only paid when the shape demands it, the density invariant
+# dss_mesh.vert's Nearest sampler depends on holds at every angle (and is
+# caught failing if a resize is skipped), the vertex-count formula matches
+# upstream, and emitted vertices land in-range, back-to-front, with
+# decodable edge tags. Source: AetherSDR src/gui/SpectrumWidget.cpp:148-172,
+# :13136-13200 and src/gui/DssRenderer.h:66-82 [@1872028c].
+nereus_add_test(tst_dss_mesh_geometry)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
