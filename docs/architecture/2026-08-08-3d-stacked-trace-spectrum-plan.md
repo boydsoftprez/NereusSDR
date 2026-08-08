@@ -14,9 +14,12 @@
 
 Every task's requirements implicitly include this section.
 
-- **Upstream cite stamp is `[@1872028c]`** on every `// From AetherSDR ...` comment. Read upstream via `git -C /Users/j.j.boyd/AetherSDR show upstream/main:<path>`, never the local working tree (it is 17 commits behind).
+- **Upstream cite stamp is `[@1872028c]`** on every `// From AetherSDR ...` comment.
+- **Read upstream by the pinned SHA, never by a branch name.** Always `git -C /Users/j.j.boyd/AetherSDR show 1872028c:<path>`. Two refs will mislead you:
+  - The **working tree** at `/Users/j.j.boyd/AetherSDR` is behind and must never be read directly.
+  - **`upstream/main` is a moving target.** It has already advanced past the pin during this epic (to `a26d6290`), and `src/gui/SpectrumWidget.cpp` grew by 77 lines in the process. Every line number this plan cites for that file is relative to `1872028c`; reading the branch instead silently shifts them and you will port the wrong lines. The DSS-specific files happened not to change, which is exactly why this is dangerous: a spot check on `DssRenderer.h` would show no difference and give false confidence.
 - **Tier 1 code is lifted verbatim.** Exactly two deviations are permitted (design §2.3): angle parameterisation, and scroll distance fixed at one row. Each deviation site carries `//-KG4VCF [v0.5.3] <description>`. Any further tier 1 edit must be added to design §2.3 in the same commit.
-- **UPSTREAM IS AUTHORITATIVE FOR COMMENT TEXT; THIS PLAN IS NOT.** The code blocks in this plan give you the *structure* to build: signatures, ordering, which values go where. They were transcribed by hand and are known to have dropped and reworded upstream comments in at least three places. For every comment inside a tier 1 lift, open the upstream file with `git -C /Users/j.j.boyd/AetherSDR show upstream/main:<path>` and copy the comment text from there, not from this plan. Where the plan and upstream disagree on comment wording, **upstream wins silently** and needs no escalation. Escalate only when they disagree on *code*.
+- **UPSTREAM IS AUTHORITATIVE FOR COMMENT TEXT; THIS PLAN IS NOT.** The code blocks in this plan give you the *structure* to build: signatures, ordering, which values go where. They were transcribed by hand and are known to have dropped and reworded upstream comments in at least three places. For every comment inside a tier 1 lift, open the upstream file with `git -C /Users/j.j.boyd/AetherSDR show 1872028c:<path>` and copy the comment text from there, not from this plan. Where the plan and upstream disagree on comment wording, **upstream wins silently** and needs no escalation. Escalate only when they disagree on *code*.
   - Adapting an identifier that genuinely changed in the port (for example upstream's `kCols` to our `kDssCols`, or `kMaxRowSpanFactor` to `dssMaxRowSpanFactor()`) is a mechanical rename inside otherwise-verbatim text, not a deviation, and needs no marker.
   - Dropping or rewriting an upstream *sentence* is a deviation and is not permitted outside the two listed above.
   - Where the port modifies logic inside a commented region, keep upstream's original comment and add the `//-KG4VCF` marker after it. Do not replace upstream's explanation with your own.
@@ -90,7 +93,7 @@ Splitting `DssGeometry.h` out of `DssRenderer.h` (upstream keeps them together) 
 - [ ] **Step 1: Read the upstream source you are about to lift**
 
 ```bash
-git -C /Users/j.j.boyd/AetherSDR show upstream/main:src/gui/DssRenderer.h | sed -n '30,190p'
+git -C /Users/j.j.boyd/AetherSDR show 1872028c:src/gui/DssRenderer.h | sed -n '30,190p'
 ```
 
 Read all of it before writing anything. Lines 45-51 are the constants, 85-187 the projection functions. Note every comment: they are lifted verbatim along with the code.
@@ -664,8 +667,8 @@ mesh sizing relies on)."
 - [ ] **Step 1: Read upstream's vertex generation**
 
 ```bash
-git -C /Users/j.j.boyd/AetherSDR show upstream/main:src/gui/SpectrumWidget.cpp | sed -n '148,172p'
-git -C /Users/j.j.boyd/AetherSDR show upstream/main:src/gui/SpectrumWidget.cpp | sed -n '13136,13200p'
+git -C /Users/j.j.boyd/AetherSDR show 1872028c:src/gui/SpectrumWidget.cpp | sed -n '148,172p'
+git -C /Users/j.j.boyd/AetherSDR show 1872028c:src/gui/SpectrumWidget.cpp | sed -n '13136,13200p'
 ```
 
 Note the edge encoding, which `dss_mesh.vert:180-195` decodes: fill vertices use edge `0` (ridge) and `1` (floor), offset by `+2` for the overlay layer; ribbon outline vertices use `-10 - side` for the base layer and `-20 - side` for the overlay layer.
@@ -999,9 +1002,9 @@ the resize bug the dynamic sizing could otherwise introduce silently."
 - [ ] **Step 1: Read the upstream ring store**
 
 ```bash
-git -C /Users/j.j.boyd/AetherSDR show upstream/main:src/gui/DssRenderer.cpp | sed -n '10,60p'
-git -C /Users/j.j.boyd/AetherSDR show upstream/main:src/gui/DssRenderer.cpp | sed -n '182,300p'
-git -C /Users/j.j.boyd/AetherSDR show upstream/main:src/gui/DssRenderer.cpp | sed -n '389,480p'
+git -C /Users/j.j.boyd/AetherSDR show 1872028c:src/gui/DssRenderer.cpp | sed -n '10,60p'
+git -C /Users/j.j.boyd/AetherSDR show 1872028c:src/gui/DssRenderer.cpp | sed -n '182,300p'
+git -C /Users/j.j.boyd/AetherSDR show 1872028c:src/gui/DssRenderer.cpp | sed -n '389,480p'
 ```
 
 `resampledRawRow` is the peak-preserving downsample, `smoothDssRow` the median-of-3 plus 1-2-1 spatial plus temporal IIR chain, `pushRowWithSupplemental` the ring write. Lift all three verbatim, renaming `supplemental` to `wide` throughout (the concept differs: ours is the same FFT, not a separate calibrated source).
@@ -1631,9 +1634,9 @@ burst does not."
 - [ ] **Step 1: Copy the shaders from upstream**
 
 ```bash
-git -C /Users/j.j.boyd/AetherSDR show upstream/main:resources/shaders/dss_mesh.vert \
+git -C /Users/j.j.boyd/AetherSDR show 1872028c:resources/shaders/dss_mesh.vert \
   > resources/shaders/dss_mesh.vert
-git -C /Users/j.j.boyd/AetherSDR show upstream/main:resources/shaders/dss_mesh.frag \
+git -C /Users/j.j.boyd/AetherSDR show 1872028c:resources/shaders/dss_mesh.frag \
   > resources/shaders/dss_mesh.frag
 ```
 
@@ -2146,7 +2149,7 @@ at a frequency the operator has since left."
 - [ ] **Step 1: Read upstream's pipeline setup**
 
 ```bash
-git -C /Users/j.j.boyd/AetherSDR show upstream/main:src/gui/SpectrumWidget.cpp | sed -n '12787,12905p'
+git -C /Users/j.j.boyd/AetherSDR show 1872028c:src/gui/SpectrumWidget.cpp | sed -n '12787,12905p'
 ```
 
 Note the `RGBA16F` support probe that disables the mesh and falls back to CPU, the `Nearest` height sampler with `Linear` palette sampler, and the SRB binding numbers (0 UBO both stages, 1 height vertex-stage, 2 palette fragment-stage) which `dss_mesh.vert:63` and `dss_mesh.frag:47` depend on.
@@ -3087,7 +3090,7 @@ kDssMeshUboFloats entries."
 - [ ] **Step 1: Read upstream's CPU renderer**
 
 ```bash
-git -C /Users/j.j.boyd/AetherSDR show upstream/main:src/gui/DssRenderer.cpp | sed -n '753,903p'
+git -C /Users/j.j.boyd/AetherSDR show 1872028c:src/gui/DssRenderer.cpp | sed -n '753,903p'
 ```
 
 `image()` is the cache gate, `rebuild()` the painter's-algorithm draw, `dssDepthVisibleSegments` the occlusion test used by the depth-shadow overlay.
@@ -3259,7 +3262,7 @@ perspective after the slider moved."
 - [ ] **Step 1: Read upstream**
 
 ```bash
-git -C /Users/j.j.boyd/AetherSDR show upstream/main:src/gui/SpectrumWidget.cpp | sed -n '17160,17240p'
+git -C /Users/j.j.boyd/AetherSDR show 1872028c:src/gui/SpectrumWidget.cpp | sed -n '17160,17240p'
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -3507,7 +3510,7 @@ caller to bound it."
 - [ ] **Step 1: Read upstream's section**
 
 ```bash
-git -C /Users/j.j.boyd/AetherSDR show upstream/main:src/gui/SpectrumOverlayMenu.cpp | sed -n '1874,1942p'
+git -C /Users/j.j.boyd/AetherSDR show 1872028c:src/gui/SpectrumOverlayMenu.cpp | sed -n '1874,1942p'
 ```
 
 Labels, ranges, defaults and tooltip wording are copied exactly. The 3D Angle row is new and sits after 3D Span.
