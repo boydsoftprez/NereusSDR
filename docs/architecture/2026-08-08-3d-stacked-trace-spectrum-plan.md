@@ -40,7 +40,8 @@ Every task's requirements implicitly include this section.
 - **ATTRIBUTION LANDS IN THE SAME COMMIT AS THE FILE, NEVER DEFERRED.** The pre-commit hook runs `check-new-ports.py` in **full-tree** mode, so any file on disk carrying AetherSDR tells and lacking a PROVENANCE row blocks *every* commit in the repository, including commits that have nothing to do with it. An unregistered file does not merely fail its own task; it wedges the whole branch. CLAUDE.md requires the same thing independently: the verbatim header and the PROVENANCE row go in the commit that introduces the ported logic.
   - Any task creating a file with an AetherSDR header or a `// From AetherSDR` cite MUST add its row to `docs/attribution/aethersdr-reconciliation.md` under "Bucket A" in that same commit.
   - Row format is four columns: `| <NereusSDR file> | <AetherSDR counterpart> | <evidence: which lines cite what> | "<one-sentence mod-history wording>" |`
-  - Verify before committing with `python3 scripts/check-new-ports.py`. If it flags your file, you are not done.
+  - Put the row in this plan's own `## 3D Stacked-Trace Spectrum Plan` section at the end of that document, not inside the `## Bucket A (48 files)` heading, whose count would then be wrong. Task 1 created that section; later tasks append to it. This follows the two most recent precedents in the same file, `## Phase 3P-II PGXL/TGXL Accessories` and `## Phase 3F Sub-Epic D`.
+  - Verify before committing with `python3 scripts/check-new-ports.py --full-tree`. The `--full-tree` flag is required: without it the script runs in diff mode against staged files only and prints a vacuous `OK [diff]` that tells you nothing about the file you just wrote. Expected output is `OK [full-tree]: <N> C/C++ file(s) checked`. If it flags your file, you are not done.
 
 ---
 
@@ -479,7 +480,7 @@ branch. Add this row to the Bucket A table in
 Then confirm the gate is clean before committing:
 
 ```bash
-python3 scripts/check-new-ports.py
+python3 scripts/check-new-ports.py --full-tree
 ```
 
 Expected: `OK [full-tree]` with no flagged files. If it still flags
@@ -3855,7 +3856,7 @@ cmake --build build -j$(sysctl -n hw.ncpu) \
 Expected: the whole suite green, including the ten new `tst_dss_*` executables. Then confirm the attribution gates:
 
 ```bash
-python3 scripts/check-new-ports.py && python3 scripts/verify-inline-cites.py && python3 scripts/verify-provenance-sync.py
+python3 scripts/check-new-ports.py --full-tree && python3 scripts/verify-inline-cites.py && python3 scripts/verify-provenance-sync.py
 ```
 
 - [ ] **Step 6: Manual bench check**
