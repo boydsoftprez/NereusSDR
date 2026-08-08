@@ -2228,6 +2228,81 @@ void SpectrumWidget::setWaterfallStopOnTx(bool on)
     scheduleSettingsSave();
 }
 
+// ---- 3DSS stacked-trace mode ----
+// 3D Stacked-Trace Spectrum Plan Task 6 (design doc
+// docs/architecture/2026-08-08-3d-stacked-trace-spectrum-design.md).
+void SpectrumWidget::setSpectrumRenderMode(int mode)
+{
+    const SpectrumRenderMode next =
+        (mode == static_cast<int>(SpectrumRenderMode::Mode3D))
+            ? SpectrumRenderMode::Mode3D
+            : SpectrumRenderMode::Mode2D;
+    if (m_spectrumRenderMode == next) { return; }
+    m_spectrumRenderMode = next;
+    if (next == SpectrumRenderMode::Mode2D) {
+        // Leaving 3D: drop the ring so re-entering starts clean rather than
+        // showing a stack of rows captured at a frequency we have since left.
+        m_dss.clear();
+        m_dssRowsPushed = 0;
+    }
+    m_dss.invalidate();
+    markOverlayDirty();
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setDssFloorDepth(int dB)
+{
+    const int v = std::clamp(dB, 0, 24);
+    if (m_dssFloorDepth == v) { return; }
+    m_dssFloorDepth = v;
+    m_dss.invalidate();
+    markOverlayDirty();
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setDssGain(int pct)
+{
+    const int v = std::clamp(pct, 0, 100);
+    if (m_dssGain == v) { return; }
+    m_dssGain = v;
+    m_dss.invalidate();
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setDssRowSpan(int pct)
+{
+    const int v = std::clamp(pct, 0, 100);
+    if (m_dssRowSpan == v) { return; }
+    m_dssRowSpan = v;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setDssAngle(int pct)
+{
+    const int v = std::clamp(pct, 0, 100);
+    if (m_dssAngle == v) { return; }
+    m_dssAngle = v;
+    // The mesh column count is a function of the shape, so a large enough
+    // angle change invalidates the vertex buffers. Task 7 reallocates them.
+    m_dssMeshNeedsResize = true;
+    m_dss.invalidate();
+    markOverlayDirty();
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setThreeDSliceDepth(bool on)
+{
+    if (m_threeDSliceDepth == on) { return; }
+    m_threeDSliceDepth = on;
+    scheduleSettingsSave();
+    update();
+}
+
 // Issue #230 fix: Clarity is a NereusSDR-only override modeled on
 // Thetis's AGC pattern at display.cs:6584 [v2.10.3.13], where the AGC
 // running-min is a runtime field (_RX1waterfallPreviousMinValue) that
@@ -4726,8 +4801,17 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
     }
 
     // Task 2.8: Stop-on-TX -- skip if TX active and feature enabled.
-    if (m_wfStopOnTx && m_activePeakHold.txActive()) {
+    if (m_wfStopOnTx && (m_activePeakHold.txActive() || m_txActiveForTest)) {
         return;
+    }
+
+    // 3DSS: feed the stacked-trace ring from the same call, downstream of the
+    // stop-on-TX gate above, so the perspective stack and the flat waterfall
+    // beneath it advance and freeze in lockstep. Teeing at the WaterfallTicker
+    // callback instead would sit upstream of that gate and let the 3D surface
+    // keep scrolling through an over.
+    if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+        pushDssRow(wfPixelsDbm);
     }
 
     // 2026-05-25 KG4VCF bench fix: cadence is now driven by
@@ -4778,6 +4862,18 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
             markOverlayDirty();
         }
     }
+}
+
+// ---- 3DSS row tee ----
+// Resamples the same post-pipeline row pushWaterfallRow() just wrote to the
+// flat waterfall into the stacked-trace ring. Task 8 extends this to also
+// fill the wide (off-screen) channel via pushRowWithWide.
+void SpectrumWidget::pushDssRow(const QVector<float>& wfPixelsDbm)
+{
+    const double centerMhz    = m_centerHz    / 1.0e6;
+    const double bandwidthMhz = m_bandwidthHz / 1.0e6;
+    m_dss.pushRow(wfPixelsDbm, centerMhz, bandwidthMhz);
+    ++m_dssRowsPushed;
 }
 
 // ---- dBm to waterfall color ----

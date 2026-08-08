@@ -167,6 +167,8 @@ mw0lge@grange-lane.co.uk
 #include "spectrum/PeakBlobDetector.h"
 #include "spectrum/SpectrumAvenger.h"
 
+#include "gui/DssRenderer.h"
+
 #include <utility>
 
 #include "core/ConnectionState.h"
@@ -211,6 +213,14 @@ enum class WfColorScheme : int {
     ClarityBlue,    // Phase 3G-9b: narrow-band monochrome (80% navy noise floor,
                     // top 20% cyan→white signals). AetherSDR-style readability.
     Count
+};
+
+// Spectrum render mode for the panadapter surface.
+// From AetherSDR SpectrumWidget.h:78-82 [@1872028c].
+enum class SpectrumRenderMode : int {
+    Mode2D = 0,    // FFT trace + scrolling waterfall (classic)
+    Mode3D,        // 3DSS perspective stacked-trace surface
+    Count          // sentinel
 };
 
 // Frequency label alignment for the bottom scale bar.
@@ -570,6 +580,31 @@ public:
     // Stop-on-TX: pause pushWaterfallRow() while TX is active.
     void setWaterfallStopOnTx(bool on);
     bool waterfallStopOnTx() const { return m_wfStopOnTx; }
+
+    // ── 3DSS stacked-trace mode ───────────────────────────────────────────
+    void setSpectrumRenderMode(int mode);
+    int  spectrumRenderMode() const { return static_cast<int>(m_spectrumRenderMode); }
+    void setDssFloorDepth(int dB);
+    int  dssFloorDepth() const { return m_dssFloorDepth; }
+    void setDssGain(int pct);
+    int  dssGain() const { return m_dssGain; }
+    void setDssRowSpan(int pct);
+    int  dssRowSpan() const { return m_dssRowSpan; }
+    void setDssAngle(int pct);
+    int  dssAngle() const { return m_dssAngle; }
+    void setThreeDSliceDepth(bool on);
+    bool threeDSliceDepth() const { return m_threeDSliceDepth; }
+    DssShape dssShape() const { return dssShapeForAngle(m_dssAngle); }
+
+    // Test seams. pushWaterfallRow() is private and normally driven by the
+    // WaterfallTicker thread; these let the row-tee placement be proven
+    // without standing up a ticker or a QRhi context.
+    void pushWaterfallRowForTest(const QVector<float>& wfPixelsDbm) {
+        pushWaterfallRow(wfPixelsDbm);
+    }
+    void setTxActiveForTest(bool on) { m_txActiveForTest = on; }
+    int  dssRowsPushedForTest() const { return m_dssRowsPushed; }
+
     void setWfOpacity(int percent);          // 0..100
     int  wfOpacity() const { return m_wfOpacity; }
     void setWfUpdatePeriodMs(int ms);
@@ -1626,6 +1661,12 @@ private:
     void   pushWaterfallRow(const QVector<float>& wfPixelsDbm);
     QRgb   dbmToRgb(float dbm) const;
 
+    // 3DSS: resamples + stores wfPixelsDbm into the stacked-trace ring.
+    // Called from pushWaterfallRow() downstream of the stop-on-TX gate —
+    // see the call site there for why placement matters. Task 8 extends
+    // this to also feed the wide (off-screen) channel via pushRowWithWide.
+    void pushDssRow(const QVector<float>& wfPixelsDbm);
+
     // ---- FFT pipeline state ----
     // Single Thetis-faithful pipeline: linear-power FFT bins -> visible
     // slice -> detector -> avenger -> dBm display pixels.  Spectrum and
@@ -1843,6 +1884,24 @@ private:
     bool  m_showTxFilterOnRxWaterfall{false};
     bool  m_showRxZeroLineOnWaterfall{false};
     bool  m_showTxZeroLineOnWaterfall{false};
+
+    // ---- 3DSS stacked-trace mode state ----
+    SpectrumRenderMode m_spectrumRenderMode{SpectrumRenderMode::Mode2D};
+    // 3DSS floor depth: how far below the measured noise floor the surface
+    // baseline sits, in dB. Persisted per band (design doc section 6.3).
+    int  m_dssFloorDepth{6};
+    int  m_dssGain{70};        // colour gamma 0-100
+    int  m_dssRowSpan{100};    // wedge close-in 0-100
+    //-KG4VCF [v0.5.3] NereusSDR-original: upstream renders at one fixed
+    // viewing angle. 50 reproduces its geometry exactly.
+    int  m_dssAngle{50};
+    bool m_threeDSliceDepth{false};
+    DssRenderer m_dss;
+    int  m_dssRowsPushed{0};
+    bool m_txActiveForTest{false};
+    // The mesh column count is a function of the shape, so a large enough
+    // angle change invalidates the vertex buffers. Task 7 reallocates them.
+    bool m_dssMeshNeedsResize{false};
 
     // AGC rolling envelope (tracked across waterfall rows).
     float m_wfAgcRunMin{0.0f};

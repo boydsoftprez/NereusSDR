@@ -6205,6 +6205,17 @@ nereus_add_test(tst_dss_shader_contract)
 target_compile_definitions(tst_dss_shader_contract PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
+# ── 3D stacked-trace spectrum plan, Task 6: render mode + row tee ────────
+# Pins the SpectrumRenderMode enum default and the five 3D control values'
+# defaults/clamps, that 3D Angle 50 reproduces upstream's fixed shape, and
+# above all the row-tee placement: pushDssRow() must run from inside
+# pushWaterfallRow() downstream of the stop-on-TX early return so the 3D
+# stack and the flat waterfall advance and freeze in lockstep. A ticker-
+# callback tee (upstream of the gate) would desync the two panes on every
+# over -- stopOnTx_freezesBothPanesTogether drives TX both ways to catch it.
+# Source: AetherSDR src/gui/SpectrumWidget.h:78-82 [@1872028c].
+nereus_add_test(tst_dss_row_tee)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
