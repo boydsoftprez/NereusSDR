@@ -1058,10 +1058,27 @@ private slots:
         }
         const float* row = r.rowDataRing(r.headRing());
         float peak = -1000.0f;
+        int peakCol = -1;
         for (int c = 0; c < kDssCols; ++c) {
-            peak = std::max(peak, row[c]);
+            if (row[c] > peak) { peak = row[c]; peakCol = c; }
         }
-        QVERIFY2(peak > -80.0f,
+        // Two independent properties, because either alone is weak.
+        //
+        // The carrier must still be the loudest column, and at the column it
+        // belongs in. This is blur-independent and is how upstream's own
+        // dss_renderer_test.cpp checks the same thing.
+        const int expectedCol = 4096 * kDssCols / 8192;
+        QCOMPARE(peakCol, expectedCol);
+        //
+        // And it must still stand well clear of the floor in absolute terms,
+        // which is what actually catches a mean-based downsample. Do not
+        // tighten this past -85: the unconditional 1-2-1 spatial blur maps an
+        // isolated column to 0.25*floor + 0.5*carrier + 0.25*floor, so a
+        // -40 dBm carrier on a -130 dBm floor converges to exactly -85.0 and
+        // no number of further pushes moves it. A mean-based downsample would
+        // land near -125.8 instead, so -100 discriminates with 15 dB of margin
+        // above the true value and 25 dB below the broken one.
+        QVERIFY2(peak > -100.0f,
                  qPrintable(QStringLiteral("carrier lost, peak=%1").arg(peak)));
     }
 
