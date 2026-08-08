@@ -49,12 +49,53 @@ private slots:
     }
 
     // std140 rounds the scalar run up to a vec4 boundary. The host writes
-    // explicit padding to match; if this drifts, every vec4 after it shifts.
+    // explicit padding to match; if this drifts, every vec4 after it shifts
+    // and the surface renders garbage with no compile error.
+    //
+    // This MUST parse the real uniform block out of the shader. Restating
+    // kDssMeshUboFloats' own arithmetic here would be a tautology: the two
+    // expressions share kDssRows and constant-fold identically, so they can
+    // never disagree, and an edit to the GLSL block would sail through. That
+    // matters most for the task that writes this UBO, which is the one most
+    // likely to change the block.
     void uboFloatCount_matchesStd140Layout() {
-        // 22 scalars, padded to 24, then bgFill(4) + shadowBands(8*4)
-        // + shadowStyles(8*4) + shadowMeta(4) + rowFrames(kDssRows*4).
-        const int expected = 24 + 4 + 32 + 32 + 4 + kDssRows * 4;
-        QCOMPARE(kDssMeshUboFloats, expected);
+        const QString src = shaderSource(QStringLiteral("dss_mesh.vert"));
+        QVERIFY(!src.isEmpty());
+        static const QRegularExpression blockRe(
+            QStringLiteral(R"(layout\(std140[^{]*\{(.*?)\n\};)"),
+            QRegularExpression::DotMatchesEverythingOption);
+        const auto blockMatch = blockRe.match(src);
+        QVERIFY2(blockMatch.hasMatch(), "no std140 uniform block found");
+        // Strip comments so a commented-out member is not counted.
+        static const QRegularExpression commentRe(QStringLiteral("//[^\n]*"));
+        const QString body =
+            blockMatch.captured(1).remove(commentRe);
+
+        static const QRegularExpression memberRe(
+            QStringLiteral(R"(\b(float|vec4)\s+\w+\s*(?:\[\s*(\d+)\s*\])?\s*;)"));
+        int scalars = 0;
+        int vec4Slots = 0;
+        bool seenVec4 = false;
+        auto it = memberRe.globalMatch(body);
+        while (it.hasNext()) {
+            const auto m = it.next();
+            if (m.captured(1) == QLatin1String("float")) {
+                // std140 packing here assumes every scalar precedes every
+                // vec4. If that ever stops being true the padding maths below
+                // is wrong, so fail loudly rather than compute a wrong total.
+                QVERIFY2(!seenVec4,
+                         "a float is declared after a vec4; std140 padding "
+                         "assumption in this test no longer holds");
+                ++scalars;
+            } else {
+                seenVec4 = true;
+                const QString count = m.captured(2);
+                vec4Slots += count.isEmpty() ? 1 : count.toInt();
+            }
+        }
+        QVERIFY2(scalars > 0 && vec4Slots > 0, "uniform block parse found nothing");
+        const int paddedScalars = ((scalars + 3) / 4) * 4;
+        QCOMPARE(kDssMeshUboFloats, paddedScalars + vec4Slots * 4);
     }
 
     // Upstream issue annotations are load-bearing history and no script
