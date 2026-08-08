@@ -2423,6 +2423,31 @@ private:
     static constexpr int kFftVertStride = 6;  // x, y, r, g, b, a
     int m_visibleBinCount{0};  // bins rendered this frame (for draw call count)
 
+    // ---- 3DSS mesh GPU resources ----
+    bool initDssMeshPipeline();
+    void rebuildDssMeshIfNeeded(QRhiResourceUpdateBatch* batch);
+    void uploadDssHeightRows(QRhiResourceUpdateBatch* batch);
+    void uploadDssPaletteLut(QRhiResourceUpdateBatch* batch);
+    void writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
+                         const QRect& specRect, float dpr);
+    bool dssMeshReady() const { return m_dssMeshReady; }
+
+    QRhiGraphicsPipeline*       m_dssFillPipeline{nullptr};
+    QRhiGraphicsPipeline*       m_dssLinePipeline{nullptr};
+    QRhiShaderResourceBindings* m_dssSrb{nullptr};
+    QRhiBuffer*                 m_dssMeshVbo{nullptr};
+    QRhiBuffer*                 m_dssMeshLineVbo{nullptr};
+    QRhiBuffer*                 m_dssUbo{nullptr};
+    QRhiTexture*                m_dssHeightTex{nullptr};
+    QRhiTexture*                m_dssPaletteTex{nullptr};
+    QRhiSampler*                m_dssHeightSampler{nullptr};
+    QRhiSampler*                m_dssPaletteSampler{nullptr};
+    bool    m_dssMeshReady{false};
+    int     m_dssMeshCols{0};
+    quint64 m_dssLutToken{~0ull};
+    quint64 m_dssUploadedRowGeneration{~0ull};
+    int     m_dssLastUploadedHead{-1};
+
 #endif
 
     // Invalidate the GPU-path cached overlay texture so grid, labels,

@@ -115,6 +115,7 @@
 #include "SpectrumWidget.h"
 #include "SpectrumOverlayMenu.h"
 #include "ImdOverlay.h"
+#include "gui/DssMeshGeometry.h"
 #include "spectrum/WaterfallTicker.h"
 #include "widgets/VfoWidget.h"
 #include "ColorSwatchButton.h"
@@ -7934,6 +7935,241 @@ void SpectrumWidget::initSpectrumPipeline()
     m_fftLinePipeline->create();
 }
 
+// ---- 3DSS mesh GPU resources (3D stacked-trace spectrum plan, Task 7) ----
+// Pipeline/SRB/texture structure follows AetherSDR SpectrumWidget.cpp's
+// initDssMeshPipeline() [@1872028c]; see per-function comments below for the
+// exact cited ranges. The one behavioural divergence: the vertex buffers are
+// sized from the live perspective shape (dssMeshColsFor(dssShape())) rather
+// than a compile-time constant, and are reallocated only when that column
+// count actually changes -- see rebuildDssMeshIfNeeded().
+
+bool SpectrumWidget::initDssMeshPipeline()
+{
+    QRhi* r = rhi();
+    m_dssMeshReady = false;
+    if (!r) { return false; }
+
+    // R stores dBm and G stores captured-frequency coverage. The second
+    // channel keeps zoom-created floor spans colour-stable without hiding
+    // their lines. From AetherSDR SpectrumWidget.cpp:12793-12798 [@1872028c].
+    if (!r->isTextureFormatSupported(QRhiTexture::RGBA16F, {})) {
+        qCWarning(lcSpectrum) << "SpectrumWidget: RGBA16F unsupported — "
+                                  "stacked-trace mesh disabled (CPU fallback)";
+        return false;
+    }
+
+    QShader vs = loadShader(QStringLiteral(
+        ":/shaders/resources/shaders/dss_mesh.vert.qsb"));
+    QShader fs = loadShader(QStringLiteral(
+        ":/shaders/resources/shaders/dss_mesh.frag.qsb"));
+    if (!vs.isValid() || !fs.isValid()) {
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh shader load "
+                                  "failed — stacked-trace mesh disabled";
+        return false;
+    }
+
+    m_dssMeshCols = dssMeshColsFor(dssShape());
+    const int fillVerts = kDssVisibleRows * dssFillVerticesPerRow(m_dssMeshCols);
+    const int lineVerts = kDssVisibleRows * dssLineVerticesPerRow(m_dssMeshCols);
+
+    m_dssMeshVbo = r->newBuffer(QRhiBuffer::Immutable,
+                                QRhiBuffer::VertexBuffer,
+                                fillVerts * 3 * sizeof(float));
+    m_dssMeshLineVbo = r->newBuffer(QRhiBuffer::Immutable,
+                                    QRhiBuffer::VertexBuffer,
+                                    lineVerts * 3 * sizeof(float));
+    m_dssUbo = r->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer,
+                            kDssMeshUboFloats * sizeof(float));
+    if (!m_dssMeshVbo->create() || !m_dssMeshLineVbo->create()
+        || !m_dssUbo->create()) {
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh buffer create failed";
+        return false;
+    }
+
+    m_dssHeightTex = r->newTexture(QRhiTexture::RGBA16F,
+                                   QSize(m_dss.cols(), m_dss.rows()));
+    m_dssPaletteTex = r->newTexture(QRhiTexture::RGBA8, QSize(256, 1));
+    if (!m_dssHeightTex->create() || !m_dssPaletteTex->create()) {
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh texture create failed";
+        return false;
+    }
+
+    // Height sampled in the vertex stage; Nearest is enough because the mesh
+    // grid is never sparser than the texture -- the column count is sized so
+    // that even at the widest rowSpanFactor the on-screen columns still cover
+    // every texel, so no bin can fall between two samples. Palette is Linear
+    // for a smooth floor->peak gradient.
+    m_dssHeightSampler = r->newSampler(
+        QRhiSampler::Nearest, QRhiSampler::Nearest, QRhiSampler::None,
+        QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge);
+    m_dssPaletteSampler = r->newSampler(
+        QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::None,
+        QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge);
+    if (!m_dssHeightSampler->create() || !m_dssPaletteSampler->create()) {
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh sampler create failed";
+        return false;
+    }
+
+    // Binding numbers 0 (UBO, both stages), 1 (height, vertex stage), 2
+    // (palette, fragment stage) are load-bearing: dss_mesh.vert:63 and
+    // dss_mesh.frag:47/50 declare these exact bindings.
+    m_dssSrb = r->newShaderResourceBindings();
+    m_dssSrb->setBindings({
+        QRhiShaderResourceBinding::uniformBuffer(0,
+            QRhiShaderResourceBinding::VertexStage
+                | QRhiShaderResourceBinding::FragmentStage, m_dssUbo),
+        QRhiShaderResourceBinding::sampledTexture(1,
+            QRhiShaderResourceBinding::VertexStage,
+            m_dssHeightTex, m_dssHeightSampler),
+        QRhiShaderResourceBinding::sampledTexture(2,
+            QRhiShaderResourceBinding::FragmentStage,
+            m_dssPaletteTex, m_dssPaletteSampler),
+    });
+    if (!m_dssSrb->create()) {
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh SRB create failed";
+        return false;
+    }
+
+    QRhiVertexInputLayout layout;
+    layout.setBindings({{3 * sizeof(float)}});
+    layout.setAttributes({{0, 0, QRhiVertexInputAttribute::Float3, 0}});
+
+    QRhiGraphicsPipeline::TargetBlend blend;
+    blend.enable   = true;
+    blend.srcColor = QRhiGraphicsPipeline::SrcAlpha;
+    blend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+    blend.srcAlpha = QRhiGraphicsPipeline::One;
+    blend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+
+    const auto makePipeline = [&]() -> QRhiGraphicsPipeline* {
+        QRhiGraphicsPipeline* p = r->newGraphicsPipeline();
+        p->setShaderStages({{QRhiShaderStage::Vertex, vs},
+                            {QRhiShaderStage::Fragment, fs}});
+        p->setVertexInputLayout(layout);
+        p->setTopology(QRhiGraphicsPipeline::Triangles);
+        p->setShaderResourceBindings(m_dssSrb);
+        p->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
+        p->setTargetBlends({blend});
+        return p;
+    };
+    m_dssFillPipeline = makePipeline();
+    m_dssLinePipeline = makePipeline();
+    if (!m_dssFillPipeline->create() || !m_dssLinePipeline->create()) {
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh pipeline create failed";
+        return false;
+    }
+
+    m_dssMeshReady = true;
+    return true;
+}
+
+// Rebuilds the static mesh VBOs only when the column count derived from the
+// live perspective shape actually changed (angle slider moved enough to
+// cross a column boundary), never unconditionally. Sizing every panadapter
+// for the widest angle unconditionally would cost 57.8 MiB instead of 33.8
+// MiB at the default angle, and reallocating every frame would stall the
+// render thread. NereusSDR-original: upstream sizes its VBOs once at a
+// fixed viewing angle and never rebuilds them (design doc section 5.5).
+void SpectrumWidget::rebuildDssMeshIfNeeded(QRhiResourceUpdateBatch* batch)
+{
+    if (!m_dssMeshReady || !batch) { return; }
+    const int wanted = dssMeshColsFor(dssShape());
+    if (!m_dssMeshNeedsResize && wanted == m_dssMeshCols
+        && m_dssMeshVbo->size() > 0) {
+        return;
+    }
+    m_dssMeshNeedsResize = false;
+
+    QVector<float> fill;
+    QVector<float> line;
+    dssBuildMeshVertices(wanted, fill, line);
+    const quint32 fillBytes = quint32(fill.size()) * sizeof(float);
+    const quint32 lineBytes = quint32(line.size()) * sizeof(float);
+
+    if (wanted != m_dssMeshCols) {
+        m_dssMeshVbo->destroy();
+        m_dssMeshVbo->setSize(fillBytes);
+        m_dssMeshLineVbo->destroy();
+        m_dssMeshLineVbo->setSize(lineBytes);
+        if (!m_dssMeshVbo->create() || !m_dssMeshLineVbo->create()) {
+            qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh resize failed";
+            m_dssMeshReady = false;
+            return;
+        }
+        m_dssMeshCols = wanted;
+    }
+    batch->uploadStaticBuffer(m_dssMeshVbo, 0, fillBytes, fill.constData());
+    batch->uploadStaticBuffer(m_dssMeshLineVbo, 0, lineBytes, line.constData());
+}
+
+// Uploads the ring texture. Only the newest row changes per frame under
+// normal scrolling, so upload one row unless the ring generation jumped by
+// more than one push (mode just entered 3D, or several rows arrived between
+// paints) -- in which case the whole texture is re-uploaded to avoid
+// re-deriving which rows are stale from the generation delta alone.
+void SpectrumWidget::uploadDssHeightRows(QRhiResourceUpdateBatch* batch)
+{
+    if (!m_dssMeshReady || !batch || m_dss.rowCount() == 0) { return; }
+    if (m_dss.rowGeneration() == m_dssUploadedRowGeneration) { return; }
+
+    const int cols = m_dss.cols();
+    const auto packRow = [&](int ring, QVector<qfloat16>& out) {
+        const float*  exact    = m_dss.rowDataRing(ring);
+        const quint8* exactCov = m_dss.rowCoverageRing(ring);
+        const float*  wide     = m_dss.rowWideDataRing(ring);
+        const quint8* wideCov  = m_dss.rowWideCoverageRing(ring);
+        out.resize(cols * 4);
+        for (int c = 0; c < cols; ++c) {
+            out[c * 4 + 0] = qfloat16(exact[c]);
+            out[c * 4 + 1] = qfloat16(exactCov[c] ? 1.0f : 0.0f);
+            out[c * 4 + 2] = qfloat16(wide[c]);
+            out[c * 4 + 3] = qfloat16(wideCov[c] ? 1.0f : 0.0f);
+        }
+    };
+
+    QVector<qfloat16> packed;
+    const int head = m_dss.headRing();
+    const bool fullUpload =
+        m_dssLastUploadedHead < 0
+        || m_dss.rowCount() < kDssRows;
+    if (fullUpload) {
+        for (int ring = 0; ring < m_dss.rows(); ++ring) {
+            packRow(ring, packed);
+            QRhiTextureSubresourceUploadDescription desc(
+                packed.constData(), packed.size() * sizeof(qfloat16));
+            desc.setSourceSize(QSize(cols, 1));
+            desc.setDestinationTopLeft(QPoint(0, ring));
+            batch->uploadTexture(m_dssHeightTex,
+                                 QRhiTextureUploadEntry(0, 0, desc));
+        }
+    } else {
+        packRow(head, packed);
+        QRhiTextureSubresourceUploadDescription desc(
+            packed.constData(), packed.size() * sizeof(qfloat16));
+        desc.setSourceSize(QSize(cols, 1));
+        desc.setDestinationTopLeft(QPoint(0, head));
+        batch->uploadTexture(m_dssHeightTex,
+                             QRhiTextureUploadEntry(0, 0, desc));
+    }
+    m_dssLastUploadedHead = head;
+    m_dssUploadedRowGeneration = m_dss.rowGeneration();
+}
+
+// Stub: Task 8 ("Palette LUT decoupled from waterfall knobs") fills this in.
+void SpectrumWidget::uploadDssPaletteLut(QRhiResourceUpdateBatch* batch)
+{
+    Q_UNUSED(batch);
+}
+
+// Stub: Task 9 ("Floor anchoring, wide feed, UBO writer") fills this in.
+void SpectrumWidget::writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
+                                     const QRect& specRect, float dpr)
+{
+    Q_UNUSED(batch);
+    Q_UNUSED(specRect);
+    Q_UNUSED(dpr);
+}
+
 void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
 {
     if (m_rhiInitialized) { return; }
@@ -7950,6 +8186,7 @@ void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
     initWaterfallPipeline();
     initOverlayPipeline();
     initSpectrumPipeline();
+    initDssMeshPipeline();
 
     // Upload quad VBO data
     batch->uploadStaticBuffer(m_wfVbo, kQuadData);
@@ -8618,6 +8855,23 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         }
     }
 
+    // ---- 3DSS mesh resource updates (only when 3D is the active mode) ----
+    // Queued alongside the FFT vertex updates above so a single
+    // cb->resourceUpdate(batch) submits everything for this frame. dpr is
+    // computed locally here (rather than reusing the post-beginPass
+    // declaration below) because renderTarget()->pixelSize() does not
+    // require an active pass, and these batch writes must be recorded
+    // before cb->resourceUpdate(batch) consumes the batch.
+    if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+        rebuildDssMeshIfNeeded(batch);
+        uploadDssPaletteLut(batch);
+        uploadDssHeightRows(batch);
+        const QSize dssOutputSize = renderTarget()->pixelSize();
+        const float dssDpr =
+            dssOutputSize.width() / static_cast<float>(qMax(1, w));
+        writeDssMeshUbo(batch, specRect, dssDpr);
+    }
+
     cb->resourceUpdate(batch);
 
     // ---- Begin render pass ----
@@ -8641,8 +8895,38 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         cb->draw(4);
     }
 
-    // Draw FFT spectrum
-    if (m_fftFillPipeline && m_fftLinePipeline && m_visibleBinCount > 0) {
+    // Spectrum region: the 3DSS surface, or the classic FFT trace.
+    // 3DSS replaces only the spectrum trace: the surface fills specRect and
+    // the waterfall, divider, freq scale, and all overlays keep their
+    // normal 2D positions. Everything below is identical to 2D except the
+    // FFT trace is swapped for the 3DSS surface quad inside specRect.
+    // From AetherSDR SpectrumWidget.cpp:13304-13307 [@1872028c].
+    const bool is3D =
+        (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) && m_dssMeshReady;
+
+    if (is3D && m_dss.rowCount() > 0) {
+        const float specVpX = static_cast<float>(specRect.x()) * dpr;
+        const float specVpY = static_cast<float>(h - specRect.bottom() - 1) * dpr;
+        const float specVpW = static_cast<float>(specRect.width()) * dpr;
+        const float specVpH = static_cast<float>(specRect.height()) * dpr;
+        const QRhiViewport specVp(specVpX, specVpY, specVpW, specVpH);
+        const int rows = m_dss.visibleRowCount();
+
+        cb->setGraphicsPipeline(m_dssFillPipeline);
+        cb->setShaderResources(m_dssSrb);
+        cb->setViewport(specVp);
+        const QRhiCommandBuffer::VertexInput fillVbuf(m_dssMeshVbo, 0);
+        cb->setVertexInput(0, 1, &fillVbuf);
+        cb->draw(rows * dssFillVerticesPerRow(m_dssMeshCols));
+
+        cb->setGraphicsPipeline(m_dssLinePipeline);
+        cb->setShaderResources(m_dssSrb);
+        cb->setViewport(specVp);
+        const QRhiCommandBuffer::VertexInput lineVbuf(m_dssMeshLineVbo, 0);
+        cb->setVertexInput(0, 1, &lineVbuf);
+        cb->draw(rows * dssLineVerticesPerRow(m_dssMeshCols));
+    } else if (!is3D && m_fftFillPipeline && m_fftLinePipeline
+               && m_visibleBinCount > 0) {
         float specVpX = static_cast<float>(specRect.x()) * dpr;
         float specVpY = static_cast<float>(h - specRect.bottom() - 1) * dpr;
         float specVpW = static_cast<float>(specRect.width()) * dpr;
@@ -8765,6 +9049,23 @@ void SpectrumWidget::releaseResources()
     delete m_fftLineVbo;       m_fftLineVbo = nullptr;
     delete m_fftFillVbo;       m_fftFillVbo = nullptr;
     delete m_fftPeakVbo;       m_fftPeakVbo = nullptr;
+
+    // 3DSS mesh (3D stacked-trace spectrum plan, Task 7).
+    delete m_dssFillPipeline;    m_dssFillPipeline = nullptr;
+    delete m_dssLinePipeline;    m_dssLinePipeline = nullptr;
+    delete m_dssSrb;             m_dssSrb = nullptr;
+    delete m_dssMeshVbo;         m_dssMeshVbo = nullptr;
+    delete m_dssMeshLineVbo;     m_dssMeshLineVbo = nullptr;
+    delete m_dssUbo;             m_dssUbo = nullptr;
+    delete m_dssHeightTex;       m_dssHeightTex = nullptr;
+    delete m_dssPaletteTex;      m_dssPaletteTex = nullptr;
+    delete m_dssHeightSampler;   m_dssHeightSampler = nullptr;
+    delete m_dssPaletteSampler;  m_dssPaletteSampler = nullptr;
+    m_dssMeshReady = false;
+    m_dssMeshCols = 0;
+    m_dssLutToken = ~0ull;
+    m_dssUploadedRowGeneration = ~0ull;
+    m_dssLastUploadedHead = -1;
 
     m_rhiInitialized = false;
 }
