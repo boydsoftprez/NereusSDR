@@ -213,8 +213,8 @@ private slots:
         // would pass unnoticed. Tasks 3 and 9 both consume this formula.
         // (1 - 1/1.25) / (1 - 0.60) = 0.2 / 0.4 = 0.5
         QVERIFY(std::abs(dssWedgeFreeDepth(1.25f, s) - 0.5f)  < 1e-6f);
-        // (1 - 1/1.50) / (1 - 0.60) = 0.3333... / 0.4 = 0.8333...
-        QVERIFY(std::abs(dssWedgeFreeDepth(1.50f, s) - 0.8333333f) < 1e-6f);
+        // (1 - 1/1.40) / (1 - 0.60) = (2/7) / 0.4 = 5/7
+        QVERIFY(std::abs(dssWedgeFreeDepth(1.40f, s) - (5.0f / 7.0f)) < 1e-6f);
     }
 
     void rowFrequencyUnit_isDepthIndependent() {
