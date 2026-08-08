@@ -109,11 +109,13 @@ inline void appendDssVertex(QVector<float>& vertices,
 }  // namespace detail
 
 // 3DSS mesh: build the static perspective grid once (geometry never changes
-// — height comes from the ring-buffered texture sampled per-vertex). Rows
-// are emitted back to front so the painter's-algorithm draw order lets
-// nearer curtains occlude farther ones. Base first, overlay second.
-// Curtains use both only at the fixed front/rear boundaries; ridge outlines
-// use both at every fixed depth for exact-row crossfades.
+// — height comes from the ring-buffered texture sampled per-vertex). Mesh
+// columns, NOT texture columns: the mesh is wider than the viewport so a
+// widened row keeps texel density on screen. Rows are emitted back to front
+// so the painter's-algorithm draw order lets nearer curtains occlude
+// farther ones. Base first, overlay second. Curtains use both only at the
+// fixed front/rear boundaries; ridge outlines use both at every fixed depth
+// for exact-row crossfades.
 inline void dssBuildMeshVertices(int meshCols,
                                  QVector<float>& fillOut,
                                  QVector<float>& lineOut)
