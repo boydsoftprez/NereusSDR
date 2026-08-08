@@ -154,13 +154,32 @@ private slots:
         r.clear();
         QVERIFY(!r.hasData());
         QCOMPARE(r.rowCount(), 0);
-        // hasData() and rowCount() both reduce to m_count == 0, so the two
-        // assertions above pass whether or not clear() actually wipes the
-        // per-row frame stamps. Query an age accessor as well: ringAtAge()
-        // clamps to ring bounds without an m_count guard, so a clear() that
-        // skipped the fills would hand back the stale 14.2 MHz stamp here.
-        QCOMPARE(r.rowCenterMhzAtAge(0),    0.0);
-        QCOMPARE(r.rowBandwidthMhzAtAge(0), 0.0);
+    }
+
+    // clear() must also wipe the per-row frequency stamps, because
+    // ringAtAge() clamps to ring bounds WITHOUT the m_count guard that
+    // upstream's age accessors carry. Without the wipe, a post-clear read
+    // hands back a stale stamp.
+    //
+    // Filling the whole ring first is what makes this test bind, and it is
+    // not optional. m_head walks BACKWARD on push and clear() resets it to 0,
+    // so after a single push the written slot is index kDssRows-1 while
+    // ringAtAge(0) reads index 0 -- a slot that was never written and is
+    // already value-initialised to 0.0. The assertions would then pass
+    // against a clear() that wipes nothing at all. Verified by mutation:
+    // with the fills commented out, the single-push form still reported
+    // 13/13 passing. Push kDssRows rows so every slot carries the stamp and
+    // index 0 is genuinely dirty.
+    void clear_wipesFrameStampsAcrossTheWholeRing() {
+        DssRenderer r;
+        for (int i = 0; i < kDssRows; ++i) {
+            r.pushRowWithWide(flatRow(768, -130.0f), 14.2, 0.192,
+                              flatRow(768, -140.0f), 14.2, 0.500);
+        }
+        QCOMPARE(r.rowCenterMhzAtAge(0), 14.2);   // precondition: slot is dirty
+        r.clear();
+        QCOMPARE(r.rowCenterMhzAtAge(0),        0.0);
+        QCOMPARE(r.rowBandwidthMhzAtAge(0),     0.0);
         QCOMPARE(r.rowWideCenterMhzAtAge(0),    0.0);
         QCOMPARE(r.rowWideBandwidthMhzAtAge(0), 0.0);
         QCOMPARE(r.rowWideCoverageRing(r.headRing())[0], quint8(0));

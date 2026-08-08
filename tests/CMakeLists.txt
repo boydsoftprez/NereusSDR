@@ -6186,9 +6186,11 @@ nereus_add_test(tst_dss_mesh_geometry)
 # smearing signals across the pan, the wide (off-screen) channel records
 # coverage independently of the exact FFT channel, newestWideBandwidthMhz()
 # looks past bare front rows rather than collapsing to 0 the instant one
-# push omits a wide slice, clear() resets everything, and rowGeneration()
-# advances on every push. Source: AetherSDR src/gui/DssRenderer.cpp:30-33,
-# :50-60, :183-216, :218-250 [@1872028c].
+# push omits a wide slice, clear() resets everything AND (mutation-verified,
+# whole-ring-filled precondition) actually wipes the per-row frame stamps
+# rather than leaving them for ringAtAge()'s unguarded clamp to hand back
+# stale, and rowGeneration() advances on every push. Source: AetherSDR
+# src/gui/DssRenderer.cpp:30-33, :50-60, :183-216, :218-250 [@1872028c].
 nereus_add_test(tst_dss_renderer_ring)
 
 # --------------------------------------------------------------------------
