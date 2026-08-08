@@ -154,6 +154,16 @@ private slots:
         r.clear();
         QVERIFY(!r.hasData());
         QCOMPARE(r.rowCount(), 0);
+        // hasData() and rowCount() both reduce to m_count == 0, so the two
+        // assertions above pass whether or not clear() actually wipes the
+        // per-row frame stamps. Query an age accessor as well: ringAtAge()
+        // clamps to ring bounds without an m_count guard, so a clear() that
+        // skipped the fills would hand back the stale 14.2 MHz stamp here.
+        QCOMPARE(r.rowCenterMhzAtAge(0),    0.0);
+        QCOMPARE(r.rowBandwidthMhzAtAge(0), 0.0);
+        QCOMPARE(r.rowWideCenterMhzAtAge(0),    0.0);
+        QCOMPARE(r.rowWideBandwidthMhzAtAge(0), 0.0);
+        QCOMPARE(r.rowWideCoverageRing(r.headRing())[0], quint8(0));
     }
 
     void rowGeneration_advancesOnEveryPush() {

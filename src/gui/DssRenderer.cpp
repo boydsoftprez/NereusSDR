@@ -33,13 +33,13 @@ namespace {
 // From AetherSDR src/gui/DssRenderer.cpp:17 [@1872028c].
 constexpr float kTemporalAlpha = 0.60f;  // temporal IIR: fraction of the new row
 
-// From AetherSDR src/gui/DssRenderer.cpp:28-30 [@1872028c].
+// From AetherSDR src/gui/DssRenderer.cpp:30-33 [@1872028c].
 inline float median3(float a, float b, float c)
 {
     return std::max(std::min(a, b), std::min(std::max(a, b), c));
 }
 
-// From AetherSDR src/gui/DssRenderer.cpp:49-61 [@1872028c].
+// From AetherSDR src/gui/DssRenderer.cpp:50-60 [@1872028c].
 bool frequencyFramesMatch(double firstCenterMhz, double firstBandwidthMhz,
                           double secondCenterMhz, double secondBandwidthMhz)
 {
@@ -52,7 +52,7 @@ bool frequencyFramesMatch(double firstCenterMhz, double firstBandwidthMhz,
         && nearlyEqual(firstBandwidthMhz, secondBandwidthMhz);
 }
 
-// From AetherSDR src/gui/DssRenderer.cpp:182-215 [@1872028c].
+// From AetherSDR src/gui/DssRenderer.cpp:183-216 [@1872028c].
 // Peak-preserving: a one-bin carrier must survive the reduction to kDssCols.
 std::array<float, kDssCols> resampledRawRow(const QVector<float>& binsDbm,
                                             float fallback)
@@ -88,7 +88,7 @@ std::array<float, kDssCols> resampledRawRow(const QVector<float>& binsDbm,
     return row;
 }
 
-// From AetherSDR src/gui/DssRenderer.cpp:217-252 [@1872028c].
+// From AetherSDR src/gui/DssRenderer.cpp:218-250 [@1872028c].
 std::array<float, kDssCols> smoothDssRow(
     const std::array<float, kDssCols>& raw,
     std::array<float, kDssCols>& rawPrev1,

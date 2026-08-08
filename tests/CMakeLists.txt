@@ -6187,8 +6187,8 @@ nereus_add_test(tst_dss_mesh_geometry)
 # coverage independently of the exact FFT channel, newestWideBandwidthMhz()
 # looks past bare front rows rather than collapsing to 0 the instant one
 # push omits a wide slice, clear() resets everything, and rowGeneration()
-# advances on every push. Source: AetherSDR src/gui/DssRenderer.cpp:28-30,
-# :49-61, :182-215, :217-252 [@1872028c].
+# advances on every push. Source: AetherSDR src/gui/DssRenderer.cpp:30-33,
+# :50-60, :183-216, :218-250 [@1872028c].
 nereus_add_test(tst_dss_renderer_ring)
 
 # --------------------------------------------------------------------------
