@@ -185,6 +185,7 @@ QT_END_NAMESPACE
 #ifdef NEREUS_GPU_SPECTRUM
 #include <QRhiWidget>
 #include <rhi/qrhi.h>
+#include "gui/DssMeshGeometry.h"  // DssOutlinePipelineMode (Task 7 Step 6b)
 using SpectrumBaseClass = QRhiWidget;
 #else
 using SpectrumBaseClass = QWidget;
@@ -2447,6 +2448,13 @@ private:
     quint64 m_dssLutToken{~0ull};
     quint64 m_dssUploadedRowGeneration{~0ull};
     int     m_dssLastUploadedHead{-1};
+    // Linux takes Qt's default QRhiWidget backend (this file's setApi() only
+    // covers Q_OS_MAC/Q_OS_WIN), which is typically OpenGL -- so this cannot
+    // default to DedicatedRibbonPipeline and stay correct there; it is
+    // overwritten from the real backend at the top of initDssMeshPipeline()
+    // before anything reads it.
+    DssOutlinePipelineMode m_dssOutlinePipelineMode{
+        DssOutlinePipelineMode::DedicatedRibbonPipeline};
 
 #endif
 

@@ -7949,6 +7949,13 @@ bool SpectrumWidget::initDssMeshPipeline()
     m_dssMeshReady = false;
     if (!r) { return false; }
 
+    // Linux takes Qt's default QRhiWidget backend (this file's setApi() only
+    // covers Q_OS_MAC/Q_OS_WIN), typically OpenGL, whose driver renders the
+    // ribbon outline flat/stale from a separate, identically configured
+    // pipeline -- see DssMeshGeometry.h.
+    m_dssOutlinePipelineMode = dssOutlinePipelineModeForBackend(
+        r->backend() == QRhi::OpenGLES2);
+
     // R stores dBm and G stores captured-frequency coverage. The second
     // channel keeps zoom-created floor spans colour-stable without hiding
     // their lines. From AetherSDR SpectrumWidget.cpp:12793-12798 [@1872028c].
@@ -8053,8 +8060,16 @@ bool SpectrumWidget::initDssMeshPipeline()
         return p;
     };
     m_dssFillPipeline = makePipeline();
-    m_dssLinePipeline = makePipeline();
-    if (!m_dssFillPipeline->create() || !m_dssLinePipeline->create()) {
+    // QRhi's OpenGLES2 backend shares the fill pipeline for the outline draw
+    // (dssOutlinePipelineFor, DssMeshGeometry.h) instead of a second,
+    // identically configured one -- skip allocating it there, not just
+    // skip drawing with it.
+    if (m_dssOutlinePipelineMode
+        == DssOutlinePipelineMode::DedicatedRibbonPipeline) {
+        m_dssLinePipeline = makePipeline();
+    }
+    if (!m_dssFillPipeline->create()
+        || (m_dssLinePipeline && !m_dssLinePipeline->create())) {
         qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh pipeline create failed";
         return false;
     }
@@ -8919,7 +8934,10 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         cb->setVertexInput(0, 1, &fillVbuf);
         cb->draw(rows * dssFillVerticesPerRow(m_dssMeshCols));
 
-        cb->setGraphicsPipeline(m_dssLinePipeline);
+        // OpenGL binds the fill pipeline here too (dssOutlinePipelineFor) --
+        // m_dssLinePipeline is null on that backend, never created above.
+        cb->setGraphicsPipeline(dssOutlinePipelineFor(
+            m_dssOutlinePipelineMode, m_dssFillPipeline, m_dssLinePipeline));
         cb->setShaderResources(m_dssSrb);
         cb->setViewport(specVp);
         const QRhiCommandBuffer::VertexInput lineVbuf(m_dssMeshLineVbo, 0);

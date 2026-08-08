@@ -150,6 +150,30 @@ private slots:
             QVERIFY(baseRibbon || overlayRibbon);
         }
     }
+
+    // Linux takes Qt's OpenGL default (SpectrumWidget sets Metal only under
+    // Q_OS_MAC and D3D11 only under Q_OS_WIN), and QRhi's OpenGL backend
+    // renders flat or stale ridge outlines from a separate pipeline. So the
+    // outline draw must share the fill pipeline there and only there.
+    void outlinePipeline_sharesFillOnOpenGlOnly() {
+        QCOMPARE(dssOutlinePipelineModeForBackend(true),
+                 DssOutlinePipelineMode::SharedFillPipeline);
+        QCOMPARE(dssOutlinePipelineModeForBackend(false),
+                 DssOutlinePipelineMode::DedicatedRibbonPipeline);
+    }
+
+    // On OpenGL the dedicated pipeline is never created, so the selector must
+    // return the fill pipeline without dereferencing the null one.
+    void outlinePipeline_selectsWithoutTouchingTheNullPipeline() {
+        int fill = 1;
+        int dedicated = 2;
+        QCOMPARE(dssOutlinePipelineFor(
+                     DssOutlinePipelineMode::SharedFillPipeline,
+                     &fill, static_cast<int*>(nullptr)), &fill);
+        QCOMPARE(dssOutlinePipelineFor(
+                     DssOutlinePipelineMode::DedicatedRibbonPipeline,
+                     &fill, &dedicated), &dedicated);
+    }
 };
 
 QTEST_APPLESS_MAIN(TestDssMeshGeometry)
