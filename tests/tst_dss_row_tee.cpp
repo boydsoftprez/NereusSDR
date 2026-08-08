@@ -99,6 +99,33 @@ private slots:
         QCOMPARE(w.dssRowsPushedForTest(), 1);
     }
 
+    // Leaving 3D must clear the ring, so re-entering does not display a stack
+    // of rows captured at a frequency the operator has since left. And
+    // re-asserting the SAME mode must NOT clear, or an idempotent UI refresh
+    // would silently wipe live history.
+    //
+    // Both behaviours are load-bearing for the rendering task that reads this
+    // ring. Without this test, deleting the clear branch entirely leaves every
+    // other test in this file green.
+    void leaving3D_clearsTheRing_butSameModeDoesNot() {
+        SpectrumWidget w;
+        w.resize(400, 200);
+        w.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&w));  // see stopOnTx_freezesBothPanesTogether
+        w.setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode3D));
+        w.pushWaterfallRowForTest(row(768, -130.0f));
+        w.pushWaterfallRowForTest(row(768, -130.0f));
+        QCOMPARE(w.dssRowsPushedForTest(), 2);   // precondition: ring is dirty
+
+        // Same mode again: no-op guard must fire, history survives.
+        w.setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode3D));
+        QCOMPARE(w.dssRowsPushedForTest(), 2);
+
+        // Genuinely leaving 3D: ring clears.
+        w.setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode2D));
+        QCOMPARE(w.dssRowsPushedForTest(), 0);
+    }
+
     // In 2D the ring must not be fed at all: a 2D pan allocates and does no
     // DSS work (design doc section 3.4).
     void mode2D_doesNotFeedTheRing() {
