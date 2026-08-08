@@ -37,6 +37,10 @@ Every task's requirements implicitly include this section.
 - **Do not "clean up" em-dashes inside lifted upstream comments.** Several verbatim comments in `DssGeometry.h`, `DssRenderer.cpp` and both shaders contain them. Verbatim means verbatim; the house style applies to text you author, not to text you are preserving for attribution.
 - **Build:** `cmake --build build -j$(sysctl -n hw.ncpu)`. Test executables are `EXCLUDE_FROM_ALL`; always build the named target before running ctest, or you will run a stale binary and get a false green.
 - **Register every new test** with `nereus_add_test(tst_<name>)` in `tests/CMakeLists.txt`, keeping the list alphabetically sorted.
+- **ATTRIBUTION LANDS IN THE SAME COMMIT AS THE FILE, NEVER DEFERRED.** The pre-commit hook runs `check-new-ports.py` in **full-tree** mode, so any file on disk carrying AetherSDR tells and lacking a PROVENANCE row blocks *every* commit in the repository, including commits that have nothing to do with it. An unregistered file does not merely fail its own task; it wedges the whole branch. CLAUDE.md requires the same thing independently: the verbatim header and the PROVENANCE row go in the commit that introduces the ported logic.
+  - Any task creating a file with an AetherSDR header or a `// From AetherSDR` cite MUST add its row to `docs/attribution/aethersdr-reconciliation.md` under "Bucket A" in that same commit.
+  - Row format is four columns: `| <NereusSDR file> | <AetherSDR counterpart> | <evidence: which lines cite what> | "<one-sentence mod-history wording>" |`
+  - Verify before committing with `python3 scripts/check-new-ports.py`. If it flags your file, you are not done.
 
 ---
 
@@ -461,10 +465,31 @@ cmake --build build --target tst_dss_geometry && ctest --test-dir build -R '^tst
 
 Expected: PASS, 8 test functions.
 
+- [ ] **Step 6b: Register the file's provenance**
+
+`DssGeometry.h` carries an AetherSDR header and `// From AetherSDR` cites, so
+it must be registered now or the pre-commit hook blocks every commit on the
+branch. Add this row to the Bucket A table in
+`docs/attribution/aethersdr-reconciliation.md`:
+
+```
+| `src/gui/DssGeometry.h` | `src/gui/DssRenderer.h` | Verbatim lift of the perspective constants (`:45-51`) and projection functions (`:85-187`) at `[@1872028c]`: depthScale, projectPerspective, projectSurface, rowSpanFactorFor, wedgeFreeDepth, rowScreenCoverage, rowFrequencyUnit. Two marked NereusSDR deviations (`//-KG4VCF [v0.5.3]`): the three shape constants are promoted to a runtime `DssShape` for the 3D Angle control, and the transition-row reserve is documented as always one row here. | "3DSS perspective geometry constants and projection functions ported verbatim from AetherSDR `src/gui/DssRenderer.h`; the shape constants are parameterised at runtime for the NereusSDR-original 3D Angle control." |
+```
+
+Then confirm the gate is clean before committing:
+
+```bash
+python3 scripts/check-new-ports.py
+```
+
+Expected: `OK [full-tree]` with no flagged files. If it still flags
+`DssGeometry.h`, the row is malformed or in the wrong table.
+
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/gui/DssGeometry.h tests/tst_dss_geometry.cpp tests/CMakeLists.txt
+git add src/gui/DssGeometry.h tests/tst_dss_geometry.cpp tests/CMakeLists.txt \
+        docs/attribution/aethersdr-reconciliation.md
 git commit -m "feat(dss): lift AetherSDR perspective geometry with a runtime shape
 
 Tier 1 verbatim lift of DssRenderer.h:36-187 [@1872028c], with the three
@@ -3813,9 +3838,11 @@ Emit it from `setDssAngle()` after the state settles, alongside the existing dis
 
 - [ ] **Step 4: Close out attribution**
 
-Add Bucket A rows to `docs/attribution/aethersdr-reconciliation.md` for all seven files: `src/gui/DssGeometry.h`, `src/gui/DssRenderer.{h,cpp}`, `src/gui/DssMeshGeometry.h`, `src/gui/SpectrumWidget.{h,cpp}`, `src/gui/SpectrumOverlayMenu.{h,cpp}`. Each row names the upstream file and line ranges and the `[@1872028c]` stamp.
+Every task that created a ported file already added its own Bucket A row in its own commit, because the pre-commit hook's full-tree scan makes deferral impossible. This step is the audit, not the bulk entry.
 
-Add `dss_mesh.vert` and `dss_mesh.frag` to the shader table in `docs/attribution/ASSETS.md`, using the existing `waterfall.frag` row as the template.
+Confirm a Bucket A row exists in `docs/attribution/aethersdr-reconciliation.md` for each of `src/gui/DssGeometry.h`, `src/gui/DssRenderer.{h,cpp}`, `src/gui/DssMeshGeometry.h`, `src/gui/SpectrumWidget.{h,cpp}` and `src/gui/SpectrumOverlayMenu.{h,cpp}`, each naming the upstream file, its line ranges and the `[@1872028c]` stamp. Add any that are missing.
+
+Then add `dss_mesh.vert` and `dss_mesh.frag` to the shader table in `docs/attribution/ASSETS.md`, using the existing `waterfall.frag` row as the template. Shaders live in `ASSETS.md` rather than the reconciliation table because AetherSDR ships no per-file shader headers.
 
 - [ ] **Step 5: Full verification**
 
