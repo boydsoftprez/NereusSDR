@@ -1356,3 +1356,16 @@ the upstream source.
 | `src/gui/PanadapterApplet.cpp` | `src/gui/PanadapterApplet.{h,cpp}` [@0cd4559] | Same as `.h`. Implementation body: `QVBoxLayout` with zero margin/spacing wrapping the `SpectrumWidget`; `setActiveSliceIndex` idempotency guard + signal emission; `removeSlice` promotes another slice from the set when removing the active one. | "Same as `.h`." |
 | `src/gui/PanadapterStack.h` | `src/gui/PanadapterStack.{h,cpp}` [@0cd4559] | Structural port: namespace AetherSDR -> NereusSDR; pan layout manager skeleton (5 templates planned: "1" / "2v" / "2h" / "12h" / "2x2"; only "1" wired in this task); `addPanadapter` / `removePanadapter` / `panadapter` / `allApplets` / `count` / `currentLayoutId` / `activePanId` / `setActivePan` live; `applyLayout` / `floatPanadapter` / `removeAll` / `rebuildSplitters` / `clearSplitters` stubbed for Tasks 4-8. Forward-declares `PanFloatingWindow` (lands in Task 7). Phase 3F Sub-Epic D Task 3. | "Pan layout manager skeleton ported structurally from AetherSDR `src/gui/PanadapterStack.{h,cpp}` [@0cd4559]. Default 'Single' layout constructed in ctor; 4 remaining templates land in Tasks 4-6. Phase 3F Sub-Epic D Task 3." |
 | `src/gui/PanadapterStack.cpp` | `src/gui/PanadapterStack.{h,cpp}` [@0cd4559] | Same as `.h`. Implementation body: `QVBoxLayout` wrapping vertical `QSplitter`; ctor auto-adds `pan-0` to seed the default `"1"` layout; `addPanadapter` idempotency on duplicate pan-id; `removePanadapter` uses `deleteLater()` for safe child cleanup; `setActivePan` change-only signal emission. | "Same as `.h`." |
+
+## 3D Stacked-Trace Spectrum Plan
+
+Added 2026-08-08. Task 1 of the 3D stacked-trace spectrum plan (design doc
+`docs/architecture/2026-08-08-3d-stacked-trace-spectrum-design.md`, plan
+`docs/architecture/2026-08-08-3d-stacked-trace-spectrum-plan.md`) lifts the
+DSS perspective projection math verbatim from AetherSDR's `DssRenderer.h`,
+with the three shape constants promoted to a runtime `DssShape` so a 3D
+Angle control can drive them later in the plan.
+
+| NereusSDR file | AetherSDR counterpart | Port notes | Mod-history wording |
+|---|---|---|---|
+| `src/gui/DssGeometry.h` | `src/gui/DssRenderer.h` | Verbatim lift of the perspective constants (`:45-51`) and projection functions (`:85-187`) at `[@1872028c]`: depthScale, projectPerspective, projectSurface, rowSpanFactorFor, wedgeFreeDepth, rowScreenCoverage, rowFrequencyUnit. Two marked NereusSDR deviations (`//-KG4VCF [v0.5.3]`): the three shape constants are promoted to a runtime `DssShape` for the 3D Angle control, and the transition-row reserve is documented as always one row here. | "3DSS perspective geometry constants and projection functions ported verbatim from AetherSDR `src/gui/DssRenderer.h`; the shape constants are parameterised at runtime for the NereusSDR-original 3D Angle control." |

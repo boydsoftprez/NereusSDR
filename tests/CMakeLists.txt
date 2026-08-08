@@ -6152,6 +6152,13 @@ nereus_add_test(tst_tnf_ui_wiring)
 #         section 8.3 + section 11.
 nereus_add_test(tst_notch_visual_does_not_perturb_noise_floor_or_maxbin)
 
+# ── 3D stacked-trace spectrum plan, Task 1: DssGeometry ───────────────────
+# Golden test asserting kDssUpstreamShape reproduces AetherSDR DssRenderer.h's
+# constants exactly, and that dssDepthScale / dssProjectPerspective /
+# dssProjectSurface / the row-span helpers match upstream's formulas bit
+# for bit. Source: AetherSDR src/gui/DssRenderer.h:36-187 [@1872028c].
+nereus_add_test(tst_dss_geometry)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
