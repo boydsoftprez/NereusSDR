@@ -2572,6 +2572,98 @@ Before `cb->beginPass(...)`, add the three resource updates alongside the existi
     }
 ```
 
+- [ ] **Step 6b: Port the OpenGL outline-pipeline dispatch (Linux correctness)**
+
+Upstream does not bind a dedicated ribbon pipeline on the OpenGL backend. Its
+reason, verbatim from `SpectrumPreviewLogic.h:16-18 [@1872028c]`:
+
+> "QRhi's OpenGLES2 backend, which covers desktop GL as well as GLES, reuses the
+> fill program for ribbon outlines: live probes showed flat/stale outlines
+> with a separate, identically configured program."
+
+This matters here specifically because `SpectrumWidget`'s constructor sets
+`QRhiWidget::Api::Metal` under `Q_OS_MAC` and `Direct3D11` under `Q_OS_WIN`
+but has **no Linux branch**, so Linux takes Qt's default and lands on OpenGL.
+NereusSDR ships Linux AppImages for two architectures, so omitting this would
+render the 3D ridge outlines flat or stale on every Linux install.
+
+Add to `src/gui/DssMeshGeometry.h` (header-only and QRhi-free, so the
+selection stays unit-testable without a graphics device, which is upstream's
+stated reason for its shape):
+
+```cpp
+// ─── Outline pipeline selection ─────────────────────────────────────────
+// From AetherSDR src/gui/SpectrumPreviewLogic.h:11-56 [@1872028c].
+
+enum class DssOutlinePipelineMode {
+    DedicatedRibbonPipeline,
+    SharedFillPipeline,
+};
+
+// QRhi's OpenGLES2 backend, which covers desktop GL as well as GLES, reuses the
+// fill program for ribbon outlines: live probes showed flat/stale outlines
+// with a separate, identically configured program.
+constexpr DssOutlinePipelineMode dssOutlinePipelineModeForBackend(
+    bool openGlEs2Backend)
+{
+    return openGlEs2Backend
+        ? DssOutlinePipelineMode::SharedFillPipeline
+        : DssOutlinePipelineMode::DedicatedRibbonPipeline;
+}
+
+// The pipeline the outline draw binds, given the mode above. Templated on the
+// pipeline type purely so the selection stays testable without a QRhi device:
+// SpectrumWidget instantiates it with QRhiGraphicsPipeline*. Keeping the
+// selection here rather than as a ternary at the draw site is what lets
+// the unit test pin the mapping the renderer actually uses.
+// dedicatedPipeline is null on OpenGL — never created — so the shared-fill
+// answer must not depend on it.
+template <typename PipelineT>
+constexpr PipelineT* dssOutlinePipelineFor(DssOutlinePipelineMode mode,
+                                           PipelineT* fillPipeline,
+                                           PipelineT* dedicatedPipeline)
+{
+    return mode == DssOutlinePipelineMode::SharedFillPipeline
+        ? fillPipeline
+        : dedicatedPipeline;
+}
+```
+
+Wire it in `SpectrumWidget`: add a member
+`DssOutlinePipelineMode m_dssOutlinePipelineMode{DssOutlinePipelineMode::DedicatedRibbonPipeline};`,
+set it at the top of `initDssMeshPipeline()` from
+`dssOutlinePipelineModeForBackend(r->backend() == QRhi::OpenGLES2)`, skip
+creating `m_dssLinePipeline` entirely when the mode is `SharedFillPipeline`,
+and select at the outline draw site with `dssOutlinePipelineFor(...)`.
+
+Extend `tests/tst_dss_mesh_geometry.cpp`:
+
+```cpp
+    // Linux takes Qt's OpenGL default (SpectrumWidget sets Metal only under
+    // Q_OS_MAC and D3D11 only under Q_OS_WIN), and QRhi's OpenGL backend
+    // renders flat or stale ridge outlines from a separate pipeline. So the
+    // outline draw must share the fill pipeline there and only there.
+    void outlinePipeline_sharesFillOnOpenGlOnly() {
+        QCOMPARE(dssOutlinePipelineModeForBackend(true),
+                 DssOutlinePipelineMode::SharedFillPipeline);
+        QCOMPARE(dssOutlinePipelineModeForBackend(false),
+                 DssOutlinePipelineMode::DedicatedRibbonPipeline);
+    }
+
+    // On OpenGL the dedicated pipeline is never created, so the selector must
+    // return the fill pipeline without dereferencing the null one.
+    void outlinePipeline_selectsWithoutTouchingTheNullPipeline() {
+        int fill = 1;
+        int dedicated = 2;
+        QCOMPARE(dssOutlinePipelineFor(
+                     DssOutlinePipelineMode::SharedFillPipeline,
+                     &fill, static_cast<int*>(nullptr)), &fill);
+        QCOMPARE(dssOutlinePipelineFor(
+                     DssOutlinePipelineMode::DedicatedRibbonPipeline,
+                     &fill, &dedicated), &dedicated);
+    }
+```
+
 - [ ] **Step 7: Build and confirm no regression**
 
 ```bash
