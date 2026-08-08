@@ -373,14 +373,14 @@ the whole slider travel, which occurs at the minimum `backWidthFrac`:
 |---|---|---|---|---|
 | Upstream fixed | 0.60 | 1.667 | 1281 | 33.8 MiB |
 | NereusSDR at `t=0.5` | 0.60 | 1.667 | 1281 | 33.8 MiB |
-| NereusSDR at `t=0` | 0.35 | 2.857 | 2195 | 57.9 MiB |
+| NereusSDR at `t=0` | 0.35 | 2.857 | 2195 | 57.8 MiB |
 
 **Measured, 2026-08-08.** Upstream states 33.7 MiB per panadapter at its fixed
 1281 columns (`SpectrumWidget.cpp:150-157 [@1872028c]`), and the figure
 reproduces exactly:
 `(1281 - 1) x 6 x 2 verts/row x 96 rows x 3 floats x 4 bytes x 2 VBOs`.
-Sizing unconditionally for the widest angle would cost 57.9 MiB per panadapter
-and 232 MiB across four, which is not acceptable.
+Sizing unconditionally for the widest angle would cost 57.8 MiB per panadapter
+and 231.4 MiB across four, which is not acceptable.
 
 **Resolution: size the mesh for the current angle, not the worst case.** The
 mesh VBOs hold only static `(u, v, edge)` geometry. They are rebuilt when the
@@ -586,7 +586,7 @@ explicit human review item on every PR in this epic.**
 2. **The angle slider has no upstream reference for its extremes.** Expect to
    clamp its travel narrower than the math permits after looking at it.
 3. **Mesh memory is measured and mitigated, but the mitigation is untested on
-   hardware.** 33.8 MiB per panadapter at the default angle, 57.9 MiB at the
+   hardware.** 33.8 MiB per panadapter at the default angle, 57.8 MiB at the
    most dramatic, resolved by sizing the mesh for the live angle (section 5.5).
    What remains unproven is the reallocation itself: rebuilding two VBOs of
    tens of MiB on a slider commit must not stall the render thread visibly.

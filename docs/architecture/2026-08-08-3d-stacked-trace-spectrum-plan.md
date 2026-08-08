@@ -963,7 +963,7 @@ from the live perspective shape instead of a compile-time constant.
 
 Measured at the default angle the mesh costs 33.8 MiB per panadapter,
 reproducing upstream's stated figure exactly. Sizing unconditionally for
-the widest angle would cost 57.9 MiB per pan and 232 MiB across four, so
+the widest angle would cost 57.8 MiB per pan and 231.4 MiB across four, so
 the mesh is rebuilt when the angle changes the column count instead.
 
 dssMeshDensityHolds replaces upstream's static_assert and is tested to
@@ -2327,7 +2327,7 @@ void SpectrumWidget::rebuildDssMeshIfNeeded(QRhiResourceUpdateBatch* batch)
     const quint32 lineBytes = quint32(line.size()) * sizeof(float);
 
     // Reallocate only when the column count actually moved. Sizing for the
-    // worst-case angle unconditionally would cost 57.9 MiB per panadapter
+    // worst-case angle unconditionally would cost 57.8 MiB per panadapter
     // instead of 33.8 (design doc section 5.5).
     if (wanted != m_dssMeshCols) {
         m_dssMeshVbo->destroy();
