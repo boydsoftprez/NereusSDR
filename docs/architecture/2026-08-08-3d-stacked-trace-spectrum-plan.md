@@ -16,6 +16,10 @@ Every task's requirements implicitly include this section.
 
 - **Upstream cite stamp is `[@1872028c]`** on every `// From AetherSDR ...` comment. Read upstream via `git -C /Users/j.j.boyd/AetherSDR show upstream/main:<path>`, never the local working tree (it is 17 commits behind).
 - **Tier 1 code is lifted verbatim.** Exactly two deviations are permitted (design §2.3): angle parameterisation, and scroll distance fixed at one row. Each deviation site carries `//-KG4VCF [v0.5.3] <description>`. Any further tier 1 edit must be added to design §2.3 in the same commit.
+- **UPSTREAM IS AUTHORITATIVE FOR COMMENT TEXT; THIS PLAN IS NOT.** The code blocks in this plan give you the *structure* to build: signatures, ordering, which values go where. They were transcribed by hand and are known to have dropped and reworded upstream comments in at least three places. For every comment inside a tier 1 lift, open the upstream file with `git -C /Users/j.j.boyd/AetherSDR show upstream/main:<path>` and copy the comment text from there, not from this plan. Where the plan and upstream disagree on comment wording, **upstream wins silently** and needs no escalation. Escalate only when they disagree on *code*.
+  - Adapting an identifier that genuinely changed in the port (for example upstream's `kCols` to our `kDssCols`, or `kMaxRowSpanFactor` to `dssMaxRowSpanFactor()`) is a mechanical rename inside otherwise-verbatim text, not a deviation, and needs no marker.
+  - Dropping or rewriting an upstream *sentence* is a deviation and is not permitted outside the two listed above.
+  - Where the port modifies logic inside a commented region, keep upstream's original comment and add the `//-KG4VCF` marker after it. Do not replace upstream's explanation with your own.
 - **Preserve upstream inline issue-number annotations verbatim** on lifted lines: `(#4539)`, `(#3937)`, `(#2724)`, `(#1921)`, `(#3482)`, and any others encountered. No script enforces this; it is a human review item on every PR (design §9.1).
 - **New file headers:** copy the attribution block from `src/gui/SpectrumOverlayMenu.h:1-24` verbatim, changing only the file path on line 3 and the Modification-history date and description. Do not retype it from memory.
 - **No `QSettings`.** Use `AppSettings::instance()`. Booleans persist as the strings `"True"` / `"False"`.
@@ -236,7 +240,7 @@ namespace NereusSDR {
 //
 // From AetherSDR src/gui/DssRenderer.h:36-187 [@1872028c].
 //
-// Perspective geometry of the surface, shared by the CPU renderer and the
+// Perspective geometry of the surface, shared by this CPU renderer and the
 // GPU mesh UBO (SpectrumWidget::renderGpuFrame). dss_mesh.vert applies the
 // SAME formulas with these values passed as uniforms — single source of
 // truth so the CPU fallback and the GPU mesh can't drift apart.
@@ -260,11 +264,12 @@ inline constexpr float kDssHaze = 0.16f;   // fade toward bg with depth
 inline constexpr float kDssColorSpanDb = 45.0f;
 
 inline constexpr int kDssVisibleRows = 96;    // front → back display depth
-// Outgoing rows kept during scroll.
-//-KG4VCF [v0.5.3] Upstream sizes this for the largest multi-row scroll
-// distance a Flex/Kiwi producer can deliver. NereusSDR's producer appends
-// exactly one row per tick, so only one is ever needed; the reserve is kept
-// at upstream's 8 so every ring-index formula stays line-comparable with
+// Outgoing rows kept during scroll. Must cover the largest row distance
+// passed to SpectrumWidget::startWaterfallScrollAnimation(); the current
+// Flex, Kiwi, and fallback producers append at most one row per update.
+//-KG4VCF [v0.5.3] NereusSDR's producer appends exactly one row per
+// waterfall tick, so only one is ever needed; the reserve is kept at
+// upstream's 8 so every ring-index formula stays line-comparable with
 // upstream. Permitted tier 1 deviation 2 of 2, design doc §2.3.
 inline constexpr int kDssTransitionRows = 8;
 inline constexpr int kDssRows = kDssVisibleRows + kDssTransitionRows;
@@ -327,6 +332,15 @@ inline float dssRowScreenCoverage(float depth, float rowSpanFactor,
     return dssDepthScale(depth, shape) * rowSpanFactor;
 }
 
+// ── Wedge-closing row span ──────────────────────────────────────────────
+// Because every row covers the SAME frequency span while the far rows
+// narrow to kBackWidthFrac, the surface leaves two empty triangles beside
+// it. Widen the span each row covers instead: the near rows then run off
+// both edges of the plot and the existing perspective narrowing walks them
+// back in, closing the wedge from the front. The projection below is
+// untouched, so the converging slant, the frequency ruler and every marker
+// stay put. dss_mesh.vert applies the SAME formulas.
+
 // Span at which the DEEPEST row lands exactly on the plot edge. Beyond this
 // the surface only overhangs further without revealing more of the plot.
 inline float dssMaxRowSpanFactor(const DssShape& shape)
@@ -335,7 +349,8 @@ inline float dssMaxRowSpanFactor(const DssShape& shape)
 }
 
 // Shallowest depth still leaving a wedge, or 1 when the surface is closed
-// all the way to the back.
+// all the way to the back. Lets the host report how much a given overhang
+// actually bought.
 inline float dssWedgeFreeDepth(float rowSpanFactor, const DssShape& shape)
 {
     if (rowSpanFactor <= 1.0f) {
@@ -348,7 +363,7 @@ inline float dssWedgeFreeDepth(float rowSpanFactor, const DssShape& shape)
 }
 
 // Usable span for an overhang of `spanFactor` x the viewport bandwidth.
-// Clamped at the max: past it the extra data is off-plot anyway.
+// Clamped at kMaxRowSpanFactor: past it the extra data is off-plot anyway.
 inline float dssRowSpanFactorForOverhang(float spanFactor,
                                          const DssShape& shape)
 {
