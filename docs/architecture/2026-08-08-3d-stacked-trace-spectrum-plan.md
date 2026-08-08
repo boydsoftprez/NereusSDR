@@ -91,6 +91,18 @@ Read all of it before writing anything. Lines 45-51 are the constants, 85-187 th
 
 - [ ] **Step 2: Write the failing golden test**
 
+A note on tolerances before you write it. The projection functions are
+`float`-typed to match upstream, so every comparison below is float32
+arithmetic widened into a `double` result. That carries roughly 1e-8 of
+rounding: `dssProjectPerspective(0.0f, 1.0f, shape).x()` lands on
+0.19999998807907104 rather than 0.20, and the `.y()` at depth 1 lands on
+0.42000001668930054 rather than 0.42. Both are pure float representation
+error, not formula drift. The tolerance is therefore `1e-6` throughout,
+which leaves about sixty times headroom over that noise while still
+catching any real geometry change, since a wrong constant or a wrong
+operation moves these values by 1e-3 or more. AetherSDR's own
+`tests/dss_renderer_test.cpp` uses a looser 1e-4 on the same formulas.
+
 Create `tests/tst_dss_geometry.cpp`. Header block per Global Constraints, then:
 
 ```cpp
@@ -134,16 +146,16 @@ private slots:
         // Centre frequency never moves horizontally at any depth.
         for (float d : {0.0f, 0.25f, 0.5f, 1.0f}) {
             const QPointF p = dssProjectPerspective(0.5f, d, s);
-            QVERIFY(std::abs(p.x() - 0.5) < 1e-9);
+            QVERIFY(std::abs(p.x() - 0.5) < 1e-6);
         }
         // Front edge spans the full width; back edge narrows to 0.60.
-        QVERIFY(std::abs(dssProjectPerspective(0.0f, 0.0f, s).x() - 0.0) < 1e-9);
-        QVERIFY(std::abs(dssProjectPerspective(1.0f, 0.0f, s).x() - 1.0) < 1e-9);
-        QVERIFY(std::abs(dssProjectPerspective(0.0f, 1.0f, s).x() - 0.20) < 1e-9);
-        QVERIFY(std::abs(dssProjectPerspective(1.0f, 1.0f, s).x() - 0.80) < 1e-9);
+        QVERIFY(std::abs(dssProjectPerspective(0.0f, 0.0f, s).x() - 0.0) < 1e-6);
+        QVERIFY(std::abs(dssProjectPerspective(1.0f, 0.0f, s).x() - 1.0) < 1e-6);
+        QVERIFY(std::abs(dssProjectPerspective(0.0f, 1.0f, s).x() - 0.20) < 1e-6);
+        QVERIFY(std::abs(dssProjectPerspective(1.0f, 1.0f, s).x() - 0.80) < 1e-6);
         // Baseline rises with depth by depthSpanFrac.
-        QVERIFY(std::abs(dssProjectPerspective(0.5f, 0.0f, s).y() - 1.0)  < 1e-9);
-        QVERIFY(std::abs(dssProjectPerspective(0.5f, 1.0f, s).y() - 0.42) < 1e-9);
+        QVERIFY(std::abs(dssProjectPerspective(0.5f, 0.0f, s).y() - 1.0)  < 1e-6);
+        QVERIFY(std::abs(dssProjectPerspective(0.5f, 1.0f, s).y() - 0.42) < 1e-6);
     }
 
     void projectSurface_matchesUpstream() {
@@ -151,19 +163,19 @@ private slots:
         // At the floor the surface sits exactly on the baseline.
         const QPointF atFloor =
             dssProjectSurface(0.5f, 0.0f, -120.0f, -120.0f, 60.0f, 1.0f, s);
-        QVERIFY(std::abs(atFloor.y() - 1.0) < 1e-9);
+        QVERIFY(std::abs(atFloor.y() - 1.0) < 1e-6);
         // Full scale at the front rises by frontMaxRidgeFrac * width(=1).
         const QPointF atPeak =
             dssProjectSurface(0.5f, 0.0f, -60.0f, -120.0f, 60.0f, 1.0f, s);
-        QVERIFY(std::abs(atPeak.y() - (1.0 - 0.46)) < 1e-9);
+        QVERIFY(std::abs(atPeak.y() - (1.0 - 0.46)) < 1e-6);
         // Far ridges are shorter by the depth width factor.
         const QPointF atBack =
             dssProjectSurface(0.5f, 1.0f, -60.0f, -120.0f, 60.0f, 1.0f, s);
-        QVERIFY(std::abs(atBack.y() - (0.42 - 0.46 * 0.60)) < 1e-9);
+        QVERIFY(std::abs(atBack.y() - (0.42 - 0.46 * 0.60)) < 1e-6);
         // A non-finite dBm is pinned to the floor, not propagated as NaN.
         const QPointF nan = dssProjectSurface(
             0.5f, 0.0f, std::nanf(""), -120.0f, 60.0f, 1.0f, s);
-        QVERIFY(std::abs(nan.y() - 1.0) < 1e-9);
+        QVERIFY(std::abs(nan.y() - 1.0) < 1e-6);
     }
 
     void rowSpanFactor_matchesUpstream() {
