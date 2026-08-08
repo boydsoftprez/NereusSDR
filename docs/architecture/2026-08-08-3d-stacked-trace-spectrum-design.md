@@ -90,6 +90,23 @@ Tier 2 keeping upstream's class boundaries and public surface is deliberate.
 When the surface looks wrong we open their file beside ours and the functions
 line up. That is most of the value of a port without the cost of one.
 
+### 2.3 Tier 1 deviations are enumerated, not open-ended
+
+"Verbatim" tier 1 carries exactly two intentional deviations, and no others:
+
+1. **Angle parameterisation (section 5).** The three geometry constants become
+   runtime values with upstream's numbers as defaults. The shader is untouched
+   by this; it already receives them as uniforms.
+2. **Scroll distance fixed at one row (decision 4).** `scrollDistanceRows` and
+   the multi-row burst handling drop out of the shader; `scrollProgressRows`
+   and the boundary-row crossfade stay.
+
+Each deviation site inside otherwise-lifted code carries the in-region
+modification marker `HOW-TO-PORT.md` prescribes:
+`//-KG4VCF [vX.Y.Z] <description>`. Any further tier 1 edit discovered during
+implementation gets added to this list in the same commit, or it does not
+happen.
+
 ---
 
 ## 3. Architecture
@@ -125,7 +142,13 @@ surface exactly as they composite over the 2D trace today.
 Two per panadapter:
 
 - an `RGBA16F` ring texture, `kCols` (768) by `kRows` (104)
-- a 256-entry palette lookup texture built from our existing `dbmToRgb()`
+- a 256-entry palette lookup texture baked per section 4.3
+
+`kRows` stays at upstream's 96 visible plus 8 transition rows even though our
+burst distance is fixed at one and could get by with fewer transition rows.
+Keeping the reference dimensions keeps every ring-index formula comparable
+line-for-line with upstream, and the cost of the spare rows is about 48 KB per
+panadapter.
 
 Plus a UBO and a mesh vertex buffer. Upstream guards on
 `isTextureFormatSupported(RGBA16F)` and falls back to the CPU surface
@@ -154,10 +177,14 @@ with a precise timer and elevated QoS (`SpectrumWidget.cpp:443-475`), at
 `DisplayWfUpdatePeriodMs` cadence (default 30 ms), independent of both FFT
 arrival timing and `DisplaySpectrumFps`.
 
-The ticker callback gains a second call into `DssRenderer::pushRow`. Same tick,
-same cadence, so the 3D stack and the flat waterfall beneath it advance in
-lockstep by construction. Upstream fought for that alignment repeatedly across
-several releases; NereusSDR gets it because one timer drives both.
+`pushWaterfallRow()` gains a second call into `DssRenderer::pushRow`,
+**downstream of the stop-on-TX gate** at `SpectrumWidget.cpp:4728`. Same tick,
+same cadence, same gate, so the 3D stack and the flat waterfall beneath it
+advance and freeze in lockstep by construction. Teeing at the ticker callback
+instead would sit upstream of that gate, and during TX the waterfall would
+freeze while the 3D stack kept scrolling. Upstream fought for pane alignment
+repeatedly across several releases; NereusSDR gets it because one timer and one
+gate drive both.
 
 ### 4.2 Two channels
 
@@ -180,9 +207,20 @@ worse resolution on screen. Per-column coverage bytes are also kept, because
 they carry zoom-created gaps in retained rows.
 
 Both channels are filled from one FFT frame. Bins inside `visibleBinRange()`
-(`SpectrumWidget.cpp:4220`) fill the exact channel; the wider slice fills the
-wide channel. At full DDC width there is nothing outside the view, and the
-3D Span control correctly reports no span available.
+(`SpectrumWidget.cpp:4220`) fill the exact channel.
+
+The wide channel does **not** store the full DDC row. At a deep zoom that
+would spread 768 columns across the whole DDC (a 10 kHz view from a 768 kHz
+DDC would get roughly 1 kHz per column) to feed an overhang that can never use
+more than `kMaxRowSpanFactor` times the viewport. Instead it stores a window
+of `kMaxRowSpanFactor(t = 0)` times the viewport bandwidth, centred on the
+view, clamped to the DDC extent, with coverage bytes zero wherever the DDC has
+no data. Sizing the window for the **widest angle** rather than the current
+one keeps stored rows valid across runtime angle changes, so moving the angle
+slider never requires re-ingesting history.
+
+At full DDC width there is nothing outside the view, and the 3D Span control
+correctly reports no span available.
 
 ### 4.3 Floor and colour
 
@@ -193,11 +231,29 @@ current dBm display span.
 
 Colour is independent of height and reads through a fixed 45 dB aperture
 (`kColorSpanDb`, `DssRenderer.h:51 [@1872028c]`), so a high Ref level cannot
-compress every real signal into blue. The LUT is built from `dbmToRgb()`
-(`SpectrumWidget.h:1627`), so all six `WfColorScheme` palettes work in 3D with
-no additional work.
+compress every real signal into blue.
 
-3D Gain shapes the palette lookup gamma.
+The 256-entry LUT is deliberately **not** built from `dbmToRgb()`. Upstream's
+`uploadDssPaletteLut` (`SpectrumWidget.cpp:12573-12602 [@1872028c]`) documents
+that it bypasses `dbmToRgb()`'s waterfall gain and black-level window on
+purpose: otherwise the waterfall's own sliders would silently reshape the 3D
+surface colours. Instead the LUT is baked from the raw `wfSchemeStops()`
+gradient through the 3D Gain gamma, per `dssStrengthToRgb`
+(`SpectrumWidget.cpp:11602 [@1872028c]`):
+
+```
+gamma = 4 ^ ((50 - dssGain) / 50)
+rgb   = interpolateGradient(pow(clamp(s, 0, 1), gamma), schemeStops)
+```
+
+Gain 50 is linear, gain 100 is gamma 0.25 (colour lifted to the noise floor),
+gain 0 is gamma 4 (colour only on the strongest peaks). The default of 70
+lands at gamma 0.574. `dssStrengthToRgb` is a tier 1 lift. All six
+`WfColorScheme` palettes work in 3D because the scheme **stops** are shared;
+the waterfall's gain, black-level and min-dBm knobs intentionally are not.
+
+The LUT re-bakes only when the scheme or 3D Gain changes, keyed by a token
+folding both, never per frame.
 
 ### 4.4 Zoom, retune and scroll
 
@@ -369,11 +425,17 @@ Five are per panadapter, keyed through `settingsKey(base, panIndex)`:
 - `Display3DAngle`
 - `Display3DSliceShadow`
 
-3D Floor is per panadapter **and** per band, so it carries a band suffix on top
-of the pan keying, matching the existing per-band grid keys built at
-`PanadapterModel.cpp:85-87`:
+3D Floor is per band, keyed exactly like the existing per-band grid keys built
+at `PanadapterModel.cpp:85-87`:
 
 - `Display3DFloorDepth_<bandKeyName>`
+
+Note that the existing per-band keys (`DisplayGridMax_<band>` and friends)
+carry **no pan index**; they are effectively global today because the shipped
+build has a single panadapter. 3D Floor follows that convention exactly rather
+than inventing a pan-scoped variant of it. When 3F multi-panadapter lands,
+these keys inherit whatever per-pan migration the grid keys get, in the same
+change.
 
 ### 6.3 Why 3D Floor is per band
 
@@ -400,6 +462,8 @@ the same instinct expressed against a different axis.
 | Upstream mechanism | NereusSDR treatment | Reason |
 |---|---|---|
 | Supplemental channel fed by native FLEX waterfall tiles | Fed by off-screen DDC bins from the same FFT | No native tiles; we own the FFT |
+| `DssSupplementalCoverage.h` tile-intensity to dBm calibration (quantile floor/span alignment) | Dropped entirely | Exists only because FLEX tiles are an arbitrary display scale; our wide channel is already dBm from the same FFT |
+| `DssDcEdgeMath.h` leading-spike flattener (#4413) | Dropped; named bench-watch item (section 10) | Fix targets a FLEX firmware 4.2.18 spike when a view starts exactly at DC; our DC artifact, if any, sits at DDC centre instead |
 | Cross-source coverage arbitration | Bin-range test | One measurement, not two |
 | `reprojectFrequencyFrame` settle windows, `flexDssFftScaleSettling`, `armDssZoomFloorSyncAfterSettle` | Dropped | Retune is synchronous here |
 | KiwiSDR source branches | Dropped | No such source |
@@ -434,13 +498,21 @@ All headless. No graphics context required.
    downsample from full FFT width to 768 columns; ring wrap at the
    `kRows` boundary; coverage bytes correct on zoom-created gaps; temporal
    smoothing reset does not blend across a raw-scale change.
-5. **Palette.** All 256 LUT entries match `dbmToRgb()` at the same inputs,
-   across all six `WfColorScheme` values.
-6. **Settings round-trip.** All six keys, per panadapter, plus per-band 3D
-   Floor recall across a simulated band change.
+5. **Palette.** All 256 LUT entries match the `dssStrengthToRgb` formula
+   (scheme stops through the 3D Gain gamma, section 4.3) across all six
+   `WfColorScheme` values and gains {0, 50, 70, 100}, including the gamma
+   identities: gain 50 is exactly linear, gain 100 is gamma 0.25, gain 0 is
+   gamma 4. Deliberately **not** compared against `dbmToRgb()`: proving the
+   waterfall gain and black-level knobs do NOT move 3D colours is part of the
+   test.
+6. **Settings round-trip.** All six keys, plus per-band 3D Floor recall across
+   a simulated band change.
 7. **Alignment.** A synthetic carrier at a known frequency lands at the same
    horizontal position in the front 3D row as in the flat waterfall row
    directly beneath it.
+8. **TX lockstep.** With stop-on-TX enabled and TX active, `pushWaterfallRow`
+   advances neither the waterfall ring nor the DSS ring; with it disabled,
+   both advance together. Guards the tee placement in section 4.1.
 
 Test labels and build wiring follow `docs/development/fast-test-loop.md`.
 
@@ -463,7 +535,10 @@ Requirements, all landing in the same commits that introduce the ported logic:
 2. Inline cites on every tier 1 lift, stamped `[@1872028c]`.
 3. Bucket A rows in `docs/attribution/aethersdr-reconciliation.md` for all
    seven files (five new, two modified).
-4. `scripts/check-new-ports.py`, `scripts/verify-inline-cites.py` and
+4. `docs/attribution/ASSETS.md` entries for `dss_mesh.vert` and
+   `dss_mesh.frag`. Shader attribution lives there because AetherSDR ships no
+   per-file shader headers; `waterfall.frag`'s existing entry is the template.
+5. `scripts/check-new-ports.py`, `scripts/verify-inline-cites.py` and
    `scripts/verify-provenance-sync.py` green.
 
 ### 9.1 Known enforcement gap
@@ -493,7 +568,17 @@ explicit human review item on every PR in this epic.**
    (section 5.5).
 4. **The `RGBA16F` fallback path is inherited and sound but unproven here**,
    particularly on Windows and Intel graphics, until somebody runs it there.
-5. **Scope.** Full parity in one epic is a wide surface. The renderer, mesh and
+5. **DC-centre ridge wall (bench-watch).** The DDC's DC bin sits at the centre
+   of our full-width FFT. In 2D any residual centre spike is one column of
+   trace and waterfall; the 3D perspective history repeats it through 96 rows
+   and turns it into a front-to-back wall. Upstream hit the same class of
+   artifact at the DC **edge** and shipped `DssDcEdgeMath.h` (#4413), whose
+   approach (replace a contiguous outlier with the nearby noise median, DSS
+   rows only, 2D trace untouched) is the template remedy if the bench finds
+   our centre wall objectionable. Not built pre-emptively: whether our DDC
+   even shows a visible DC spike after existing processing is a bench
+   observation, not a code-reading conclusion.
+6. **Scope.** Full parity in one epic is a wide surface. The renderer, mesh and
    shaders can land and be judged independently. Slice shadows and the Setup
    mirroring are the tail and are the parts most likely to slip.
 
