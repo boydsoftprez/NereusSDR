@@ -41,6 +41,7 @@ Every task's requirements implicitly include this section.
 - **Build:** `cmake --build build -j$(sysctl -n hw.ncpu)`. Test executables are `EXCLUDE_FROM_ALL`; always build the named target before running ctest, or you will run a stale binary and get a false green.
 - **Register every new test** with `nereus_add_test(tst_<name>)` in `tests/CMakeLists.txt`, keeping the list alphabetically sorted.
 - **The 1e-6 tolerance rule applies to TEST assertions you write, never to constants lifted from upstream.** `frequencyFramesMatch` carries a `1.0e-9` epsilon in upstream source; that is a lifted constant and preserving it exactly is required. Changing it to 1e-6 would be an unauthorised deviation. The rule exists because float32 geometry comparisons in *our tests* cannot achieve 1e-9, not because 1e-9 is wrong wherever it appears.
+- **A test that pins two sides of a boundary must READ one side, not restate it.** Wherever a value is duplicated across a language or process boundary (C++ against GLSL, host against wire format, code against a config file), the test has to parse the far side from its actual source. Restating the near side's arithmetic in the test produces two spellings of one expression that constant-fold together and can never disagree. Task 5 shipped exactly that: a UBO float count compared against a hand-copied version of its own formula, which would have let a GLSL edit ship a silent layout mismatch.
 - **A test for a defensive fix must be shown to FAIL without the fix.** Reasoning that it would is not enough, and has already been wrong once here: a reviewer hand-traced that `clear_resetsEverything` covered a restored wipe, but disabling the wipe left it passing 13/13, because `clear()` resets `m_head` to 0 and the assertion read a never-written, already-zero slot. When a task adds guard or reset behaviour, mutate it out, run the test, and confirm it goes red before you claim coverage. State that you did so in your report.
 - **Cover interior branches, not just boundaries.** Where a function has early-return guards around a computation, assert at least two points inside the computed range as well as the guards. Task 1's review caught exactly this: a two-assertion test hit both of `dssWedgeFreeDepth`'s guard clauses and never once reached its interpolation, so an inverted numerator would have passed. If the test code given in a task only checks boundaries on a function that computes something in between, add the interior assertions rather than transcribing the gap.
 - **ATTRIBUTION LANDS IN THE SAME COMMIT AS THE FILE, NEVER DEFERRED.** The pre-commit hook runs `check-new-ports.py` in **full-tree** mode, so any file on disk carrying AetherSDR tells and lacking a PROVENANCE row blocks *every* commit in the repository, including commits that have nothing to do with it. An unregistered file does not merely fail its own task; it wedges the whole branch. CLAUDE.md requires the same thing independently: the verbatim header and the PROVENANCE row go in the commit that introduces the ported logic.
@@ -1758,12 +1759,53 @@ private slots:
     }
 
     // std140 rounds the scalar run up to a vec4 boundary. The host writes
-    // explicit padding to match; if this drifts, every vec4 after it shifts.
+    // explicit padding to match; if this drifts, every vec4 after it shifts
+    // and the surface renders garbage with no compile error.
+    //
+    // This MUST parse the real uniform block out of the shader. Restating
+    // kDssMeshUboFloats' own arithmetic here would be a tautology: the two
+    // expressions share kDssRows and constant-fold identically, so they can
+    // never disagree, and an edit to the GLSL block would sail through. That
+    // matters most for the task that writes this UBO, which is the one most
+    // likely to change the block.
     void uboFloatCount_matchesStd140Layout() {
-        // 22 scalars, padded to 24, then bgFill(4) + shadowBands(8*4)
-        // + shadowStyles(8*4) + shadowMeta(4) + rowFrames(kDssRows*4).
-        const int expected = 24 + 4 + 32 + 32 + 4 + kDssRows * 4;
-        QCOMPARE(kDssMeshUboFloats, expected);
+        const QString src = shaderSource(QStringLiteral("dss_mesh.vert"));
+        QVERIFY(!src.isEmpty());
+        static const QRegularExpression blockRe(
+            QStringLiteral(R"(layout\(std140[^{]*\{(.*?)\n\};)"),
+            QRegularExpression::DotMatchesEverythingOption);
+        const auto blockMatch = blockRe.match(src);
+        QVERIFY2(blockMatch.hasMatch(), "no std140 uniform block found");
+        // Strip comments so a commented-out member is not counted.
+        static const QRegularExpression commentRe(QStringLiteral("//[^\n]*"));
+        const QString body =
+            blockMatch.captured(1).remove(commentRe);
+
+        static const QRegularExpression memberRe(
+            QStringLiteral(R"(\b(float|vec4)\s+\w+\s*(?:\[\s*(\d+)\s*\])?\s*;)"));
+        int scalars = 0;
+        int vec4Slots = 0;
+        bool seenVec4 = false;
+        auto it = memberRe.globalMatch(body);
+        while (it.hasNext()) {
+            const auto m = it.next();
+            if (m.captured(1) == QLatin1String("float")) {
+                // std140 packing here assumes every scalar precedes every
+                // vec4. If that ever stops being true the padding maths below
+                // is wrong, so fail loudly rather than compute a wrong total.
+                QVERIFY2(!seenVec4,
+                         "a float is declared after a vec4; std140 padding "
+                         "assumption in this test no longer holds");
+                ++scalars;
+            } else {
+                seenVec4 = true;
+                const QString count = m.captured(2);
+                vec4Slots += count.isEmpty() ? 1 : count.toInt();
+            }
+        }
+        QVERIFY2(scalars > 0 && vec4Slots > 0, "uniform block parse found nothing");
+        const int paddedScalars = ((scalars + 3) / 4) * 4;
+        QCOMPARE(kDssMeshUboFloats, paddedScalars + vec4Slots * 4);
     }
 
     // Upstream issue annotations are load-bearing history and no script
