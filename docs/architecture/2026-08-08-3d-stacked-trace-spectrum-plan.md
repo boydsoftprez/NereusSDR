@@ -41,6 +41,8 @@ Every task's requirements implicitly include this section.
 - **Build:** `cmake --build build -j$(sysctl -n hw.ncpu)`. Test executables are `EXCLUDE_FROM_ALL`; always build the named target before running ctest, or you will run a stale binary and get a false green.
 - **Register every new test** with `nereus_add_test(tst_<name>)` in `tests/CMakeLists.txt`, keeping the list alphabetically sorted.
 - **The 1e-6 tolerance rule applies to TEST assertions you write, never to constants lifted from upstream.** `frequencyFramesMatch` carries a `1.0e-9` epsilon in upstream source; that is a lifted constant and preserving it exactly is required. Changing it to 1e-6 would be an unauthorised deviation. The rule exists because float32 geometry comparisons in *our tests* cannot achieve 1e-9, not because 1e-9 is wrong wherever it appears.
+- **Widget tests that push rows must show the widget first.** `pushWaterfallRow()` opens with a `m_waterfall.isNull()` guard, and `m_waterfall` is only allocated in `resizeEvent()`, which Qt does not dispatch synchronously from `resize()` on an unshown top-level widget. A test that only calls `resize()` silently pushes nothing, so any assertion that a counter stayed at zero passes for the wrong reason. Use `resize()`, then `show()`, then `QVERIFY(QTest::qWaitForWindowExposed(&w))`. This already made one test in Task 6 vacuous before it was caught.
+- **Assert an absence only after proving the mechanism can produce a presence.** A test whose whole content is "this counter is still zero" is indistinguishable from a test where nothing ran at all. Either increment it first in the same test, or rely on a sibling test that demonstrably does.
 - **A test that pins two sides of a boundary must READ one side, not restate it.** Wherever a value is duplicated across a language or process boundary (C++ against GLSL, host against wire format, code against a config file), the test has to parse the far side from its actual source. Restating the near side's arithmetic in the test produces two spellings of one expression that constant-fold together and can never disagree. Task 5 shipped exactly that: a UBO float count compared against a hand-copied version of its own formula, which would have let a GLSL edit ship a silent layout mismatch.
 - **A test for a defensive fix must be shown to FAIL without the fix.** Reasoning that it would is not enough, and has already been wrong once here: a reviewer hand-traced that `clear_resetsEverything` covered a restored wipe, but disabling the wipe left it passing 13/13, because `clear()` resets `m_head` to 0 and the assertion read a never-written, already-zero slot. When a task adds guard or reset behaviour, mutate it out, run the test, and confirm it goes red before you claim coverage. State that you did so in your report.
 - **Cover interior branches, not just boundaries.** Where a function has early-return guards around a computation, assert at least two points inside the computed range as well as the guards. Task 1's review caught exactly this: a two-assertion test hit both of `dssWedgeFreeDepth`'s guard clauses and never once reached its interpolation, so an inverted numerator would have passed. If the test code given in a task only checks boundaries on a function that computes something in between, add the interior assertions rather than transcribing the gap.
@@ -1991,6 +1993,33 @@ private slots:
         w.setTxActiveForTest(true);
         w.pushWaterfallRowForTest(row(768, -130.0f));
         QCOMPARE(w.dssRowsPushedForTest(), 1);
+    }
+
+    // Leaving 3D must clear the ring, so re-entering does not display a stack
+    // of rows captured at a frequency the operator has since left. And
+    // re-asserting the SAME mode must NOT clear, or an idempotent UI refresh
+    // would silently wipe live history.
+    //
+    // Both behaviours are load-bearing for the rendering task that reads this
+    // ring. Without this test, deleting the clear branch entirely leaves every
+    // other test in this file green.
+    void leaving3D_clearsTheRing_butSameModeDoesNot() {
+        SpectrumWidget w;
+        w.resize(400, 200);
+        w.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&w));
+        w.setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode3D));
+        w.pushWaterfallRowForTest(row(768, -130.0f));
+        w.pushWaterfallRowForTest(row(768, -130.0f));
+        QCOMPARE(w.dssRowsPushedForTest(), 2);   // precondition: ring is dirty
+
+        // Same mode again: no-op guard must fire, history survives.
+        w.setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode3D));
+        QCOMPARE(w.dssRowsPushedForTest(), 2);
+
+        // Genuinely leaving 3D: ring clears.
+        w.setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode2D));
+        QCOMPARE(w.dssRowsPushedForTest(), 0);
     }
 
     // In 2D the ring must not be fed at all: a 2D pan allocates and does no
