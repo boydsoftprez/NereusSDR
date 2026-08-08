@@ -1331,6 +1331,8 @@ if(NEREUS_GPU_SPECTRUM)
                 resources/shaders/spectrum.frag
                 resources/shaders/overlay.vert
                 resources/shaders/overlay.frag
+                resources/shaders/dss_mesh.vert
+                resources/shaders/dss_mesh.frag
         )
 
         qt_add_shaders(NereusSDRObjs "nereus_meter_shaders"

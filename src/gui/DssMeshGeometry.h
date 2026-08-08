@@ -160,4 +160,15 @@ inline void dssBuildMeshVertices(int meshCols,
     }
 }
 
+// UBO float count for dss_mesh.{vert,frag}. std140 rounds the leading
+// 22-scalar run up to a vec4 boundary, so the host writes two explicit
+// zeros before bgFill. From AetherSDR dss_mesh.vert:14-58 [@1872028c].
+inline constexpr int kDssMeshUboFloats =
+    24              // 22 scalars padded to a vec4 boundary
+    + 4             // bgFill
+    + 8 * 4         // shadowBands[8]
+    + 8 * 4         // shadowStyles[8]
+    + 4             // shadowMeta
+    + kDssRows * 4; // rowFrames[kDssRows]
+
 }  // namespace NereusSDR

@@ -6193,6 +6193,18 @@ nereus_add_test(tst_dss_mesh_geometry)
 # src/gui/DssRenderer.cpp:30-33, :50-60, :183-216, :218-250 [@1872028c].
 nereus_add_test(tst_dss_renderer_ring)
 
+# ── 3D stacked-trace spectrum plan, Task 5: DSS mesh shader contract ──────
+# The shaders are GLSL and cannot be unit-tested directly, but the C++ host
+# and the GLSL UBO layout must agree on two numbers or the surface renders
+# garbage with no compile error: the rowFrames[] array length must equal
+# kDssRows, and the std140 UBO float count must match the host's write
+# order. Reads the actual shader source files from disk rather than
+# restating a copy of the constants, so a drift in either file is caught.
+# Source: AetherSDR resources/shaders/dss_mesh.{vert,frag} [@1872028c].
+nereus_add_test(tst_dss_shader_contract)
+target_compile_definitions(tst_dss_shader_contract PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
