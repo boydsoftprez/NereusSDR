@@ -32,7 +32,7 @@ namespace NereusSDR {
 
 // ─── Stacked-trace spectrum surface geometry ────────────────────────────────
 //
-// From AetherSDR src/gui/DssRenderer.h:36-187 [@1872028c].
+// From AetherSDR src/gui/DssRenderer.h:33-64, 84-187 [@1872028c].
 //
 // Perspective geometry of the surface, shared by this CPU renderer and the
 // GPU mesh UBO (SpectrumWidget::renderGpuFrame). dss_mesh.vert applies the

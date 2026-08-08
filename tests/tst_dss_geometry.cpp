@@ -118,6 +118,12 @@ private slots:
         const DssShape s = kDssUpstreamShape;
         QCOMPARE(dssWedgeFreeDepth(1.0f, s), 0.0f);
         QCOMPARE(dssWedgeFreeDepth(dssMaxRowSpanFactor(s), s), 1.0f);
+        // Interior of the interpolation branch, not just its boundaries.
+        // rowSpanFactor 1.25 -> (1 - 1/1.25) / (1 - 0.60) = 0.2 / 0.4 = 0.5
+        QVERIFY(std::abs(dssWedgeFreeDepth(1.25f, s) - 0.5f) < 1e-6f);
+        // A second interior point, so a single-point coincidence cannot pass.
+        // rowSpanFactor 1.4 -> (1 - 1/1.4) / (1 - 0.60) = (2/7) / 0.4 = 5/7
+        QVERIFY(std::abs(dssWedgeFreeDepth(1.4f, s) - (5.0f / 7.0f)) < 1e-6f);
     }
 
     void rowFrequencyUnit_isDepthIndependent() {
