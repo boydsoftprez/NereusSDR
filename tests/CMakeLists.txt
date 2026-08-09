@@ -6227,6 +6227,16 @@ nereus_add_test(tst_dss_row_tee)
 # [@1872028c].
 nereus_add_test(tst_dss_palette)
 
+# ── 3D stacked-trace spectrum plan, Task 9: floor anchoring + wide feed ───
+# Pins the 3D Floor control (offsets the measured noise floor down, so the
+# stack keeps a constant apparent height as conditions move), the dBm span
+# (tracks m_refLevel/m_dynamicRange), buildDssWideRow()'s off-screen-DDC-
+# bins windowing (sized for the WIDEST angle so a runtime angle change never
+# invalidates retained rows; empty at full DDC width), and dssRowSpanTarget()
+# scaling the available overhang by the 3D Span percentage. Source: AetherSDR
+# src/gui/SpectrumWidget.cpp:12743-12784 [@1872028c].
+nereus_add_test(tst_dss_floor_and_span)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

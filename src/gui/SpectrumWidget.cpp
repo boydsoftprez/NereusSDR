@@ -160,6 +160,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <utility>
@@ -435,6 +436,29 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
         if (m_hasNewSpectrum) {
             m_hasNewSpectrum = false;
             update();
+        }
+
+        // 3DSS: advance the continuous scroll-progress accumulator from
+        // wall clock between DSS row pushes (see m_dssScrollProgressRows'
+        // header comment). Gated on Mode3D to match the "no wasted 2D
+        // work" shape the rest of the 3DSS pipeline already follows
+        // (rebuildDssMeshIfNeeded/uploadDssPaletteLut/uploadDssHeightRows
+        // in renderGpuFrame()); m_dssLastTickMs resets to 0 on leaving 3D
+        // so a stale multi-second gap can never appear as one giant jump
+        // when 3D is re-entered.
+        if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+            const qint64 nowTickMs = QDateTime::currentMSecsSinceEpoch();
+            if (m_dssLastTickMs > 0) {
+                const float deltaMs =
+                    static_cast<float>(nowTickMs - m_dssLastTickMs);
+                const float periodMs =
+                    static_cast<float>(qMax(1, m_wfUpdatePeriodMs));
+                m_dssScrollProgressRows = qBound(0.0f,
+                    m_dssScrollProgressRows + deltaMs / periodMs, 1.0f);
+            }
+            m_dssLastTickMs = nowTickMs;
+        } else {
+            m_dssLastTickMs = 0;
         }
     });
     m_displayTimer.start();
@@ -2796,6 +2820,28 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // FFTEngine.cpp:348 [v2.10.3.13] (binsDbm = 10·log10 + offset).
     const double dbmScale  = std::pow(10.0, dbmOffset / 10.0);
 
+    // 3DSS wide channel feed: m_fullLinearBins (this whole FFT frame,
+    // unsliced) converted to dBm at full bin resolution, so
+    // buildDssWideRow() can window bins outside visibleBinRange() using
+    // the SAME calibration as the exact channel above (same dbmScale).
+    // Deliberately skips detector reduction and avenger averaging -- both
+    // are display-pixel/view-width concerns, and DssRenderer applies its
+    // own independent temporal smoothing to whatever it receives (see
+    // smoothDssRow() in DssRenderer.cpp), so a second averaging pass here
+    // would just blur what that smoothing already handles. The conversion
+    // itself mirrors SpectrumAvenger::apply()'s avMode==0 "no averaging"
+    // case -- WDSP avenger() analyzer.c:464-554 [v2.10.3.13], case 0 at
+    // analyzer.c:495-501: dbm = 10*log10(scale * linear) -- with the same
+    // 1.0e-60 log floor SpectrumAvenger.cpp:65 uses. Gated on Mode3D:
+    // nothing reads m_lastFullBinsDbm in 2D (pushDssRow() never runs).
+    if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+        m_lastFullBinsDbm.resize(m_fullLinearBins.size());
+        for (int i = 0; i < m_fullLinearBins.size(); ++i) {
+            m_lastFullBinsDbm[i] = static_cast<float>(
+                10.0 * std::log10(dbmScale * m_fullLinearBins[i] + 1.0e-60));
+        }
+    }
+
     auto avengerMode = [](SpectrumAveraging m) -> int {
         // Wire-format integer codes per WDSP analyzer.c:464 [v2.10.3.13].
         switch (m) {
@@ -4886,16 +4932,113 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
     }
 }
 
+// ---- 3DSS floor anchoring, wide channel feed ----
+
+// The 3DSS surface baseline. Anchored to the measured noise floor so the
+// stack keeps a constant apparent height as band conditions move, offset
+// downward by the 3D Floor control to expose more or less noise texture.
+float SpectrumWidget::dssFloorDbm() const
+{
+    // m_nfLerpAverage is this widget's smoothed measured noise floor, the
+    // same quantity NoiseFloorTracker::noiseFloor() exposes (both are the
+    // Thetis display.cs:4628 lerp average). m_nfFftBinAverage is the
+    // per-frame value and would make the surface jitter every frame.
+    return m_nfLerpAverage - static_cast<float>(m_dssFloorDepth);
+}
+
+float SpectrumWidget::dssSpanDb() const
+{
+    // The dBm display span. This widget stores the range as a top
+    // (m_refLevel) plus a depth (m_dynamicRange), not as a floor/ceiling
+    // pair, so the span is m_dynamicRange directly.
+    return std::max(1.0f, m_dynamicRange);
+}
+
+// Build the wide channel from the off-screen DDC bins of the SAME FFT frame.
+//
+// The window is sized for the WIDEST angle the slider allows rather than the
+// current one, so retained rows stay valid across a runtime angle change and
+// moving the slider never forces a re-ingest (design doc section 4.2).
+// Returns an empty vector when the view already covers the whole DDC, which
+// is the correct "no span available" answer.
+QVector<float> SpectrumWidget::buildDssWideRow(
+    const QVector<float>& fullBins,
+    double& wideCenterMhzOut,
+    double& wideBandwidthMhzOut) const
+{
+    wideCenterMhzOut = 0.0;
+    wideBandwidthMhzOut = 0.0;
+    if (fullBins.isEmpty() || m_sampleRateHz <= 0.0) {
+        return {};
+    }
+    const double viewBwHz = m_bandwidthHz;
+    if (viewBwHz <= 0.0 || viewBwHz >= m_sampleRateHz) {
+        return {};   // view already covers the DDC; nothing outside it
+    }
+
+    const float widestSpan = dssMaxRowSpanFactor(dssShapeForAngle(0));
+    const double wantHz = std::min(
+        static_cast<double>(widestSpan) * viewBwHz, m_sampleRateHz);
+    const double ddcLowHz  = m_ddcCenterHz - m_sampleRateHz * 0.5;
+    const double binHz     = m_sampleRateHz / fullBins.size();
+    const double wideLowHz = std::clamp(
+        m_centerHz - wantHz * 0.5,
+        ddcLowHz, ddcLowHz + m_sampleRateHz - wantHz);
+
+    // fullBins.size() is qsizetype (long long on 64-bit); std::clamp needs
+    // all three arguments the same type, so the bound is narrowed to int
+    // explicitly rather than left to fail template deduction.
+    const int binCount = static_cast<int>(fullBins.size());
+    const int first = std::clamp(
+        static_cast<int>((wideLowHz - ddcLowHz) / binHz), 0, binCount - 1);
+    const int last = std::clamp(
+        static_cast<int>((wideLowHz + wantHz - ddcLowHz) / binHz),
+        first + 1, binCount);
+
+    wideCenterMhzOut    = (wideLowHz + wantHz * 0.5) / 1.0e6;
+    wideBandwidthMhzOut = wantHz / 1.0e6;
+    return QVector<float>(fullBins.constBegin() + first,
+                          fullBins.constBegin() + last);
+}
+
+// From AetherSDR SpectrumWidget.cpp:12743-12784 [@1872028c], minus the
+// AETHER_DSS_ROW_SPAN environment-variable override and the "age 0 is not
+// authoritative" Flex/Kiwi multi-source caveats: our producer's only row
+// source is pushDssRow(), which always attaches a wide slice whenever
+// buildDssWideRow() finds one available, so there is no separate producer
+// that could append without one while zoomed in.
+float SpectrumWidget::dssRowSpanTarget(double targetBandwidthMhz) const
+{
+    return dssRowSpanFactorFor(
+        m_dss.newestWideBandwidthMhz(targetBandwidthMhz),
+        targetBandwidthMhz,
+        m_dssRowSpan,
+        dssShape());
+}
+
 // ---- 3DSS row tee ----
 // Resamples the same post-pipeline row pushWaterfallRow() just wrote to the
-// flat waterfall into the stacked-trace ring. Task 8 extends this to also
-// fill the wide (off-screen) channel via pushRowWithWide.
+// flat waterfall into the stacked-trace ring, and fills the wide (off-
+// screen) channel from the cached full-DDC dBm snapshot (m_lastFullBinsDbm,
+// set in updateSpectrumLinear()) via pushRowWithWide. Falls back to the
+// exact-only pushRow() whenever buildDssWideRow() has nothing to offer
+// (not zoomed in, or no FFT frame cached yet).
 void SpectrumWidget::pushDssRow(const QVector<float>& wfPixelsDbm)
 {
     const double centerMhz    = m_centerHz    / 1.0e6;
     const double bandwidthMhz = m_bandwidthHz / 1.0e6;
-    m_dss.pushRow(wfPixelsDbm, centerMhz, bandwidthMhz);
+    double wideCenterMhz = 0.0;
+    double wideBandwidthMhz = 0.0;
+    const QVector<float> wide =
+        buildDssWideRow(m_lastFullBinsDbm, wideCenterMhz, wideBandwidthMhz);
+    if (wide.isEmpty()) {
+        m_dss.pushRow(wfPixelsDbm, centerMhz, bandwidthMhz);
+    } else {
+        m_dss.pushRowWithWide(wfPixelsDbm, centerMhz, bandwidthMhz,
+                              wide, wideCenterMhz, wideBandwidthMhz);
+    }
     ++m_dssRowsPushed;
+    m_dssScrollProgressRows = 0.0f;
 }
 
 // ---- dBm to waterfall color ----
@@ -8261,13 +8404,98 @@ void SpectrumWidget::uploadDssPaletteLut(QRhiResourceUpdateBatch* batch)
     m_dssLutToken = token;
 }
 
-// Stub: Task 9 ("Floor anchoring, wide feed, UBO writer") fills this in.
+// Writes the std140 uniform block dss_mesh.vert declares at :14-58. Field
+// order matches the shader exactly: twenty-two leading float scalars, two
+// explicit std140 padding floats to reach the vec4 boundary the scalar run
+// rounds up to, then bgFill / shadowBands[8] / shadowStyles[8] / shadowMeta
+// / rowFrames[kDssRows]. A single float out of order here shifts every
+// vec4 after it and the surface renders garbage with no compile error --
+// see tst_dss_shader_contract.cpp for the count half of this contract
+// (parses the real shader; cannot catch a wrong order, only a wrong total).
+//
+// Restructured from AetherSDR SpectrumWidget.cpp:14148-14408 [@1872028c],
+// which assembles the equivalent block inline inside renderGpuFrame()
+// rather than as a separate function. Two upstream sections are NOT
+// ported here: the row-span-factor ease-toward-target animation
+// (:14164-14183, m_dssRowSpanFactor += kRowSpanAlpha * (target -
+// m_dssRowSpanFactor) -- this task writes dssRowSpanTarget() straight
+// through; an eased approach is a possible follow-up, not a correctness
+// requirement) and the slice-shadow descriptor computation (:14216-14366,
+// writeShadowSlot/appendShadow against m_sliceOverlays), left zeroed here
+// per the task brief and filled in by Task 12. The rowFrames loop
+// (:14373-14401) is the closest thing to a verbatim carry-over: same
+// four-component-per-row shape, ages 0..kDssRows-1, oldest first.
+// Upstream pre-subtracts each row's own target-relative delta at write
+// time (rowCenterMhz - dssTargetCenterMhz) and always writes 0 for
+// targetCenterOffsetMhz; this port writes both sides absolute (the row's
+// own captured centre, and the CURRENT centre) and lets the shader's
+// "(targetCenterOffsetMhz - frame.x)" subtraction do the same work --
+// algebraically identical (target - row) either way, verified by hand
+// against dss_mesh.vert:120-122 before porting this way, and cheaper: one
+// subtraction per fragment instead of kDssRows subtractions per frame on
+// the CPU whether or not that row is ever sampled.
 void SpectrumWidget::writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
                                      const QRect& specRect, float dpr)
 {
-    Q_UNUSED(batch);
-    Q_UNUSED(specRect);
-    Q_UNUSED(dpr);
+    if (!m_dssUbo || !batch) { return; }
+    const double targetBwMhz = m_bandwidthHz / 1.0e6;
+    const double targetCenterMhz = m_centerHz / 1.0e6;
+    const DssShape shape = dssShape();
+
+    std::array<float, kDssMeshUboFloats> ubo{};
+    int i = 0;
+    // rowOffset: ring scroll plus a half texel so Nearest lands on centres.
+    ubo[i++] = (m_dss.headRing() + 0.5f) / static_cast<float>(m_dss.rows());
+    ubo[i++] = dssFloorDbm();
+    ubo[i++] = dssSpanDb();
+    ubo[i++] = 0.6f;                                  // zCurve: lift the floor band
+    ubo[i++] = shape.backWidthFrac;
+    ubo[i++] = shape.depthSpanFrac;
+    ubo[i++] = shape.frontMaxRidgeFrac;
+    ubo[i++] = kDssHaze;
+    ubo[i++] = static_cast<float>(m_dss.cols());
+    ubo[i++] = static_cast<float>(targetBwMhz);
+    ubo[i++] = static_cast<float>(targetCenterMhz);
+    ubo[i++] = 1.0f;                                  // rowFrequencyFrames on
+    ubo[i++] = m_dssScrollProgressRows;
+    ubo[i++] = static_cast<float>(m_dss.rows());
+    //-KG4VCF [v0.5.3] Always one: our producer appends a single row per
+    // waterfall tick. Permitted tier 1 deviation 2 of 2, design doc 2.3.
+    ubo[i++] = 1.0f;                                  // scrollDistanceRows
+    ubo[i++] = kDssColorSpanDb;
+    ubo[i++] = static_cast<float>(m_dss.rowCount());
+    ubo[i++] = static_cast<float>(kDssVisibleRows);
+    ubo[i++] = specRect.width()  * dpr;
+    ubo[i++] = specRect.height() * dpr;
+    ubo[i++] = dssRowSpanTarget(targetBwMhz);
+    ubo[i++] = static_cast<float>(m_dssMeshCols);
+    ubo[i++] = 0.0f;                                  // std140 pad
+    ubo[i++] = 0.0f;                                  // std140 pad
+
+    const QColor bg(0x0a, 0x0a, 0x14);
+    ubo[i++] = bg.redF();
+    ubo[i++] = bg.greenF();
+    ubo[i++] = bg.blueF();
+    ubo[i++] = 1.0f;
+
+    i += 8 * 4;   // shadowBands, filled by Task 12
+    i += 8 * 4;   // shadowStyles, filled by Task 12
+    ubo[i++] = 0.0f;                                  // descriptor count
+    ubo[i++] = m_threeDSliceDepth ? 1.0f : 0.0f;
+    ubo[i++] = specRect.width() * dpr;
+    ubo[i++] = 0.0f;
+
+    // rowFrames: per-row capture frame so older rows remap correctly while
+    // the operator zooms or tunes with history on screen.
+    for (int age = 0; age < kDssRows; ++age) {
+        ubo[i++] = static_cast<float>(m_dss.rowCenterMhzAtAge(age));
+        ubo[i++] = static_cast<float>(m_dss.rowBandwidthMhzAtAge(age));
+        ubo[i++] = static_cast<float>(m_dss.rowWideCenterMhzAtAge(age));
+        ubo[i++] = static_cast<float>(m_dss.rowWideBandwidthMhzAtAge(age));
+    }
+    Q_ASSERT(i == kDssMeshUboFloats);
+    batch->updateDynamicBuffer(m_dssUbo, 0,
+                               kDssMeshUboFloats * sizeof(float), ubo.data());
 }
 
 void SpectrumWidget::initialize(QRhiCommandBuffer* cb)

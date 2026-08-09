@@ -613,6 +613,23 @@ public:
     // the palette LUT re-bakes only on a real change.
     quint64 dssPaletteToken() const;
 
+    // The 3DSS surface baseline: the measured noise floor (NoiseFloorTracker
+    // / m_nfLerpAverage) offset down by 3D Floor, so the stack keeps a
+    // constant apparent height as band conditions move.
+    float dssFloorDbm() const;
+    // The dBm display span the surface height maps across.
+    float dssSpanDb() const;
+    // Windows the off-screen DDC bins of `fullBins` (the same FFT frame
+    // that produced the on-screen row) into the wide channel that fills the
+    // wedge beside the exact-channel trapezoid. Public so it is directly
+    // testable without a live FFT pipeline.
+    QVector<float> buildDssWideRow(const QVector<float>& fullBins,
+                                   double& wideCenterMhzOut,
+                                   double& wideBandwidthMhzOut) const;
+    // Wedge-closing row span for the current 3D Span setting, scaled
+    // against whatever wide-channel overhang is actually on screen.
+    float dssRowSpanTarget(double targetBandwidthMhz) const;
+
     // Test seams. pushWaterfallRow() is private and normally driven by the
     // WaterfallTicker thread; these let the row-tee placement be proven
     // without standing up a ticker or a QRhi context.
@@ -621,6 +638,17 @@ public:
     }
     void setTxActiveForTest(bool on) { m_txActiveForTest = on; }
     int  dssRowsPushedForTest() const { return m_dssRowsPushed; }
+    // NoiseFloorTracker runs from live FFT frames; this seam drives
+    // dssFloorDbm() directly so the floor-anchoring math is testable
+    // without standing up the noise-floor pipeline.
+    void setMeasuredNoiseFloorForTest(float dbm) { m_nfLerpAverage = dbm; }
+    // updateSpectrumLinear() is the only production writer of
+    // m_lastFullBinsDbm (see its definition); this seam drives
+    // buildDssWideRow()'s production call path (via pushDssRow()) without
+    // standing up the FFT pipeline.
+    void setFullBinsForTest(const QVector<float>& binsDbm) {
+        m_lastFullBinsDbm = binsDbm;
+    }
 
     void setWfOpacity(int percent);          // 0..100
     int  wfOpacity() const { return m_wfOpacity; }
@@ -1694,6 +1722,12 @@ private:
     QVector<float> m_renderedPixels;       // spectrum avenger output (dBm)
     QVector<float> m_wfDisplayLinearPixels; // waterfall detector output (linear)
     QVector<float> m_wfRenderedPixels;     // waterfall avenger output (dBm)
+    // 3DSS wide channel feed: m_fullLinearBins converted to dBm at full
+    // bin resolution (unsliced -- NOT visibleBinRange()'d), so
+    // buildDssWideRow() can window bins outside the current view. Cached
+    // once per FFT frame in updateSpectrumLinear(), gated on Mode3D since
+    // nothing reads it in 2D. See buildDssWideRow()/pushDssRow() (.cpp).
+    QVector<float> m_lastFullBinsDbm;
 
     // Equivalent Noise Bandwidth of the current FFT window, in bins.
     // Refreshed every frame via the windowEnb arg on fftReadyLinear so
@@ -1916,6 +1950,17 @@ private:
     DssRenderer m_dss;
     int  m_dssRowsPushed{0};
     bool m_txActiveForTest{false};
+    // Continuous scroll progress toward the back between discrete DSS row
+    // pushes (0 just after a push, ramping to 1 by the time the next one
+    // lands), so the mesh glides instead of popping once per push. Advanced
+    // from wall clock in the m_displayTimer tick, reset in pushDssRow().
+    // NereusSDR-original: upstream drives the equivalent quantity from a
+    // QElapsedTimer restarted per push burst (SpectrumWidget.cpp:6031-6064
+    // [@1872028c]); NereusSDR's producer always advances by exactly one
+    // row, so an accumulate/reset pair on the existing display timer needs
+    // no new clock object.
+    float  m_dssScrollProgressRows{0.0f};
+    qint64 m_dssLastTickMs{0};   // wall clock of the previous display tick
 
     // AGC rolling envelope (tracked across waterfall rows).
     float m_wfAgcRunMin{0.0f};
