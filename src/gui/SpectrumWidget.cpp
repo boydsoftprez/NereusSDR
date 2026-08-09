@@ -5223,6 +5223,30 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
         effectiveHigh = effectiveLow + 1.0f;
     }
 
+    // Everything at or under the floor is the low colour, which on the TX
+    // path is a control the operator actually set.
+    //
+    // From Thetis display.cs:6424-6427 [v2.10.3.15], the TX branch that pairs
+    // the threshold with the colour:
+    //     low_threshold  = (float)TXWFAmpMin;
+    //     high_threshold = (float)TXWFAmpMax;
+    //     cScheme        = _tx_color_scheme;
+    //     low_color      = waterfall_low_color_tx;
+    // consumed at :6766-6768 under `if (waterfall_data[i] <= low_threshold)`
+    // (:6764).
+    //
+    // NereusSDR ported the threshold half and not the colour half. TX Low
+    // Color was settable, persisted and read back, and dbmToRgb never looked
+    // at it: a bin at or below m_txWfLowLevel produced adjusted == 0 and fell
+    // into the palette's first gradient stop. Found by Codex on PR #317.
+    //
+    // TX only. The RX floor colour is the RX palette's own first stop and
+    // has no separate control, so reading one here would invent behaviour
+    // rather than restore it.
+    if (isTx && dbm <= effectiveLow) {
+        return m_txWfLowColor.rgb();
+    }
+
     // From Thetis display.cs:6889-6891
     float range = effectiveHigh - effectiveLow;
     float adjusted = (dbm - effectiveLow) / range;
@@ -7592,13 +7616,25 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
     // stop. Bench 2026-08-05, "i cant let go, it just goes up and down no
     // matter where the mouse is". Checking the live button state costs
     // nothing and cannot get stuck.
+    //
+    // A drag that ends here is a drag that ENDED, so it has to finalise the
+    // same way mouseReleaseEvent does. The first version only cleared the
+    // flag, so on exactly the macOS case this exists for, the scale change
+    // held for the session and was thrown away at exit: no
+    // dbmRangeChangeRequested for the observers, no scheduleSettingsSave.
+    // The operator drags the scale into shape, quits, and comes back to the
+    // old one having done nothing wrong. Found by Codex on PR #317.
     if (m_draggingDbm && !(event->buttons() & Qt::LeftButton)) {
         m_draggingDbm = false;
         setCursor(Qt::ArrowCursor);
+        emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
+        scheduleSettingsSave();
     }
     if (m_draggingDbmRange && !(event->buttons() & Qt::RightButton)) {
         m_draggingDbmRange = false;
         setCursor(Qt::ArrowCursor);
+        emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
+        scheduleSettingsSave();
     }
 
     if (m_draggingDbm) {

@@ -35,6 +35,7 @@ private slots:
     void no_pointer_path_tunes_while_keyed();
     void keyed_save_leaves_the_receive_bandwidth_alone();
     void txGrid_load_accepts_what_the_drag_can_produce();
+    void tx_low_colour_is_used_below_the_floor();
 };
 
 // 1. Fresh widget has MOX overlay off
@@ -266,6 +267,36 @@ void TestSpectrumWidgetMoxOverlay::txGrid_load_accepts_what_the_drag_can_produce
     w.setMoxOverlay(true);                       // swap the transmit grid in
 
     QCOMPARE(w.refLevel(), 60.0f);
+}
+
+// TX Low Color is a control the operator can set, so it has to reach a pixel.
+//
+// It was persisted and read back and never consulted in dbmToRgb: a bin at or
+// below m_txWfLowLevel produced adjusted == 0 and fell into the palette's
+// first gradient stop. Thetis pairs the two in its TX branch
+// (display.cs:6424-6427 [v2.10.3.15], low_threshold and low_color set
+// together) and NereusSDR ported only the threshold. Found by Codex on
+// PR #317.
+void TestSpectrumWidgetMoxOverlay::tx_low_colour_is_used_below_the_floor()
+{
+    SpectrumWidget w;
+    w.setTxWfLowLevel(-100);
+    w.setTxWfHighLevel(0);
+    w.setTxWfLowColor(QColor(17, 34, 51));      // nothing a palette would pick
+
+    // Receive is untouched: it has no separate low-colour control, so the
+    // floor there is still the palette's own first stop.
+    const QRgb rxFloor = w.dbmToRgbForTest(-140.0f);
+    QVERIFY2(rxFloor != qRgb(17, 34, 51),
+             "the TX low colour leaked into the receive path");
+
+    w.setMoxOverlay(true);
+    QCOMPARE(w.dbmToRgbForTest(-140.0f), qRgb(17, 34, 51));  // under the floor
+    QCOMPARE(w.dbmToRgbForTest(-100.0f), qRgb(17, 34, 51));  // exactly on it
+
+    // And a bin above the floor still comes from the gradient.
+    QVERIFY2(w.dbmToRgbForTest(-20.0f) != qRgb(17, 34, 51),
+             "the low colour swallowed a bin above the floor");
 }
 
 QTEST_MAIN(TestSpectrumWidgetMoxOverlay)
