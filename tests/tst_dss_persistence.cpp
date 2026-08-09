@@ -24,10 +24,20 @@
 // real ~/.config/NereusSDR/NereusSDR.settings). init()/cleanup() clear it
 // before and after every slot so no test's writes can leak into another's
 // fresh PanadapterModel/SpectrumWidget construction.
+//
+// Fix-forward (coordinator review): storage alone does not make 3D Floor
+// recall on band change operator-visible -- something has to push the
+// stored value into the live SpectrumWidget. That connection is
+// MainWindow::wireDss3DFloorRecallForTest, a static composition seam
+// (same shape as the pre-existing wireWidebandExtensionForTest etc. in
+// MainWindow.h) that MainWindow's constructor calls verbatim, so the test
+// below exercises the exact connect() call production code makes, not a
+// parallel test-only copy of it.
 
 #include <QtTest/QtTest>
 
 #include "core/AppSettings.h"
+#include "gui/MainWindow.h"
 #include "gui/SpectrumWidget.h"
 #include "models/PanadapterModel.h"
 
@@ -214,6 +224,45 @@ private slots:
             QStringLiteral("DisplayGridMax_") + bandKeyName(Band::Band30m)));
         QVERIFY(!AppSettings::instance().contains(
             QStringLiteral("Display3DFloorDepth_") + bandKeyName(Band::Band30m)));
+    }
+
+    // ============================================================
+    // End-to-end recall: PanadapterModel -> live SpectrumWidget
+    // ============================================================
+
+    // Catches: the recall connection never wired at all, wired to the
+    // wrong signal, or wired but reading the wrong band. Unlike
+    // floorDepth_isRecalledPerBand (direct set-then-get on the model,
+    // never touches a SpectrumWidget) this drives the actual production
+    // seam, MainWindow::wireDss3DFloorRecallForTest, and asserts on the
+    // WIDGET's own dssFloorDepth() getter -- the thing an operator
+    // actually sees on the panadapter -- not the model's storage.
+    //
+    // Both bands are set up front, before wiring, so the first assertion
+    // also exercises the seam's initial push (band 80m is already current
+    // when wireDss3DFloorRecallForTest runs), not only its bandChanged
+    // handler.
+    void bandChangeRecallsIntoTheLiveWidget_endToEnd()
+    {
+        PanadapterModel pan;
+        SpectrumWidget sw;
+
+        pan.setDss3DFloorDepthForBand(Band::Band80m, 4);
+        pan.setDss3DFloorDepthForBand(Band::Band10m, 18);
+
+        pan.setCenterFrequency(3700000.0);  // 3.7 MHz -> 80m
+        QCOMPARE(pan.band(), Band::Band80m);
+
+        MainWindow::wireDss3DFloorRecallForTest(&pan, &sw);
+        QCOMPARE(sw.dssFloorDepth(), 4);  // initial push landed on wiring
+
+        pan.setCenterFrequency(28400000.0);  // 28.4 MHz -> 10m
+        QCOMPARE(pan.band(), Band::Band10m);
+        QCOMPARE(sw.dssFloorDepth(), 18);  // live widget followed the change
+
+        pan.setCenterFrequency(3700000.0);  // back to 80m
+        QCOMPARE(pan.band(), Band::Band80m);
+        QCOMPARE(sw.dssFloorDepth(), 4);  // and back again
     }
 };
 

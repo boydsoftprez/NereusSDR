@@ -991,6 +991,28 @@ void MainWindow::fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
     }
 }
 
+// 3D Stacked-Trace Spectrum Plan Task 14 fix-forward: 3D Floor recall.
+// Unlike the other five 3D controls (per panadapter, stored on
+// SpectrumWidget itself), 3D Floor is stored per band on PanadapterModel
+// because it is anchored to the measured noise floor -- see
+// PanadapterModel::dss3DFloorDepthForBand's class-header comment. Pushes
+// the value stored for the current band immediately (so app startup, which
+// runs before any bandChanged() has fired, is covered too --
+// SpectrumWidget::loadSettings() never touches m_dssFloorDepth, so without
+// this push the widget would sit at its hardcoded ship default of 6 until
+// the operator's next band change), then keeps it synced on every
+// PanadapterModel::bandChanged() crossing.
+void MainWindow::wireDss3DFloorRecallForTest(PanadapterModel* pan,
+                                             SpectrumWidget* spectrum)
+{
+    if (!pan || !spectrum) { return; }
+    spectrum->setDssFloorDepth(pan->dss3DFloorDepthForBand(pan->band()));
+    connect(pan, &PanadapterModel::bandChanged, spectrum,
+            [pan, spectrum](NereusSDR::Band newBand) {
+        spectrum->setDssFloorDepth(pan->dss3DFloorDepthForBand(newBand));
+    });
+}
+
 // Phase 3F: create + fully wire a secondary slice's VfoWidget on the given
 // SpectrumWidget. Factored out of the sliceAdded handler so the same wiring
 // is reused on panKeyChanged migration. Slice A (index 0) keeps its own
@@ -3861,6 +3883,16 @@ void MainWindow::buildUI()
                     activeSpectrumWidget()->setNoiseFloorFastAttack(true);
                 });
             }
+
+            // 3D Stacked-Trace Spectrum Plan Task 14 fix-forward: 3D Floor
+            // recall, same bandChanged block as the ClarityController
+            // priming and NF fast-attack connections directly above, so 3D
+            // Floor arrives at the same time as the rest of the per-band
+            // state a band change already recalls. Routed through the
+            // static seam below (same shape as wireWidebandExtensionForTest
+            // etc.) so the unit test exercises the exact connect() call
+            // this constructor makes, not a parallel test-only copy of it.
+            wireDss3DFloorRecallForTest(pan0, activeSpectrumWidget());
         }
     }
 
