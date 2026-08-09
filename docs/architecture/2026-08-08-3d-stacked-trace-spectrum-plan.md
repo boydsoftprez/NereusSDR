@@ -4179,3 +4179,75 @@ shader headers."
 
 **Deep scrollback (design §3.1 `m_history*`) is deliberately out of this plan.** Upstream keeps a separate `qfloat16` scrollback ring so the 3D surface can be rebuilt while browsing waterfall history. That is a real parity item, but it is only reachable once our own waterfall scrollback and the 3D surface are both live, and it has no bearing on the live view. It should be raised as a follow-up rather than silently dropped.
 
+
+---
+
+# Addendum: display controls in the left panel (Tasks 16-18)
+
+Added 2026-08-09 after bench feedback on the first smoke test. Two findings
+from the operator:
+
+1. The 3D controls exist only in the right-click popup and Setup. They belong
+   in the left-hand display widget too, and while we are there, so do the other
+   right-click display controls that make sense.
+2. Dragging the dBm strip on the right edge does nothing in 3D.
+
+Scope decision: the applet carries ALL 14 display controls and becomes the
+primary surface. Branch decision: all of it lands on this branch rather than a
+follow-up, accepted with the noted cost that the PR roughly doubles and mixes a
+feature port with a cross-cutting display refactor.
+
+## Task 16: wire the dBm strip drag to 3D Floor
+
+The drag is not broken, it is wired to a value 3D ignores. In 2D it moves
+`m_refLevel` (`SpectrumWidget.cpp`, find `m_draggingDbm` by name), and the 2D
+scale is Ref-anchored so the whole window slides. In 3D nothing reads
+`m_refLevel`: the surface anchors to `dssFloorDbm()`, which is
+`m_nfLerpAverage - m_dssFloorDepth`. So the gesture runs, mutates a variable,
+and the 3D view has no opinion about it.
+
+Wire the plain drag to 3D Floor in 3D mode. That is the true analogue: drag
+down to reveal more noise, up to hide it. Ctrl-drag needs NO change, because
+the span-zoom gesture writes `m_dynamicRange`, which `dssSpanDb()` already
+reads.
+
+Rescale the travel. The 2D formula is `m_dynamicRange / specH` dB per pixel,
+tuned for a range spanning -160..+20. 3D Floor spans 0..24, so reusing it would
+saturate in about a centimetre. Map the full strip height to the full 0..24
+range instead.
+
+Keep the 0..24 bounds. They match the slider and upstream; widening them here
+would put the drag and the slider out of step.
+
+Tests: in 3D, a drag of N pixels changes `dssFloorDepth()` and NOT `refLevel`.
+In 2D, the same drag changes `refLevel` and NOT `dssFloorDepth()`. Both
+directions, and prove each fails if the mode branch is inverted.
+
+## Task 17: DisplaySettingsModel
+
+A QObject owning the 14 display values, one setter and one changed signal each,
+plus load/save. Every surface binds to the model, never to another surface.
+
+Why: today two surfaces sync point-to-point with `m_updatingFromModel` guards,
+and the final review found one guard test that could not actually prove the
+guard worked. A third surface makes that 42 hand-maintained bindings. With a
+model each surface has one binding direction and the echo problem becomes
+structurally impossible rather than something a future editor must remember.
+
+Absorb persistence here too. It currently lives in `SpectrumWidget::
+loadSettings()`, where 3D Floor's per-band split already sits awkwardly beside
+the per-pan keys.
+
+The 14: Colour Scheme, Colour Gain, Black Level, Ref Level, Dyn Range, Fill
+Alpha, Fill spectrum trace, Spectrum mode, 3D Floor, 3D Gain, 3D Span,
+3D Angle, 3D Slice Shadow, and the waterfall/spectrum split fraction.
+
+## Task 18: DisplayApplet
+
+Left-panel applet carrying all 14, in the same three sections the popup uses
+(Waterfall, Spectrum, 3D View). Binds to the model. Re-point the right-click
+popup and Setup at the model in the same task so there is exactly one source of
+truth from the moment the third surface exists.
+
+Follow `AppletWidget`'s established shape; register with
+`AppletVisibilityController` so it can be shown and hidden like its siblings.
