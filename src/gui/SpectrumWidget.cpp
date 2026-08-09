@@ -7291,31 +7291,6 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             }
         }
 
-        // 3D Slice Shadow toggle. Upstream keeps this checkable action in
-        // the same general right-click QMenu that also carries "Show Tune
-        // Guides" / "Extended Frequency Line" / "Extended Passband" --
-        // none of which NereusSDR has ported, since NereusSDR's own
-        // "default, nothing else hit" right-click surface below is the
-        // SpectrumOverlayMenu *widget*, not a QMenu, and that widget's
-        // future "3D VIEW" section (mode / floor / gain / span / angle) is
-        // a later task in this same plan. This one boolean therefore gets
-        // its own small, standalone QMenu rather than waiting on that
-        // widget to grow a section for it. Blocking exec(), then falls
-        // through to SpectrumOverlayMenu below regardless of the outcome:
-        // that widget must stay reachable by plain right-click even while
-        // already in 3D mode, since its own upcoming mode control is how an
-        // operator gets back to 2D.
-        // From AetherSDR SpectrumWidget.cpp:9975-9979 [@1872028c]
-        if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
-            QMenu menu(this);
-            QAction* depthAction = menu.addAction(tr("3D Slice Shadow"));
-            depthAction->setCheckable(true);
-            depthAction->setChecked(m_threeDSliceDepth);
-            connect(depthAction, &QAction::toggled,
-                    this, &SpectrumWidget::setThreeDSliceDepth);
-            menu.exec(event->globalPosition().toPoint());
-        }
-
         // Show overlay menu on right-click (default — not on a spot).
         if (!m_overlayMenu) {
             m_overlayMenu = new SpectrumOverlayMenu(this);
