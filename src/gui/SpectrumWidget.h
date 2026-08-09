@@ -656,6 +656,22 @@ public:
     void setFullBinsForTest(const QVector<float>& binsDbm) {
         m_lastFullBinsDbm = binsDbm;
     }
+    // Public one-line forward (drawDbmScale3D is private) so the 3D dBm
+    // scale can be painted onto an off-widget QImage/QPainter without a
+    // live paintEvent(), following the drawSpotMarkersForTest /
+    // drawNotchMarkersForTest convention above.
+    void drawDbmScale3DForTest(QPainter& p, const QRect& specRect, float floorDbm) {
+        drawDbmScale3D(p, specRect, floorDbm);
+    }
+    // drawDbmScaleLabels' rangeDb<=0 guard is unreachable through
+    // drawDbmScale3DForTest() alone: dssSpanDb() floors at 1.0f (Task 9), so
+    // drawDbmScale3D() can never compute a non-positive span in production.
+    // This seam drives the guard directly so the degenerate-span case can be
+    // proven, not just argued.
+    void drawDbmScaleLabelsForTest(QPainter& p, const QRect& specRect,
+                                   float topDbm, float rangeDb) {
+        drawDbmScaleLabels(p, specRect, topDbm, rangeDb);
+    }
 
     void setWfOpacity(int percent);          // 0..100
     int  wfOpacity() const { return m_wfOpacity; }
@@ -1572,6 +1588,19 @@ private:
     void drawWaterfallChrome(QPainter& p, const QRect& wfRect);
     void drawFreqScale(QPainter& p, const QRect& r);
     void drawDbmScale(QPainter& p, const QRect& specRect);
+    // Task 11 (3D dBm scale). drawDbmScaleChrome/drawDbmScaleLabels are new
+    // additions -- ported from AetherSDR's shared 2D/3D helpers -- and are
+    // NOT wired into drawDbmScale() above, which stays untouched so the 2D
+    // path sees zero behavioural change. Only drawDbmScale3D() calls them.
+    // From AetherSDR SpectrumWidget.cpp:17223-17335 [@1872028c]
+    void drawDbmScaleChrome(QPainter& p, const QRect& specRect);
+    void drawDbmScaleLabels(QPainter& p, const QRect& specRect,
+                            float topDbm, float rangeDb);
+    // In 3D mode, a single right-side axis cannot be pixel-exact for every
+    // perspective row. Keep it as a full-height amplitude reference anchored
+    // to the 3D floor, so plain drag visibly shifts the dBm numbers and
+    // Ctrl/Meta-drag changes the span.
+    void drawDbmScale3D(QPainter& p, const QRect& specRect, float floorDbm);
     void drawBandPlan(QPainter& p, const QRect& specRect);
 
     // ── Waterfall scrollback (sub-epic E) ─────────────────────────────────

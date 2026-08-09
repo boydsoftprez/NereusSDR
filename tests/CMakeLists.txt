@@ -6250,6 +6250,15 @@ nereus_add_test(tst_dss_floor_and_span)
 # Source: AetherSDR src/gui/DssRenderer.cpp:753-903 [@1872028c].
 nereus_add_test(tst_dss_cpu_surface)
 
+# ── 3D stacked-trace spectrum plan, Task 11: 3D dBm scale ────────────────
+# Pins drawDbmScale3D(): floor-anchored (dssFloorDbm() + rounded 3D Span),
+# not Ref-anchored like the 2D scale, so its rendered output must move when
+# the measured noise floor moves. Also pins the ported rangeDb<=0 guard
+# (drawDbmScaleLabels) against degenerate/zero-size rects and non-positive
+# spans without crashing or dividing by zero.
+# Source: AetherSDR src/gui/SpectrumWidget.cpp:17223-17335 [@1872028c].
+nereus_add_test(tst_dss_dbm_scale)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

@@ -3394,7 +3394,14 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
         // drawDbmScale needs the FULL-WIDTH spectrum-vertical rect so the strip
         // lands in the reserved right-edge zone at x=[w-kDbmStripW..w-1].
         // Passing the clipped specRect would put the strip INSIDE the spectrum.
-        drawDbmScale(p, QRect(0, 0, w, specH));
+        // dBm strip: 2D draws a linear dBm axis; 3D maps the ticks onto the front
+        // (live) trace's ridge band. Same strip chrome and click targets either way.
+        // From AetherSDR SpectrumWidget.cpp:15122-15128 [@1872028c]
+        if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+            drawDbmScale3D(p, QRect(0, 0, w, specH), dssFloorDbm());
+        } else {
+            drawDbmScale(p, QRect(0, 0, w, specH));
+        }
     }
     drawBandPlan(p, specRect);
     // Sub-epic E: time-scale + LIVE button on the right edge of the
@@ -4204,6 +4211,118 @@ void SpectrumWidget::drawDbmScale(QPainter& p, const QRect& specRect)
             QPointF(strip.left() + 6, y - staticAscent / 2.0),
             cit.value());
     }
+}
+
+// ---- dBm scale strip: shared chrome + labels for the 3D scale ----
+// From AetherSDR SpectrumWidget.cpp:17223-17261 [@1872028c]
+//
+// Upstream shares this chrome (background/border/up-down arrows) between
+// its own drawDbmScale() (2D) and drawDbmScale3D(). Ported fresh here as a
+// NEW function rather than factored out of drawDbmScale() above: that
+// function is used by the 2D path on every frame and must not change.
+// The only current caller is drawDbmScale3D() below.
+void SpectrumWidget::drawDbmScaleChrome(QPainter& p, const QRect& specRect)
+{
+    const QRect strip = NereusSDR::DbmStrip::stripRect(specRect, kDbmStripW);
+
+    // Opaque background: since #3482 the FFT trace/waterfall end at the strip's
+    // left edge, so nothing meaningful renders beneath it — a solid fill gives a
+    // crisp right edge instead of letting the bg/grid bleed through and read as
+    // right-side asymmetry against the hard left window border.
+    p.fillRect(strip, QColor(0x0a, 0x0a, 0x18, 220));
+
+    // Left border line
+    p.setPen(QColor(0x30, 0x40, 0x50));
+    p.drawLine(strip.left(), specRect.top(), strip.left(), specRect.bottom());
+
+    // ── Up/Down arrows side by side at top ─────────────────────────────
+    const int halfW = kDbmStripW / 2;
+    const int upCx  = strip.left() + halfW / 2;         // left half center
+    const int dnCx  = strip.left() + halfW + halfW / 2; // right half center
+    const int arrowTop = specRect.top() + 2;
+    const int arrowBot = specRect.top() + kDbmArrowH - 2;
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0x60, 0x80, 0xa0));
+
+    // Up arrow (▲) — left side
+    QPolygon upTri;
+    upTri << QPoint(upCx - 5, arrowBot)
+          << QPoint(upCx + 5, arrowBot)
+          << QPoint(upCx,     arrowTop);
+    p.drawPolygon(upTri);
+
+    // Down arrow (▼) — right side
+    QPolygon dnTri;
+    dnTri << QPoint(dnCx - 5, arrowTop)
+          << QPoint(dnCx + 5, arrowTop)
+          << QPoint(dnCx,     arrowBot);
+    p.drawPolygon(dnTri);
+}
+
+// From AetherSDR SpectrumWidget.cpp:17263-17312 [@1872028c]
+void SpectrumWidget::drawDbmScaleLabels(QPainter& p, const QRect& specRect,
+                                        float topDbm, float rangeDb)
+{
+    if (rangeDb <= 0.0f) {
+        return;
+    }
+    const QRect strip = NereusSDR::DbmStrip::stripRect(specRect, kDbmStripW);
+
+    // ── dBm labels — full-height LINEAR axis: topDbm at the top, topDbm-rangeDb
+    //    at the baseline, evenly spaced across specRect.height(). ──────────
+    QFont f = p.font();
+    f.setPointSize(7);
+    p.setFont(f);
+    const QFontMetrics fm(f);
+
+    const int labelTop = specRect.top() + kDbmArrowH + 4;
+
+    // Use adaptive step: aim for ~4-6 labels
+    const float stepDb = NereusSDR::DbmStrip::adaptiveStepDb(rangeDb);
+
+    const float bottomDbm = topDbm - rangeDb;
+    const float firstLabel = std::ceil(bottomDbm / stepDb) * stepDb;
+
+    auto drawTickLabel = [&](float dbm, int y, int textBaseline) {
+        p.setPen(QColor(0x50, 0x70, 0x80));
+        p.drawLine(strip.left(), y, strip.left() + 4, y);
+
+        const QString label = QString::number(static_cast<int>(std::lround(dbm)));
+        p.setPen(QColor(0x80, 0xa0, 0xb0));
+        p.drawText(strip.left() + 6, textBaseline, label);
+    };
+
+    for (float dbm = firstLabel; dbm <= topDbm; dbm += stepDb) {
+        const float frac = (topDbm - dbm) / rangeDb;
+        const int y = specRect.top() + static_cast<int>(frac * specRect.height());
+        if (y < labelTop || y > specRect.bottom() - 5) { continue; }
+
+        drawTickLabel(dbm, y, y + fm.ascent() / 2);
+    }
+
+    const int bottomY = specRect.bottom();
+    if (bottomY >= labelTop) {
+        drawTickLabel(bottomDbm, bottomY, bottomY - 2);
+    }
+}
+
+// ─── dBm scale strip for 3D stacked-trace mode ───────────────────────────
+// From AetherSDR SpectrumWidget.cpp:17320-17335 [@1872028c]
+//
+// In 3D mode, a single right-side axis cannot be pixel-exact for every
+// perspective row. Keep it as a full-height amplitude reference anchored to the
+// 3D floor, so plain drag visibly shifts the dBm numbers and Ctrl/Meta-drag
+// changes the span.
+void SpectrumWidget::drawDbmScale3D(QPainter& p, const QRect& specRect,
+                                    float floorDbm)
+{
+    drawDbmScaleChrome(p, specRect);
+    // Round the span the same way the mesh/CPU surface do (buildDssImage /
+    // renderGpuFrame use std::round(span*2)/2) so labels and surface agree to
+    // the pixel instead of a sub-dB top/bottom skew (#3937).
+    const float span = std::round(dssSpanDb() * 2.0f) / 2.0f;
+    drawDbmScaleLabels(p, specRect, floorDbm + span, span);
 }
 
 // ---- Band-plan strip ----
@@ -8863,7 +8982,14 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                 // drawDbmScale needs the FULL-WIDTH rect so the strip
                 // lands in the reserved right-edge zone at x=[w-kDbmStripW..w-1].
                 // Passing the clipped specRect would put the strip INSIDE the spectrum.
-                drawDbmScale(p, QRect(0, 0, w, specH));
+                // dBm strip: both render modes use a readable full-height amplitude
+                // reference; the 3D surface itself is perspective-foreshortened.
+                // From AetherSDR SpectrumWidget.cpp:13983-13989 [@1872028c]
+                if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+                    drawDbmScale3D(p, QRect(0, 0, w, specH), dssFloorDbm());
+                } else {
+                    drawDbmScale(p, QRect(0, 0, w, specH));
+                }
             }
             // Plan 4 D9 (Cluster E) + follow-up (option A): TX filter overlay
             // on panadapter (GPU path), MOX-gated.  Painted BEFORE drawBandPlan
