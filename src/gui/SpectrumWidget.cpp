@@ -114,6 +114,7 @@
 
 #include "SpectrumWidget.h"
 #include "SpectrumOverlayMenu.h"
+#include "core/WidebandFftEngine.h"
 #include "ImdOverlay.h"
 #include "spectrum/WaterfallTicker.h"
 #include "widgets/VfoWidget.h"
@@ -2693,10 +2694,47 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // current m_centerHz +/- m_bandwidthHz/2 window against m_ddcCenterHz
     // + m_sampleRateHz.  When zoomed out, slice == full FFT.
     auto [firstBin, lastBin] = visibleBinRange(binsLinear.size());
+
+    // Drop the DDC's filter skirt before anything is derived from the range.
+    // The outermost bins sit in the decimation filter's transition band and
+    // read near-nothing; at normal zoom they are off-screen, but the extended
+    // pan draws the island at its true width and puts them on screen as a
+    // dark band at each edge (bench 2026-08-08, "still black gaps between
+    // wideband" and the DDC). Thetis discards the same 4% on its own display
+    // (specHPSDR.cs:529-535 [v2.10.3.15]).
+    //
+    // Must happen before sliceCount, and it has to agree with the clipped
+    // span listenableIslandPixels lays out, or the island's bins and pixels
+    // would disagree and every signal in it would land at the wrong
+    // frequency.
+    if (m_extendedMode) {
+        const int clip = static_cast<int>(
+            std::floor(kDdcClipFraction * binsLinear.size()));
+        firstBin = std::max(firstBin, clip);
+        lastBin  = std::min(lastBin,
+                            static_cast<int>(binsLinear.size()) - 1 - clip);
+    }
+
     const int sliceCount = lastBin - firstBin + 1;
     if (sliceCount <= 0) { return; }
 
-    const double pixPerBin = static_cast<double>(displayWidth) / sliceCount;
+    // Extended pan (Sub-Epic F Task 8, finished 2026-08-08): the DDC only
+    // covers part of the window once the operator zooms past its rate, so it
+    // gets only the pixels it actually spans and the wideband ADC fills the
+    // rest. visibleBinRange() clamps to the DDC's bin array, so before this
+    // the DDC's spectrum was decimated across the FULL panel -- stretched,
+    // and no longer aligned with the frequency scale under it.
+    //
+    // Outside extended mode listenableIslandPixels() returns the whole width,
+    // which makes islandWidth == displayWidth and every line below identical
+    // to what it was.
+
+    const auto [islandFirstPx, islandLastPx] =
+        listenableIslandPixels(displayWidth);
+    const int islandWidth = islandLastPx - islandFirstPx + 1;
+    if (islandWidth <= 0) { return; }
+
+    const double pixPerBin = static_cast<double>(islandWidth) / sliceCount;
     const double binPerPix = (pixPerBin > 0.0) ? 1.0 / pixPerBin : 1.0;
     const double invEnb    = 1.0 / m_fftWindowEnb;
     // dbmOffset folded into the avenger's power-domain scale so that
@@ -2726,15 +2764,17 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     }
     NereusSDR::applySpectrumDetector(m_spectrumDetector,
                                      sliceCount,
-                                     displayWidth,
+                                     islandWidth,
                                      pixPerBin,
                                      binPerPix,
                                      m_fullLinearBins.constData() + firstBin,
-                                     m_displayLinearPixels.data(),
+                                     m_displayLinearPixels.data() + islandFirstPx,
                                      invEnb,
                                      0.0,
                                      static_cast<double>(sliceCount),
                                      0.0);
+    fillWidebandWings(m_displayLinearPixels, islandFirstPx, islandLastPx,
+                      dbmOffset);
     m_spectrumAvenger.apply(m_displayLinearPixels,
                             avengerMode(m_spectrumAveraging),
                             static_cast<double>(m_spectrumAverageAlpha),
@@ -2792,15 +2832,20 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     }
     NereusSDR::applySpectrumDetector(m_waterfallDetector,
                                      sliceCount,
-                                     displayWidth,
+                                     islandWidth,
                                      pixPerBin,
                                      binPerPix,
                                      m_fullLinearBins.constData() + firstBin,
-                                     m_wfDisplayLinearPixels.data(),
+                                     m_wfDisplayLinearPixels.data() + islandFirstPx,
                                      invEnb,
                                      0.0,
                                      static_cast<double>(sliceCount),
                                      0.0);
+    // Wings go into the waterfall too: a waterfall that stopped at the DDC
+    // edge while the trace above it ran the full width would read as the
+    // wings having no history rather than as a boundary.
+    fillWidebandWings(m_wfDisplayLinearPixels, islandFirstPx, islandLastPx,
+                      dbmOffset);
     m_waterfallAvenger.apply(m_wfDisplayLinearPixels,
                              avengerMode(m_waterfallAveraging),
                              static_cast<double>(m_waterfallAverageAlpha),
@@ -3394,6 +3439,44 @@ void SpectrumWidget::drawGrid(QPainter& p, const QRect& specRect)
     double startFine = std::ceil((m_centerHz - m_bandwidthHz / 2.0) / fineStep) * fineStep;
     for (double f = startFine; f < m_centerHz + m_bandwidthHz / 2.0; f += fineStep) {
         int x = hzToX(f, specRect);
+        p.drawLine(x, specRect.top(), x, specRect.bottom());
+    }
+
+    drawExtendedIslandBounds(p, specRect);
+}
+
+// Phase 3F Sub-Epic F Task 9, finished 2026-08-08: mark where the DDC's
+// listenable island ends and the wideband wings begin.
+//
+// Without the markers the two data sources are indistinguishable on screen,
+// and they are not interchangeable: inside the island the operator can hear
+// what they are looking at and a click retunes the slice; outside it the
+// trace is survey data off the wideband ADC and a click retunes the whole
+// DDC (mousePressEvent, the Task 12 branch). A boundary the operator cannot
+// see is a boundary they cross by accident.
+//
+// Drawn from drawGrid so it lands in the same cached static-overlay texture
+// as the rest of the chrome -- the island edges only move when the pan is
+// retuned or zoomed, which already invalidates that cache.
+void SpectrumWidget::drawExtendedIslandBounds(QPainter& p, const QRect& specRect)
+{
+    if (!m_extendedMode || m_sampleRateHz <= 0.0 || m_bandwidthHz <= 0.0) {
+        return;
+    }
+
+    const double ddcLowHz  = m_ddcCenterHz - m_sampleRateHz / 2.0;
+    const double ddcHighHz = m_ddcCenterHz + m_sampleRateHz / 2.0;
+    const double windowLow  = m_centerHz - m_bandwidthHz / 2.0;
+    const double windowHigh = m_centerHz + m_bandwidthHz / 2.0;
+
+    p.setPen(QPen(m_gridColor.lighter(160), 1, Qt::DashLine));
+    for (const double edgeHz : {ddcLowHz, ddcHighHz}) {
+        // An edge outside the window has no boundary to draw: the island
+        // runs off that side of the panel.
+        if (edgeHz < windowLow || edgeHz > windowHigh) {
+            continue;
+        }
+        const int x = hzToX(edgeHz, specRect);
         p.drawLine(x, specRect.top(), x, specRect.bottom());
     }
 }
@@ -4528,11 +4611,10 @@ void SpectrumWidget::clearWaterfallHistory()
 }
 
 // Phase 3F Sub-Epic F Task 6: store the latest per-ADC wideband bins.
-// Sub-Epic F polish (T7-T10) will paint these as a background layer when
-// m_extendedMode is true and the pan's visible frequency range exceeds
-// the active DDC bandwidth.  For now this is silent storage so the
-// FFT pipeline stays warm and bench operators can confirm data is
-// flowing without UI churn.
+//
+// Still no update() here. The display timer drives repaints at a fixed rate
+// (m_displayTimer, 30 fps by default) and the next tick picks these up, so
+// asking for a GPU pass per wideband frame would only add cost.
 void SpectrumWidget::setWidebandBins(int adcIndex, const QVector<float>& dbmBins)
 {
     if (adcIndex == 0) {
@@ -4540,9 +4622,236 @@ void SpectrumWidget::setWidebandBins(int adcIndex, const QVector<float>& dbmBins
     } else if (adcIndex == 1) {
         m_widebandBinsAdc1 = dbmBins;
     }
-    // No update() call: paint is gated behind m_extendedMode (wired in
-    // F polish).  Triggering a repaint here would cost a GPU pass per
-    // wideband frame on hardware that isn't yet rendering the bins.
+}
+
+// -20*log10((sum w)/2): the peak bin of a real transform of a full-scale
+// sinusoid, once the analysis window is accounted for. Same convention the
+// I/Q path uses (FFTEngine.cpp:484-486, -20*log10(sum w)), adjusted by the
+// real-vs-complex split.
+//
+// Reads the window sum from the engine rather than assuming an unwindowed
+// block: WidebandFftEngine gained a Blackman-Harris 7-term window on
+// 2026-08-08, which lowers the coherent gain by about 24 dB. Hardcoding N
+// here would have left the wings that far out the moment the window landed.
+float SpectrumWidget::widebandFftNormalisationDb()
+{
+    const double coherentPeak =
+        WidebandFftEngine::windowSum() / kWidebandRealFftPeakDivisor;
+    if (coherentPeak <= 0.0) { return 0.0f; }
+    return -20.0f * std::log10(static_cast<float>(coherentPeak));
+}
+
+// Refer a wideband bin to the DDC's bin width.
+//
+// Bench 2026-08-08: the wings saturated the panel even with the FFT
+// normalisation right. Both halves of the trace are showing noise, and noise
+// power in a bin scales with that bin's width -- so putting a 7500 Hz
+// wideband bin (122.88 MHz / 16384) next to a 47 Hz DDC bin (192 kHz / 4096)
+// without referring them to a common bandwidth overstates the wideband side
+// by 10*log10(7500/47) = 22 dB. That is the whole discrepancy: -78.27 dB
+// alone saturated, -124.39 dB fell through the floor, and the two brackets
+// straddle this value.
+//
+// Computed per frame rather than baked into a constant because BOTH widths
+// move: the DDC bin width follows the pan's FFT size and the radio's sample
+// rate, and the wideband bin width follows the ADC clock. A fixed number
+// would be correct for exactly one combination and silently wrong for the
+// rest.
+//
+// Same idea as the existing 1-Hz normalisation the DDC path already offers
+// (normalizeShiftDb, -10*log10(binWidthHz), Thetis SetDisplayNormOneHz at
+// specHPSDR.cs:325) — but applied only to the wings, and referred to the
+// island's bin rather than to 1 Hz, since the goal is for the two halves to
+// agree with each other.
+//
+// Note this is a power-DENSITY match, so it is the NOISE FLOORS either side
+// of the boundary that line up. A narrow carrier in a wing reads low by the
+// same factor; the wideband bin is 160x too coarse to resolve one anyway.
+float SpectrumWidget::widebandBandwidthNormalisationDb() const
+{
+    // NOISE bandwidth on both sides, not bin spacing. The wideband transform
+    // is zero-padded, so its bins sit 4x closer together than the bandwidth
+    // each one integrates -- using the spacing here would under-correct by
+    // exactly that padding factor and put the wings 6 dB hot.
+    const double wbNoiseBwHz =
+        (m_widebandAdcRateHz
+         / static_cast<double>(WidebandFftEngine::kCaptureSamples))
+        * WidebandFftEngine::windowEnbBins();
+    const double ddcNoiseBwHz = binWidthHz() * qMax(m_fftWindowEnb, 1e-9);
+    if (wbNoiseBwHz <= 0.0 || ddcNoiseBwHz <= 0.0) {
+        return 0.0f;
+    }
+    return -10.0f * std::log10(static_cast<float>(wbNoiseBwHz / ddcNoiseBwHz));
+}
+
+float SpectrumWidget::widebandTotalCalibrationDb() const
+{
+    return widebandFftNormalisationDb() + widebandBandwidthNormalisationDb();
+}
+
+void SpectrumWidget::setWidebandAdcIndex(int adcIndex)
+{
+    // Two ADC slots is the ceiling for every supported SKU; anything else is
+    // a resolution failure upstream and must not silently select ADC1.
+    m_widebandAdcIndex = (adcIndex == 1) ? 1 : 0;
+}
+
+void SpectrumWidget::setWidebandAdcRateHz(double rateHz)
+{
+    if (rateHz > 0.0) {
+        m_widebandAdcRateHz = rateHz;
+    }
+}
+
+// How far out the operator is allowed to zoom.
+//
+// Bench 2026-08-08: this is why "Extended view (wideband wings)" did nothing
+// even with the paint implemented. BOTH zoom gestures clamped the visible
+// bandwidth to m_sampleRateHz (the wheel at wheelEvent, the frequency-scale
+// drag at mouseMoveEvent), and m_extendedMode's only trigger is
+// `m_bandwidthHz > m_sampleRateHz`. The mode was unreachable from any
+// operator gesture: the toggle enabled a state the UI could not enter.
+//
+// The extended ceiling is the wideband ADC's Nyquist because that is exactly
+// the span wing data exists for -- WidebandFftEngine emits bins covering
+// 0..adcRate/2 (matching Thetis wbDisplay.cs:4680-4704 [v2.10.3.15], where
+// no clipping and no zoom leave low_freq = 0 and high_freq = sample_rate/2).
+// Zooming past it would only add panel that can never be filled.
+//
+// With extended view switched off the ceiling stays exactly where it was, so
+// the operator override still pins a pan to its DDC.
+double SpectrumWidget::maxZoomOutBandwidthHz() const
+{
+    if (!m_extendedViewAllowed || m_sampleRateHz <= 0.0) {
+        return m_sampleRateHz;
+    }
+    return std::max(m_sampleRateHz, m_widebandAdcRateHz / 2.0);
+}
+
+// Phase 3F Sub-Epic F Task 7 geometry, finished 2026-08-08.
+//
+// The DDC covers m_ddcCenterHz +/- m_sampleRateHz/2. Mapped into the window
+// m_centerHz +/- m_bandwidthHz/2, that is the listenable island; everything
+// else is wing. Not extended -> the island is the whole panel, so every
+// caller degrades to the pre-existing behaviour by construction.
+std::pair<int, int> SpectrumWidget::listenableIslandPixels(int displayWidth) const
+{
+    if (displayWidth <= 0) {
+        return {0, -1};
+    }
+    if (!m_extendedMode || m_sampleRateHz <= 0.0 || m_bandwidthHz <= 0.0) {
+        return {0, displayWidth - 1};
+    }
+
+    // Clipped half-span, not the full rate: the outer kDdcClipFraction of
+    // the DDC is filter skirt and is not drawn. The geometry has to agree
+    // with the bin range updateSpectrumLinear feeds the detector, or the
+    // island's signals would land at the wrong frequencies.
+    const double ddcHalfSpanHz = m_sampleRateHz * (0.5 - kDdcClipFraction);
+    const double displayLowHz = m_centerHz - m_bandwidthHz / 2.0;
+    const double ddcLowHz     = m_ddcCenterHz - ddcHalfSpanHz;
+    const double ddcHighHz    = m_ddcCenterHz + ddcHalfSpanHz;
+    const double hzPerPixel   = m_bandwidthHz / static_cast<double>(displayWidth);
+
+    int first = static_cast<int>(std::floor((ddcLowHz - displayLowHz) / hzPerPixel));
+    int last  = static_cast<int>(std::ceil((ddcHighHz - displayLowHz) / hzPerPixel)) - 1;
+
+    first = std::clamp(first, 0, displayWidth - 1);
+    last  = std::clamp(last, 0, displayWidth - 1);
+    if (last < first) {
+        last = first;
+    }
+    return {first, last};
+}
+
+// Phase 3F Sub-Epic F Task 8, finished 2026-08-08.
+//
+// Frequency axis from Thetis wbDisplay.cs:4680-4704 [v2.10.3.15]: for real
+// samples `bin_width = sample_rate / fft_size`, and with no clipping or zoom
+// the usable span works out to 0..sample_rate/2 -- which is exactly the range
+// WidebandFftEngine documents. NereusSDR's engine drops the DC bin, so
+// dbmBins[i] is the FFT's bin i+1 and sits at (i+1) * bin_width.
+//
+// dB scale from Thetis wbDisplay.cs:2106 [v2.10.3.15]:
+//   max = current_display_data[i];
+//   max += rx_display_cal_offset;
+//   max += preamp_offset;
+void SpectrumWidget::fillWidebandWings(QVector<float>& linearPixels,
+                                       int islandFirstPx, int islandLastPx,
+                                       double dbmOffset) const
+{
+    const int width = static_cast<int>(linearPixels.size());
+    if (width <= 0 || m_bandwidthHz <= 0.0) {
+        return;
+    }
+    // Ordinary (non-extended) pan: the island IS the panel, so there are no
+    // wing pixels. Returning here rather than falling into a loop that skips
+    // every pixel keeps the common path free of per-frame work.
+    if (islandFirstPx <= 0 && islandLastPx >= width - 1) {
+        return;
+    }
+
+    const QVector<float>& bins = (m_widebandAdcIndex == 1) ? m_widebandBinsAdc1
+                                                           : m_widebandBinsAdc0;
+    // Bin SPACING for the frequency mapping (where a bin sits). The
+    // bandwidth it integrates is a separate, larger figure and lives in
+    // widebandBandwidthNormalisationDb().
+    const double binWidthHz =
+        m_widebandAdcRateHz
+        / static_cast<double>(WidebandFftEngine::kFftSize);
+    const double displayLowHz = m_centerHz - m_bandwidthHz / 2.0;
+    const double hzPerPixel   = m_bandwidthHz / static_cast<double>(width);
+
+    // The avenger turns its input into dBm as 10*log10(linear * 10^(off/10)),
+    // so a wing pixel that should read `db` dBm has to go in as
+    // 10^((db - off)/10). Folding dbmOffset out here is what puts the wings
+    // and the island on one scale across the boundary.
+    const auto toLinear = [dbmOffset](double db) {
+        return std::pow(10.0, (db - dbmOffset) / 10.0);
+    };
+    // Bottom of the current window rather than a fixed constant, so a wing
+    // with no data reads as "nothing here" at any ref level / range.
+    const double floorLinear = toLinear(m_refLevel - m_dynamicRange);
+
+    const bool haveBins = !bins.isEmpty() && binWidthHz > 0.0;
+
+    for (int x = 0; x < width; ++x) {
+        if (x >= islandFirstPx && x <= islandLastPx) {
+            continue;                       // island belongs to the DDC plane
+        }
+        if (!haveBins) {
+            linearPixels[x] = static_cast<float>(floorLinear);
+            continue;
+        }
+
+        const double pixelLowHz  = displayLowHz + x * hzPerPixel;
+        const double pixelHighHz = pixelLowHz + hzPerPixel;
+
+        // -1 undoes the dropped DC bin: dbmBins[i] <-> (i+1) * binWidthHz.
+        int firstBin = static_cast<int>(std::floor(pixelLowHz / binWidthHz)) - 1;
+        int lastBin  = static_cast<int>(std::ceil(pixelHighHz / binWidthHz)) - 1;
+        firstBin = std::max(firstBin, 0);
+        lastBin  = std::min(lastBin, static_cast<int>(bins.size()) - 1);
+
+        if (firstBin > lastBin) {
+            // Window reaches past the ADC's Nyquist (or below DC): there is
+            // no wideband data to show there, so say so rather than smear
+            // the nearest bin across it.
+            linearPixels[x] = static_cast<float>(floorLinear);
+            continue;
+        }
+
+        // Peak across the bins under this pixel. Thetis's wideband analyzer
+        // is configured for a peak detector too (wbDisplay.cs:4711
+        // SetAnalyzer, and its per-pixel loop takes `max`), so a narrow
+        // carrier survives decimation instead of averaging away.
+        float peakDb = bins[firstBin];
+        for (int b = firstBin + 1; b <= lastBin; ++b) {
+            peakDb = std::max(peakDb, bins[b]);
+        }
+        linearPixels[x] = static_cast<float>(
+            toLinear(static_cast<double>(peakDb + widebandTotalCalibrationDb())));
+    }
 }
 
 // Phase 3F Sub-Epic F Tasks 7-10: extended-view policy + derived state.
@@ -7138,8 +7447,10 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         int dx = m_bwDragStartX - mx;
         double factor = 1.0 + dx * 0.003;  // 0.3% per pixel
         double newBw = m_bwDragStartBw * factor;
-        newBw = std::clamp(newBw, 1000.0, m_sampleRateHz);
+        newBw = std::clamp(newBw, 1000.0, maxZoomOutBandwidthHz());
         m_bandwidthHz = newBw;
+        // Same direct write as the wheel path; see the note there.
+        recomputeExtendedMode();
         // Recenter on VFO when zooming so the signal stays visible
         // Only emit centerChanged if center actually moved — avoids DDC retune per drag frame
         if (!qFuzzyCompare(m_centerHz, m_vfoHz)) {
@@ -7578,13 +7889,19 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
         // Cmd+scroll (macOS) or Ctrl+scroll: zoom bandwidth in/out
         double factor = (delta > 0) ? 0.8 : 1.25;
         double newBw = m_bandwidthHz * factor;
-        newBw = std::clamp(newBw, 1000.0, m_sampleRateHz);
+        newBw = std::clamp(newBw, 1000.0, maxZoomOutBandwidthHz());
         m_bandwidthHz = newBw;
         // Recenter on VFO when zooming
         m_centerHz = m_vfoHz;
         emit centerChanged(m_centerHz);
         emit bandwidthChangeRequested(newBw);
         updateVfoPositions();
+        // This path writes m_bandwidthHz directly instead of going through
+        // setFrequencyRange, so it has to re-derive extended mode itself --
+        // otherwise zooming past the DDC with the wheel widens the window
+        // without ever asking the radio for the wideband stream that fills
+        // the wings.
+        recomputeExtendedMode();
 #ifdef NEREUS_GPU_SPECTRUM
         markOverlayDirty();
 #endif

@@ -1604,7 +1604,21 @@ void MainWindow::refreshPanStatusOverlays()
         // being blanked: the operator is mid-drag between pans and a flash
         // to placeholder text reads as a fault.
         if (!slice) { continue; }
-        applet->updateStatusOverlay(slice, m_radioModel->sliceChainIndex(sliceId));
+        const int chain = m_radioModel->sliceChainIndex(sliceId);
+        applet->updateStatusOverlay(slice, chain);
+
+        // Extended-pan wings read one ADC's wideband bins, and
+        // widebandSpectrumReady fans every ADC at every pan, so the pan has
+        // to be told which one is its own. The chain index IS the ADC index
+        // on this path: it is what RadioModel hands
+        // P2RadioConnection::setWidebandEnabled to turn the stream on
+        // (RadioModel.cpp, Sub-Epic F Task 11), so keying the paint off the
+        // same number is what makes the pan draw the ADC it asked to have
+        // enabled. -1 (slice bound to no stream) leaves the last answer
+        // alone rather than snapping the wings to ADC0.
+        if (chain >= 0 && applet->spectrumWidget()) {
+            applet->spectrumWidget()->setWidebandAdcIndex(chain);
+        }
     }
 }
 

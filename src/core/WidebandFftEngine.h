@@ -35,6 +35,8 @@
 #include <QObject>
 #include <QVector>
 
+#include <vector>
+
 #include <fftw3.h>
 
 namespace NereusSDR {
@@ -54,22 +56,71 @@ public:
     /// the FFT plan itself is rate-agnostic.
     void setAdcSampleRateHz(double rateHz) { m_adcRateHz = rateHz; }
 
+    /// Analysis-window figures, shared by every instance because the window
+    /// is a pure function of kCaptureSamples. Static so the display side can
+    /// reference amplitudes without plumbing an engine pointer through, and
+    /// so there is exactly one definition of the window in the build.
+    ///
+    /// windowSum   — sum w[i]. The amplitude reference for converting these
+    ///               bins to dB: an unwindowed block would give
+    ///               kCaptureSamples, and windowing lowers it.
+    /// windowEnbBins — equivalent noise bandwidth in BINS,
+    ///               N * sum(w^2) / (sum w)^2. What a bin actually integrates
+    ///               for noise purposes, which is NOT the zero-padded bin
+    ///               spacing.
+    static double windowSum();
+    static double windowEnbBins();
+
+    /// Spacing between the bins handed out (adcRate / kFftSize) versus the
+    /// bandwidth each one truly integrates (adcRate / kCaptureSamples times
+    /// the window ENB). Zero-padding drives these apart on purpose: the
+    /// first governs where a bin sits, the second governs how much noise is
+    /// in it.
+    double binSpacingHz() const { return m_adcRateHz / double(kFftSize); }
+    double noiseBandwidthHz() const
+    {
+        return (m_adcRateHz / double(kCaptureSamples)) * windowEnbBins();
+    }
+
     /// Per-bin frequency width (Hz). Equals adcRateHz / kFftSize.
     /// Examples: 7500 Hz at 122.88 MHz, 9375 Hz at 153.6 MHz.
     double binWidthHz() const;
 
     /// Compute FFT: real samples in, dBm-style bins out (size 8192
     /// for the canonical 16384-sample input). Output is resized.
-    /// If `realSamples.size() != kFftSize`, the call is a no-op
+    /// If `realSamples.size() != kCaptureSamples`, the call is a no-op
     /// (callers must always pass a full frame).
     /// Note: dBm calibration constant (gain offset) deferred to the
     /// Sub-Epic F Task 5+ wiring into SpectrumWidget.
     void computeFft(const QVector<float>& realSamples,
                     QVector<float>& dbmBins);
 
+    /// Samples the radio actually captures per burst. Fixed in the FPGA:
+    /// the capture FIFO is 16k and is not host-selectable, per the gateware's
+    /// own note at n1gp-Anvelina_PROIII Orion.v:1503 [@8e86a61] ("TODO:
+    /// change number of samples in FIFO (presently 16k) based on user
+    /// selection"). 16384 samples at 122.88 MHz is 133 us of contiguous
+    /// signal, so 1/133us = 7.5 kHz is the true resolution and no amount of
+    /// client-side processing can better it.
+    static constexpr int kCaptureSamples = 16384;
+
+    /// Transform length. Larger than the capture on purpose: the extra span
+    /// is zero-padding, which sinc-interpolates the SAME 7.5 kHz resolution
+    /// onto a finer bin grid.
+    ///
+    /// This buys smoothness, NOT resolution. Bench 2026-08-08: at a 424 kHz
+    /// pan window only ~56 independent wideband values covered ~620 pixels,
+    /// so each one smeared across 11 px and the wings looked like stair
+    /// steps beside the DDC's island. 4x padding puts a bin every 1875 Hz
+    /// and the trace reads as a curve. Anyone reading 1875 Hz as a
+    /// resolution figure is reading it wrong -- the main lobe is still
+    /// 7.5 kHz wide.
+    static constexpr int kFftSize    = 65536;
+    static constexpr int kOutputBins = kFftSize / 2;
+
 private:
-    static constexpr int kFftSize    = 16384;
-    static constexpr int kOutputBins = 8192;
+    /// The Hann window, built once and shared.
+    static const std::vector<float>& window();
 
     double         m_adcRateHz {122880000.0};
     fftwf_plan     m_plan      {nullptr};
