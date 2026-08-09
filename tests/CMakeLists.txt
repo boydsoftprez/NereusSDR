@@ -6240,6 +6240,16 @@ nereus_add_test(tst_dss_palette)
 # 12743-12784, :14195 [@1872028c].
 nereus_add_test(tst_dss_floor_and_span)
 
+# ── 3D stacked-trace spectrum plan, Task 10: CPU fallback surface ────────
+# Pins DssRenderer::image()'s cache gate -- rebuilds only when px / scale
+# strip / floor / range / zCurve / palette token / DssShape actually change,
+# holds otherwise -- and the painter's-algorithm occlusion test
+# (dssDepthVisibleSegments) the Task 12 depth-shadow overlay consumes. The
+# shape-in-cache-key case is NereusSDR-original: upstream renders at one
+# fixed angle, so its cache has no shape to invalidate on.
+# Source: AetherSDR src/gui/DssRenderer.cpp:753-903 [@1872028c].
+nereus_add_test(tst_dss_cpu_surface)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

@@ -25,18 +25,58 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+
+#include <QPainter>
+#include <QPolygonF>
 
 namespace NereusSDR {
 
 namespace {
 
+// CPU-only tunables (image()/rebuild()). The perspective geometry (back-width
+// / depth-span / front-ridge / haze) lives in DssGeometry.h as shared
+// constants so the GPU mesh uses the same values -- upstream's equivalent
+// comment says "DssRenderer.h" because upstream keeps them as members of
+// this class; NereusSDR split the shared geometry into its own file in
+// Task 1. These four are the extra CPU-render-only touches the GPU frag
+// doesn't replicate (depth dimming floor, slope shading); kTemporalAlpha
+// below is the fifth (temporal smoothing), ported separately by Task 4.
+// From AetherSDR src/gui/DssRenderer.cpp:12-16 [@1872028c].
+constexpr double kMinDim = 0.50;  // depth dimming never falls below this
+
 // From AetherSDR src/gui/DssRenderer.cpp:17 [@1872028c].
 constexpr float kTemporalAlpha = 0.60f;  // temporal IIR: fraction of the new row
+
+// From AetherSDR src/gui/DssRenderer.cpp:18-20 [@1872028c].
+constexpr double kSlopeGain = 0.55;  // slope shading strength
+constexpr double kShadeLo   = 0.68;
+constexpr double kShadeHi   = 1.32;
+
+// From AetherSDR src/gui/DssRenderer.cpp:28 [@1872028c].
+inline int chan(double v) { return static_cast<int>(std::clamp(v, 0.0, 255.0)); }
 
 // From AetherSDR src/gui/DssRenderer.cpp:30-33 [@1872028c].
 inline float median3(float a, float b, float c)
 {
     return std::max(std::min(a, b), std::min(std::max(a, b), c));
+}
+
+// From AetherSDR src/gui/DssRenderer.cpp:35-39 [@1872028c].
+inline QColor scaled(const QColor& c, double f)
+{
+    f = std::max(0.0, f);
+    return QColor(chan(c.red() * f), chan(c.green() * f), chan(c.blue() * f));
+}
+
+// Linear blend c -> t by f in [0,1].
+// From AetherSDR src/gui/DssRenderer.cpp:41-48 [@1872028c].
+inline QColor lerpColor(const QColor& c, const QColor& t, double f)
+{
+    f = std::clamp(f, 0.0, 1.0);
+    return QColor(chan(c.red()   + (t.red()   - c.red())   * f),
+                  chan(c.green() + (t.green() - c.green()) * f),
+                  chan(c.blue()  + (t.blue()  - c.blue())  * f));
 }
 
 // From AetherSDR src/gui/DssRenderer.cpp:50-60 [@1872028c].
@@ -278,6 +318,171 @@ void DssRenderer::pushRowWithWide(const QVector<float>& binsDbm,
     m_count = std::min(m_count + 1, kDssRows);
     m_dirty = true;
     ++m_rowGeneration;
+}
+
+// From AetherSDR src/gui/DssRenderer.cpp:753-779 [@1872028c].
+const QImage& DssRenderer::image(const QSize& px, int scaleStripPx,
+                                 float floorDbm, float rangeDb, float zCurve,
+                                 const PaletteFn& palette,
+                                 quint64 paletteToken,
+                                 const QColor& bgFill, const DssShape& shape)
+{
+    const bool changed = m_dirty
+        || px != m_cacheSize
+        || scaleStripPx != m_cacheScaleStrip
+        || floorDbm != m_cacheFloor
+        || rangeDb != m_cacheRange
+        || zCurve != m_cacheZCurve
+        || paletteToken != m_cachePaletteToken
+        // -KG4VCF [v0.5.3] Not present upstream: its shape is a compile-time
+        // constant, so it cannot change and needs no cache-key entry. Ours
+        // moves with the runtime 3D Angle control -- without this, the
+        // fallback would keep drawing the previous perspective after the
+        // operator moves the slider.
+        || shape.backWidthFrac != m_cacheShape.backWidthFrac
+        || shape.depthSpanFrac != m_cacheShape.depthSpanFrac
+        || shape.frontMaxRidgeFrac != m_cacheShape.frontMaxRidgeFrac;
+
+    if (changed) {
+        rebuild(px, scaleStripPx, floorDbm, rangeDb, zCurve, palette, bgFill,
+               shape);
+        ++m_generation;
+        m_cacheSize         = px;
+        m_cacheScaleStrip   = scaleStripPx;
+        m_cacheFloor        = floorDbm;
+        m_cacheRange        = rangeDb;
+        m_cacheZCurve       = zCurve;
+        m_cachePaletteToken = paletteToken;
+        m_cacheShape        = shape;
+        m_dirty             = false;
+    }
+    return m_cache;
+}
+
+// From AetherSDR src/gui/DssRenderer.cpp:781-888 [@1872028c].
+void DssRenderer::rebuild(const QSize& px, int scaleStripPx, float floorDbm,
+                          float rangeDb, float zCurve, const PaletteFn& palette,
+                          const QColor& bgFill, const DssShape& shape)
+{
+    const int W = px.width();
+    const int Htot = px.height();
+    if (W <= 0 || Htot <= 0) {
+        m_cache = QImage();
+        return;
+    }
+
+    if (m_cache.size() != px || m_cache.format() != QImage::Format_RGBA8888_Premultiplied) {
+        m_cache = QImage(px, QImage::Format_RGBA8888_Premultiplied);
+    }
+    m_cache.fill(Qt::transparent);
+
+    // Plot region is everything above the (transparent) scale strip.
+    const double H = std::max(1, Htot - std::max(0, scaleStripPx));
+
+    QPainter p(&m_cache);
+    p.fillRect(QRectF(0, 0, W, H), bgFill);
+
+    if (m_count <= 0 || !palette || rangeDb <= 0.0f) {
+        return;
+    }
+
+    const double zc            = std::max(0.05, static_cast<double>(zCurve));
+    const double bottomY       = H;                       // plot floor
+    const double depthSpan     = H * shape.depthSpanFrac;
+    const double frontMaxRidge = H * shape.frontMaxRidgeFrac;
+    // Match dss_mesh.vert's depth parametrization exactly (v = rr / rows), so
+    // the CPU fallback and the GPU mesh place rows at the same depth.
+    const double denom         = kDssVisibleRows;
+
+    std::array<QPointF, kDssCols> pts;
+    std::array<QColor, kDssCols>  cols;   // depth/slope-shaded fill colour per column
+
+    QPolygonF poly;                    // reused (clear keeps capacity → no realloc)
+    poly.reserve(4);
+    QPen ridgePen;
+    ridgePen.setCosmetic(true);
+    ridgePen.setCapStyle(Qt::RoundCap);
+    ridgePen.setJoinStyle(Qt::RoundJoin);
+
+    // Back (oldest) → front (newest): painter's algorithm. Nearer traces are
+    // wider, sit lower, and fill to the floor, so they occlude farther ones.
+    for (int age = visibleRowCount() - 1; age >= 0; --age) {
+        const double depthFrac    = age / denom;
+        const double rowWidthFrac = 1.0 - depthFrac * (1.0 - shape.backWidthFrac);
+        const double inset        = W * (1.0 - rowWidthFrac) * 0.5;
+        const double rowW         = W - 2.0 * inset;
+        const double baselineY    = bottomY - depthFrac * depthSpan;
+        const double maxRidge     = frontMaxRidge * rowWidthFrac;
+        const double dim          = kMinDim + (1.0 - kMinDim) * (1.0 - depthFrac);
+
+        const int ring = ringAtAge(age);
+        const auto& row = m_rows[ring];
+        const auto& coverage = m_rowCoverage[ring];
+        // Pass 1: geometry — noise-floor-anchored ridge heights, with the same
+        // pow(s, zCurve) floor-lift the GPU shader applies.
+        for (int c = 0; c < kDssCols; ++c) {
+            const double x = inset + (kDssCols > 1 ? double(c) / (kDssCols - 1) : 0.0) * rowW;
+            const float dbm = coverage[c] != 0 ? row[c] : floorDbm;
+            double strength = std::clamp(
+                (dbm - floorDbm) / rangeDb, 0.0f, 1.0f);
+            strength = std::pow(strength, zc);
+            pts[c] = QPointF(x, baselineY - strength * maxRidge);
+        }
+        // Pass 2: colour — palette by amplitude, hazed by depth, lit by slope.
+        const double slopeScale = (maxRidge > 1.0) ? maxRidge : 1.0;
+        for (int c = 0; c < kDssCols; ++c) {
+            const int cl = std::max(0, c - 1);
+            const int cr = std::min(kDssCols - 1, c + 1);
+            const double slope = (pts[cl].y() - pts[cr].y()) / slopeScale; // +: rises to right
+            const double shade = std::clamp(1.0 + kSlopeGain * slope, kShadeLo, kShadeHi);
+            const float dbm = coverage[c] != 0 ? row[c] : floorDbm;
+            QColor base = QColor(palette(dbm));
+            base = lerpColor(base, bgFill, depthFrac * kDssHaze);
+            cols[c] = scaled(base, dim * shade);
+        }
+
+        // Fill — flat per-column trapezoid to the floor. AA off so adjacent
+        // columns tile without seams; the AA ridge line on top hides the
+        // jagged upper edge. No per-column gradient → no per-column allocs.
+        p.setRenderHint(QPainter::Antialiasing, false);
+        p.setPen(Qt::NoPen);
+        for (int c = 0; c < kDssCols - 1; ++c) {
+            poly.clear();
+            poly << pts[c] << pts[c + 1]
+                 << QPointF(pts[c + 1].x(), bottomY)
+                 << QPointF(pts[c].x(), bottomY);
+            p.setBrush(cols[c]);
+            p.drawPolygon(poly);
+        }
+
+        // Ridge line — bright per-amplitude rim, AA on for a crisp crest.
+        p.setRenderHint(QPainter::Antialiasing, true);
+        ridgePen.setWidthF(age == 0 ? 1.6 : 1.0);
+        for (int c = 0; c < kDssCols - 1; ++c) {
+            const float dbm = coverage[c] != 0 ? row[c] : floorDbm;
+            QColor rc = QColor(palette(dbm)).lighter(165);
+            rc = lerpColor(rc, bgFill, depthFrac * kDssHaze);
+            ridgePen.setColor(scaled(rc, dim));
+            p.setPen(ridgePen);
+            p.drawLine(pts[c], pts[c + 1]);
+        }
+    }
+}
+
+// From AetherSDR src/gui/DssRenderer.cpp:890-903 [@1872028c].
+QVector<bool> dssDepthVisibleSegments(const QVector<qreal>& yFrontToBack)
+{
+    if (yFrontToBack.size() < 2) {
+        return {};
+    }
+    QVector<bool> visible(yFrontToBack.size() - 1, true);
+    qreal silhouetteY = std::numeric_limits<qreal>::max();
+    for (qsizetype i = 1; i < yFrontToBack.size(); ++i) {
+        visible[i - 1] = yFrontToBack.at(i - 1) <= silhouetteY + 0.5
+            || yFrontToBack.at(i) <= silhouetteY + 0.5;
+        silhouetteY = std::min(silhouetteY, yFrontToBack.at(i - 1));
+    }
+    return visible;
 }
 
 }  // namespace NereusSDR

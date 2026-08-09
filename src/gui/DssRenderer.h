@@ -43,7 +43,14 @@ namespace NereusSDR {
 // FFT rows drawn back-to-front (painter's algorithm) as a receding trapezoid.
 // The newest trace spans the full width across the front; older traces recede
 // into a narrower, higher trapezoid. Each ridge is filled down to the plot
-// floor so nearer traces occlude farther ones.
+// floor so nearer traces occlude farther ones. Fill colour follows amplitude
+// via an injected palette and dims with depth for atmospheric perspective; a
+// bright per-amplitude line tops each ridge.
+//
+// The rendered surface is cached in a QImage and rebuilt ONLY when a new row
+// arrives, the target size changes, or the amplitude mapping / palette
+// changes. This keeps it cheap enough to paint on the CPU and composite
+// through the existing QRhi overlay pipeline (no new shaders).
 //
 // The renderer is standalone and knows nothing about SpectrumWidget or QRhi.
 //
@@ -68,6 +75,31 @@ public:
                          const QVector<float>& wideBinsDbm,
                          double wideCenterMhz,
                          double wideBandwidthMhz);
+
+    // Return the cached surface sized to px. The plot region (everything above
+    // the bottom scaleStripPx) is painted opaque over bgFill; the scale strip
+    // is left transparent so the host can composite a scale on top.
+    //
+    // Ridge HEIGHT is anchored to the noise floor: a column maps to
+    // strength = clamp((dbm - floorDbm) / rangeDb, 0, 1), so floorDbm sits at
+    // the baseline (≈0 height) and floorDbm+rangeDb reaches the full ridge. The
+    // host supplies floorDbm from its measured-noise-floor estimate plus the 3D
+    // floor offset, and rangeDb from the current dBm display span.
+    // Colour comes from palette(dbm), independent of height. paletteToken lets
+    // the host signal palette changes without us inspecting them. Rebuilds only
+    // when something relevant changed.
+    // zCurve (<1) lifts the floor→signal band, matching dss_mesh.vert's
+    // pow(s, zCurve) so the CPU fallback surfaces the noise floor like the GPU.
+    // From AetherSDR src/gui/DssRenderer.h:234-247 [@1872028c].
+    //
+    //-KG4VCF [v0.5.3] shape is a NereusSDR addition: upstream renders at one
+    // fixed perspective and needs no equivalent parameter. Ours moves with the
+    // runtime 3D Angle control, so it is also part of what "something
+    // relevant changed" means below -- see m_cacheShape.
+    const QImage& image(const QSize& px, int scaleStripPx,
+                        float floorDbm, float rangeDb, float zCurve,
+                        const PaletteFn& palette, quint64 paletteToken,
+                        const QColor& bgFill, const DssShape& shape);
 
     void invalidate() { m_dirty = true; }
     bool hasData() const { return m_count > 0; }
@@ -125,6 +157,9 @@ public:
 
 private:
     int ringAtAge(int age) const;
+    void rebuild(const QSize& px, int scaleStripPx, float floorDbm,
+                float rangeDb, float zCurve, const PaletteFn& palette,
+                const QColor& bgFill, const DssShape& shape);
 
     // Circular store: m_head indexes the newest row.
     std::array<std::array<float, kDssCols>, kDssRows> m_rows{};
@@ -172,6 +207,36 @@ private:
     // pre-reset data.
     bool m_skipLiveTemporalBlendOnce = false;
     bool m_skipWideTemporalBlendOnce = false;
+
+    // Cache + the parameters it was built for (rebuild on any change).
+    QImage  m_cache;
+    QSize   m_cacheSize;
+    int     m_cacheScaleStrip   = -1;
+    float   m_cacheFloor        = 0.0f;
+    float   m_cacheRange        = 0.0f;
+    float   m_cacheZCurve       = 0.0f;
+    quint64 m_cachePaletteToken = ~0ull;
+    //-KG4VCF [v0.5.3] The perspective shape is a runtime value here, so it
+    // is part of the cache key. Upstream can omit it: its shape is constant.
+    DssShape m_cacheShape{0.0f, 0.0f, 0.0f};
 };
+
+// Painter's-algorithm occlusion for the CPU depth-shadow overlay drawn on top
+// of this surface.
+//
+// `yFrontToBack` holds the projected screen y of one frequency column at each
+// depth step, nearest row first. rebuild() fills every row's curtain down to
+// the plot floor, so a nearer row hides everything below its ridge: a point is
+// occluded once it sits lower (larger y) than the topmost ridge in front of
+// it. The shadow is painted as a flat overlay after the surface, so segments
+// that fail this test would otherwise be stroked across the face of the nearer
+// curtain and read as floating in front of the surface.
+//
+// Returns one flag per segment (size = N-1, empty for N < 2): true when either
+// endpoint still clears that silhouette, so partial overlaps are kept rather
+// than over-culled. The half-pixel slack keeps a ridge that merely grazes the
+// silhouette from flickering in and out between frames.
+// From AetherSDR src/gui/DssRenderer.h:388-403 [@1872028c].
+QVector<bool> dssDepthVisibleSegments(const QVector<qreal>& yFrontToBack);
 
 }  // namespace NereusSDR

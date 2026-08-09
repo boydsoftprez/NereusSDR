@@ -1514,6 +1514,19 @@ private:
     // ---- Drawing helpers ----
     void drawGrid(QPainter& p, const QRect& specRect);
     void drawSpectrum(QPainter& p, const QRect& specRect);
+    // 3DSS CPU fallback surface (Task 10): builds/caches the DssRenderer
+    // QImage at up to px, capped by kDssFallbackMaxW/H so a HiDPI/maximized
+    // window doesn't rebuild a multi-megapixel image every frame -- the
+    // surface is intrinsically low-res and gets stretched on draw either
+    // way. Shared by drawSpectrum()'s QPainter path (NEREUS_GPU_SPECTRUM=OFF
+    // builds, which never reach renderGpuFrame() at all) and
+    // uploadDssFallbackImage() (the RGBA16F-unsupported GPU path). Unlike
+    // upstream's buildDssImage(), floorDbm is not a caller-supplied
+    // parameter: NereusSDR has one floor source (dssFloorDbm()), not
+    // upstream's per-caller value (m_lastDetectDssFloor in 2D, dssFloorDbm()
+    // in 3D).
+    // From AetherSDR SpectrumWidget.cpp:11880-11894 [@1872028c].
+    const QImage& buildDssImage(const QSize& px, int scaleStripPx);
     // Active Peak Hold separate render pass (Q14.1). Called from drawSpectrum()
     // after the fill path so the peak trace sits on top of fill but below
     // the live trace line.  Iterates the per-display-pixel peak array
@@ -1968,6 +1981,14 @@ private:
     // no new clock object.
     float  m_dssScrollProgressRows{0.0f};
     qint64 m_dssLastTickMs{0};   // wall clock of the previous display tick
+
+    // 3DSS CPU fallback surface (Task 10). Consumed by BOTH the GPU
+    // "mesh unavailable" path and the CPU paint path, so these stay outside
+    // the NEREUS_GPU_SPECTRUM block below -- the QPainter path needs them
+    // even when GPU spectrum rendering is disabled (-DNEREUS_GPU_SPECTRUM=OFF).
+    // From AetherSDR SpectrumWidget.h:1510-1511 [@1872028c].
+    static constexpr int kDssFallbackMaxW = 1024;   // 3DSS surface texture/image caps
+    static constexpr int kDssFallbackMaxH = 512;
 
     // AGC rolling envelope (tracked across waterfall rows).
     float m_wfAgcRunMin{0.0f};
@@ -2525,6 +2546,29 @@ private:
     // before anything reads it.
     DssOutlinePipelineMode m_dssOutlinePipelineMode{
         DssOutlinePipelineMode::DedicatedRibbonPipeline};
+
+    // ---- 3DSS CPU-fallback quad (Task 10: RGBA16F unsupported) ----
+    // Composited through the SAME overlay pipeline (m_ovPipeline/m_ovVbo/
+    // m_ovSampler) the static/dynamic chrome layers already use -- "blit it
+    // through the existing overlay pipeline" per the task brief -- with its
+    // own texture + SRB sized to the spectrum viewport (capped at
+    // kDssFallbackMaxW/H) rather than the full window. Deliberately NOT
+    // named m_dssSrb/m_dssGpuTex: those upstream names belong to the GPU
+    // MESH resources above (m_dssFillPipeline/m_dssSrb/...), claimed by
+    // Task 7 before this task's cached-image fallback existed to need its
+    // own pair -- see docs/attribution/aethersdr-reconciliation.md, Task 7
+    // row, "Task 10 must pick different names for the fallback quad's own
+    // SRB/texture". Upstream itself keeps these two concepts separate too
+    // (m_dssMeshFillPipeline/m_dssMeshSrb for the mesh vs. m_dssGpuTex/
+    // m_dssSrb for its own cached-image fallback); NereusSDR's mesh
+    // resources just happen to have already claimed the shorter names.
+    void uploadDssFallbackImage(QRhiResourceUpdateBatch* batch,
+                                const QRect& specRect, float dpr);
+    QRhiTexture*                m_dssFallbackTex{nullptr};
+    QRhiShaderResourceBindings* m_dssFallbackSrb{nullptr};
+    int     m_dssFallbackTexW{0};
+    int     m_dssFallbackTexH{0};
+    quint64 m_dssFallbackUploadedGen{~0ull};
 
 #endif
 

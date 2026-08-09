@@ -3544,6 +3544,29 @@ void SpectrumWidget::drawGrid(QPainter& p, const QRect& specRect)
 // in commit 5.
 void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
 {
+    // Task 10: 3DSS CPU-rendered surface replaces the classic FFT trace
+    // entirely in 3D mode. This is the ONLY 3DSS surface a
+    // -DNEREUS_GPU_SPECTRUM=OFF build ever draws -- that configuration never
+    // reaches renderGpuFrame() (the whole function is compiled out), so this
+    // early return is not merely a mesh-unavailable fallback here, it is the
+    // sole rendering path for CPU-only builds. Skips the grid entirely, like
+    // upstream: the opaque plot region (scaleStripPx 0, so no transparent
+    // strip) would only paint over it anyway, and the earlier drawGrid(p,
+    // specRect) call in paintEvent has already returned by the time this
+    // runs, so nothing is wasted by leaving that call site alone.
+    // From AetherSDR SpectrumWidget.cpp:14915-14933 [@1872028c] (paintEvent's
+    // is3D branch).
+    if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+        const QImage& surf = buildDssImage(
+            specRect.size().boundedTo(QSize(kDssFallbackMaxW, kDssFallbackMaxH)),
+            0);
+        p.fillRect(specRect, QColor(0x0a, 0x0a, 0x14));
+        if (!surf.isNull()) {
+            p.drawImage(specRect, surf);
+        }
+        return;
+    }
+
     // Display-pixel iteration -- mirrors Thetis Display.cs:5249-5378
     // [v2.10.3.13] which loops `for (int i = 0; i < nDecimatedWidth; i++)`
     // over the post-analyzer current_display_data[] array.  Our
@@ -5132,6 +5155,36 @@ quint64 SpectrumWidget::dssPaletteToken() const
     quint64 t = static_cast<quint64>(m_wfColorScheme);
     t = t * 131 + static_cast<quint64>(m_dssGain);
     return t;
+}
+
+// ---- 3DSS CPU fallback surface (Task 10) ----
+// From AetherSDR SpectrumWidget.cpp:11880-11894 [@1872028c], with the
+// floorDbm parameter dropped: NereusSDR has one floor source (dssFloorDbm()),
+// not upstream's per-caller value (m_lastDetectDssFloor in 2D vs
+// dssFloorDbm() in 3D -- a distinction that does not apply here, since this
+// helper is only ever called while in 3D mode).
+const QImage& SpectrumWidget::buildDssImage(const QSize& px, int scaleStripPx)
+{
+    const float floorDbm = dssFloorDbm();
+    const float rangeDb  = std::round(dssSpanDb() * 2.0f) / 2.0f;
+
+    // Same mapping as the GPU mesh: a stable colour aperture independent of
+    // the Ref-level height span, gamma-shaped by "3D Gain". Uses
+    // dssColorRangeDb() (Task 9) rather than re-deriving std::min(rangeDb,
+    // kDssColorSpanDb) inline as upstream does, so the CPU fallback and the
+    // GPU mesh (writeDssMeshUbo()) read the exact same colour aperture.
+    const float colorRangeDb = dssColorRangeDb();
+    auto palette = [this, floorDbm, colorRangeDb](float dbm) {
+        const float r = (colorRangeDb > 0.0f) ? colorRangeDb : 1.0f;
+        return dssStrengthToRgb((dbm - floorDbm) / r);
+    };
+    // zCurve: 0.6f matches writeDssMeshUbo()'s hardcoded value (Task 9) so
+    // the CPU fallback lifts the floor band identically to the GPU mesh.
+    // bgFill: 0x0a0a14 matches both the pass clear colour and the mesh
+    // UBO's bgFill field (writeDssMeshUbo()), for the same reason.
+    return m_dss.image(px, scaleStripPx, floorDbm, rangeDb, 0.6f,
+                       palette, dssPaletteToken(), QColor(0x0a, 0x0a, 0x14),
+                       dssShape());
 }
 
 // ---- VFO marker + filter passband overlay ----
@@ -8082,6 +8135,29 @@ void SpectrumWidget::initOverlayPipeline()
     lockMemory(m_overlayDynamic.constBits(),
                m_overlayDynamic.sizeInBytes(),
                "SpectrumWidget::m_overlayDynamic (init)");
+
+    // 3DSS CPU-fallback quad (Task 10). Parallel texture + SRB so the same
+    // overlay pipeline can paint the cached CPU 3D surface as a quad in the
+    // spectrum viewport when the GPU mesh path is unavailable (RGBA16F
+    // unsupported). Initially sized to the full window like m_ovGpuTex/
+    // m_ovDynGpuTex above; uploadDssFallbackImage() resizes it down to the
+    // actual (capped) surface size on first use. The image itself is built/
+    // uploaded on demand there, called from renderGpuFrame().
+    // From AetherSDR SpectrumWidget.cpp:12619-12630 [@1872028c] (upstream's
+    // own m_dssGpuTex/m_dssSrb init, same shape, different field names --
+    // see the .h declaration for why the names differ).
+    m_dssFallbackTex = r->newTexture(QRhiTexture::RGBA8, QSize(pw, ph));
+    m_dssFallbackTex->create();
+    m_dssFallbackTexW = pw;
+    m_dssFallbackTexH = ph;
+    m_dssFallbackSrb = r->newShaderResourceBindings();
+    m_dssFallbackSrb->setBindings({
+        QRhiShaderResourceBinding::sampledTexture(1,
+            QRhiShaderResourceBinding::FragmentStage,
+            m_dssFallbackTex, m_ovSampler),
+    });
+    m_dssFallbackSrb->create();
+    m_dssFallbackUploadedGen = ~0ull;
 }
 
 void SpectrumWidget::initSpectrumPipeline()
@@ -8514,6 +8590,62 @@ void SpectrumWidget::writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
     Q_ASSERT(i == kDssMeshUboFloats);
     batch->updateDynamicBuffer(m_dssUbo, 0,
                                kDssMeshUboFloats * sizeof(float), ubo.data());
+}
+
+// 3DSS CPU-fallback quad (Task 10). Builds the capped-resolution CPU surface
+// via buildDssImage() and uploads it into m_dssFallbackTex, resizing the
+// texture/SRB first if the target size changed. Called from renderGpuFrame()
+// only when the mesh pipeline never came up (m_dssMeshReady false); the draw
+// call that actually composites the result lives in renderGpuFrame()'s
+// spectrum-region branch, reusing m_ovPipeline + m_ovVbo with this SRB.
+//
+// From AetherSDR SpectrumWidget.cpp:14409-14447 [@1872028c]. Two exclusions:
+// dpr is a parameter here rather than recomputed from
+// renderTarget()->pixelSize() locally -- the caller already has it (see
+// writeDssMeshUbo()'s own dpr parameter, same existing convention); and the
+// perfEnabled PerfTelemetry::recordGpuUpload() call is dropped, no
+// NereusSDR PerfMonitor equivalent exists for this specific texture-upload
+// event and adding one is out of this task's scope.
+void SpectrumWidget::uploadDssFallbackImage(QRhiResourceUpdateBatch* batch,
+                                            const QRect& specRect, float dpr)
+{
+    if (!batch) { return; }
+
+    // Cap the software surface (like the CPU-only paint path) so a HiDPI/
+    // maximized window doesn't rebuild a multi-megapixel QImage every frame;
+    // the surface is intrinsically low-res, so stretch it on draw.
+    const int specPwDev = qMax(1, qRound(specRect.width()  * dpr));
+    const int specPhDev = qMax(1, qRound(specRect.height() * dpr));
+    const double sc = qMin(1.0, qMin(double(kDssFallbackMaxW) / specPwDev,
+                                     double(kDssFallbackMaxH) / specPhDev));
+    const int dssW = qMax(2, static_cast<int>(specPwDev * sc));
+    const int dssH = qMax(2, static_cast<int>(specPhDev * sc));
+    const QImage& surf = buildDssImage(QSize(dssW, dssH), 0);
+
+    // m_dssFallbackTex/m_dssFallbackSrb/m_ovSampler come from
+    // initOverlayPipeline(); guard against a partial GPU init (OOM / device
+    // loss) so the fallback never dereferences a null resource.
+    if (surf.isNull() || !m_dssFallbackTex || !m_dssFallbackSrb || !m_ovSampler) {
+        return;
+    }
+    if (m_dssFallbackTexW != dssW || m_dssFallbackTexH != dssH) {
+        m_dssFallbackTexW = dssW;
+        m_dssFallbackTexH = dssH;
+        m_dssFallbackTex->setPixelSize(QSize(dssW, dssH));
+        m_dssFallbackTex->create();
+        m_dssFallbackSrb->setBindings({
+            QRhiShaderResourceBinding::sampledTexture(1,
+                QRhiShaderResourceBinding::FragmentStage,
+                m_dssFallbackTex, m_ovSampler),
+        });
+        m_dssFallbackSrb->create();
+        m_dssFallbackUploadedGen = ~0ull;   // force the upload below
+    }
+    if (m_dssFallbackUploadedGen != m_dss.generation()) {
+        QRhiTextureSubresourceUploadDescription desc(surf);
+        batch->uploadTexture(m_dssFallbackTex, QRhiTextureUploadEntry(0, 0, desc));
+        m_dssFallbackUploadedGen = m_dss.generation();
+    }
 }
 
 void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
@@ -9216,6 +9348,14 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         const float dssDpr =
             dssOutputSize.width() / static_cast<float>(qMax(1, w));
         writeDssMeshUbo(batch, specRect, dssDpr);
+        // Task 10: CPU fallback surface, built/uploaded only when the mesh
+        // pipeline never came up (RGBA16F unsupported at
+        // initDssMeshPipeline() time -- see its warning log). Skipped
+        // whenever the mesh is live: no point paying for a QImage rebuild
+        // the draw-call chain below will never composite.
+        if (!m_dssMeshReady) {
+            uploadDssFallbackImage(batch, specRect, dssDpr);
+        }
     }
 
     cb->resourceUpdate(batch);
@@ -9274,6 +9414,31 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         const QRhiCommandBuffer::VertexInput lineVbuf(m_dssMeshLineVbo, 0);
         cb->setVertexInput(0, 1, &lineVbuf);
         cb->draw(rows * dssLineVerticesPerRow(m_dssMeshCols));
+    } else if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D
+               && m_ovPipeline && m_dssFallbackSrb && m_dssFallbackTexW > 0) {
+        // Task 10: CPU cached-image fallback (mesh pipeline unavailable --
+        // is3D is false here precisely because m_dssMeshReady is false, so
+        // this branch is Mode3D's ONLY remaining path; it must win over the
+        // classic-FFT-trace branch below or 3D mode would silently render
+        // the 2D trace instead of the CPU surface it's supposed to fall
+        // back to). Reuses the overlay pipeline/VBO -- the same textured
+        // full-screen-quad shader every static/dynamic overlay draw already
+        // uses -- with its own SRB bound to the small capped-resolution DSS
+        // texture, stretched to the spectrum viewport exactly like the mesh
+        // draw above. From AetherSDR SpectrumWidget.cpp:14643-14654
+        // [@1872028c] (upstream's own `is3D && m_ovPipeline && m_dssSrb &&
+        // m_dssTexW > 0` cached-image draw, same shape, this task's own
+        // field names).
+        const float specVpX = static_cast<float>(specRect.x()) * dpr;
+        const float specVpY = static_cast<float>(h - specRect.bottom() - 1) * dpr;
+        const float specVpW = static_cast<float>(specRect.width()) * dpr;
+        const float specVpH = static_cast<float>(specRect.height()) * dpr;
+        cb->setGraphicsPipeline(m_ovPipeline);
+        cb->setShaderResources(m_dssFallbackSrb);
+        cb->setViewport({specVpX, specVpY, specVpW, specVpH});
+        const QRhiCommandBuffer::VertexInput vbuf(m_ovVbo, 0);
+        cb->setVertexInput(0, 1, &vbuf);
+        cb->draw(4);
     } else if (!is3D && m_fftFillPipeline && m_fftLinePipeline
                && m_visibleBinCount > 0) {
         float specVpX = static_cast<float>(specRect.x()) * dpr;
@@ -9416,6 +9581,13 @@ void SpectrumWidget::releaseResources()
     m_dssLutToken = ~0ull;
     m_dssUploadedRowGeneration = ~0ull;
     m_dssLastUploadedHead = -1;
+
+    // 3DSS CPU-fallback quad (Task 10).
+    delete m_dssFallbackTex;  m_dssFallbackTex = nullptr;
+    delete m_dssFallbackSrb;  m_dssFallbackSrb = nullptr;
+    m_dssFallbackTexW = 0;
+    m_dssFallbackTexH = 0;
+    m_dssFallbackUploadedGen = ~0ull;
 
     m_rhiInitialized = false;
 }
