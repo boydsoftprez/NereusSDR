@@ -187,6 +187,18 @@ public:
     /// Keyed under AppSettings "PanSplitter0Sizes" + "PanLayoutId" (and per-row
     /// children for 12h / 2x2). Restore loads the layout AND the sizes.
     void saveSplitterState();
+
+    /// Write every still-floating pan's window geometry to AppSettings.
+    ///
+    /// Called from MainWindow::closeEvent, BEFORE its
+    /// AppSettings::instance().save(). ~PanadapterStack also saves on its way
+    /// through dockAllFloatingPans, but that runs after the flush and
+    /// AppSettings::setValue only touches an in-memory map with a defaulted
+    /// destructor, so the teardown save alone never reached the disk. The
+    /// teardown save stays for the non-quit paths (a layout change docks
+    /// everything the same way); this is the one that survives a quit. Codex,
+    /// PR #318.
+    void saveFloatingGeometry();
     void restoreSplitterState();
 
     /// Phase 3F Sub-Epic D Task 6 test seam: read the root splitter's current

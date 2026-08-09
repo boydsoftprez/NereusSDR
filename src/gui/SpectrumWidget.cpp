@@ -4943,7 +4943,31 @@ void SpectrumWidget::setExtendedViewAllowed(bool allowed)
         return;
     }
     m_extendedViewAllowed = allowed;
+
+    // Withdrawing permission has to pull the CURRENT span back inside the
+    // DDC, not merely lower the ceiling for the next gesture.
+    //
+    // maxZoomOutBandwidthHz is consulted by the wheel and the frequency-scale
+    // drag and by nothing else, so an operator who zoomed out past the DDC
+    // and then switched Extended view off kept the wide span with
+    // m_extendedMode cleared. The next frame takes the ordinary path, treats
+    // the whole panel as island, and stretches the DDC's bins across a much
+    // wider scale with no wings to explain it: the exact stretched-island
+    // defect this sub-epic set out to fix, reachable through the toggle that
+    // is supposed to be the way out of it. Found by Codex on PR #318.
+    if (!allowed && m_sampleRateHz > 0.0 && m_bandwidthHz > m_sampleRateHz) {
+        applyViewWindowForExtendedClamp(m_sampleRateHz);
+    }
+
     recomputeExtendedMode();
+}
+
+// The clamp above, kept separate so the write goes through one place and
+// carries the repaint + history handling every other span change gets.
+void SpectrumWidget::applyViewWindowForExtendedClamp(double bandwidthHz)
+{
+    setFrequencyRange(m_centerHz, bandwidthHz);
+    emit bandwidthChangeRequested(bandwidthHz);
 }
 
 void SpectrumWidget::recomputeExtendedMode()

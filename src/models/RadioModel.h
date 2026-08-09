@@ -2310,6 +2310,17 @@ signals:
     /// and panadapter window must follow.
     void streamCentreChanged(int streamIndex, double centreHz, int sampleRateHz);
 
+    /// A stream's PHYSICAL ADC moved, without necessarily anything else
+    /// moving with it.
+    ///
+    /// An antenna or codec-state change can shift a stream from ADC0 to ADC1
+    /// while it keeps its stream index, and on a one-chain board its folded
+    /// chain index stays 0 too, so no slice property changes and nothing that
+    /// watches slice properties re-reads the routing. Anything keyed on the
+    /// physical ADC (the extended pan's wideband wings) has to listen here.
+    /// Codex, PR #318.
+    void streamAdcRoutingChanged();
+
     /// Phase 3F Sub-Epic I: emitted whenever the slice or stream set changes
     /// such that the per-board codec must recompute the DDC assignment.
     /// Observation hook; invokeCodecDdcAssignment does the work. Task 7b: it

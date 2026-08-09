@@ -1566,6 +1566,11 @@ private:
     double         m_widebandAdcRateHz{122880000.0};  // Thetis wbDisplay.cs:4511
     void recomputeExtendedMode();
 
+    /// Pull the visible span back to `bandwidthHz` when extended view is
+    /// withdrawn, through setFrequencyRange so the change carries the same
+    /// repaint and waterfall handling as any other zoom.
+    void applyViewWindowForExtendedClamp(double bandwidthHz);
+
     /// Overwrite the wing pixels (everything outside the listenable island)
     /// with wideband ADC data, in the linear-power domain the avenger
     /// expects. `dbmOffset` is the same offset the DDC plane is folded

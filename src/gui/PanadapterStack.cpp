@@ -560,6 +560,15 @@ void PanadapterStack::refreshReturnedFromFloat(const QStringList& panIds)
 
 void PanadapterStack::rebuildSplitters(const QString&, const QStringList&) {}
 
+void PanadapterStack::saveFloatingGeometry()
+{
+    for (auto it = m_floating.cbegin(); it != m_floating.cend(); ++it) {
+        if (PanFloatingWindow* floater = it.value()) {
+            floater->saveWindowGeometry();
+        }
+    }
+}
+
 QStringList PanadapterStack::dockAllFloatingPans()
 {
     QStringList returned;

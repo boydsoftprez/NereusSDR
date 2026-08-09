@@ -15087,14 +15087,16 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
     // connectToRadio has created a receiver for that stream; the
     // ReceiverManager copy is there so its long-standing adcIndex field stops
     // reporting 0 for a DDC the radio moved, which is the lie D1 was built on.
+    bool adcRoutingMoved = false;
     {
         const int streams = std::min(m_streamAllocator.streamCount(), 5);
         for (int st = 0; st < streams; ++st) {
             const int ddc = assignment.streamDdc[st];
             if (ddc < 0) { continue; }   // suspended: keep the last known ADC
             const size_t streamIndex = static_cast<size_t>(st);
-            m_streamAdc[streamIndex] =
-                NereusSDR::adcForDdc(assignment, ddc);
+            const int newAdc = NereusSDR::adcForDdc(assignment, ddc);
+            if (m_streamAdc[streamIndex] != newAdc) { adcRoutingMoved = true; }
+            m_streamAdc[streamIndex] = newAdc;
             if (m_receiverManager) {
                 // Mirror the already-decoded physical map. Do not decode the
                 // control bytes again here: SliceModel, ReceiverManager, and
@@ -15103,6 +15105,19 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
                                                      m_streamAdc[streamIndex]);
             }
         }
+    }
+
+    // Announce a physical-ADC move, because nothing else does.
+    //
+    // An antenna or codec-state change can move a stream from ADC0 to ADC1
+    // without moving it to a different logical stream, and on a one-chain
+    // board chainForStream folds the new ADC back to 0 as well. So neither
+    // streamIndex nor chainIndex changes, no slice property moves, and the
+    // extended pan's wings went on painting the ADC it used to be on until
+    // some unrelated overlay or topology event happened past. The lookup was
+    // right and simply never re-ran. Found by Codex on PR #318.
+    if (adcRoutingMoved) {
+        emit streamAdcRoutingChanged();
     }
 
     // Stamp every slice with both physical-routing coordinates of the stream

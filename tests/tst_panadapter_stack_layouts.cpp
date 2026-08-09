@@ -359,6 +359,35 @@ private slots:
                  "tearing the stack down with a pan floating discarded its "
                  "geometry");
     }
+
+    // The save that actually survives a quit.
+    //
+    // The teardown save added for the previous finding writes to AppSettings'
+    // in-memory map, and MainWindow::closeEvent calls AppSettings::save()
+    // BEFORE ~PanadapterStack runs, with a defaulted AppSettings destructor
+    // behind it. So the geometry was still stale on disk at next launch. This
+    // is the explicit pass closeEvent makes while a flush is still coming.
+    // Found by Codex on PR #318.
+    void floating_geometry_is_saved_before_the_flush()
+    {
+        auto& s = AppSettings::instance();
+        const QString key = QStringLiteral("FloatingPan_pan-0_Geometry");
+        s.setValue(key, QString());
+
+        PanadapterStack stack;
+        stack.applyLayout(QStringLiteral("1"),
+                          MainWindow::panIdsForLayout(QStringLiteral("1")));
+        stack.floatPanadapter(QStringLiteral("pan-0"));
+        s.setValue(key, QString());     // ignore anything the float wrote
+
+        // No teardown: this is the closeEvent-ordering path, where the stack
+        // is still very much alive when the geometry has to be on record.
+        stack.saveFloatingGeometry();
+
+        QVERIFY2(!s.value(key, QString()).toString().isEmpty(),
+                 "saveFloatingGeometry wrote nothing while the pan was still "
+                 "floating, so closeEvent's flush would miss it");
+    }
 };
 
 QTEST_MAIN(TestPanadapterStackLayouts)

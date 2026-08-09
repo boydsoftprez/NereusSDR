@@ -403,6 +403,32 @@ private slots:
                  average);
     }
 
+    // Withdrawing extended-view permission has to pull the CURRENT span back,
+    // not just lower the ceiling for the next gesture.
+    //
+    // maxZoomOutBandwidthHz is read by the wheel and the scale drag and by
+    // nothing else, so switching Extended view off left the wide span in
+    // place with m_extendedMode cleared. The next frame took the ordinary
+    // path, treated the whole panel as island, and stretched the DDC's bins
+    // across it with no wings: the stretched-island defect reachable through
+    // the toggle meant to be the way out of it. Found by Codex on PR #318.
+    void disabling_extended_view_clamps_the_current_span()
+    {
+        SpectrumWidget sw;
+        sw.setExtendedViewAllowed(true);
+        sw.setSampleRate(192000.0);
+        sw.setDdcCenterFrequency(14200000.0);
+        sw.setFrequencyRange(14200000.0, 1920000.0);   // 10x past the DDC
+        QVERIFY2(sw.extendedMode(), "test needs extended mode engaged");
+
+        sw.setExtendedViewAllowed(false);
+
+        QVERIFY2(!sw.extendedMode(), "extended mode should be off");
+        QCOMPARE(sw.bandwidth(), 192000.0);
+        QVERIFY2(sw.bandwidth() <= sw.maxZoomOutBandwidthHz(),
+                 "span left above the ceiling it was just clamped to");
+    }
+
     // Pan far enough into a wing and the DDC leaves the window entirely.
     //
     // Clamping both endpoints together manufactured a one-pixel island at

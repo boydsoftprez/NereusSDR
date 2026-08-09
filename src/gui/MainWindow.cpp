@@ -2683,6 +2683,14 @@ void MainWindow::buildUI()
         refreshPanNotchMinWidth();
     });
 
+    // A stream's physical ADC can move without its stream index or its folded
+    // chain index moving with it, so nothing that watches slice properties
+    // notices. The extended pan's wings are keyed on that physical ADC and
+    // would otherwise keep painting the old one until an unrelated overlay
+    // event happened past. Codex, PR #318.
+    connect(m_radioModel, &RadioModel::streamAdcRoutingChanged, this,
+            &MainWindow::refreshPanStatusOverlays);
+
     // TNF: the notch list is global, so one connect per NotchModel signal
     // repaints every pan. refreshPanNotchMarkers takes no arguments; Qt
     // drops the extra ones from notchAdded / notchChanged / notchRemoved /
@@ -3417,7 +3425,17 @@ void MainWindow::buildUI()
             // (in which case we clamp to full-span).
             const double freq = activeSpectrumWidget()->centerFrequency();
             const double currentBw = activeSpectrumWidget()->bandwidth();
-            const double clampedBw = (currentBw > rateHz) ? rateHz : currentBw;
+            // Against the EXTENDED ceiling, not the DDC rate.
+            //
+            // A span past the DDC rate is a legitimate state now: it is the
+            // one and only trigger for extended mode. Clamping to rateHz here
+            // meant any reconnect or rate change silently collapsed an
+            // extended view back onto the DDC, and the operator's zoom was
+            // gone with no wings and no explanation. maxZoomOutBandwidthHz
+            // returns rateHz when extended view is switched off, so the
+            // ordinary case is unchanged. Codex, PR #318.
+            const double ceiling = activeSpectrumWidget()->maxZoomOutBandwidthHz();
+            const double clampedBw = (currentBw > ceiling) ? ceiling : currentBw;
             activeSpectrumWidget()->setFrequencyRange(freq, clampedBw);
         }
     });
@@ -8013,12 +8031,24 @@ void MainWindow::wireSliceToSpectrum()
     // (between 10 kHz and the DDC sample rate), keep it; otherwise
     // fall back to the full-span default (768 kHz = sample rate).
     double freq = slice->frequency();
+    activeSpectrumWidget()->setDdcCenterFrequency(freq);
+    // Rate BEFORE the span, so the extended ceiling below is computed against
+    // a real DDC rate rather than the widget's construction default.
+    activeSpectrumWidget()->setSampleRate(768000.0);
+
+    // The upper bound is the extended ceiling, not a hardcoded 768 kHz.
+    //
+    // saveSettings can now record a span above the DDC rate, because that is
+    // exactly what extended view is, and this test rejected every one of them
+    // and fell back to full span. So an extended zoom was always discarded at
+    // startup even though it had been persisted correctly. maxZoomOutBandwidth
+    // Hz returns the DDC rate when extended view is off, which is what the
+    // old literal meant to say. Codex, PR #318.
     const double loadedBw = activeSpectrumWidget()->bandwidth();
-    const double initialBw = (loadedBw >= 10000.0 && loadedBw <= 768000.0)
+    const double ceiling  = activeSpectrumWidget()->maxZoomOutBandwidthHz();
+    const double initialBw = (loadedBw >= 10000.0 && loadedBw <= ceiling)
                              ? loadedBw : 768000.0;
     activeSpectrumWidget()->setFrequencyRange(freq, initialBw);
-    activeSpectrumWidget()->setDdcCenterFrequency(freq);
-    activeSpectrumWidget()->setSampleRate(768000.0);
     activeSpectrumWidget()->setVfoFrequency(freq);
     activeSpectrumWidget()->setFilterOffset(slice->filterLow(), slice->filterHigh());
     activeSpectrumWidget()->setStepSize(slice->stepHz());
@@ -10189,6 +10219,12 @@ void MainWindow::closeEvent(QCloseEvent* event)
     // during MainWindow init.
     if (m_panStack) {
         m_panStack->saveSplitterState();
+        // Any pan still popped out, while there is still a flush coming.
+        // ~PanadapterStack saves too, but it runs after the
+        // AppSettings::save() below and setValue only writes an in-memory map
+        // whose owner has a defaulted destructor, so the teardown save alone
+        // never reached the disk. Codex, PR #318.
+        m_panStack->saveFloatingGeometry();
     }
 
     // Issue #206 — persist window geometry + maximized/fullscreen
