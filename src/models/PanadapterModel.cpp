@@ -87,6 +87,9 @@ QString gridMinKey(Band b)      { return QStringLiteral("DisplayGridMin_") + ban
 QString clarityFloorKey(Band b) { return QStringLiteral("ClarityFloor_")   + bandKeyName(b); }
 // NereusSDR-original — no Thetis equivalent.
 QString bandNFKey(Band b)       { return QStringLiteral("DisplayBandNFEstimate_") + bandKeyName(b); }
+// NereusSDR-original: no Thetis equivalent (3D Stacked-Trace Spectrum Plan
+// Task 14). Follows the same no-pan-index convention as the keys above.
+QString dss3DFloorDepthKey(Band b) { return QStringLiteral("Display3DFloorDepth_") + bandKeyName(b); }
 
 } // namespace
 
@@ -245,6 +248,30 @@ void PanadapterModel::setBandNFEstimate(Band b, float nf)
     }
 }
 
+// NereusSDR-original: no Thetis equivalent (3D Stacked-Trace Spectrum
+// Plan Task 14).
+int PanadapterModel::dss3DFloorDepthForBand(Band b) const
+{
+    return m_perBandGrid.value(b, BandGridSettings{ kThetisDefaultDbMax, kThetisDefaultDbMin })
+        .dss3DFloorDepth;
+}
+
+// NereusSDR-original: no Thetis equivalent (3D Stacked-Trace Spectrum
+// Plan Task 14). Writes its own key directly (does NOT go through
+// saveBandGridToSettings()) so that touching only the per-band grid range
+// via setPerBandDbMax/setPerBandDbMin never writes a Display3DFloorDepth_
+// key for a band the operator has not touched in 3D mode. Mirrors the
+// setBandNFEstimate() pattern above.
+void PanadapterModel::setDss3DFloorDepthForBand(Band b, int depth)
+{
+    BandGridSettings& slot = m_perBandGrid[b];
+    if (slot.dss3DFloorDepth == depth) {
+        return;
+    }
+    slot.dss3DFloorDepth = depth;
+    AppSettings::instance().setValue(dss3DFloorDepthKey(b), depth);
+}
+
 void PanadapterModel::setGridStep(int step)
 {
     if (step <= 0 || m_gridStep == step) {
@@ -274,6 +301,7 @@ void PanadapterModel::loadPerBandGridFromSettings()
         const QVariant minV  = s.value(gridMinKey(b));
         const QVariant cfV   = s.value(clarityFloorKey(b));
         const QVariant nfV   = s.value(bandNFKey(b));
+        const QVariant dssV  = s.value(dss3DFloorDepthKey(b));
         BandGridSettings slot = m_perBandGrid.value(b, BandGridSettings{ kThetisDefaultDbMax, kThetisDefaultDbMin });
         if (maxV.isValid())  { slot.dbMax          = maxV.toInt();   }
         if (minV.isValid())  { slot.dbMin          = minV.toInt();   }
@@ -281,6 +309,10 @@ void PanadapterModel::loadPerBandGridFromSettings()
         // NereusSDR-original — no Thetis equivalent.
         // Load per-band NF estimates persisted from previous sessions for priming.
         if (nfV.isValid())   { slot.bandNFEstimate = nfV.toFloat();  }
+        // NereusSDR-original: no Thetis equivalent (3D Stacked-Trace
+        // Spectrum Plan Task 14). Absent key keeps the struct's default
+        // member initializer (6), same pattern as dbMax/dbMin above.
+        if (dssV.isValid())  { slot.dss3DFloorDepth = dssV.toInt();  }
         m_perBandGrid.insert(b, slot);
     }
 

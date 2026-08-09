@@ -89,6 +89,16 @@ struct BandGridSettings {
     // Last-seen noise-floor estimate for this band, persisted across sessions.
     // NaN until at least one 2s settle window has been observed on this band.
     float bandNFEstimate = std::numeric_limits<float>::quiet_NaN();
+    // NereusSDR-original: no Thetis equivalent (3D Stacked-Trace Spectrum
+    // Plan Task 14; upstream AetherSDR groups 3D settings in a JSON object,
+    // not per band). 3D Floor depth (0-24 dB) is anchored to the measured
+    // noise floor, which is strongly a per-band property, so it is stored
+    // here alongside the grid ceiling/floor rather than per panadapter like
+    // the other five 3D controls (SpectrumWidget). Default 6 matches
+    // SpectrumWidget's m_dssFloorDepth ship default: a real usable value,
+    // not a "no data yet" sentinel, so unlike clarityFloor/bandNFEstimate
+    // it does not use NaN.
+    int   dss3DFloorDepth = 6;
 };
 
 // Represents a single panadapter display.
@@ -158,6 +168,15 @@ public:
     // so the waterfall snaps to the remembered state rather than cold-starting.
     float bandNFEstimate(Band b) const;
     void setBandNFEstimate(Band b, float nf);
+
+    // NereusSDR-original: no Thetis equivalent (3D Stacked-Trace Spectrum
+    // Plan Task 14). Per-band 3D Floor depth (0-24 dB), keyed exactly like
+    // the grid slot above (Display3DFloorDepth_<bandKeyName>, no pan
+    // index). Reading an unset band returns the ship default (6). Writes
+    // persist immediately and independently of dbMax/dbMin/clarityFloor;
+    // touching only the grid range for a band must never write this key.
+    int  dss3DFloorDepthForBand(Band b) const;
+    void setDss3DFloorDepthForBand(Band b, int depth);
 
     // Grid step (single global value, matches Thetis). Persisted under
     // the "DisplayGridStep" key.

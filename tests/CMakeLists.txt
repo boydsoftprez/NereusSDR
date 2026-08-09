@@ -6285,6 +6285,20 @@ nereus_add_test(tst_dss_slice_shadow)
 # [@1872028c].
 nereus_add_test(tst_dss_overlay_menu)
 
+# ── 3D stacked-trace spectrum plan, Task 14: persistence ─────────────────
+# Pins the six-control persistence split: Spectrum render-mode / 3D Gain /
+# 3D Span / 3D Angle / 3D Slice Shadow round-trip per panadapter through
+# SpectrumWidget's existing settingsKey() helper (and write "True"/"False"
+# strings, not 1/0); 3D Floor round-trips per BAND instead on
+# PanadapterModel, keyed exactly like the existing DisplayGridMax_<band>
+# grid keys (no pan index), recalled across a real setCenterFrequency()
+# band change, and never written by either SpectrumWidget's per-pan save
+# path or a plain per-band grid-range edit that never touched 3D. This is
+# a NereusSDR-original persistence scheme (upstream AetherSDR groups its
+# 3D settings in a single JSON object rather than per-band/per-pan flat
+# keys), so there is no upstream source to cite.
+nereus_add_test(tst_dss_persistence)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

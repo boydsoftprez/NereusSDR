@@ -589,6 +589,16 @@ public:
     bool waterfallStopOnTx() const { return m_wfStopOnTx; }
 
     // ── 3DSS stacked-trace mode ───────────────────────────────────────────
+    // Persistence (3D Stacked-Trace Spectrum Plan Task 14): render mode,
+    // gain, row span, angle and slice-shadow persist per panadapter here
+    // (loadSettings()/saveSettings(), settingsKey() convention) -- see
+    // DisplaySpectrumRenderMode / Display3DGain / Display3DSpan /
+    // Display3DAngle / Display3DSliceShadow. 3D Floor is the exception: it
+    // persists per BAND instead, on PanadapterModel::dss3DFloorDepthForBand,
+    // because it is anchored to the measured noise floor, which is a
+    // per-band property. setDssFloorDepth()/dssFloorDepth() below remain
+    // the live runtime mirror the 3D renderer reads every frame; they do
+    // not write an AppSettings key themselves.
     void setSpectrumRenderMode(int mode);
     int  spectrumRenderMode() const { return static_cast<int>(m_spectrumRenderMode); }
     void setDssFloorDepth(int dB);

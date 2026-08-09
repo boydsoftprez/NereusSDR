@@ -1027,6 +1027,25 @@ void SpectrumWidget::loadSettings()
     m_nfOffsetGridFollow = qBound(-60, m_nfOffsetGridFollow, 60);
     m_maintainNFAdjustDelta = s.value(QStringLiteral("DisplayMaintainNFAdjustDelta"),
                                       QStringLiteral("False")).toString() == QStringLiteral("True");
+
+    // 3D Stacked-Trace Spectrum Plan Task 14: five of the six 3D controls
+    // are per panadapter, read through the readInt/readBool lambdas above
+    // (settingsKey() + pan-0 fallback inheritance, same as every other
+    // per-pan key in this function). 3D Floor is deliberately NOT here --
+    // it is per band on PanadapterModel (see the class-header comment on
+    // setDssFloorDepth()/dssFloorDepth() above); the live m_dssFloorDepth
+    // mirror keeps whatever value the band-change push last set until the
+    // next one arrives.
+    {
+        const int modeRaw = readInt(QStringLiteral("DisplaySpectrumRenderMode"), 0);
+        m_spectrumRenderMode = static_cast<SpectrumRenderMode>(
+            qBound(0, modeRaw, static_cast<int>(SpectrumRenderMode::Count) - 1));
+    }
+    m_dssGain          = qBound(0, readInt(QStringLiteral("Display3DGain"), 70), 100);
+    m_dssRowSpan       = qBound(0, readInt(QStringLiteral("Display3DSpan"), 100), 100);
+    m_dssAngle         = qBound(0, readInt(QStringLiteral("Display3DAngle"), 50), 100);
+    m_threeDSliceDepth = readBool(QStringLiteral("Display3DSliceShadow"), false);
+
     recomputeExtendedMode();
 }
 
@@ -1186,6 +1205,19 @@ void SpectrumWidget::saveSettings()
                QString::number(m_nfOffsetGridFollow));
     s.setValue(QStringLiteral("DisplayMaintainNFAdjustDelta"),
                m_maintainNFAdjustDelta ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // 3D Stacked-Trace Spectrum Plan Task 14: five of the six 3D controls
+    // are per panadapter -- written through the same writeInt/settingsKey
+    // pattern as every other key above. 3D Floor is deliberately excluded:
+    // it persists per band on PanadapterModel instead (see the
+    // class-header comment on setDssFloorDepth()/dssFloorDepth()), so no
+    // Display3DFloorDepth key is written from here.
+    writeInt(QStringLiteral("DisplaySpectrumRenderMode"), static_cast<int>(m_spectrumRenderMode));
+    writeInt(QStringLiteral("Display3DGain"), m_dssGain);
+    writeInt(QStringLiteral("Display3DSpan"), m_dssRowSpan);
+    writeInt(QStringLiteral("Display3DAngle"), m_dssAngle);
+    s.setValue(settingsKey(QStringLiteral("Display3DSliceShadow"), m_panIndex),
+              m_threeDSliceDepth ? QStringLiteral("True") : QStringLiteral("False"));
 }
 
 void SpectrumWidget::scheduleSettingsSave()
