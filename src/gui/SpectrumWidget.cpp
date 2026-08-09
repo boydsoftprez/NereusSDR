@@ -5194,6 +5194,79 @@ float SpectrumWidget::dssRowSpanTarget(double targetBandwidthMhz) const
         dssShape());
 }
 
+// ---- 3DSS slice shadow decals ----
+
+// The shader's shadowBands/shadowStyles arrays are fixed-size (dss_mesh.vert
+// / dss_mesh.frag both declare [8]); the builder below truncates to this
+// many rather than ever overrunning writeDssMeshUbo()'s UBO write.
+// From AetherSDR SpectrumWidget.cpp:14219-14225 [@1872028c]
+// (kShadowBandsOffset/kShadowStylesOffset sized off DssMesh::kShadowSlices,
+// upstream's own name for this same fixed budget).
+static constexpr int kDssShadowSlices = 8;
+
+// Maps every visible slice's passband onto the [0,1] viewport-unit space
+// hzToX() uses, for dss_mesh.frag's applySliceShadow() to darken directly
+// onto the 3D surface.
+//
+// From AetherSDR SpectrumWidget.cpp:14216-14366 [@1872028c] (appendShadow /
+// writeShadowSlot), simplified to what SliceMarkerGeometry actually carries:
+// NereusSDR has no per-slice mode / RTTY mark-space / isActive / markerWidth
+// fields at this call site, so unlike upstream this never emits a RTTY
+// mark+space cue pair, never emits a band-less cue-only descriptor, and
+// never dims an "inactive" slice's alpha independently of an "active" one --
+// drawSliceMarker() (the flat 2D marker this decal echoes onto the surface)
+// doesn't discriminate active/inactive or per-mode cues either, so none of
+// this narrows anything that already existed. Every visible slice therefore
+// contributes exactly one band+cue descriptor, using upstream's own
+// isActive=true magnitudes (:14263, :14269) since every slice reaching this
+// list is, in NereusSDR's simpler model, equally "on screen and current."
+QVector<SpectrumWidget::DssShadowBand> SpectrumWidget::buildDssShadowBands() const
+{
+    QVector<DssShadowBand> out;
+    if (!m_threeDSliceDepth || m_bandwidthHz <= 0.0) {
+        return out;
+    }
+
+    const double lowHz = m_centerHz - m_bandwidthHz / 2.0;
+    const auto unitForHz = [&](double hz) {
+        return static_cast<float>((hz - lowHz) / m_bandwidthHz);
+    };
+
+    // Same cyan accent drawSliceMarker() uses for the VFO centre line and
+    // triangle marker (AetherSDR SliceColors.h:15-20, "Slice 0 (A) = cyan,
+    // active"). Duplicated rather than shared: drawSliceMarker()'s own
+    // kSliceR/G/B is local to that function, and this task's constraints
+    // forbid restructuring code it did not add.
+    const QColor cue(0x00, 0xd4, 0xff);
+
+    for (const SliceMarkerGeometry& g : sliceMarkerGeometry()) {
+        if (out.size() >= kDssShadowSlices) {
+            break;
+        }
+        float low  = unitForHz(g.centreHz + g.filterLowHz);
+        float high = unitForHz(g.centreHz + g.filterHighHz);
+        if (low > high) {
+            std::swap(low, high);
+        }
+        if (high < 0.0f || low > 1.0f) {
+            continue;   // passband never touches the visible viewport
+        }
+        DssShadowBand band;
+        band.lowUnit    = low;
+        band.highUnit   = high;
+        band.centreUnit = unitForHz(g.centreHz);
+        // From AetherSDR SpectrumWidget.cpp:14263 [@1872028c]
+        // (writeShadowSlot's `active ? 0.42f : 0.17f` band alpha).
+        band.alpha       = 0.42f;
+        band.cue         = cue;
+        // From AetherSDR SpectrumWidget.cpp:14269 [@1872028c]
+        // (writeShadowSlot's `active ? 0.36f : 0.11f` cue alpha).
+        band.centreAlpha = 0.36f;
+        out.append(band);
+    }
+    return out;
+}
+
 // ---- 3DSS row tee ----
 // Resamples the same post-pipeline row pushWaterfallRow() just wrote to the
 // flat waterfall into the stacked-trace ring, and fills the wide (off-
@@ -7218,6 +7291,31 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             }
         }
 
+        // 3D Slice Shadow toggle. Upstream keeps this checkable action in
+        // the same general right-click QMenu that also carries "Show Tune
+        // Guides" / "Extended Frequency Line" / "Extended Passband" --
+        // none of which NereusSDR has ported, since NereusSDR's own
+        // "default, nothing else hit" right-click surface below is the
+        // SpectrumOverlayMenu *widget*, not a QMenu, and that widget's
+        // future "3D VIEW" section (mode / floor / gain / span / angle) is
+        // a later task in this same plan. This one boolean therefore gets
+        // its own small, standalone QMenu rather than waiting on that
+        // widget to grow a section for it. Blocking exec(), then falls
+        // through to SpectrumOverlayMenu below regardless of the outcome:
+        // that widget must stay reachable by plain right-click even while
+        // already in 3D mode, since its own upcoming mode control is how an
+        // operator gets back to 2D.
+        // From AetherSDR SpectrumWidget.cpp:9975-9979 [@1872028c]
+        if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+            QMenu menu(this);
+            QAction* depthAction = menu.addAction(tr("3D Slice Shadow"));
+            depthAction->setCheckable(true);
+            depthAction->setChecked(m_threeDSliceDepth);
+            connect(depthAction, &QAction::toggled,
+                    this, &SpectrumWidget::setThreeDSliceDepth);
+            menu.exec(event->globalPosition().toPoint());
+        }
+
         // Show overlay menu on right-click (default — not on a spot).
         if (!m_overlayMenu) {
             m_overlayMenu = new SpectrumOverlayMenu(this);
@@ -8722,9 +8820,34 @@ void SpectrumWidget::writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
     ubo[i++] = bg.blueF();
     ubo[i++] = 1.0f;
 
-    i += 8 * 4;   // shadowBands, filled by Task 12
-    i += 8 * 4;   // shadowStyles, filled by Task 12
-    ubo[i++] = 0.0f;                                  // descriptor count
+    // shadowBands / shadowStyles: buildDssShadowBands() already returns
+    // empty when 3D Slice Shadow is off, so both loops below fall straight
+    // through to the zero-padding branch and the shader's `shadowMeta.y <
+    // 0.5` early-out (redundantly, but harmlessly) never even needs it.
+    const QVector<DssShadowBand> shadowBands = buildDssShadowBands();
+    for (int slot = 0; slot < kDssShadowSlices; ++slot) {
+        if (slot < shadowBands.size()) {
+            const DssShadowBand& band = shadowBands[slot];
+            ubo[i++] = band.lowUnit;
+            ubo[i++] = band.highUnit;
+            ubo[i++] = band.centreUnit;
+            ubo[i++] = band.alpha;
+        } else {
+            i += 4;   // std::array is zero-initialized; no descriptor here
+        }
+    }
+    for (int slot = 0; slot < kDssShadowSlices; ++slot) {
+        if (slot < shadowBands.size()) {
+            const DssShadowBand& band = shadowBands[slot];
+            ubo[i++] = static_cast<float>(band.cue.redF());
+            ubo[i++] = static_cast<float>(band.cue.greenF());
+            ubo[i++] = static_cast<float>(band.cue.blueF());
+            ubo[i++] = band.centreAlpha;
+        } else {
+            i += 4;
+        }
+    }
+    ubo[i++] = static_cast<float>(shadowBands.size());   // descriptor count
     ubo[i++] = m_threeDSliceDepth ? 1.0f : 0.0f;
     ubo[i++] = specRect.width() * dpr;
     ubo[i++] = 0.0f;

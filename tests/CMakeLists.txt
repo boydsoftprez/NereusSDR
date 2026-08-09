@@ -6259,6 +6259,17 @@ nereus_add_test(tst_dss_cpu_surface)
 # Source: AetherSDR src/gui/SpectrumWidget.cpp:17223-17335 [@1872028c].
 nereus_add_test(tst_dss_dbm_scale)
 
+# ── 3D stacked-trace spectrum plan, Task 12: slice shadow decals ─────────
+# Pins buildDssShadowBands(): maps each visible slice's passband (and its
+# own carrier frequency, as the shadow's cue position) into the same [0,1]
+# viewport-unit space hzToX() uses, entirely empty when 3D Slice Shadow is
+# off, truncated to the shader's fixed 8-descriptor shadowBands/shadowStyles
+# budget, and dropping a slice whose passband never touches the visible
+# viewport rather than clamping it in place.
+# Source: AetherSDR src/gui/SpectrumWidget.cpp:14216-14366, :9975-9979
+# [@1872028c].
+nereus_add_test(tst_dss_slice_shadow)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

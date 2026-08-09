@@ -644,6 +644,31 @@ public:
     // against whatever wide-channel overhang is actually on screen.
     float dssRowSpanTarget(double targetBandwidthMhz) const;
 
+    // One slice passband darkened onto the 3D surface (dss_mesh.frag's
+    // applySliceShadow). low/high/centre are in the same [0,1] viewport-unit
+    // space hzToX() uses (0 = the on-screen bandwidth's left edge, 1 = its
+    // right edge): centreUnit is the slice's own CARRIER frequency, matching
+    // drawSliceMarker()'s separate VFO-centre-line pixel, not the passband
+    // midpoint. alpha/centreAlpha are the band-fill and centre-cue mix
+    // strengths the shader applies; cue is the slice's accent colour tinting
+    // both. From AetherSDR SpectrumWidget.cpp:14216-14366 [@1872028c]
+    // (writeShadowSlot's per-descriptor fields).
+    struct DssShadowBand {
+        float lowUnit{0.0f};
+        float highUnit{0.0f};
+        float centreUnit{0.0f};
+        float alpha{0.0f};
+        QColor cue;
+        float centreAlpha{0.0f};
+    };
+
+    // Maps every visible slice's passband (sliceMarkerGeometry()) onto
+    // viewport units for the DSS shader's slice-shadow decal, clamped to the
+    // shader's fixed 8-entry shadowBands/shadowStyles arrays. Empty when 3D
+    // Slice Shadow (threeDSliceDepth()) is off, or when a slice's passband
+    // never touches the visible viewport.
+    QVector<DssShadowBand> buildDssShadowBands() const;
+
     // Test seams. pushWaterfallRow() is private and normally driven by the
     // WaterfallTicker thread; these let the row-tee placement be proven
     // without standing up a ticker or a QRhi context.
