@@ -7599,6 +7599,10 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         m_draggingDbm = true;
         m_dragStartY = my;
         m_dragStartRef = m_refLevel;
+        // Task 16: captured unconditionally, same as m_dragStartRef above,
+        // so mouseMoveEvent's 3D branch has a baseline regardless of which
+        // mode is active when the press lands (mode cannot change mid-drag).
+        m_dragStartDssFloorDepth = m_dssFloorDepth;
         setCursor(Qt::SizeVerCursor);
         return;
     }
@@ -7832,6 +7836,50 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
 
     if (m_draggingDbm) {
         int dy = my - m_dragStartY;
+
+        // Task 16 (3D stacked-trace spectrum plan, bench fix): the dBm-strip
+        // drag-pan gesture is Ref-anchored in 2D (below), but the 3D surface
+        // never reads m_refLevel -- it anchors to dssFloorDbm(), which is
+        // m_nfLerpAverage - m_dssFloorDepth (see that function). Route the
+        // SAME plain drag at 3D Floor instead while in 3D mode, so the
+        // gesture the operator is actually looking at moves something the
+        // 3D view has an opinion about. NereusSDR-original: upstream
+        // AetherSDR's 3D Floor has no drag binding at all.
+        if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+            // Sign: dragging DOWN must reveal MORE noise (design doc
+            // addendum, Task 16 -- "drag down to reveal more noise, up to
+            // hide it"). dssFloorDbm() = m_nfLerpAverage - m_dssFloorDepth,
+            // so a LARGER m_dssFloorDepth pushes the baseline further BELOW
+            // the measured noise floor, exposing more of the texture that
+            // would otherwise sit below the visible floor. dy is already
+            // positive for a downward drag (my grows downward in Qt
+            // coordinates, same convention the 2D formula below relies on),
+            // so adding dy*depthPerPixel -- no sign flip -- makes a
+            // downward drag increase the depth, matching that requirement.
+            // (An inverted sign would instead make dragging down HIDE
+            // noise, which is the opposite of the stated fix.)
+            //
+            // Scale: 3D Floor's range is a fixed 0..24 (setDssFloorDepth's
+            // own clamp), nothing like 2D's user-adjustable m_dynamicRange
+            // (10..200). Reusing dbPerPixel below would saturate the travel
+            // within a few percent of the strip's height. Map the FULL
+            // strip height to the FULL 0..24 range instead, independent of
+            // m_dynamicRange.
+            const float depthPerPixel = 24.0f / static_cast<float>(specH);
+            const int newDepth = m_dragStartDssFloorDepth
+                + qRound(static_cast<float>(dy) * depthPerPixel);
+            // setDssFloorDepth() owns the [0,24] clamp (kept in one place
+            // so the drag and the 3D View slider can never disagree on the
+            // bound), invalidates the cached mesh/CPU surface so the drag
+            // is visible live, and drives the existing Task 14/15 per-band
+            // persistence + dssFloorDepthChanged listeners -- all of which
+            // a direct m_dssFloorDepth write here would have to reinvent.
+            setDssFloorDepth(newDepth);
+            return;
+        }
+
+        // 2D: unchanged. The amplitude scale is Ref-anchored, so moving
+        // m_refLevel slides the whole visible dBm window.
         float dbPerPixel = m_dynamicRange / static_cast<float>(specH);
         m_refLevel = m_dragStartRef + static_cast<float>(dy) * dbPerPixel;
         m_refLevel = qBound(-160.0f, m_refLevel, 20.0f);

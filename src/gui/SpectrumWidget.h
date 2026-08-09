@@ -2469,6 +2469,15 @@ private:
     bool   m_draggingDbm{false};
     int    m_dragStartY{0};
     float  m_dragStartRef{0.0f};
+    // 3D stacked-trace spectrum plan, Task 16: the dBm-strip drag-pan
+    // gesture targets 3D Floor instead of Ref Level while in 3D mode (see
+    // the mode branch in mouseMoveEvent). dssFloorDepth() is captured here
+    // at press time, the same way m_dragStartRef captures m_refLevel above,
+    // so the 3D branch has its own drag-start baseline to offset from.
+    // NereusSDR-original: upstream AetherSDR's 3D Floor has no drag
+    // binding at all (SpectrumWidget.cpp's m_draggingDbm only ever moves
+    // its Ref Level equivalent), so there is no upstream field to port.
+    int    m_dragStartDssFloorDepth{0};
     QPoint m_mousePos;              // for cursor frequency display
     bool   m_mouseInWidget{false};
 

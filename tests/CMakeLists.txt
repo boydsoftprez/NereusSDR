@@ -6315,6 +6315,20 @@ nereus_add_test(tst_dss_persistence)
 # match the already-cited Task 13 overlay-menu row.
 nereus_add_test(tst_dss_setup_sync)
 
+# ── 3D stacked-trace spectrum plan, Task 16: dBm-strip drag wired to 3D
+# Floor ────────────────────────────────────────────────────────────────
+# Bench fix. The plain vertical drag on the right-edge dBm strip
+# (SpectrumWidget.cpp, m_draggingDbm) always wrote m_refLevel, which the
+# 3D surface never reads -- it anchors to dssFloorDbm() instead. Pins the
+# mode-gated fix: in 3D the same drag now moves dssFloorDepth() (down
+# reveals more noise, up hides it, full strip height mapped to the full
+# 0..24 range) and leaves refLevel() untouched; in 2D the pre-existing
+# formula and output are completely unchanged and dssFloorDepth() is left
+# alone. Also pins the 0..24 saturation bound under the new mapping.
+# NereusSDR-original: upstream AetherSDR's 3D Floor has no drag binding at
+# all, so there is no upstream source to cite.
+nereus_add_test(tst_dss_floor_drag)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
