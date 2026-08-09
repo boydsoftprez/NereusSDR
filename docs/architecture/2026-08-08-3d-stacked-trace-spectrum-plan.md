@@ -3701,7 +3701,15 @@ specific number twelve.
 
 `buildDssShadowBands()` maps each visible slice's passband edges to viewport units via the same `mhzToX` normalisation the 2D overlays use, clamped to eight entries. Feed the result into the `shadowBands` / `shadowStyles` / `shadowMeta` region of `writeDssMeshUbo` that Task 9 left zeroed, setting `shadowMeta.x` to the band count and `shadowMeta.y` to `m_threeDSliceDepth`.
 
-Add the context-menu item, shown only in 3D, matching upstream `SpectrumWidget.cpp:9876-9887 [@1872028c]`:
+**The toggle does NOT get its own `QMenu`.** Upstream adds it to a raw `QMenu`
+because that is its right-click surface. Ours is `SpectrumOverlayMenu`, a
+QWidget popup, and adding a second competing surface would show the operator
+two menus in sequence on one right-click. The toggle therefore belongs in the
+`3D VIEW` section that Task 13 builds, beside the five sliders it relates to.
+Task 12 fills the UBO shadow slots only; Task 13 owns the control.
+
+For reference, upstream's version of the item is at
+`SpectrumWidget.cpp:9876-9887 [@1872028c]`:
 
 ```cpp
     if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
@@ -3840,7 +3848,27 @@ Add a `3D VIEW` header and the five rows, copying upstream's labels, ranges, def
     });
 ```
 
-Wire all five signals to the `SpectrumWidget` setters where the menu is constructed, and call `setDssValues(...)` before `show()` alongside the existing `setValues(...)` call.
+Add the slice-shadow toggle to the same section, as a checkbox rather than a
+slider. Task 12 filled the UBO slots the fragment shader's `applySliceShadow`
+reads; this is the control that enables them. It does NOT get its own `QMenu`:
+upstream uses one because a raw `QMenu` is its right-click surface, but ours is
+`SpectrumOverlayMenu`, and a second competing surface would show the operator
+two menus in sequence on a single right-click.
+
+```cpp
+    // ── 3D slice shadow, perspective decal for slice passbands ────────────
+    m_dssSliceShadowChk = new QCheckBox(tr("3D Slice Shadow"));
+    m_dssSliceShadowChk->setObjectName("dssSliceShadowCheck");
+    m_dssSliceShadowChk->setToolTip(
+        tr("Darken each slice's passband onto the 3D surface so it leans back\n"
+           "with the perspective, instead of drawing flat on top of it."));
+    grid->addWidget(m_dssSliceShadowChk, row, 0, 1, 4);
+    connect(m_dssSliceShadowChk, &QCheckBox::toggled,
+            this, &SpectrumOverlayMenu::dssSliceShadowChanged);
+    ++row;
+```
+
+Wire all six signals to the `SpectrumWidget` setters where the menu is constructed, and call `setDssValues(...)` before `show()` alongside the existing `setValues(...)` call. `setDssValues` takes the shadow state too, and must not echo.
 
 - [ ] **Step 4: Verify and commit**
 
