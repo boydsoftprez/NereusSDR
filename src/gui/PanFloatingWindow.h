@@ -33,12 +33,32 @@
 //                                    lands in Sub-Epic D Task 15.
 //                                    AI-assisted transformation via
 //                                    Anthropic Claude Code.
+//   2026-08-08  J.J. Boyd / KG4VCF  Bench report: a floated pan froze
+//                                    ("QRhiWidget: No QRhi" per display
+//                                    tick) and arrived with no container
+//                                    chrome. Constructor now takes the
+//                                    main window as parent and the applet
+//                                    arrives through adoptApplet() /
+//                                    leaves through takeApplet(), so the
+//                                    reparent never passes through
+//                                    setParent(nullptr). Adds per-pan
+//                                    geometry persistence
+//                                    (FloatingPan_<panId>_Geometry) and
+//                                    makes closeEvent dock instead of
+//                                    destroy. Ported from AetherSDR
+//                                    src/gui/PanFloatingWindow.{h,cpp}
+//                                    and src/gui/PanadapterStack.cpp
+//                                    [@1e0718ad]. AI-assisted
+//                                    transformation via Anthropic Claude
+//                                    Code.
 // =================================================================
 #pragma once
 
 #include <QPointer>
 #include <QWidget>
 #include <QString>
+
+class QVBoxLayout;
 
 namespace NereusSDR {
 
@@ -51,8 +71,29 @@ class PanadapterApplet;
 class PanFloatingWindow : public QWidget {
     Q_OBJECT
 public:
-    PanFloatingWindow(PanadapterApplet* applet, QWidget* parent = nullptr);
+    /// `parent` should be the main window. Qt::Window still makes this a
+    /// top-level (so it can live on a second monitor); the parent only
+    /// governs z-order and lifetime, which is what keeps a popped-out pan
+    /// above the console instead of behind it, without the
+    /// WindowStaysOnTopHint that would float it over other applications too.
+    /// From AetherSDR src/gui/PanadapterStack.cpp:800-808 [@1e0718ad].
+    explicit PanFloatingWindow(QWidget* parent = nullptr);
     ~PanFloatingWindow() override;
+
+    /// Reparent `applet` into this window's layout.
+    ///
+    /// Goes straight from the splitter into this layout via addWidget, never
+    /// through setParent(nullptr): an intermediate top-level state creates
+    /// and destroys a transient NSWindow, which on macOS can corrupt the main
+    /// window's NSResponder chain and freeze input everywhere.
+    /// From AetherSDR src/gui/PanFloatingWindow.cpp:34-56 [@1e0718ad].
+    void adoptApplet(PanadapterApplet* applet);
+
+    /// Hand the applet back, reparented directly onto `newParent`.
+    ///
+    /// Takes the destination rather than orphaning to nullptr, for the same
+    /// transient-NSWindow reason as adoptApplet.
+    PanadapterApplet* takeApplet(QWidget* newParent);
 
     PanadapterApplet* applet() const;
     QString panId() const;
@@ -60,6 +101,11 @@ public:
     /// Public hook (test seam + Stack-side trigger) that re-emits
     /// dockRequested without needing the user to close the window.
     void requestDock();
+
+    /// Per-pan window geometry, keyed "FloatingPan_<panId>_Geometry".
+    /// From AetherSDR src/gui/PanFloatingWindow.cpp:98-112 [@1e0718ad].
+    void saveWindowGeometry();
+    void restoreWindowGeometry();
 
 signals:
     void dockRequested(const QString& panId);
@@ -71,7 +117,10 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
+    void updateWindowTitle();
+
     QPointer<PanadapterApplet> m_applet;  // reparented under our layout
+    QVBoxLayout*               m_layout {nullptr};
 };
 
 } // namespace NereusSDR

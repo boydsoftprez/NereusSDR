@@ -16,6 +16,21 @@
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-08-08 — J.J. Boyd (KG4VCF). Two bench-reported defects.
+//                 (1) Extended pan: Sub-Epic F shipped the wideband DATA
+//                 path and never the paint, so the stored bins had no
+//                 reader and visibleBinRange()'s clamp stretched the DDC
+//                 trace across the whole panel once zoomed past the DDC
+//                 rate. Adds listenableIslandPixels() /
+//                 fillWidebandWings() / drawExtendedIslandBounds(); wing
+//                 frequency axis and dB calibration from Thetis
+//                 wbDisplay.cs:440, 2106, 4511, 4680-4704 [v2.10.3.15].
+//                 (2) A floated pan lost its render context. Adds
+//                 prepareForTopLevelChange() / resetGpuResources() /
+//                 applyNativeWindowIsolationPolicy(), ported from
+//                 AetherSDR src/gui/SpectrumWidget.cpp:1843-1857,
+//                 2227-2247, 7092-7110 [@1e0718ad]. AI-assisted
+//                 transformation via Anthropic Claude Code.
 // =================================================================
 
 /*  enums.cs
@@ -1041,14 +1056,102 @@ public slots:
     void clearWaterfallHistory();
 
     /// Phase 3F Sub-Epic F Task 6: receive wideband bins for the active-ADC
-    /// extended pan. Bins are stored per-ADC; actual painting wires in F
-    /// polish (T7-T10). Setter alone enables Sub-Epic H bench operators to
-    /// confirm the wideband data path is flowing without UI rendering.
+    /// extended pan. Bins are stored per-ADC; Task 8 (2026-08-08) is what
+    /// finally paints them.
     void setWidebandBins(int adcIndex, const QVector<float>& dbmBins);
     QVector<float> widebandBinsForTest(int adcIndex) const
     {
         return adcIndex == 0 ? m_widebandBinsAdc0 : m_widebandBinsAdc1;
     }
+
+    /// Which ADC's wideband bins this pan's wings read.
+    ///
+    /// MainWindow fans every ADC's frame to every pan, so without this a pan
+    /// on ADC1 would paint ADC0's spectrum in its wings. Resolved from the
+    /// pan's active slice through RadioModel::sliceChainIndex, the same
+    /// answer the WIDE pill and the CH tag are keyed on.
+    void setWidebandAdcIndex(int adcIndex);
+    int  widebandAdcIndex() const { return m_widebandAdcIndex; }
+
+    /// ADC clock backing the wideband stream. Sets the wing frequency axis:
+    /// the wideband FFT is real-input, so its bins span 0..rate/2.
+    /// From Thetis wbDisplay.cs:4511 [v2.10.3.15] — `private int
+    /// sample_rate = 122880000;`, the same value RadioModel already seeds
+    /// WidebandFftEngine with. Upstream hardcodes it too; nothing in Thetis
+    /// writes wbDisplay.SampleRate.
+    void setWidebandAdcRateHz(double rateHz);
+    double widebandAdcRateHz() const { return m_widebandAdcRateHz; }
+
+    /// Zoom-out ceiling for both operator zoom gestures.
+    ///
+    /// Bench 2026-08-08: the wheel and the frequency-scale drag both clamped
+    /// visible bandwidth to the DDC sample rate, and `m_bandwidthHz >
+    /// m_sampleRateHz` is the ONLY trigger for extended mode -- so the
+    /// "Extended view (wideband wings)" toggle enabled a state no gesture
+    /// could reach. With extended view allowed the ceiling becomes the
+    /// wideband ADC's Nyquist (the span wing data actually covers); with it
+    /// switched off the ceiling stays at the DDC rate, exactly as before.
+    double maxZoomOutBandwidthHz() const;
+
+    /// Set the display window with the span held to what this pan may show.
+    ///
+    /// The ceiling is maxZoomOutBandwidthHz(): the DDC rate normally, the
+    /// wideband ADC's Nyquist once extended view is allowed. A span of zero
+    /// or less, or one above the ceiling, becomes the ceiling.
+    ///
+    /// This exists because three separate places in MainWindow re-apply a
+    /// span (restore at startup, the sample-rate handler, and the stream
+    /// re-subscription path) and each clamped against the DDC rate on its
+    /// own. An extended zoom therefore survived until whichever of them ran
+    /// last, and Codex found them one at a time over three rounds on PR #318.
+    /// One definition, so there is no fourth.
+    void setDisplayWindowClamped(double centreHz, double requestedSpanHz);
+
+    /// dB correction applied to a raw wideband bin before it is drawn beside
+    /// the DDC trace. Two terms; see the definitions for the derivations.
+    ///
+    ///  1. FFT normalisation — refers the transform to 0 dBFS.
+    ///  2. Bandwidth normalisation — refers the wideband bin to the DDC's
+    ///     bin width, so the two halves of the trace are power densities on
+    ///     one scale rather than power-per-bin on two different scales.
+    ///
+    /// Public so tests can assert both terms are present. Bench 2026-08-08
+    /// found each one alone puts the wings off the panel: with only term 1
+    /// they saturate, and term 2 is what brings them onto the island's scale.
+    ///
+    /// `detector` is the one that produced the DDC pixels this wing sits
+    /// beside, and it is not decoration: Average / Sample / RMS are handed
+    /// invEnb and divide the window ENB out of the island
+    /// (SpectrumDetector.cpp cases 2, 3, 4), while Peak and Rosenfell take a
+    /// max and leave it in. The island's effective noise reference therefore
+    /// differs by the ENB depending on which one is selected, and the trace
+    /// and waterfall planes select independently.
+    static float widebandFftNormalisationDb();
+    float widebandBandwidthNormalisationDb(SpectrumDetector detector) const;
+    float widebandTotalCalibrationDb(SpectrumDetector detector) const;
+
+    /// Half-width of the DDC span actually drawn, kDdcClipFraction of the
+    /// rate already removed from each side.
+    ///
+    /// One definition for three consumers: the island pixel geometry, the
+    /// dashed boundary markers, and the click router that decides whether a
+    /// click retunes the slice or the DDC. They disagreed before this
+    /// existed, so each 4% edge strip painted wideband data while the marker
+    /// sat outside it and a click there still retuned the slice. Meaningful
+    /// only in extended mode, which is the only place all three use it.
+    double ddcIslandHalfSpanHz() const;
+
+    /// Pixel span [first, last] the DDC actually covers inside the current
+    /// display window; the wings are everything outside it.
+    ///
+    /// Outside extended mode this is the whole width, which is what makes
+    /// the ordinary path a no-op. Public so a test can assert the geometry
+    /// without a GPU: the bug it closes is that visibleBinRange() CLAMPS to
+    /// the DDC bin array, so zooming past the DDC rate used to stretch the
+    /// DDC's spectrum across the whole panel instead of shrinking it into
+    /// its true span — a trace that no longer agreed with the frequency
+    /// scale drawn beneath it.
+    std::pair<int, int> listenableIslandPixels(int displayWidth) const;
 
     /// Phase 3F Sub-Epic F Tasks 7-10: allow extended-pan rendering.
     /// The actual state is on only when allowed AND the visible bandwidth
@@ -1061,7 +1164,70 @@ public slots:
     bool extendedViewAllowed() const { return m_extendedViewAllowed; }
     bool extendedMode() const { return m_extendedMode; }
 
+    // ── Detach-safe RHI lifecycle (float / dock a pan) ────────────────────
+    //
+    // Bench report 2026-08-08: floating a pan painted one frame and then
+    // logged "QRhiWidget: No QRhi" once per display tick forever, i.e. a
+    // frozen panadapter in the popped-out window. Confirmed on an ANAN-G2E:
+    // one `got CAMetalLayer, pixel size 2356x1702` followed by 30 warnings a
+    // second (the display timer's rate, one widget).
+    //
+    // A QRhiWidget's render context belongs to the top-level window it lives
+    // in, so moving one between windows is a teardown and a rebuild, not a
+    // reparent. The three calls below are that teardown, split the way
+    // AetherSDR splits them because each has to happen at a different point
+    // relative to the setParent() call.
+    //
+    // From AetherSDR src/gui/SpectrumWidget.cpp:2227-2247, 7092-7110,
+    // 1843-1857 [@1e0718ad].
+
+    /// Tell Qt's RHI machinery this widget is leaving its top-level, BEFORE
+    /// the reparent. QRhiWidget registers a cleanup callback on the current
+    /// backing-store QRhi; a direct reparent can miss Qt's own notification
+    /// and leave that callback pointing at a QRhiWidgetPrivate the old QRhi
+    /// will later fire against.
+    ///
+    /// Must be sent exactly once, before the move. refreshAfterReparent must
+    /// not re-send it.
+    void prepareForTopLevelChange();
+
+    /// Drop the pipelines/buffers/textures so initialize() rebuilds them
+    /// against the new window's surface. Linux/OpenGL survives the move, so
+    /// there it is just a repaint request.
+    void resetGpuResources();
+
+    /// Re-assert the native-window attributes as one unit.
+    ///
+    /// WA_NativeWindow gives the widget its own Metal leaf;
+    /// WA_DontCreateNativeAncestors stops realizing that leaf from dragging
+    /// the ancestor QWidget tree native behind it. They are set together,
+    /// here, so a reparent that re-realizes the native window can never
+    /// reassert one without the other. Idempotent; a no-op off macOS and on
+    /// non-GPU builds.
+    void applyNativeWindowIsolationPolicy();
+
 public:
+    /// Fraction of the DDC's spectrum discarded at EACH edge when drawing
+    /// the listenable island.
+    ///
+    /// From Thetis specHPSDR.cs:529 [v2.10.3.15] — `const double
+    /// CLIP_FRACTION = 0.04;` with upstream's own comment "fraction of the
+    /// spectrum to clip off each side of each sub-span", applied at :535 as
+    /// `clip = floor(CLIP_FRACTION * fft_size)`.
+    ///
+    /// Bench 2026-08-08: "still black gaps between wideband" and the DDC.
+    /// The outermost DDC bins sit in the decimation filter's transition band
+    /// and read near-nothing. At normal zoom you never see them because the
+    /// window is inside the DDC, but the extended pan draws the island at
+    /// its true width and puts the skirt on screen as a dark band at each
+    /// edge. Upstream discards it; so do we, and the wideband wings cover
+    /// that span instead.
+    ///
+    /// Applied ONLY in extended mode. The ordinary path keeps every bin it
+    /// always had -- clipping there would be a wider behaviour change than
+    /// the reported defect.
+    static constexpr double kDdcClipFraction = 0.04;
+
     // ── Spot overlay (Phase 3J-2 Task E1) ─────────────────────────────────
     // Public structs + setters re-declared under a fresh `public:` access
     // specifier so MOC doesn't try to interpret the nested struct as a
@@ -1410,7 +1576,42 @@ private:
     QVector<float> m_widebandBinsAdc1;
     bool           m_extendedViewAllowed{true};
     bool           m_extendedMode{false};
+    int            m_widebandAdcIndex{0};
+    double         m_widebandAdcRateHz{122880000.0};  // Thetis wbDisplay.cs:4511
     void recomputeExtendedMode();
+
+    /// Pull the visible span back to `bandwidthHz` when extended view is
+    /// withdrawn, through setFrequencyRange so the change carries the same
+    /// repaint and waterfall handling as any other zoom.
+    void applyViewWindowForExtendedClamp(double bandwidthHz);
+
+    /// Overwrite the wing pixels (everything outside the listenable island)
+    /// with wideband ADC data, in the linear-power domain the avenger
+    /// expects. `dbmOffset` is the same offset the DDC plane is folded
+    /// through, so both sides of a boundary land on one dB scale.
+    ///
+    /// Writes a floor rather than leaving stale island data when no wideband
+    /// frame has arrived (P1 boards, wideband disabled, or the first frames
+    /// after a zoom-out): a wing showing the DDC's spectrum repeated would
+    /// be a display that invents signals.
+    ///
+    /// `detector` is the one that produced this plane's island pixels; it
+    /// picks the DDC noise reference the wings are calibrated against. Passed
+    /// per call rather than read off a member because the trace and the
+    /// waterfall choose their detectors independently.
+    void fillWidebandWings(QVector<float>& linearPixels,
+                           int islandFirstPx, int islandLastPx,
+                           double dbmOffset,
+                           SpectrumDetector detector) const;
+
+    /// Divisor for a REAL transform's peak: a real sinusoid splits its
+    /// energy between +f and -f, and an r2c transform returns only the
+    /// positive half, so the peak sits at (sum w)/2 rather than (sum w).
+    /// This is the 6.02 dB between this path and the complex I/Q path's
+    /// convention at FFTEngine.cpp:484-486.
+    static constexpr float kWidebandRealFftPeakDivisor = 2.0f;
+
+
 
     // ---- Phase 3Q-8: disconnect overlay state ----
     // The CPU paintEvent path can paint a QPainter overlay, but the GPU
@@ -1426,6 +1627,11 @@ private:
 
     // ---- Drawing helpers ----
     void drawGrid(QPainter& p, const QRect& specRect);
+
+    /// Dashed markers at the DDC edges while an extended pan is showing
+    /// wideband wings. Called from drawGrid so it rides the same cached
+    /// static-overlay texture as the rest of the chrome.
+    void drawExtendedIslandBounds(QPainter& p, const QRect& specRect);
     void drawSpectrum(QPainter& p, const QRect& specRect);
     // Active Peak Hold separate render pass (Q14.1). Called from drawSpectrum()
     // after the fill path so the peak trace sits on top of fill but below

@@ -26,7 +26,10 @@
 
 #include <QAction>
 #include <QContextMenuEvent>
+#include <QHBoxLayout>
+#include <QLabel>
 #include <QMenu>
+#include <QPushButton>
 #include <QResizeEvent>
 #include <QVBoxLayout>
 
@@ -40,7 +43,9 @@ PanadapterApplet::PanadapterApplet(const QString& panId, QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    layout->addWidget(m_spectrum);
+    buildFloatTitleBar();          // hidden until setFloatingState(true)
+    layout->addWidget(m_floatTitleBar);
+    layout->addWidget(m_spectrum, 1);
 
     // Phase 3F Sub-Epic E Task 2: per-pan status overlay in top-right.
     // Positioned manually in resizeEvent so the spectrum host owns the full
@@ -239,7 +244,19 @@ void PanadapterApplet::repositionStatusOverlay()
     // badges, so any overlap makes the arrows both hard to read and hard to
     // hit.
     const int reserved = m_spectrum ? m_spectrum->reservedRightEdgeWidth() : 0;
-    m_statusOverlay->setGeometry(width() - hint.width() - 8 - reserved, 8,
+    // Start below the floating title strip when there is one. The overlay is
+    // positioned in APPLET coordinates, so without this it lands on top of
+    // the strip -- the CH / WIDE / TX badges printed over the pan name and
+    // the Dock button's row.
+    //
+    // Keyed on m_isFloating rather than the strip's isVisible(): the float
+    // sequence hides the applet while it reparents, and a hidden ancestor
+    // makes isVisible() false for a child that is not itself hidden, which
+    // would put the overlay back over the strip for the frame that matters.
+    const int stripH = (m_isFloating && m_floatTitleBar)
+                           ? m_floatTitleBar->height() : 0;
+    m_statusOverlay->setGeometry(width() - hint.width() - 8 - reserved,
+                                 stripH + 8,
                                  hint.width(), hint.height());
 }
 
@@ -259,6 +276,67 @@ bool PanadapterApplet::wideBpf() const
 QString PanadapterApplet::wideReason() const
 {
     return m_statusOverlay ? m_statusOverlay->wideReason() : QString();
+}
+
+// Floating-only title strip. See the header for why it is not shown docked.
+//
+// Shape follows AetherSDR's pan title bar (PanadapterApplet.cpp:46-83
+// [@1e0718ad]): grip glyph, name on the left, control button on the right.
+// Colours are NereusSDR's existing container-title tokens rather than
+// upstream's theme placeholders, so a popped-out pan reads as the same kind
+// of surface as a floating meter container (ContainerWidget.cpp:117-167).
+void PanadapterApplet::buildFloatTitleBar()
+{
+    m_floatTitleBar = new QWidget(this);
+    m_floatTitleBar->setFixedHeight(18);
+    m_floatTitleBar->setVisible(false);
+    m_floatTitleBar->setStyleSheet(QStringLiteral(
+        "QWidget { background: #16202c; border-bottom: 1px solid #203040; }"));
+
+    auto* bar = new QHBoxLayout(m_floatTitleBar);
+    bar->setContentsMargins(6, 0, 4, 0);
+    bar->setSpacing(4);
+
+    auto* grip = new QLabel(QString::fromUtf8("\xe2\x8b\xae\xe2\x8b\xae"),
+                            m_floatTitleBar);
+    grip->setStyleSheet(QStringLiteral(
+        "QLabel { background: transparent; color: #5a7085; font-size: 10px; }"));
+    bar->addWidget(grip);
+
+    auto* title = new QLabel(QStringLiteral("Pan %1").arg(m_panId),
+                             m_floatTitleBar);
+    title->setStyleSheet(QStringLiteral(
+        "QLabel { background: transparent; color: #9fb4c8; "
+        "font-size: 10px; font-weight: bold; }"));
+    bar->addWidget(title);
+    bar->addStretch();
+
+    auto* dockBtn = new QPushButton(QString::fromUtf8("\xe2\x86\xa9"),
+                                    m_floatTitleBar);  // U+21A9 leftwards hook
+    dockBtn->setFixedSize(18, 14);
+    dockBtn->setToolTip(tr("Dock this pan back into the console"));
+    dockBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: transparent; color: #6a8090; border: none; "
+        "font-size: 11px; padding: 0; }"
+        "QPushButton:hover { color: #c8d8e8; }"));
+    connect(dockBtn, &QPushButton::clicked, this,
+            [this]() { emit dockRequested(m_panId); });
+    bar->addWidget(dockBtn);
+}
+
+// From AetherSDR src/gui/PanadapterApplet.cpp:552-565 [@1e0718ad]
+//   adapter: upstream flips one always-present button between pop-out and
+//   dock glyphs; NereusSDR shows or hides the whole strip, since the docked
+//   pan has no title bar to carry a pop-out button on.
+void PanadapterApplet::setFloatingState(bool floating)
+{
+    m_isFloating = floating;
+    if (m_floatTitleBar) {
+        m_floatTitleBar->setVisible(floating);
+    }
+    // The status overlay is positioned against the applet rect, and the strip
+    // just changed how much of that rect the spectrum owns.
+    repositionStatusOverlay();
 }
 
 // Phase 3F Sub-Epic F Task 13: operator-toggleable Extended view.

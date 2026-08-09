@@ -353,6 +353,20 @@ public:
     /// range has to be counted against that one bank.
     int chainForStream(int stream) const;
 
+    /// The PHYSICAL ADC behind a stream, with none of chainForStream's fold.
+    ///
+    /// Use these two and not the chain pair whenever the question is about the
+    /// ADC itself rather than the preselector in front of it. The wideband
+    /// display is the case that forced the split: widebandSpectrumReady
+    /// carries the physical index off the wire, so keying the paint off a
+    /// chain index made an extended pan on ADC1 render ADC0's survey on any
+    /// board where the fold applies (ANAN-100D, ANAN-200D). Codex, PR #318.
+    ///
+    /// Same -1 conventions as the chain pair: not a stream, unknown slice, or
+    /// a slice that has not bound a stream.
+    int adcForStream(int stream) const;
+    int sliceAdcIndex(int sliceId) const;
+
     /// The wideband state a chain should actually be in, as opposed to what
     /// one slice just asked for.
     ///
@@ -2295,6 +2309,17 @@ signals:
     /// Phase 3F Sub-Epic I: a stream was activated or retuned; its FFTEngine
     /// and panadapter window must follow.
     void streamCentreChanged(int streamIndex, double centreHz, int sampleRateHz);
+
+    /// A stream's PHYSICAL ADC moved, without necessarily anything else
+    /// moving with it.
+    ///
+    /// An antenna or codec-state change can shift a stream from ADC0 to ADC1
+    /// while it keeps its stream index, and on a one-chain board its folded
+    /// chain index stays 0 too, so no slice property changes and nothing that
+    /// watches slice properties re-reads the routing. Anything keyed on the
+    /// physical ADC (the extended pan's wideband wings) has to listen here.
+    /// Codex, PR #318.
+    void streamAdcRoutingChanged();
 
     /// Phase 3F Sub-Epic I: emitted whenever the slice or stream set changes
     /// such that the per-board codec must recompute the DDC assignment.

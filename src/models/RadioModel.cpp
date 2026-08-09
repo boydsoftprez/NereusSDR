@@ -11134,6 +11134,33 @@ int RadioModel::sliceChainIndex(int sliceId) const
 // no chain 1: with every stream folded onto chain 0, republishAlexAdcSlices
 // finds chain 1 empty and pushes -1 for it.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// adcForStream: the same lookup WITHOUT the fold to chain 0.
+//
+// Everything above explains why chainForStream folds ADC1 onto chain 0 on a
+// one-bank board, and that fold is right for every filter question. It is
+// wrong for the wideband display, which is not a filter question: the
+// wideband capture comes off a physical ADC and widebandSpectrumReady carries
+// that physical index straight off the wire. Feeding a chain index to
+// SpectrumWidget::setWidebandAdcIndex made an extended pan on ADC1 paint
+// ADC0's survey either side of a correct DDC island, on exactly the
+// ANAN-100D / 200D boards the fold exists for. Found by Codex on PR #318.
+// ---------------------------------------------------------------------------
+int RadioModel::adcForStream(int stream) const
+{
+    if (stream < 0 || stream >= static_cast<int>(m_streamAdc.size())) {
+        return -1;
+    }
+    return m_streamAdc[static_cast<size_t>(stream)];
+}
+
+int RadioModel::sliceAdcIndex(int sliceId) const
+{
+    SliceModel* s = sliceById(sliceId);
+    if (s == nullptr) { return -1; }
+    return adcForStream(s->streamIndex());
+}
+
 int RadioModel::chainForStream(int stream) const
 {
     if (stream < 0 || stream >= static_cast<int>(m_streamAdc.size())) {
@@ -15060,14 +15087,16 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
     // connectToRadio has created a receiver for that stream; the
     // ReceiverManager copy is there so its long-standing adcIndex field stops
     // reporting 0 for a DDC the radio moved, which is the lie D1 was built on.
+    bool adcRoutingMoved = false;
     {
         const int streams = std::min(m_streamAllocator.streamCount(), 5);
         for (int st = 0; st < streams; ++st) {
             const int ddc = assignment.streamDdc[st];
             if (ddc < 0) { continue; }   // suspended: keep the last known ADC
             const size_t streamIndex = static_cast<size_t>(st);
-            m_streamAdc[streamIndex] =
-                NereusSDR::adcForDdc(assignment, ddc);
+            const int newAdc = NereusSDR::adcForDdc(assignment, ddc);
+            if (m_streamAdc[streamIndex] != newAdc) { adcRoutingMoved = true; }
+            m_streamAdc[streamIndex] = newAdc;
             if (m_receiverManager) {
                 // Mirror the already-decoded physical map. Do not decode the
                 // control bytes again here: SliceModel, ReceiverManager, and
@@ -15076,6 +15105,19 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
                                                      m_streamAdc[streamIndex]);
             }
         }
+    }
+
+    // Announce a physical-ADC move, because nothing else does.
+    //
+    // An antenna or codec-state change can move a stream from ADC0 to ADC1
+    // without moving it to a different logical stream, and on a one-chain
+    // board chainForStream folds the new ADC back to 0 as well. So neither
+    // streamIndex nor chainIndex changes, no slice property moves, and the
+    // extended pan's wings went on painting the ADC it used to be on until
+    // some unrelated overlay or topology event happened past. The lookup was
+    // right and simply never re-ran. Found by Codex on PR #318.
+    if (adcRoutingMoved) {
+        emit streamAdcRoutingChanged();
     }
 
     // Stamp every slice with both physical-routing coordinates of the stream

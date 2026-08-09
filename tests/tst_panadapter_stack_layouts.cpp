@@ -7,6 +7,7 @@
 // =================================================================
 #include <QtTest/QtTest>
 #include <QPointer>
+#include <QSplitter>
 #include "gui/PanadapterStack.h"
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterApplet.h"
@@ -287,6 +288,105 @@ private slots:
         QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("2h")).size(), 2);
         QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("12h")).size(), 3);
         QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("2x2")).size(), 4);
+    }
+
+    // Bench report 2026-08-08: "the mouse over area for resizing the space
+    // between two pans is so small it is hard to hit". PanadapterStack never
+    // called setHandleWidth, so every splitter it built fell back to the style
+    // metric -- and a QSplitter's grab area IS its handle rect, so the drag
+    // target was a few logical pixels wide on a Retina panel.
+    //
+    // Asserted over findChildren<QSplitter*> rather than a new accessor
+    // because the point is that EVERY splitter in the tree is grabbable,
+    // including the nested row splitters the 4 multi-row layouts build. A
+    // test keyed on the root alone would have passed while 2x2's two row
+    // splitters stayed at the style default.
+    void every_splitter_has_a_grabbable_handle()
+    {
+        const QList<QString> layouts = {
+            QStringLiteral("1"),  QStringLiteral("2v"), QStringLiteral("2h"),
+            QStringLiteral("12h"), QStringLiteral("2h1"), QStringLiteral("3v"),
+            QStringLiteral("2x2"), QStringLiteral("4v"), QStringLiteral("3h2"),
+        };
+        for (const QString& layoutId : layouts) {
+            PanadapterStack stack;
+            stack.applyLayout(layoutId, MainWindow::panIdsForLayout(layoutId));
+
+            const QList<QSplitter*> splitters = stack.findChildren<QSplitter*>();
+            QVERIFY2(!splitters.isEmpty(),
+                     qPrintable(QStringLiteral("layout %1 built no splitter")
+                                    .arg(layoutId)));
+            for (QSplitter* s : splitters) {
+                QVERIFY2(s->handleWidth() >= PanadapterStack::kSplitterHandleWidth,
+                         qPrintable(QStringLiteral("layout %1: handleWidth %2 < %3")
+                                        .arg(layoutId)
+                                        .arg(s->handleWidth())
+                                        .arg(PanadapterStack::kSplitterHandleWidth)));
+                // A collapsible child lets a drag past the end swallow a pan
+                // whole, leaving no handle to drag back out with.
+                QVERIFY2(!s->childrenCollapsible(),
+                         qPrintable(QStringLiteral("layout %1: children collapsible")
+                                        .arg(layoutId)));
+            }
+        }
+    }
+
+    // Quitting with a pan still floating must not lose its geometry.
+    //
+    // dockPanadapter saves, and the window's close box saves, but
+    // dockAllFloatingPans did not, and that is the path the destructor takes.
+    // So the ordinary way to end a session was the one way guaranteed to
+    // discard the last move or resize. Found by Codex on PR #318.
+    void floating_geometry_survives_stack_teardown()
+    {
+        auto& s = AppSettings::instance();
+        const QString key =
+            QStringLiteral("FloatingPan_pan-0_Geometry");
+        s.setValue(key, QString());
+
+        {
+            PanadapterStack stack;
+            stack.applyLayout(QStringLiteral("1"),
+                              MainWindow::panIdsForLayout(QStringLiteral("1")));
+            stack.floatPanadapter(QStringLiteral("pan-0"));
+            QVERIFY2(!s.value(key, QString()).toString().isEmpty()
+                         || true,
+                     "float itself need not save; teardown must");
+            s.setValue(key, QString());   // ignore anything the float wrote
+        }   // stack destructs here, still holding a floating pan
+
+        QVERIFY2(!s.value(key, QString()).toString().isEmpty(),
+                 "tearing the stack down with a pan floating discarded its "
+                 "geometry");
+    }
+
+    // The save that actually survives a quit.
+    //
+    // The teardown save added for the previous finding writes to AppSettings'
+    // in-memory map, and MainWindow::closeEvent calls AppSettings::save()
+    // BEFORE ~PanadapterStack runs, with a defaulted AppSettings destructor
+    // behind it. So the geometry was still stale on disk at next launch. This
+    // is the explicit pass closeEvent makes while a flush is still coming.
+    // Found by Codex on PR #318.
+    void floating_geometry_is_saved_before_the_flush()
+    {
+        auto& s = AppSettings::instance();
+        const QString key = QStringLiteral("FloatingPan_pan-0_Geometry");
+        s.setValue(key, QString());
+
+        PanadapterStack stack;
+        stack.applyLayout(QStringLiteral("1"),
+                          MainWindow::panIdsForLayout(QStringLiteral("1")));
+        stack.floatPanadapter(QStringLiteral("pan-0"));
+        s.setValue(key, QString());     // ignore anything the float wrote
+
+        // No teardown: this is the closeEvent-ordering path, where the stack
+        // is still very much alive when the geometry has to be on record.
+        stack.saveFloatingGeometry();
+
+        QVERIFY2(!s.value(key, QString()).toString().isEmpty(),
+                 "saveFloatingGeometry wrote nothing while the pan was still "
+                 "floating, so closeEvent's flush would miss it");
     }
 };
 
