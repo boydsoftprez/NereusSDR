@@ -522,7 +522,7 @@ All headless. No graphics context required.
    `kRows` boundary; coverage bytes correct on zoom-created gaps; temporal
    smoothing reset does not blend across a raw-scale change.
 5. **Palette.** All 256 LUT entries match the `dssStrengthToRgb` formula
-   (scheme stops through the 3D Gain gamma, section 4.3) across all six
+   (scheme stops through the 3D Gain gamma, section 4.3) across all eight
    `WfColorScheme` values and gains {0, 50, 70, 100}, including the gamma
    identities: gain 50 is exactly linear, gain 100 is gamma 0.25, gain 0 is
    gamma 4. Deliberately **not** compared against `dbmToRgb()`: proving the

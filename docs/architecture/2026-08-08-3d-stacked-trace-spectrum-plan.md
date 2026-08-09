@@ -31,7 +31,8 @@ Every task's requirements implicitly include this section.
   - Noise floor: `m_nfLerpAverage` (smoothed, use this) and `m_nfFftBinAverage` (per-frame, do not use for the surface anchor).
   - dBm range: `m_refLevel` (top, dBm) plus `m_dynamicRange` (depth, dB). There is no floor/ceiling pair.
   - View: `m_centerHz`, `m_bandwidthHz`, `m_ddcCenterHz`, `m_sampleRateHz`.
-  - Waterfall colour: `m_wfColorScheme`, `m_wfColorGain`, `m_wfBlackLevel`.
+  - Waterfall colour: `m_wfColorScheme`, `m_wfColorGain`, `m_wfBlackLevel`, `m_wfActiveLowThreshold`, `m_wfActiveHighThreshold`. There is no `m_wfMinDbm`.
+  - `enum class WfColorScheme : int { Default, Enhanced, Spectran, BlackWhite, LinLog, LinRad, Custom, ClarityBlue, Count }`. EIGHT schemes, declared at `SpectrumWidget.h:206-217`. Do NOT use AetherSDR's six-value enum (`Default/Grayscale/BlueGreen/Fire/Plasma/Purple`); an earlier revision of this plan carried it by mistake and a task lost time to it. `setWfColorScheme()` takes the enum by value, not an `int`.
   - Logging: `qCWarning(lcSpectrum)`, declared in `src/core/LogCategories.h`. Include it.
   - Shader loading: `loadShader(const QString&)`, a static free function at `SpectrumWidget.cpp:7619`, callable from members in that TU.
   - Slices: `sliceMarkerGeometry()` returning `QVector<SliceMarkerGeometry>` with fields `centreHz`, `filterLowHz`, `filterHighHz`, `flag`. Driven in tests by `addVfoWidget(index)` then `setFrequency` / `setFilter`.
@@ -2801,7 +2802,7 @@ private slots:
         QCOMPARE(afterHigh, before);
     }
 
-    // The scheme stops ARE shared, so all six palettes work in 3D.
+    // The scheme stops ARE shared, so all eight palettes work in 3D.
     void everyScheme_producesDistinctColours() {
         SpectrumWidget w;
         w.setDssGain(50);
