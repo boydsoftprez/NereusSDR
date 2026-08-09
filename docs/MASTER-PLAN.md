@@ -179,6 +179,9 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 ### Up Next (after v0.5.2)
 - **Phase 3M-2 - CW TX** (next up). Sidetone, firmware keyer, QSK / break-in. Absorbs the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-1252 [@c26a8a4]`). Detail in §"Phase 3M-2".
 - **Phase 3M-3b — FM pre-emphasis** (de-scoped from 3M-3a-ii during v0.3.1; runs after 3M-2).
+- **Phase 3F — Multi-panadapter** (after 3M-2). Re-exposes the Active RX count widget (hidden in v0.4.0 because it was stuck-at-1 in single-RX) and finally exercises `RadioModel::setActiveRxCountLive`. Also lands the aamix anti-VOX path that the v0.4.0 single-RX direct pump deferred.
+- **Phase 3M-5 (TX Display Refactor)**, parallel-track to 3M-2. Mirrors 3G-9 RX Display Refactor symmetrically on the TX side. 7 sub-phases (3M-5a foundation + 3M-5b colormap fix landing v0.4.2; 3M-5c custom gradient picker widget; 3M-5d FFT / detector / averaging reusing RX widgets; 3M-5e grid scale; 3M-5f appearance colors; 3M-5g cal offset apply gap). Master plan + mockup at `docs/architecture/tx-display-settings-master-plan.md` and `docs/architecture/mockups/tx-display-tab.html`.
+- **Phase 3H — Skin system**, **Phase 3J — TCI + Spots**, **Phase 3K — CAT / rigctld**, **Phase 3M-recording — WAV + I/Q recording** all remain not-started.
 - **Phase 3F (Multi-panadapter)**, after 3M-2. Re-exposes the Active RX count widget (hidden in v0.4.0 because it was stuck-at-1 in single-RX) and finally exercises `RadioModel::setActiveRxCountLive`. Also lands the aamix anti-VOX path that the v0.4.0 single-RX direct pump deferred. Also unblocks RADE-on-A while SSB-on-B multi-slice scenarios (currently a known limitation per Row 12 of the Phase 3R bench matrix).
 - **HL2 RADE bench follow-up**, gated on closure of the HL2 ATT/filter safety audit. Tracked by Row 9 of `docs/architecture/phase3r-verification/README.md`.
 - **Phase 3H (Skin system)**, **Phase 3K (CAT / rigctld)**, **Phase 3M-recording (WAV + I/Q recording)** all remain not-started.
@@ -849,6 +852,46 @@ Scope:
 Thetis source: `PSForm.cs` (1164 lines), `calcc.c`, `iqc.c`, `TXA.c:557-591`
 
 Verification: Enable PS on ANAN-G2, feedback level green, measurable IMD improvement.
+
+### Phase 3M-5: TX Display Refactor (Thetis-parity port)
+
+**Goal:** Take the post-PR-#212 TX panadapter source-switch foundation (already on `claude/tx-display` from attempt-2) to full Thetis parity for the TX display surface. Mirrors 3G-9 RX Display Refactor symmetrically: 3G-9 took the RX side from "every control works" to "every control is sourced and ships clean defaults"; 3M-5 does the same for the TX side. Every Thetis TX display control either ships in 3M-5 or is explicitly out-of-scope with rationale.
+
+**Motivation:** Bench finding from PR #212 PureSignal AutoAtt follow-up (2026-05-10): the TX waterfall renders with RX-tuned colormap thresholds because ClarityController tracks RX noise floor and was leaving its RX-tuned thresholds in place during MOX. User report: "still looks like the signal is splattering way outside the intended passband; the user will think their signal is dirty." Lowering the BlackLevel slider during TX visually fixed it, but the architectural answer is to give TX its own colormap settings (and the rest of the TX display surface) the way Thetis does, with persisted user-tunable values via Setup pages.
+
+**Spec docs:**
+- Master plan: `docs/architecture/tx-display-settings-master-plan.md` (the 3M-5 spec)
+- HTML mockup: `docs/architecture/mockups/tx-display-tab.html` (visual layout for all 3 affected Setup tabs)
+- Brainstorm handoff: `docs/architecture/tx-display-brainstorm-handoff.md` (origin, 2026-05-08)
+- Attempt-2 design: `docs/architecture/tx-display-attempt2-design.md` (3M-5a foundation)
+- Attempt-2 plan: `docs/architecture/tx-display-attempt2-plan.md` (superseded by 3M-5 master plan but kept for history)
+
+**Architecture:** Per-frame inline MOX branch in the render path, mirroring Thetis `display.cs:6506-6595 [v2.10.3.13+501e3f51]`. No state machine, no save/restore on MOX edge, no event handler. AppSettings keys mirror Thetis DB keys with `DisplayTxWf*` / `DisplayTxPan*` / `DisplayTxGrid*` / `AppearanceTxDisplay*` prefixes. Setup tabs match Thetis IA 1:1 (tpDisplayTransmit, tcAppearanceTXDisplay, grpBoxTXDisplayCal). Reuse existing RX FFT slider, window combo, detector combo, averaging combo, time spinbox, and color picker widgets where the TX equivalent has the same shape. No per-band variants (confirmed by exhaustive Thetis grep across Console source).
+
+**Existing-code audit** (from the source-read prior to 3M-5):
+- `TxDisplayPage` already exists at `DisplaySetupPages.cpp:2234-2278` but only has 4 stub controls (Background, Grid Color, Line Width [NYI], Cal Offset [NYI]). 3M-5b expands this to the full Thetis 5-group layout.
+- Existing TX color controls in `AppearanceSetupPages.cpp:134` (`m_txZeroLineColorBtn`) and `:155` (`m_txFilterColorBtn`) currently mixed in the same `specGroup` as RX controls. 3M-5f migrates to a dedicated TX Display sub-tab in Appearance, no duplicates.
+- RX FFT slider widget at `DisplaySetupPages.cpp:438+` is reusable for 3M-5d.
+- `m_txDisplayOffsetSpin` is wired in UI + persistence at `hardware/CalibrationTab.cpp:325-335` but does not yet apply to the TX render path. 3M-5g closes the apply gap.
+
+**Sub-phases** (worktree `claude/tx-display`, no PR pressure, ship as commits accumulating toward eventual point-release cuts):
+
+| Sub-phase | Scope | Hours | Target release |
+|---|---|---|---|
+| **3M-5a** Foundation + cleanup | Squash 3 attempt-2 throwaway probes (gen-state probe c2e62e6, attempt-2 diag probe 7387ad3, wf histogram probe 87540f3). Keep real fixes (stash apply b93b487, params + bridge e2b36d2, BH4 swap deb4f13, Clarity-during-TX gate e931aee). | 2-3 | v0.4.2 (with 3M-5b) |
+| **3M-5b** TX Waterfall Colormap | 5 controls (Low Level, High Level, Palette, Low Color, Custom Gradient placeholder) + Setup → Display → TX tab structure (placeholder groups for 3M-5d / 3M-5e) + per-frame MOX branch in `pushWaterfallRow` and `dbmToRgb`. The user-visible "still hot" fix. | 6-8 | v0.4.2 |
+| **3M-5c** Custom Gradient Picker widget | Reusable multi-stop linear gradient editor (`src/gui/widgets/GradientPickerWidget.{h,cpp}`). Used by 3M-5b's Custom palette and 3M-5f's panadapter / waterfall gradient slots. Once it lands it can also be used for the RX-side custom gradient (separate phase). | 8-12 | v0.4.3 |
+| **3M-5d** TX FFT + Detector + Averaging | 9 controls (FFT Size + Window + 2 Detectors + 2 Averagings + 2 Times + Normalize). Reuse existing RX FFT slider widget. Wire `TxAnalyzer::applySetAnalyzer` to read FFT size + window + detector + averaging from settings instead of hardcoded values. | 6-8 | v0.4.4 |
+| **3M-5e** TX Grid Scale | 6 controls (Max + Min + Step + Display Grid + Fill + Label Align). Per-frame MOX branch in grid-draw path. | 4-6 | v0.4.5 |
+| **3M-5f** TX Appearance colors | 13+ controls + 2 toggles + 1 line-width slider in Setup → Appearance → TX Display sub-tab. Audit-and-migrate the existing 2 TX color controls into the new sub-tab. No duplicates. | 6-9 | v0.4.6 |
+| **3M-5g** TX Display Cal Offset | Close the apply gap on the existing `m_txDisplayOffsetSpin` so its value actually shifts the TX render-path dBm pipeline. | 1-2 | v0.4.7 |
+
+**Total:** 32-47 hours across 7 sub-phases. Multi-week feature, parallel to 3M-2 CW TX (which is the bigger TX epic on its own track).
+
+**Out of scope** (deferred or rationale):
+- Per-band TX waterfall settings: Thetis doesn't do it; confirmed by exhaustive grep.
+- TX detector / averaging on a separate analyzer disp from the spectrum trace: NereusSDR uses a single-pixout pipeline that handles both, matches the practical NereusSDR architecture, not Thetis's per-pixout 0/1 split.
+- Multi-pan TX overlays: Phase 3F territory.
 
 ### Phase 3F: Multi-Panadapter Layout
 **Goal:** Support 1-4 panadapters with proper DDC-to-ADC mapping and multiple active receivers.

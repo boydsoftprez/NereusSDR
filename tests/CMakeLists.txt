@@ -4720,6 +4720,65 @@ target_compile_definitions(tst_step_att_cross_thread PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_p1_bank16_pursignal_run)
 target_compile_definitions(tst_p1_bank16_pursignal_run PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-5b: TX Waterfall Colormap (TDD red) ──────────────────────────────
+# 4 tests locking in Thetis-verbatim defaults and the per-frame MOX-conditional
+# render-path branch mirroring display.cs:6506-6595 [v2.10.3.13+501e3f51]:
+#   defaults_match_thetis: txWfLowLevel==-70, txWfHighLevel==30,
+#     txWfPalette==Enhanced, txWfLowColor==Qt::black.
+#   settings_round_trip: save+load cycle preserves all 4 TX-wf settings.
+#   mox_gate_thresholds: dbmToRgb uses TX thresholds on MOX, RX thresholds off.
+#   mox_gate_palette: dbmToRgb uses TX palette on MOX, RX palette off.
+# Sources: Display.cs:1911-1937 + :2516-2521 + :428-437 [v2.10.3.13+501e3f51]
+#          display.cs:6506-6595 [v2.10.3.13+501e3f51].
+# NOTE: Steps 1.3-1.8 add the impl + test seams; this target is RED until then.
+# Uses QTEST_MAIN (QApplication required for SpectrumWidget construction).
+nereus_add_test(tst_tx_waterfall_colormap)
+
+# ── Phase 3M-5c: Custom Gradient Picker widget (TDD red) ─────────────────────
+# 10 tests locking in Thetis ucLGPicker default-state, encoded format, color
+# interpolation, mutation rules, and 101-entry LUT consumer pattern. Sources:
+#   ucLGPicker.cs:55-130    (constants + default ctor 8-stop grayscale ramp)
+#   ucLGPicker.cs:75-80     (private GradColours struct)
+#   ucLGPicker.cs:387-446   (LGPicker_MouseDown add-on-empty-strip)
+#   ucLGPicker.cs:582-597   (RemoveSelectedGripper end-cap protection / min 2)
+#   ucLGPicker.cs:666-738   (Text get/set, malformed-input no-op)
+#   ucLGPicker.cs:770-792   (GetColourAtPercent — clamp + interp)
+#   ucLGPicker.cs:912-930   (EncodedText base64 wrapper)
+#   setup.cs:33304-33312    (101-entry waterfall LUT consumer pattern)
+# All v2.10.3.13+501e3f51. NOTE: Steps 2.3-2.6 add the impl + test seams; this
+# target is RED until then. Uses QTEST_MAIN (QApplication required for the
+# GradientPickerWidget QWidget subclass).
+nereus_add_test(tst_gradient_picker)
+
+# ── Phase 3M-5d: TX FFT + Detector + Averaging (TDD red) ─────────────────────
+# 8 tests pinning the TxAnalyzer 9-control state surface + n_pixout=2.
+#   defaults_match_spec: FFT=4096, Window=Hamming (4), PanDet=0, PanAvg=0,
+#     PanAvTimeMs=30, PanNormalize=false, WfDet=0, WfAvg=0, WfAvTimeMs=120.
+#   settings_round_trip: 9-key AppSettings save+load cycle preserves all.
+#   fft_size_formula: setFftSizeSliderPosition(N) ⇒ 4096 * 2^N.
+#   bin_width_formula: binWidthHz() = sampleRate / fftSize.
+#   normalize_gated_on_pan_detector: panNormalizeEnabled() true iff
+#     PanDet >= 2 (per MW0LGE comment at setup.cs:18111-18112).
+#   av_time_ms_to_tau_seconds: setter takes ms; tau() returns seconds.
+#   setAnalyzer_called_on_each_setter: each setter ticks
+#     analyzerConfigCount() test seam.
+#   pixout_2_after_phase: nPixout() == 2 (pan + wf independent).
+# Sources: setup.designer.cs:36493 (WF AvTime ms=120) + :36753 (Pan ms=30)
+#          setup.designer.cs:2200-2235 (control declarations)
+#          setup.cs:18105-18171        (9 control handlers)
+#          specHPSDR.cs:134, :301-322, :351-380, :382-418, :471-480
+# All v2.10.3.13+501e3f51. NOTE: Steps 3.3-3.4 add the impl + test seams;
+# this target is RED until then. Uses QTEST_MAIN (QCoreApplication only —
+# TxAnalyzer is non-GUI).
+nereus_add_test(tst_tx_analyzer_settings)
+
+# ── TX display span clipping (bench 2026-08-04 + 2026-08-05) ─────────────────
+# spanClipBins (specHPSDR.cs:762-775 CalcSpectrum) decides how much baseband
+# the transmit analyzer emits. Unclipped, the pan kept its receive window and
+# SpectrumWidget stretched 96 kHz across it, so the tone rendered at the wrong
+# dial frequency; clipped to the wrong width it left too few points and the
+# trace was a blob. Pure, so it needs no WDSP channel and no bench.
+nereus_add_test(tst_tx_display_window)
 # ── Phase 3J-1 Task 2.1: TciServer + ClientSession lifecycle ─────────────────
 # 3 tests: start/listen/signal, double-start rejection, stop/clear.
 # Gated on Qt6WebSockets_FOUND — TciServer.h/.cpp are #ifdef HAVE_WEBSOCKETS.

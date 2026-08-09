@@ -167,6 +167,7 @@ mw0lge@grange-lane.co.uk
 #include "spectrum/PeakBlobDetector.h"
 #include "spectrum/SpectrumAvenger.h"
 
+#include <array>
 #include <utility>
 
 #include "core/ConnectionState.h"
@@ -318,6 +319,42 @@ public:
 
     // ---- Frequency range ----
     void setFrequencyRange(double centerHz, double bandwidthHz);
+
+    /// Re-aim the display window WITHOUT touching waterfall history.
+    ///
+    /// setFrequencyRange treats any bandwidth change as a large shift and
+    /// clears the scrollback (SpectrumWidget.cpp:1238-1249). That is right
+    /// for a band jump and wrong for the MOX edge, which changes the window
+    /// twice per transmission: using it there deleted the receive
+    /// scrollback on every key-up and again on every un-key. The 2026-05-08
+    /// handoff called for exactly the opposite -- "on MOX-down, RX1
+    /// spectrum returns to the panadapter without losing waterfall
+    /// scrollback continuity".
+    ///
+    /// No reprojection either. Transmit rows and receive rows describe
+    /// different windows, and mapping one onto the other and back is lossy
+    /// in both directions; leaving the plane alone keeps the receive
+    /// history exactly as it was. Found by Codex on PR #317.
+    void setDisplayWindowPreservingHistory(double centerHz, double bandwidthHz);
+
+    /// Render already-detected transmit pixels, bypassing the receive
+    /// detector and avenger.
+    ///
+    /// TxAnalyzer's output has ALREADY had a detector and averaging applied
+    /// by WDSP, using the TX Display controls. Feeding it through
+    /// updateSpectrumLinear ran applySpectrumDetector and m_spectrumAvenger
+    /// over it a second time using the RECEIVE controls, so the transmit
+    /// settings only behaved as labelled while receive happened to sit at
+    /// Peak / None. Found by Codex on PR #317.
+    ///
+    /// Input is dBm, matching TxAnalyzer::txFftReady, so there is no
+    /// linear round trip either: the previous path raised each pixel to a
+    /// power and took its log again purely to satisfy a signature.
+    ///
+    /// This is the trace-plane twin of setTxExternalWaterfall, which
+    /// already stands the receive path down for the waterfall plane.
+    void updateSpectrumFromTxPixels(int receiverId,
+                                    const QVector<float>& binsDbm);
     void setCenterFrequency(double centerHz);
     double centerFrequency() const { return m_centerHz; }
     double bandwidth() const { return m_bandwidthHz; }
@@ -338,6 +375,21 @@ public:
     double ddcCenterFrequency() const { return m_ddcCenterHz; }
     void setSampleRate(double hz);
     double sampleRate() const { return m_sampleRateHz; }
+
+    /// 3M-5d follow-up: TX-side bin-frequency context used by
+    /// visibleBinRange() when m_moxOverlay is true.  RX path is
+    /// unchanged.  m_txCenterHz is the TX channel center (VFO
+    /// frequency on the air); m_txSampleRateHz is the TX baseband
+    /// sample rate the TxAnalyzer feeds into WDSP (96000 Hz on the
+    /// HL2 + ANAN-G2 family).  Without these, the WDSP bin array
+    /// from GetPixels(pixout=0|1) gets sliced against the RX DDC
+    /// rate + center, which produces a stretched, mis-mapped
+    /// waterfall during MOX (bench 2026-05-10 surfaced three peaks
+    /// across the visible window from a single TUNE tone).
+    void setTxCenterFrequency(double hz);
+    double txCenterFrequency() const noexcept { return m_txCenterHz; }
+    void setTxSampleRate(double hz);
+    double txSampleRate() const noexcept { return m_txSampleRateHz; }
 
     // ---- Display range ----
     void setDbmRange(float minDbm, float maxDbm);
@@ -534,6 +586,23 @@ public:
     float wfLowThreshold() const { return m_wfLowThreshold; }
     void setWfAgcEnabled(bool on);
     bool wfAgcEnabled() const { return m_wfAgcEnabled; }
+
+    /// Force the waterfall-AGC running min/max tracker to re-prime on the
+    /// next bin push.  Use when the bin source changes dynamic range
+    /// abruptly (e.g. MOX edge: RX colormap is centered around -100 dBm,
+    /// TX bins land around -50 dBm) — without this, the 0.05 alpha
+    /// follower takes ~3 s to converge and the waterfall saturates solid
+    /// red in the meantime.
+    void resetWaterfallAgc() { m_wfAgcPrimed = false; }
+
+    /// Clear the spectrum + waterfall avenger accumulators.  Use on bin-source
+    /// changes that are abrupt enough that fading from the previous source's
+    /// state via LogRecursive smoothing produces visible artifacts (e.g. MOX
+    /// rise: the trace pipeline averages over ~3 s and during that window the
+    /// trace shows a blend of pre-MOX RX state and post-MOX TX state, which
+    /// looks like mic-driven content overlaid on the tune tone).
+    void clearAvengers() { m_spectrumAvenger.clear(); m_waterfallAvenger.clear(); }
+
     void setClarityActive(bool on);
     bool clarityActive() const { return m_clarityActive; }
 
@@ -925,6 +994,58 @@ public slots:
     void setRxFilterColor(const QColor& c);
     QColor rxFilterColor() const noexcept { return m_rxFilterColor; }
 
+    // ---- 3M-5b: TX waterfall colormap setters / getters ----
+    // From Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51] -- TX thresholds,
+    // palette, and low-color are switched inline per-frame when MOX is active.
+    // MW0LGE [2.9.0.7]  [original inline comment from display.cs:6588]
+    int  txWfLowLevel()  const noexcept { return m_txWfLowLevel;  }
+    int  txWfHighLevel() const noexcept { return m_txWfHighLevel; }
+    WfColorScheme txWfPalette()   const noexcept { return m_txWfPalette;   }
+    QColor        txWfLowColor()  const noexcept { return m_txWfLowColor;  }
+    QString       txWfGradient()  const noexcept { return m_txWfGradient;  }
+
+    void setTxWfLowLevel(int dbm);
+    void setTxWfHighLevel(int dbm);
+    void setTxWfPalette(WfColorScheme s);
+    void setTxWfLowColor(const QColor& c);
+    void setTxWfGradient(const QString& encoded);
+
+    // ---- 3M-5d: TX waterfall pixout=1 tap ----
+    // When true, updateSpectrumLinear() skips its internal call to
+    // pushWaterfallRow() because the waterfall plane is being driven
+    // separately via pushTxWaterfallRow() (TxAnalyzer's pixout=1 stream,
+    // wired in MainWindow on MOX-up).  Defaults to false; only flipped
+    // by MainWindow on MOX edges.  RX path is unaffected.
+    void setTxExternalWaterfall(bool on);
+    bool txExternalWaterfall() const noexcept { return m_txExternalWaterfall; }
+
+public slots:
+    /// Slot that bridges TxAnalyzer::txWaterfallReady (pixout=1, WDSP
+    /// already applied DetTypeWF + AverageModeWF) into the existing
+    /// waterfall-row push path.  Skips the spectrum-trace pipeline
+    /// entirely.  Only meaningful while setTxExternalWaterfall(true) has
+    /// been called by MainWindow on MOX-up; otherwise the internal
+    /// updateSpectrumLinear path is already pushing rows and a second
+    /// push would race.
+    void pushTxWaterfallRow(int receiverId, const QVector<float>& binsDbm);
+
+public:
+
+#ifdef NEREUS_BUILD_TESTS
+    // Test seams for tst_tx_waterfall_colormap (3M-5b).
+    // These expose private methods via the NEREUS_BUILD_TESTS gate so the
+    // test binary can round-trip settings and call dbmToRgb directly.
+    void saveSettingsForTest()              { saveSettings(); }
+    void loadSettingsForTest()              { loadSettings(); }
+    /// The MOX tune gate is the property under test; synthesising a press,
+    /// a wheel notch and a spot-label hit would test Qt's event delivery
+    /// instead. Every emitter routes through requestTune, which is greppable.
+    void requestTuneForTest(double hz)      { requestTune(hz); }
+    QRgb dbmToRgbForTest(float dbm) const  { return dbmToRgb(dbm); }
+    void setWfLowThresholdForTest(float dbm)  { m_wfLowThreshold  = dbm; }
+    void setWfHighThresholdForTest(float dbm) { m_wfHighThreshold = dbm; }
+#endif
+
     // ---- Per-pan settings persistence ----
     void setPanIndex(int idx) { m_panIndex = idx; }
     int  panIndex() const { return m_panIndex; }
@@ -1287,6 +1408,9 @@ public:
     }
 
 signals:
+    // 3M-5b: emitted when any TX waterfall colormap property changes.
+    // Setup page wires this to update the preview / UI state.
+    void txWfSettingsChanged();
     // 2026-05-22 bench fix: emitted after each updateSpectrumLinear
     // completes (m_renderedPixels populated). MainWindow consumes this
     // to push peakDbmInSlicePassband() into WdspEngine's MaxBin detector
@@ -1295,6 +1419,19 @@ signals:
     // ~12-17 dB lower due to window-spread power and missing detector
     // pipeline). See peakDbmInSlicePassband doc.
     void spectrumFrameRendered();
+
+    /// The transmit view window moved or resized. Carries the window the
+    /// analyzer must now cover.
+    ///
+    /// Thetis derives analyzer span and display window from ONE zoom state
+    /// (specHPSDR.cs initAnalyzer), so its pixels always cover exactly what
+    /// is on screen. Ours are set independently, which is fine until the
+    /// operator zooms mid-transmission: the analyzer stays clipped to the
+    /// span chosen at key-down, the pan shows something wider, and
+    /// SpectrumWidget stretches one across the other -- the trace then sits
+    /// wherever that stretch puts it rather than on frequency. Bench
+    /// 2026-08-05, "zoom out and the tone is stuck where key down occurred".
+    void txViewWindowChanged(double centerHz, double bandwidthHz);
 
     // Phase 3Q-8: emitted on a left-click while not Connected.
     // MainWindow wires this to showConnectionPanel().
@@ -1397,6 +1534,9 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    /// Swallowed over the dBm strip, where right-drag adjusts the range;
+    /// ignored elsewhere so PanadapterApplet still gets the pan menu.
+    void contextMenuEvent(QContextMenuEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void leaveEvent(QEvent* event) override;
 
@@ -1822,6 +1962,31 @@ private:
     // Ported from Thetis Display.RX1DisplayCalOffset (display.cs:1372).
     float       m_dbmCalOffset{0.0f};
 
+    // ---- 3M-5b: TX-specific waterfall colormap settings ----
+    // Active during MOX per Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51]
+    // inline per-frame branch.  No state machine.
+    int           m_txWfLowLevel{-70};        // dBm, from Thetis Display.cs:1925 [v2.10.3.13+501e3f51] tx_wf_amp_min default
+    int           m_txWfHighLevel{30};         // dBm, from Thetis Display.cs:1911 [v2.10.3.13+501e3f51] tx_wf_amp_max default
+    WfColorScheme m_txWfPalette{WfColorScheme::Enhanced}; // Thetis Display.cs:428 [v2.10.3.13+501e3f51] _tx_color_scheme = ColorScheme.enhanced
+    QColor        m_txWfLowColor{Qt::black};   // Thetis Display.cs:2516 [v2.10.3.13+501e3f51] waterfall_low_color_tx = Color.Black
+    QString       m_txWfGradient;              // encoded gradient string for Custom palette
+    // 3M-5c: 101-entry color LUT cached from m_txWfGradient encoded text.
+    // Mirrors the Thetis WaterfallTXGradient() 101-color array built at
+    // setup.cs:33314-33322 [v2.10.3.13+501e3f51]. Rebuilt inside
+    // setTxWfGradient() whenever the encoded string changes; consumed by
+    // dbmToRgb() when isTx && palette == Custom. m_txCustomLutValid stays
+    // false until the LUT has been populated at least once (signals "fall
+    // back to kCustomFallbackStops" so the Custom palette behaves usefully
+    // before the user picks one in Setup -> Display -> TX).
+    std::array<QRgb, 101> m_txCustomLut{};
+    bool                  m_txCustomLutValid{false};
+
+    // 3M-5d: when true, updateSpectrumLinear skips its internal
+    // pushWaterfallRow because the waterfall is being driven externally
+    // via pushTxWaterfallRow (TxAnalyzer's pixout=1 stream).  Only set
+    // true during MOX, by MainWindow.
+    bool                  m_txExternalWaterfall{false};
+
     // ---- Phase 3G-8 commit 4: waterfall renderer state ----
 
     bool  m_wfAgcEnabled{true};
@@ -1880,6 +2045,49 @@ private:
     bool  m_gridEnabled{true};
     bool  m_showZeroLine{false};
     bool  m_showFps{false};
+    // ── Two grids, one live ─────────────────────────────────────────────
+    //
+    // From Thetis display.cs:1782-1804 + :1887-1905 [v2.10.3.15]:
+    //     private static int tx_spectrum_grid_max =  20;
+    //     private static int tx_spectrum_grid_min = -80;
+    //     public static int SpectrumGridMaxMoxModified {
+    //         get { return localMox(1) ? tx_spectrum_grid_max
+    //                                  : spectrum_grid_max; }
+    //     }
+    // Receive and transmit each keep their own range, and the renderer picks
+    // which to read. Nothing is saved and restored across the MOX edge.
+    //
+    // NereusSDR keeps m_refLevel / m_dynamicRange as the LIVE pair so the
+    // ~60 render sites that read them stay untouched, and stores the two
+    // inactive halves here. setMoxOverlay is the only swap point.
+    //
+    // This replaces a save-and-restore around the MOX edges, which was
+    // fragile in a way this design cannot be: with one variable plus a
+    // capture on un-key, ANY writer between the edges silently redefines
+    // what the operator "chose". The receive noise-floor tracker did exactly
+    // that on an ORION-class radio, whose receiver keeps running through
+    // transmit, and the captured range came back on the next key-up with no
+    // drawable labels. With two stores a receive-side tracker cannot reach
+    // the transmit grid at all, whether or not anyone remembered to gate it.
+    // Bench 2026-08-05, JJ KG4VCF: "we need a dynamic range for transmit and
+    // a dynamic range for receive just like Thetis has".
+    // The view window is stored per direction for the same reason the grid
+    // is: re-imposing a default on every rise edge throws away whatever the
+    // operator did last transmission. Bench 2026-08-05, zooming out during
+    // transmit held for that cycle and snapped back on the next.
+    //
+    // Only the SPAN is really remembered for transmit -- the centre is
+    // recomputed from the carrier on each key-up, since the carrier moves.
+    double m_rxViewCenterHz{0.0};
+    double m_rxViewBandwidthHz{0.0};
+    double m_txViewCenterHz{0.0};
+    double m_txViewBandwidthHz{8000.0};   // Thetis +/-4 kHz seed
+
+    float m_rxRefLevel{-48.0f};
+    float m_rxDynamicRange{68.0f};
+    float m_txRefLevel{20.0f};      // Thetis tx_spectrum_grid_max
+    float m_txDynamicRange{100.0f}; // tx_spectrum_grid_max - tx_spectrum_grid_min
+
     bool  m_dbmScaleVisible{true};  // right-edge dBm strip; false → spectrum fills full width
     bool  m_showCursorFreq{true};   // B8 Task 21: cursor frequency readout; default on
     FreqLabelAlign m_freqLabelAlign{FreqLabelAlign::Center};
@@ -2192,6 +2400,64 @@ private:
     bool   m_draggingDbm{false};
     int    m_dragStartY{0};
     float  m_dragStartRef{0.0f};
+
+    /// Right-drag on the dBm strip: move the TOP only, leaving the floor
+    /// where it is, so the range stretches instead of sliding.
+    ///
+    /// From Thetis PanDisplay.cs [v2.10.3.15]: left-press on
+    /// dBmScalePanadapterRegion sets gridminmaxadjust (:4105-4115, max AND
+    /// min move together), right-press sets gridmaxadjust (:4424-4431, max
+    /// only). Two modes on the same strip, chosen by button. We had only
+    /// the pan, with range relegated to the scroll wheel.
+    /// True when `pos` is on the dBm strip: right of the strip edge and
+    /// above the spectrum/waterfall divider. Shared by the press handler and
+    /// contextMenuEvent so the two cannot disagree about where the strip is.
+    bool isOnDbmStrip(const QPoint& pos) const;
+
+    /// Emit txViewWindowChanged when transmitting and the window actually
+    /// moved. Called from every site that writes m_centerHz / m_bandwidthHz
+    /// so no zoom path can silently leave the analyzer behind.
+    /// THE only place m_centerHz / m_bandwidthHz may be written.
+    ///
+    /// The transmit display has two things that must agree: the window on
+    /// screen, and the span the WDSP analyzer is clipped to. Thetis gets
+    /// that for free because initAnalyzer derives both from one zoom state.
+    /// Ours are separate objects, so agreement depends on every writer
+    /// remembering to announce itself -- and on 2026-08-05 six separate
+    /// defects came from writers that did not: a stuck tone, a stretched
+    /// axis, a jittering passband.
+    ///
+    /// Routing every write through here makes the announcement structural
+    /// rather than remembered. A new zoom or pan path added later cannot
+    /// silently desync the analyzer, because it cannot change the window
+    /// without going through this.
+    ///
+    /// Pass the current value for whichever of the two is not changing.
+    void applyViewWindow(double centreHz, double bandwidthHz);
+
+    void notifyTxViewWindow();
+
+    /// THE only place frequencyClicked may be emitted.
+    ///
+    /// Withheld while this pan is showing transmit, for the reason the
+    /// release branch already gave: panning and zooming during transmit are
+    /// new on this branch, so a pointer gesture over the pan can now move a
+    /// keyed transmitter into an antenna and an amplifier.
+    ///
+    /// That gate went on the short-pan-release branch alone, and it was not
+    /// the only way in. A press inside the passband sets m_draggingVfo and
+    /// mouseMoveEvent tunes on every move; a spot label tunes on press; the
+    /// wheel tunes on every notch. Codex found all three on PR #317, and the
+    /// lesson is the same one applyViewWindow already learned on this branch:
+    /// a rule enforced at one of several call sites is a rule that holds
+    /// until someone adds the next call site. Routed rather than repeated.
+    ///
+    /// Menu actions go through it too. The hazard is the radio moving while
+    /// keyed, which does not care whether the operator meant it.
+    void requestTune(double hz);
+
+    bool   m_draggingDbmRange{false};
+    float  m_dragStartFloor{0.0f};
     QPoint m_mousePos;              // for cursor frequency display
     bool   m_mouseInWidget{false};
 
@@ -2228,6 +2494,17 @@ private:
     // ---- MOX / TX overlay state (H.1, Phase 3M-1a) ----
     // From Thetis display.cs:1568 [v2.10.3.13]: static bool _mox = false;
     bool  m_moxOverlay{false};
+
+    // 3M-5d follow-up: TX-side bin-frequency context for visibleBinRange().
+    // Set by MainWindow on MOX rise (and on VFO change during TX) so the
+    // TX FFT pixel array can be sliced against the TX channel center
+    // + TX sample rate instead of the RX DDC rate + center.  Without
+    // these, the same WDSP bin array gets sliced as if it covered the
+    // RX DDC bandwidth, which on HL2 is 8x wider than the TX bandwidth
+    // -- producing a stretched display that aliases TX-baseband edges
+    // onto the visible window (bench 2026-05-10).
+    double m_txCenterHz{0.0};
+    double m_txSampleRateHz{96000.0};
     // TX attenuator cal offset — applied as an additional dBm shift during TX.
     // From Thetis display.cs:4840 [v2.10.3.13]: if (!local_mox) fOffset += rx1_preamp_offset;
     // Upstream tags preserved: //MW0LGE (from cited upstream lines) [v2.10.3.15]

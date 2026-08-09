@@ -118,6 +118,7 @@
 #include "spectrum/WaterfallTicker.h"
 #include "widgets/VfoWidget.h"
 #include "ColorSwatchButton.h"
+#include "widgets/GradientPickerWidget.h"
 #include "core/AppSettings.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/LogCategories.h"   // Phase 3M-4 bench-fix Round 2: lcSpectrum
@@ -463,8 +464,22 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // ticker thread, slot runs on the main thread when the event loop
     // is free.  See WaterfallTicker.h for the cadence-isolation rationale.
     connect(m_waterfallTicker, &WaterfallTicker::tick, this, [this]() {
-        // ALWAYS push on tick.  Empty-cache guard so we do nothing
-        // before the very first FFT.
+        // Push on tick, EXCEPT while the TX analyzer owns the waterfall.
+        //
+        // "Always" was right when this was the only writer. During transmit
+        // it is not: pushTxWaterfallRow feeds rows straight in at the
+        // analyzer's own frame rate, and this ticker went on re-pushing the
+        // last cached RX row alongside them. Two writers at two cadences
+        // interleave, which paints the waterfall in horizontal bands of
+        // transmit and stale receive. Bench 2026-08-05, and it is the
+        // scanline artifact in that report.
+        //
+        // The cache write is already gated in updateSpectrumLinear, so the
+        // contents here are frozen RX data during transmit -- there is
+        // nothing worth drawing even if the cadence did line up.
+        if (m_txExternalWaterfall) {
+            return;
+        }
         m_pendingWfPixelsDbmDirty = false;
         if (!m_pendingWfPixelsDbm.isEmpty()) {
             pushWaterfallRow(m_pendingWfPixelsDbm);
@@ -817,6 +832,46 @@ void SpectrumWidget::loadSettings()
     m_wfOpacity          = readInt(QStringLiteral("DisplayWfOpacity"), 100);
     m_wfUpdatePeriodMs   = readInt(QStringLiteral("DisplayWfUpdatePeriodMs"), 30);
 
+    // 3M-5b: TX waterfall colormap settings.
+    // From Thetis Display.cs:1911-1937 [v2.10.3.13+501e3f51] — TXWFAmpMin / TXWFAmpMax defaults.
+    m_txWfLowLevel  = readInt(QStringLiteral("DisplayTxWfLowLevel"),  -70);
+    m_txWfHighLevel = readInt(QStringLiteral("DisplayTxWfHighLevel"),  30);
+    // From Thetis setup.cs:33314-33322 [v2.10.3.13+501e3f51] — comboColorPalette_tx default.
+    m_txWfPalette = static_cast<WfColorScheme>(qBound(0,
+        s.value(settingsKey(QStringLiteral("DisplayTxWfPalette"), m_panIndex),
+                QString::number(static_cast<int>(WfColorScheme::Enhanced))).toInt(),
+        static_cast<int>(WfColorScheme::Count) - 1));
+    // From Thetis Display.cs:2516-2521 [v2.10.3.13+501e3f51] — waterfall_low_color_tx default Black.
+    {
+        const QString hex = s.value(
+            settingsKey(QStringLiteral("DisplayTxWfLowColor"), m_panIndex),
+            QStringLiteral("#FF000000")).toString();
+        QColor c = QColor::fromString(hex);
+        m_txWfLowColor = c.isValid() ? c : QColor(Qt::black);
+    }
+    // 3M-5c: Custom gradient encoded text (default empty -> picker reverts
+    // to Thetis-verbatim 8-stop grayscale on first show; the cached
+    // m_txCustomLut stays invalid until the user picks Custom palette and
+    // mutates the gradient at least once).
+    m_txWfGradient = s.value(settingsKey(QStringLiteral("DisplayTxWfGradient"), m_panIndex),
+                             QString()).toString();
+    m_txCustomLutValid = false;
+    if (!m_txWfGradient.isEmpty()) {
+        // Rebuild cached LUT from persisted encoded text. Same Thetis
+        // setup.cs:33314-33322 [v2.10.3.13+501e3f51] consumer pattern as
+        // setTxWfGradient() but invoked at load time so the very first
+        // MOX paint after launch already has the cached 101-color LUT.
+        GradientPickerWidget tempPicker;
+        tempPicker.setEncodedText(m_txWfGradient);
+        const QVector<QColor> lut = tempPicker.colorTable(101);
+        if (lut.size() == 101) {
+            for (int k = 0; k < 101; ++k) {
+                m_txCustomLut[k] = lut[k].rgba();
+            }
+            m_txCustomLutValid = true;
+        }
+    }
+
     // Sub-epic E: scrollback depth (default 20 min, range 60s..20min).
     m_waterfallHistoryMs = s.value(
         settingsKey(QStringLiteral("DisplayWaterfallHistoryMs"), m_panIndex),
@@ -859,6 +914,44 @@ void SpectrumWidget::loadSettings()
     // B8 Task 21: cursor frequency readout persists across restarts.
     m_showCursorFreq = readBool(QStringLiteral("DisplayShowCursorFreq"), true);
     m_dbmScaleVisible = readBool(QStringLiteral("DisplayDbmScaleVisible"), true);
+
+    // Transmit grid. Bounded on load so a value that cannot have come from a
+    // deliberate drag heals to the Thetis seed instead of persisting: an
+    // unusable transmit grid is self-trapping, because the strip the
+    // operator would drag to fix it is the thing that stopped drawing.
+    //
+    // Per pan, through rawValue, like every other key in this function. These
+    // three shipped as bare global keys, which every pan then read AND wrote
+    // while holding its own member: a pan that never transmitted would carry
+    // the value it loaded at startup and put it back on its next save,
+    // silently reverting a transmit-grid drag made on the pan that did.
+    {
+        bool okRef = false, okRange = false;
+        const float ref =
+            rawValue(QStringLiteral("DisplayTxGridRefLevel")).toFloat(&okRef);
+        const float rng =
+            rawValue(QStringLiteral("DisplayTxGridDynamicRange")).toFloat(&okRange);
+        // Bounds are the DRAG's bounds, not a second opinion about them.
+        //
+        // They were [-160, +20] while the drag handler clamped to Thetis's
+        // [-200, +200]. The +20 half was the worse end: it is exactly the
+        // transmit grid's default reference level, so an operator who dragged
+        // the pinned scale UP to fix it saved a value the loader then threw
+        // away, and the next launch came back to the same pinned grid with no
+        // sign anything had happened. Found by Codex on PR #317.
+        if (okRef && ref >= -200.0f && ref <= 200.0f)  { m_txRefLevel     = ref; }
+        if (okRange && rng >= 10.0f && rng <= 200.0f)  { m_txDynamicRange = rng; }
+
+        bool okBw = false;
+        const double bw =
+            rawValue(QStringLiteral("DisplayTxViewBandwidth")).toDouble(&okBw);
+        // Wide enough to see, narrow enough to be a transmit view.
+        if (okBw && bw >= 1000.0 && bw <= 500000.0) { m_txViewBandwidthHz = bw; }
+    }
+    // The receive store mirrors whatever the live pair loaded above, since
+    // the widget always comes up in receive.
+    m_rxRefLevel     = m_refLevel;
+    m_rxDynamicRange = m_dynamicRange;
     m_bandPlanFontSize = s.value(QStringLiteral("BandPlanFontSize"),
                                  QStringLiteral("6")).toInt();
     const int alignRaw = readInt(QStringLiteral("DisplayFreqLabelAlign"),
@@ -992,10 +1085,27 @@ void SpectrumWidget::saveSettings()
         s.setValue(settingsKey(key, m_panIndex), QString::number(val));
     };
 
-    writeFloat(QStringLiteral("DisplayGridMax"), m_refLevel);
-    writeFloat(QStringLiteral("DisplayGridMin"), m_refLevel - m_dynamicRange);
+    // The RECEIVE store, not the live pair. While transmitting the live pair
+    // IS the transmit grid, so writing it here would put transmit values
+    // into the receive keys and the operator's receive scale would be gone
+    // after any save that happened to land mid-transmission.
+    {
+        const float rxRef   = m_moxOverlay ? m_rxRefLevel     : m_refLevel;
+        const float rxRange = m_moxOverlay ? m_rxDynamicRange : m_dynamicRange;
+        writeFloat(QStringLiteral("DisplayGridMax"), rxRef);
+        writeFloat(QStringLiteral("DisplayGridMin"), rxRef - rxRange);
+    }
     writeFloat(QStringLiteral("DisplaySpectrumFrac"), m_spectrumFrac);
-    writeFloat(QStringLiteral("DisplayBandwidth"), static_cast<float>(m_bandwidthHz));  // Phase 3G-12
+    // The RECEIVE span, for the same reason as the grid above. While keyed
+    // m_bandwidthHz is the TRANSMIT span, so a save landing mid-transmission
+    // wrote the transmit zoom into the receive key and the next launch came
+    // up with the receive pan at a transmit width. The 500 ms debounce makes
+    // that easy to hit: any dBm-strip release or setting change while keyed
+    // is enough. Found by Codex on PR #317, alongside the grid half of it
+    // that this branch had already fixed and this line had been left out of.
+    writeFloat(QStringLiteral("DisplayBandwidth"),                        // Phase 3G-12
+               static_cast<float>(m_moxOverlay ? m_rxViewBandwidthHz
+                                               : m_bandwidthHz));
     writeInt(QStringLiteral("DisplayWfColorGain"), m_wfColorGain);
     writeInt(QStringLiteral("DisplayWfBlackLevel"), m_wfBlackLevel);
     writeFloat(QStringLiteral("DisplayWfHighLevel"), m_wfHighThreshold);
@@ -1039,6 +1149,21 @@ void SpectrumWidget::saveSettings()
               m_wfStopOnTx ? QStringLiteral("True") : QStringLiteral("False"));
     writeInt(QStringLiteral("DisplayWfOpacity"), m_wfOpacity);
     writeInt(QStringLiteral("DisplayWfUpdatePeriodMs"), m_wfUpdatePeriodMs);
+
+    // 3M-5b: TX waterfall colormap settings.
+    // From Thetis Display.cs:1911-1937 [v2.10.3.13+501e3f51] — TXWFAmpMin / TXWFAmpMax.
+    writeInt(QStringLiteral("DisplayTxWfLowLevel"),  m_txWfLowLevel);
+    writeInt(QStringLiteral("DisplayTxWfHighLevel"), m_txWfHighLevel);
+    // From Thetis setup.cs:33314-33322 [v2.10.3.13+501e3f51] — comboColorPalette_tx.
+    s.setValue(settingsKey(QStringLiteral("DisplayTxWfPalette"), m_panIndex),
+               QString::number(static_cast<int>(m_txWfPalette)));
+    // From Thetis Display.cs:2516-2521 [v2.10.3.13+501e3f51] — waterfall_low_color_tx.
+    s.setValue(settingsKey(QStringLiteral("DisplayTxWfLowColor"), m_panIndex),
+               m_txWfLowColor.name(QColor::HexArgb).toUpper());
+    // Custom gradient (3M-5c placeholder).
+    s.setValue(settingsKey(QStringLiteral("DisplayTxWfGradient"), m_panIndex),
+               m_txWfGradient);
+
     s.setValue(settingsKey(QStringLiteral("DisplayWaterfallHistoryMs"), m_panIndex),
                QString::number(m_waterfallHistoryMs));
     s.setValue(settingsKey(QStringLiteral("DisplayWfUseSpectrumMinMax"), m_panIndex),
@@ -1069,6 +1194,19 @@ void SpectrumWidget::saveSettings()
               m_showCursorFreq ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(settingsKey(QStringLiteral("DisplayDbmScaleVisible"), m_panIndex),
               m_dbmScaleVisible ? QStringLiteral("True") : QStringLiteral("False"));
+    // Transmit grid persists independently of receive. While transmitting the
+    // LIVE pair is the transmit one, so read the store that is not currently
+    // live rather than the member directly.
+    //
+    // Per pan, matching the load side. A bare key here made every pan a
+    // writer of one shared value, so the last pan to save won and the
+    // transmitting pan's drag was the thing most likely to be overwritten.
+    s.setValue(settingsKey(QStringLiteral("DisplayTxGridRefLevel"), m_panIndex),
+               QString::number(m_moxOverlay ? m_refLevel : m_txRefLevel));
+    s.setValue(settingsKey(QStringLiteral("DisplayTxGridDynamicRange"), m_panIndex),
+               QString::number(m_moxOverlay ? m_dynamicRange : m_txDynamicRange));
+    s.setValue(settingsKey(QStringLiteral("DisplayTxViewBandwidth"), m_panIndex),
+               QString::number(m_moxOverlay ? m_bandwidthHz : m_txViewBandwidthHz));
     s.setValue(QStringLiteral("BandPlanFontSize"),
                QString::number(m_bandPlanFontSize));
     writeInt(QStringLiteral("DisplayFreqLabelAlign"), static_cast<int>(m_freqLabelAlign));
@@ -1152,6 +1290,59 @@ void SpectrumWidget::scheduleSettingsSave()
     });
 }
 
+void SpectrumWidget::updateSpectrumFromTxPixels(int receiverId,
+                                                const QVector<float>& binsDbm)
+{
+    Q_UNUSED(receiverId);
+    if (binsDbm.isEmpty()) { return; }
+
+    const int displayWidth = qMax(width() - effectiveStripW(), 800);
+
+    // Same window slice the trace path uses, so the transmit trace and the
+    // transmit waterfall agree about the X axis.
+    auto [firstBin, lastBin] = visibleBinRange(binsDbm.size());
+    const int sliceCount = lastBin - firstBin + 1;
+    if (sliceCount <= 0) { return; }
+
+    if (m_renderedPixels.size() != displayWidth) {
+        m_renderedPixels.resize(displayWidth);
+    }
+
+    // Straight resample, deliberately NOT a detector. WDSP already reduced
+    // bins to pixels using the TX Display detector and averaging; running a
+    // second detector here is the defect this method exists to remove. With
+    // the analyzer clipped to the display window, n_pix and displayWidth are
+    // within a few percent of each other, so this is close to 1:1 and there
+    // is nothing left to decimate.
+    const double step = static_cast<double>(sliceCount)
+                      / static_cast<double>(displayWidth);
+    for (int x = 0; x < displayWidth; ++x) {
+        const double src = static_cast<double>(firstBin) + step * x;
+        const int    i0  = static_cast<int>(src);
+        const int    i1  = qMin(i0 + 1, lastBin);
+        const double f   = src - static_cast<double>(i0);
+        const float  a   = binsDbm[qBound(firstBin, i0, lastBin)];
+        const float  b   = binsDbm[qBound(firstBin, i1, lastBin)];
+        m_renderedPixels[x] = static_cast<float>(a + (b - a) * f);
+    }
+
+    m_hasNewSpectrum = true;
+    emit spectrumFrameRendered();
+    update();
+}
+
+void SpectrumWidget::setDisplayWindowPreservingHistory(double centerHz,
+                                                       double bandwidthHz)
+{
+    if (bandwidthHz <= 0.0) { return; }
+    if (qFuzzyCompare(m_centerHz, centerHz)
+        && qFuzzyCompare(m_bandwidthHz, bandwidthHz)) {
+        return;
+    }
+    applyViewWindow(centerHz, bandwidthHz);
+    update();
+}
+
 void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
 {
     const bool bwChanged = !qFuzzyCompare(m_bandwidthHz, bandwidthHz);
@@ -1183,8 +1374,7 @@ void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
         reprojectWaterfall(oldCenterHz, oldBandwidthHz, newCenterHz, newBandwidthHz);
     }
 
-    m_centerHz = centerHz;
-    m_bandwidthHz = bandwidthHz;
+    applyViewWindow(centerHz, bandwidthHz);
     updateVfoPositions();
 #ifdef NEREUS_GPU_SPECTRUM
     // Band-plan strip depends on m_centerHz/m_bandwidthHz — invalidate the
@@ -1244,6 +1434,30 @@ void SpectrumWidget::setSampleRate(double hz)
     }
 }
 
+// 3M-5d follow-up: setters for TX-side bin-frequency context.  See
+// visibleBinRange() for usage.  Both are safe to call at any time;
+// the MOX branch in visibleBinRange picks them up only while
+// m_moxOverlay is true so RX-only operation is unaffected.
+void SpectrumWidget::setTxCenterFrequency(double hz)
+{
+    if (!qFuzzyCompare(m_txCenterHz + 1.0, hz + 1.0)) {
+        m_txCenterHz = hz;
+        if (m_moxOverlay) {
+            update();
+        }
+    }
+}
+
+void SpectrumWidget::setTxSampleRate(double hz)
+{
+    if (hz > 0.0 && !qFuzzyCompare(m_txSampleRateHz, hz)) {
+        m_txSampleRateHz = hz;
+        if (m_moxOverlay) {
+            update();
+        }
+    }
+}
+
 void SpectrumWidget::setFilterOffset(int lowHz, int highHz)
 {
     m_filterLowHz = lowHz;
@@ -1259,6 +1473,8 @@ void SpectrumWidget::setDbmRange(float minDbm, float maxDbm)
 {
     m_refLevel = maxDbm;
     m_dynamicRange = maxDbm - minDbm;
+    // Same reason as the drag: the scale is cached chrome, the trace is not.
+    markOverlayDirty();
     update();
     // Note: callers that invoke setDbmRange deliberately (Copy button, user drag)
     // schedule their own save. The NF-aware grid onNoiseFloorChanged() avoids
@@ -1996,6 +2212,23 @@ void SpectrumWidget::onNoiseFloorChanged(float nfDbm)
     // density.
     if (!m_adjustGridMinToNF) { return; }
 
+    // Not while transmitting. This tracks a RECEIVE noise floor, and on an
+    // ORION-class radio the receiver keeps running through transmit, so the
+    // tracker goes on firing at its 500 ms cadence and dragging the grid
+    // underneath the transmit graticule.
+    //
+    // Two things break. The transmit scale the operator is looking at moves
+    // on its own, and the MOX fall edge captures whatever the tracker last
+    // set rather than what the operator chose -- so the next key-up comes up
+    // on a noise-floor-derived range, which is how the dBm labels vanished
+    // on the second TUNE at the bench on 2026-08-05.
+    //
+    // Same reasoning as the Clarity gate 3M-5 already added, and the same
+    // reasoning as composeWaterfallActiveThresholds's early return: every
+    // receive-side tracker has to stand down while the pan is showing
+    // transmit. This one was missed.
+    if (m_moxOverlay) { return; }
+
     const float oldMin = m_refLevel - m_dynamicRange;
     const float oldMax = m_refLevel;
     // abs incase //MW0LGE [2.9.0.7] [original inline comment from console.cs:46081]
@@ -2220,12 +2453,124 @@ void SpectrumWidget::setWaterfallAGCOffsetDb(int db)
     scheduleSettingsSave();
 }
 
+// 3M-5b: TX waterfall colormap setters.
+// From Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51] -- TX thresholds,
+// palette, and low-color switch inline per-frame when m_moxOverlay is active.
+// MW0LGE [2.9.0.7]  [original inline comment from display.cs:6588; the
+// cited 6506-6595 range spans it]
+void SpectrumWidget::setTxWfLowLevel(int dbm)
+{
+    if (m_txWfLowLevel == dbm) { return; }
+    m_txWfLowLevel = dbm;
+    scheduleSettingsSave();
+    update();
+    emit txWfSettingsChanged();
+}
+
+void SpectrumWidget::setTxWfHighLevel(int dbm)
+{
+    if (m_txWfHighLevel == dbm) { return; }
+    m_txWfHighLevel = dbm;
+    scheduleSettingsSave();
+    update();
+    emit txWfSettingsChanged();
+}
+
+void SpectrumWidget::setTxWfPalette(WfColorScheme s)
+{
+    if (m_txWfPalette == s) { return; }
+    m_txWfPalette = s;
+    scheduleSettingsSave();
+    update();
+    emit txWfSettingsChanged();
+}
+
+void SpectrumWidget::setTxWfLowColor(const QColor& c)
+{
+    if (m_txWfLowColor == c) { return; }
+    m_txWfLowColor = c;
+    scheduleSettingsSave();
+    update();
+    emit txWfSettingsChanged();
+}
+
+void SpectrumWidget::setTxWfGradient(const QString& encoded)
+{
+    if (m_txWfGradient == encoded) { return; }
+    m_txWfGradient = encoded;
+
+    // 3M-5c: Rebuild the cached 101-entry color LUT from the encoded
+    // string. Mirrors the WaterfallTXGradient() consumer at Thetis
+    // setup.cs:33314-33322 [v2.10.3.13+501e3f51]:
+    //   Color[] waterfall_grad = new Color[101];
+    //   for (int p = 0; p <= 100; p++)
+    //       waterfall_grad[p] = lgLinearGradientTX_waterfall.GetColourAtPercent(p / 100f);
+    // GradientPickerWidget::setEncodedText is a silent no-op on empty /
+    // malformed input, so a fresh-install empty string leaves the picker
+    // at its Thetis-verbatim default 8-stop grayscale ramp.
+    m_txCustomLutValid = false;
+    if (!encoded.isEmpty()) {
+        GradientPickerWidget tempPicker;
+        tempPicker.setEncodedText(encoded);
+        const QVector<QColor> lut = tempPicker.colorTable(101);
+        if (lut.size() == 101) {
+            for (int k = 0; k < 101; ++k) {
+                m_txCustomLut[k] = lut[k].rgba();
+            }
+            m_txCustomLutValid = true;
+        }
+    }
+
+    scheduleSettingsSave();
+    update();
+    emit txWfSettingsChanged();
+}
+
 // Task 2.8: Stop-on-TX — gate pushWaterfallRow() while TX is active.
 void SpectrumWidget::setWaterfallStopOnTx(bool on)
 {
     if (m_wfStopOnTx == on) { return; }
     m_wfStopOnTx = on;
     scheduleSettingsSave();
+}
+
+// 3M-5d: gate the internal pushWaterfallRow inside updateSpectrumLinear
+// so the external pixout=1 stream from TxAnalyzer drives the waterfall
+// plane during MOX without racing the internal path.  Flipped by
+// MainWindow on MOX edges; default false leaves RX path untouched.
+void SpectrumWidget::setTxExternalWaterfall(bool on)
+{
+    m_txExternalWaterfall = on;
+}
+
+// 3M-5d: bridge slot wired to TxAnalyzer::txWaterfallReady during MOX.
+// WDSP's GetPixels(disp, 1, ...) already applied DetTypeWF +
+// AverageModeWF in the analyzer.c domain.  Source array spans the
+// TX baseband (96 kHz at WdspEngine::kTxDspSampleRate, centered at
+// the TX channel = VFO frequency); visibleBinRange() picks up the
+// TX context when m_moxOverlay is true (TX center / TX rate) so the
+// slice maps to the panadapter's visible RF window correctly.  The
+// slice happens here for the WF path; the trace path slices inside
+// updateSpectrumLinear (same code).  Both paths therefore use
+// matching X-axis math.
+void SpectrumWidget::pushTxWaterfallRow(int receiverId,
+                                        const QVector<float>& binsDbm)
+{
+    Q_UNUSED(receiverId);
+    if (binsDbm.isEmpty()) {
+        pushWaterfallRow(binsDbm);
+        return;
+    }
+    auto [firstBin, lastBin] = visibleBinRange(binsDbm.size());
+    if (lastBin < firstBin) {
+        pushWaterfallRow(binsDbm);
+        return;
+    }
+    QVector<float> visible(lastBin - firstBin + 1);
+    for (int k = firstBin; k <= lastBin; ++k) {
+        visible[k - firstBin] = binsDbm[k];
+    }
+    pushWaterfallRow(visible);
 }
 
 // Issue #230 fix: Clarity is a NereusSDR-only override modeled on
@@ -2938,8 +3283,22 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // pushing immediately.  m_wfPushTimer (started in the ctor) drains
     // the cache at strictly m_wfUpdatePeriodMs cadence so network-burst
     // FFT delivery does not produce visible scroll stutter.
-    m_pendingWfPixelsDbm = m_wfRenderedPixels;
-    m_pendingWfPixelsDbmDirty = true;
+    //
+    // 3M-5d: skip when the waterfall is being driven externally by
+    // TxAnalyzer's pixout=1 stream (set by MainWindow on MOX-up).  This
+    // prevents the WDSP's DetTypeWF + AverageModeWF pixels from being
+    // overwritten by NereusSDR's own avenger output, and avoids a
+    // double-push race.  RX path stays at false, no behaviour change.
+    //
+    // Revive merge: 3M-5d gated the direct pushWaterfallRow that used to
+    // sit here; the gate now wraps the CACHE WRITE instead, which is the
+    // same seam one step earlier. Gating the timer drain rather than the
+    // write would have been wrong: the cache would keep the last RX row
+    // and the drain would replay it under the TX rows.
+    if (!m_txExternalWaterfall) {
+        m_pendingWfPixelsDbm = m_wfRenderedPixels;
+        m_pendingWfPixelsDbmDirty = true;
+    }
     m_hasNewSpectrum = true;
 
     // 2026-05-22 bench fix: signal that a fresh m_renderedPixels frame is
@@ -4219,12 +4578,24 @@ double SpectrumWidget::xToHz(int x, const QRect& r) const
 
 std::pair<int, int> SpectrumWidget::visibleBinRange(int binCount) const
 {
-    if (binCount <= 0 || m_sampleRateHz <= 0.0) {
+    // 3M-5d follow-up: during MOX the bin array comes from the TX
+    // analyzer (TxAnalyzer's pixout=0|1 stream) which covers a
+    // narrower baseband (96 kHz, centered at the TX channel = VFO
+    // frequency) than the RX DDC rate.  Branching here keeps the
+    // RX path byte-identical to pre-3M-5d behavior; only the MOX
+    // branch picks TX context.
+    const bool useTx = m_moxOverlay
+                    && m_txSampleRateHz > 0.0
+                    && m_txCenterHz != 0.0;
+    const double rateHz   = useTx ? m_txSampleRateHz : m_sampleRateHz;
+    const double centerHz = useTx ? m_txCenterHz     : m_ddcCenterHz;
+
+    if (binCount <= 0 || rateHz <= 0.0) {
         return {0, -1};  // empty range — callers compute count = 0
     }
 
-    double binWidth = m_sampleRateHz / binCount;
-    double fftLowHz = m_ddcCenterHz - m_sampleRateHz / 2.0;
+    double binWidth = rateHz / binCount;
+    double fftLowHz = centerHz - rateHz / 2.0;
 
     double displayLowHz  = m_centerHz - m_bandwidthHz / 2.0;
     double displayHighHz = m_centerHz + m_bandwidthHz / 2.0;
@@ -4650,6 +5021,24 @@ void SpectrumWidget::reprojectWaterfall(double oldCenterHz, double oldBandwidthH
 void SpectrumWidget::composeWaterfallActiveThresholds(const QVector<float>& wfPixelsDbm)
 {
     if (wfPixelsDbm.isEmpty()) { return; }
+
+    // 3M-5b: AGC, NF-AGC and Clarity are RX-only. TX uses the static pair
+    // from Setup -> Display -> TX; per Thetis display.cs:6506-6595
+    // [v2.10.3.13+501e3f51] the TX path has no per-frame tracking at all.
+    //
+    // Revive merge: 3M-5b expressed this as `!isTx` on each block back when
+    // the composition was inline in pushWaterfallRow. Issue #230 moved the
+    // composition here, so the gate becomes one early return -- and gains
+    // something the inline version did not have. Returning before the AGC
+    // follower runs leaves m_wfAgcRunMin/Max holding their last RX values,
+    // so unkeying resumes the RX waterfall where it left off. The inline
+    // gates skipped the THRESHOLD writes but the follower state lived in
+    // the same block, so this is strictly the safer shape.
+    //
+    // dbmToRgb does not read the active mirror while m_moxOverlay is set,
+    // so nothing downstream needs the values this would have written.
+    if (m_moxOverlay) { return; }
+
     const int n = wfPixelsDbm.size();
 
     // Seed from persistent user values unless Clarity is the live
@@ -4789,18 +5178,73 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
 // Color gain adjusts high_threshold, black level adjusts low_threshold.
 QRgb SpectrumWidget::dbmToRgb(float dbm) const
 {
-    // Effective thresholds adjusted by gain/black level sliders.
-    // Black level slider (0-125): lower = more black, higher = less black.
-    // Color gain slider (0-100): shifts high threshold DOWN (more color).
-    // From Thetis display.cs:2522-2536 defaults: high=-80, low=-130.
-    // Issue #230 fix: read the render-active mirror, not the
-    // persistent user fields — AGC / NF-AGC / Clarity drive the
-    // active mirror via composeWaterfallActiveThresholds() and
-    // setClarityWaterfallThresholds().  Persistent values stay clean.
-    float effectiveLow = m_wfActiveLowThreshold + static_cast<float>(125 - m_wfBlackLevel) * 0.4f;
-    float effectiveHigh = m_wfActiveHighThreshold - static_cast<float>(m_wfColorGain) * 0.3f;
+    // From Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51] -- per-frame
+    // MW0LGE [2.9.0.7]  [original inline comment from display.cs:6588]
+    // MOX-conditional render path.  No state machine; branch is inline
+    // per pixel.  When MOX is active, TX-specific thresholds + palette are
+    // used instead of RX values.  Black-level / color-gain sliders are NOT
+    // applied for TX (Thetis does not expose them per-direction).
+    const bool isTx = m_moxOverlay;
+    const WfColorScheme scheme = isTx ? m_txWfPalette : m_wfColorScheme;
+
+    float effectiveLow;
+    float effectiveHigh;
+    if (isTx) {
+        // TX: static thresholds from m_txWfLowLevel / m_txWfHighLevel.
+        // From Thetis display.cs:6536-6539 [v2.10.3.13+501e3f51]:
+        //   low_threshold  = (float)TXWFAmpMin;
+        //   high_threshold = (float)TXWFAmpMax;
+        //
+        // Deliberately NOT the active mirror. The mirror carries AGC /
+        // NF-AGC / Clarity output, all of which are RX noise-floor
+        // trackers; Thetis's TX path is static thresholds with no
+        // per-frame tracking at all. Reading the mirror here would let an
+        // RX-derived level set the TX palette.
+        effectiveLow  = static_cast<float>(m_txWfLowLevel);
+        effectiveHigh = static_cast<float>(m_txWfHighLevel);
+    } else {
+        // RX: black-level / color-gain adjustment math.
+        // Black level slider (0-125): lower = more black, higher = less black.
+        // Color gain slider (0-100): shifts high threshold DOWN (more color).
+        // From Thetis display.cs:2522-2536 defaults: high=-80, low=-130.
+        // Issue #230 fix: read the render-active mirror, not the
+        // persistent user fields — AGC / NF-AGC / Clarity drive the
+        // active mirror via composeWaterfallActiveThresholds() and
+        // setClarityWaterfallThresholds().  Persistent values stay clean.
+        //
+        // Revive merge: 3M-5b wrote this branch against m_wfLow/HighThreshold,
+        // which #230 later split into persisted-vs-active. The RX branch
+        // follows #230 onto the mirror; the TX branch above stays on its own
+        // static pair, so the two fixes compose rather than collide.
+        effectiveLow  = m_wfActiveLowThreshold  + static_cast<float>(125 - m_wfBlackLevel) * 0.4f;
+        effectiveHigh = m_wfActiveHighThreshold - static_cast<float>(m_wfColorGain) * 0.3f;
+    }
     if (effectiveHigh <= effectiveLow) {
         effectiveHigh = effectiveLow + 1.0f;
+    }
+
+    // Everything at or under the floor is the low colour, which on the TX
+    // path is a control the operator actually set.
+    //
+    // From Thetis display.cs:6424-6427 [v2.10.3.15], the TX branch that pairs
+    // the threshold with the colour:
+    //     low_threshold  = (float)TXWFAmpMin;
+    //     high_threshold = (float)TXWFAmpMax;
+    //     cScheme        = _tx_color_scheme;
+    //     low_color      = waterfall_low_color_tx;
+    // consumed at :6766-6768 under `if (waterfall_data[i] <= low_threshold)`
+    // (:6764).
+    //
+    // NereusSDR ported the threshold half and not the colour half. TX Low
+    // Color was settable, persisted and read back, and dbmToRgb never looked
+    // at it: a bin at or below m_txWfLowLevel produced adjusted == 0 and fell
+    // into the palette's first gradient stop. Found by Codex on PR #317.
+    //
+    // TX only. The RX floor colour is the RX palette's own first stop and
+    // has no separate control, so reading one here would invent behaviour
+    // rather than restore it.
+    if (isTx && dbm <= effectiveLow) {
+        return m_txWfLowColor.rgb();
     }
 
     // From Thetis display.cs:6889-6891
@@ -4808,11 +5252,24 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
     float adjusted = (dbm - effectiveLow) / range;
     adjusted = qBound(0.0f, adjusted, 1.0f);
 
-    // Look up in gradient stops for current color scheme
-    int stopCount = 0;
-    const WfGradientStop* stops = wfSchemeStops(m_wfColorScheme, stopCount);
+    // 3M-5c: TX + Custom palette + populated 101-LUT -> direct index into
+    // the GradientPickerWidget-built LUT. Mirrors the WaterfallTXGradient
+    // consumer at Thetis setup.cs:33314-33322 [v2.10.3.13+501e3f51] which
+    // builds Color[101] from GetColourAtPercent(p / 100f) and indexes by
+    // percent-of-range. When the LUT hasn't been populated yet (fresh
+    // install, user has not opened Setup -> Display -> TX -> Custom) the
+    // code falls through to the existing kCustomFallbackStops path so the
+    // Custom palette stays usable as a default colour scheme.
+    if (isTx && scheme == WfColorScheme::Custom && m_txCustomLutValid) {
+        const int idx = qBound(0, static_cast<int>(adjusted * 100.0f + 0.5f), 100);
+        return m_txCustomLut[idx];
+    }
 
-    // Find the two surrounding stops and interpolate
+    // Look up in gradient stops for current color scheme (TX or RX).
+    int stopCount = 0;
+    const WfGradientStop* stops = wfSchemeStops(scheme, stopCount);
+
+    // Find the two surrounding stops and interpolate.
     for (int i = 0; i < stopCount - 1; ++i) {
         if (adjusted <= stops[i + 1].pos) {
             float t = (adjusted - stops[i].pos)
@@ -5158,6 +5615,47 @@ void SpectrumWidget::setMoxOverlay(bool isTx)
     if (m_moxOverlay == isTx) {
         return;  // idempotent
     }
+    // Park the live grid in the store it belongs to, then load the other.
+    // Doing it here rather than in MainWindow means the widget can never be
+    // caught holding the wrong grid: there is exactly one place the swap
+    // happens and it is the same flag every renderer already branches on.
+    if (isTx) {
+        m_rxRefLevel        = m_refLevel;
+        m_rxDynamicRange    = m_dynamicRange;
+        m_rxViewCenterHz    = m_centerHz;
+        m_rxViewBandwidthHz = m_bandwidthHz;
+        m_refLevel          = m_txRefLevel;
+        m_dynamicRange      = m_txDynamicRange;
+        // Centre is re-aimed at the carrier by the caller; the SPAN is what
+        // carries over, so a zoom made last transmission survives.
+        if (m_txViewBandwidthHz > 0.0) { m_bandwidthHz = m_txViewBandwidthHz; }
+    } else {
+        m_txRefLevel        = m_refLevel;
+        m_txDynamicRange    = m_dynamicRange;
+        m_txViewCenterHz    = m_centerHz;
+        m_txViewBandwidthHz = m_bandwidthHz;
+        m_refLevel          = m_rxRefLevel;
+        m_dynamicRange      = m_rxDynamicRange;
+        if (m_rxViewBandwidthHz > 0.0) {
+            m_centerHz    = m_rxViewCenterHz;
+            m_bandwidthHz = m_rxViewBandwidthHz;
+        }
+    }
+    // Deliberately NO scheduleSettingsSave() here.
+    //
+    // onNoiseFloorChanged moves the live receive grid at 500 ms cadence and
+    // pointedly does not save, so its tracking reverts on restart and the
+    // operator's own scale survives (SpectrumWidget.cpp, "do NOT call
+    // scheduleSettingsSave() here"). Saving from the MOX edge launders that
+    // drift into persistence: every transmission would bake whatever the
+    // tracker last did into DisplayGridMax/Min, and the receive scale the
+    // operator chose would erode away a few dB per key-up.
+    //
+    // Bench 2026-08-05, JJ KG4VCF: receive stopped reaching -1xx dBm and
+    // bottomed out around -90 after a few transmissions. Deliberate changes
+    // -- a strip drag, a Setup edit -- schedule their own save, which is
+    // where both grids get written.
+
     m_moxOverlay = isTx;
     markOverlayDirty();
     update();   // ensure QPainter path repaints immediately on MOX flip;
@@ -5900,7 +6398,7 @@ void SpectrumWidget::showSpotClusterPopup(const SpotCluster& cluster, const QPoi
             // NereusSDR signal contract: frequencyClicked(double hz).
             // AetherSDR emits MHz; multiply by 1e6 to match the Hz signature.
             const double freqHz = spot.freqMhz * 1.0e6;
-            emit frequencyClicked(freqHz);
+            requestTune(freqHz);
             if (spot.source == "Memory") {
                 emit spotTriggered(spot.index);
             }
@@ -6606,6 +7104,24 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
     }
 
     if (event->button() == Qt::RightButton) {
+        // The dBm strip claims right-press first: on that strip a right drag
+        // adjusts the RANGE (Thetis gridmaxadjust, PanDisplay.cs:4424-4431
+        // [v2.10.3.15]), and the notch / spot / overlay menus below would
+        // otherwise swallow it before the strip hit-test further down ever
+        // ran. The strip is 36 px of the right edge above the divider, so
+        // this takes nothing away from the menus.
+        {
+            if (isOnDbmStrip(QPoint(mx, my))) {
+                m_draggingDbmRange = true;
+                m_dragStartY       = my;
+                m_dragStartRef     = m_refLevel;
+                m_dragStartFloor   = m_refLevel - m_dynamicRange;
+                setCursor(Qt::SizeVerCursor);
+                event->accept();
+                return;
+            }
+        }
+
         // Ctrl + right-click adds a notch at the clicked frequency; Shift
         // makes it narrow.  Checked before the spot menu and the overlay
         // menu, so plain right-click behaviour is unchanged when Ctrl is
@@ -6686,13 +7202,13 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                         : QString("Apply %1").arg(call);
                     menu.addAction(title, this,
                         [this, freqHz, spotIndex]() {
-                            emit frequencyClicked(freqHz);
+                            requestTune(freqHz);
                             emit spotTriggered(spotIndex);
                         });
                 } else {
                     menu.addAction(QString("Tune to %1").arg(call), this,
                         [this, freqHz]() {
-                            emit frequencyClicked(freqHz);
+                            requestTune(freqHz);
                         });
                     menu.addAction(QStringLiteral("Copy Callsign"), this,
                         [call]() {
@@ -6796,7 +7312,7 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             if (hr.rect.contains(pos)) {
                 // NereusSDR signal contract: frequencyClicked(double hz).
                 // AetherSDR emits MHz; multiply by 1e6 to match Hz signature.
-                emit frequencyClicked(hr.freqMhz * 1.0e6);
+                requestTune(hr.freqMhz * 1.0e6);
                 // Notify the radio that a spot was clicked (#341)
                 if (hr.markerIndex >= 0 && hr.markerIndex < m_spotMarkers.size()) {
                     emit spotTriggered(m_spotMarkers[hr.markerIndex].index);
@@ -6850,10 +7366,17 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             return;
         }
 
-        // Below arrows: start drag-pan (existing behavior)
-        m_draggingDbm = true;
-        m_dragStartY = my;
+        // Below arrows: left pans the window, right stretches it.
+        // From Thetis PanDisplay.cs:4105-4115 [v2.10.3.15] (left ->
+        // gridminmaxadjust) and :4424-4431 (right -> gridmaxadjust).
+        m_dragStartY   = my;
         m_dragStartRef = m_refLevel;
+        if (event->button() == Qt::RightButton) {
+            m_draggingDbmRange = true;
+            m_dragStartFloor   = m_refLevel - m_dynamicRange;
+        } else {
+            m_draggingDbm = true;
+        }
         setCursor(Qt::SizeVerCursor);
         return;
     }
@@ -7085,11 +7608,104 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         return;
     }
 
+    // A drag ends when its button is no longer held, whether or not a
+    // release event ever reached us. On macOS a right-press that the window
+    // system turns into a context-menu gesture can swallow the matching
+    // release, and the drag flag then stays set forever: every subsequent
+    // mouse move keeps dragging the scale with no button down and no way to
+    // stop. Bench 2026-08-05, "i cant let go, it just goes up and down no
+    // matter where the mouse is". Checking the live button state costs
+    // nothing and cannot get stuck.
+    //
+    // A drag that ends here is a drag that ENDED, so it has to finalise the
+    // same way mouseReleaseEvent does. The first version only cleared the
+    // flag, so on exactly the macOS case this exists for, the scale change
+    // held for the session and was thrown away at exit: no
+    // dbmRangeChangeRequested for the observers, no scheduleSettingsSave.
+    // The operator drags the scale into shape, quits, and comes back to the
+    // old one having done nothing wrong. Found by Codex on PR #317.
+    if (m_draggingDbm && !(event->buttons() & Qt::LeftButton)) {
+        m_draggingDbm = false;
+        setCursor(Qt::ArrowCursor);
+        emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
+        scheduleSettingsSave();
+    }
+    if (m_draggingDbmRange && !(event->buttons() & Qt::RightButton)) {
+        m_draggingDbmRange = false;
+        setCursor(Qt::ArrowCursor);
+        emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
+        scheduleSettingsSave();
+    }
+
     if (m_draggingDbm) {
-        int dy = my - m_dragStartY;
-        float dbPerPixel = m_dynamicRange / static_cast<float>(specH);
-        m_refLevel = m_dragStartRef + static_cast<float>(dy) * dbPerPixel;
-        m_refLevel = qBound(-160.0f, m_refLevel, 20.0f);
+        // From Thetis PanDisplay.cs:3688-3699 [v2.10.3.15]:
+        //     int delta_y = e.Y - grid_minmax_drag_start_point.Y;
+        //     double delta_db = ((double)delta_y / 10) * 5;
+        //     val += (decimal)delta_db;  min_val += (decimal)delta_db;
+        //     if (val > 200) val = 200;
+        //     if (min_val < -200) min_val = -200;
+        //
+        // A FIXED half-dB per pixel, not a fraction of the current range.
+        // Ours scaled by m_dynamicRange / specH, which on a 49 dB receive
+        // window came out around 0.13 dB per pixel -- roughly a quarter of
+        // Thetis's, so the scale barely moved and the drag felt dead. It
+        // also meant the drag's feel changed with the zoom level, which
+        // Thetis's does not.
+        static constexpr float kDbPerPixel = 0.5f;
+
+        const int dy = my - m_dragStartY;
+        float newRef = m_dragStartRef + static_cast<float>(dy) * kDbPerPixel;
+
+        // Thetis's own limits. The old +20 ceiling was the reason dragging
+        // up did nothing at all while transmitting: the transmit grid's
+        // reference level IS +20 (display.cs:1887 tx_spectrum_grid_max), so
+        // the drag started already pinned against the stop.
+        // Bench 2026-08-05.
+        newRef = qBound(-200.0f + m_dynamicRange, newRef, 200.0f);
+        m_refLevel = newRef;
+        // The scale labels and grid lines live in the CACHED overlay texture
+        // (renderGpuFrame draws them only under `if (m_overlayStaticDirty)`),
+        // while the trace is vertex geometry rebuilt every frame. update()
+        // alone therefore moved the trace and left the numbers frozen at
+        // whatever range was live when something else last invalidated the
+        // overlay -- which is the whole complaint: "the spectrum goes up and
+        // down but the scale does not adjust". Bench 2026-08-05.
+        markOverlayDirty();
+        update();
+        return;
+    }
+
+    if (m_draggingDbmRange) {
+        // From Thetis PanDisplay.cs:3702-3712 [v2.10.3.15]:
+        //     if (gridmaxadjust) {
+        //         int delta_y = e.Y - grid_minmax_drag_start_point.Y;
+        //         double delta_db = ((double)delta_y / 10) * 5;
+        //         decimal val = grid_minmax_max_y;  val += (decimal)delta_db;
+        //         if (val > 200) val = 200;
+        //         SpectrumGridMax = (int)val;
+        //     }
+        // Only the ceiling moves; the floor is untouched, so the RANGE is
+        // what changes. Same half-dB per pixel as the pan.
+        static constexpr float kDbPerPixel = 0.5f;
+
+        const int dy = my - m_dragStartY;
+        float newRef = m_dragStartRef + static_cast<float>(dy) * kDbPerPixel;
+        newRef = qMin(newRef, 200.0f);
+
+        // The floor stays put, so guard the range rather than the ceiling:
+        // a ceiling dragged to or below the floor would invert the scale.
+        float newRange = newRef - m_dragStartFloor;
+        if (newRange < 10.0f) {
+            newRange = 10.0f;
+            newRef   = m_dragStartFloor + newRange;
+        } else if (newRange > 200.0f) {
+            newRange = 200.0f;
+            newRef   = m_dragStartFloor + newRange;
+        }
+
+        m_refLevel     = newRef;
+        m_dynamicRange = newRange;
+        markOverlayDirty();
         update();
         return;
     }
@@ -7122,7 +7738,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         // From AetherSDR SpectrumWidget.cpp:1222-1228
         double hz = xToHz(mx, specRect);
         hz = std::round(hz / m_stepHz) * m_stepHz;
-        emit frequencyClicked(hz);
+        requestTune(hz);
         return;
     }
 
@@ -7134,11 +7750,11 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         double factor = 1.0 + dx * 0.003;  // 0.3% per pixel
         double newBw = m_bwDragStartBw * factor;
         newBw = std::clamp(newBw, 1000.0, m_sampleRateHz);
-        m_bandwidthHz = newBw;
-        // Recenter on VFO when zooming so the signal stays visible
+        // Recenter on VFO when zooming so the signal stays visible.
         // Only emit centerChanged if center actually moved — avoids DDC retune per drag frame
-        if (!qFuzzyCompare(m_centerHz, m_vfoHz)) {
-            m_centerHz = m_vfoHz;
+        const bool centreMoved = !qFuzzyCompare(m_centerHz, m_vfoHz);
+        applyViewWindow(centreMoved ? m_vfoHz : m_centerHz, newBw);
+        if (centreMoved) {
             emit centerChanged(m_centerHz);
         }
         updateVfoPositions();
@@ -7167,7 +7783,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         // From AetherSDR SpectrumWidget.cpp:1230-1237
         double deltaPx = mx - m_panDragStartX;
         double deltaHz = -(deltaPx / static_cast<double>(specRect.width())) * m_bandwidthHz;
-        m_centerHz = m_panDragStartCenter + deltaHz;
+        applyViewWindow(m_panDragStartCenter + deltaHz, m_bandwidthHz);
         emit centerChanged(m_centerHz);
         updateVfoPositions();
 #ifdef NEREUS_GPU_SPECTRUM
@@ -7391,8 +8007,79 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
     QWidget::mouseMoveEvent(event);
 }
 
+void SpectrumWidget::applyViewWindow(double centreHz, double bandwidthHz)
+{
+    const bool moved   = !qFuzzyCompare(m_centerHz, centreHz);
+    const bool resized = !qFuzzyCompare(m_bandwidthHz, bandwidthHz);
+    if (!moved && !resized) { return; }
+
+    // The ONLY direct writes to these two in the whole class, apart from
+    // setMoxOverlay's swap. Everything else routes through here.
+    m_centerHz    = centreHz;
+    m_bandwidthHz = bandwidthHz;
+
+    // The scale and grid are cached chrome; the trace is not. Without this
+    // the numbers stay frozen while the trace moves.
+    markOverlayDirty();
+
+    // Structural, not remembered: any zoom or pan path added later inherits
+    // this because it cannot change the window without coming through here.
+    notifyTxViewWindow();
+}
+
+void SpectrumWidget::requestTune(double hz)
+{
+    // See the header. One gate, one emitter, so the next tune path added
+    // inherits the safety rule instead of having to remember it.
+    if (m_moxOverlay) { return; }
+    emit frequencyClicked(hz);
+}
+
+void SpectrumWidget::notifyTxViewWindow()
+{
+    if (!m_moxOverlay || m_bandwidthHz <= 0.0) { return; }
+    emit txViewWindowChanged(m_centerHz, m_bandwidthHz);
+}
+
+bool SpectrumWidget::isOnDbmStrip(const QPoint& pos) const
+{
+    if (effectiveStripW() <= 0) { return false; }
+    const int specH = specHFromHeight(height(), m_spectrumFrac,
+                                      kFreqScaleH + kDividerH);
+    return pos.x() >= width() - kDbmStripW && pos.y() < specH;
+}
+
+void SpectrumWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    // A right press on the dBm strip is a range drag (Thetis gridmaxadjust,
+    // PanDisplay.cs:4424-4431 [v2.10.3.15]), so swallow the context menu
+    // there. Without this the pan menu opens on top of the gesture: Qt
+    // synthesises this event independently of mousePressEvent, so accepting
+    // the press is not enough, and it propagates to PanadapterApplet, whose
+    // contextMenuEvent builds the pan menu. Bench 2026-08-05.
+    if (isOnDbmStrip(event->pos())) {
+        event->accept();
+        return;
+    }
+    // Anywhere else, let it reach the pan applet as before.
+    event->ignore();
+    QRhiWidget::contextMenuEvent(event);
+}
+
 void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
 {
+    // Outside the LeftButton gate below, which never sees a right release.
+    // Deliberately not filtered on which button was released: the point is
+    // to end the gesture, and being fussy about that is how it got stuck.
+    if (m_draggingDbmRange) {
+        m_draggingDbmRange = false;
+        setCursor(Qt::ArrowCursor);
+        emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
+        scheduleSettingsSave();
+        event->accept();
+        return;
+    }
+
     // Sub-epic E: time-scale drag end
     // From AetherSDR SpectrumWidget.cpp:2382-2387 [@0cd4559]
     //   note: drag release does NOT auto-resume to live — m_wfLive is only
@@ -7411,7 +8098,24 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         // From AetherSDR SpectrumWidget.cpp:1427-1457 — 4px Manhattan threshold
         if (m_draggingPan) {
             int dx = std::abs(static_cast<int>(event->position().x()) - m_panDragStartX);
-            if (dx <= 4) {
+            // NOT while transmitting. A release that moved less than the
+            // 4 px threshold is read as a click-to-tune and retunes the VFO
+            // -- which, keyed into an antenna and an amplifier, is not
+            // something a stray click should be able to do. The panadapter
+            // was effectively read-only during transmit until this branch
+            // made it pannable and zoomable, so the exposure is new even
+            // though the code is not.
+            //
+            // Panning and zooming the view stay available while keyed; it
+            // is only the retune that is withheld. Bench 2026-08-05: "the
+            // tune jumps when I let go".
+            //
+            // requestTune now carries the same gate for every tune path, so
+            // the check here is redundant for the frequencyClicked branches.
+            // It stays because ddcRetuneRequested below is NOT one of them
+            // and moves the slice just as surely: its own comment records
+            // that MainWindow forwards it to slice frequency.
+            if (dx <= 4 && !m_moxOverlay) {
                 int w = width();
                 int specH = static_cast<int>(height() * m_spectrumFrac);
                 QRect specRect(0, 0, w - effectiveStripW(), specH);
@@ -7429,7 +8133,7 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
                     if (std::abs(hz - m_ddcCenterHz) <= halfBwHz) {
                         // Click landed inside the listenable island —
                         // standard slice retune.
-                        emit frequencyClicked(hz);
+                        requestTune(hz);
                     } else {
                         // Click landed in a wing — operator wants the
                         // clicked Hz to become the new DDC center.
@@ -7438,7 +8142,7 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
                         emit ddcRetuneRequested(hz);
                     }
                 } else {
-                    emit frequencyClicked(hz);
+                    requestTune(hz);
                 }
             }
         }
@@ -7552,6 +8256,7 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
             const float bottom = m_refLevel - m_dynamicRange;
             m_dynamicRange = qBound(10.0f, m_dynamicRange - notches * 5.0f, 200.0f);
             m_refLevel = bottom + m_dynamicRange;
+            markOverlayDirty();   // cached scale; see the drag handler
             emit dbmRangeChangeRequested(bottom, m_refLevel);
             update();
             scheduleSettingsSave();
@@ -7574,9 +8279,8 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
         double factor = (delta > 0) ? 0.8 : 1.25;
         double newBw = m_bandwidthHz * factor;
         newBw = std::clamp(newBw, 1000.0, m_sampleRateHz);
-        m_bandwidthHz = newBw;
         // Recenter on VFO when zooming
-        m_centerHz = m_vfoHz;
+        applyViewWindow(m_vfoHz, newBw);
         emit centerChanged(m_centerHz);
         emit bandwidthChangeRequested(newBw);
         updateVfoPositions();
@@ -7593,7 +8297,7 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
         int steps = (delta > 0) ? 1 : -1;
         double newHz = m_vfoHz + steps * m_stepHz;
         newHz = std::max(newHz, 100000.0);
-        emit frequencyClicked(newHz);
+        requestTune(newHz);
     }
 
     update();
@@ -8694,10 +9398,10 @@ void SpectrumWidget::setVfoFrequency(double hz)
 
         bool needsScroll = false;
         if (hz < leftEdge + margin) {
-            m_centerHz = hz + m_bandwidthHz / 2.0 - margin;
+            applyViewWindow(hz + m_bandwidthHz / 2.0 - margin, m_bandwidthHz);
             needsScroll = true;
         } else if (hz > rightEdge - margin) {
-            m_centerHz = hz - m_bandwidthHz / 2.0 + margin;
+            applyViewWindow(hz - m_bandwidthHz / 2.0 + margin, m_bandwidthHz);
             needsScroll = true;
         }
 
@@ -8727,7 +9431,7 @@ void SpectrumWidget::setVfoFrequency(double hz)
 
 void SpectrumWidget::recenterOnVfo()
 {
-    m_centerHz = m_vfoHz;
+    applyViewWindow(m_vfoHz, m_bandwidthHz);
     m_vfoOffScreen = VfoOffScreen::None;
     emit centerChanged(m_centerHz);
     updateVfoPositions();
