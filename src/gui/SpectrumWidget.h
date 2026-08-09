@@ -1900,9 +1900,6 @@ private:
     DssRenderer m_dss;
     int  m_dssRowsPushed{0};
     bool m_txActiveForTest{false};
-    // The mesh column count is a function of the shape, so a large enough
-    // angle change invalidates the vertex buffers. Task 7 reallocates them.
-    bool m_dssMeshNeedsResize{false};
 
     // AGC rolling envelope (tracked across waterfall rows).
     float m_wfAgcRunMin{0.0f};
@@ -2444,6 +2441,11 @@ private:
     QRhiSampler*                m_dssHeightSampler{nullptr};
     QRhiSampler*                m_dssPaletteSampler{nullptr};
     bool    m_dssMeshReady{false};
+    // False until rebuildDssMeshIfNeeded() has actually pushed vertices
+    // for m_dssMeshCols. Guards the first-upload case that a plain dirty
+    // flag misses, and is reset on teardown so a rebuilt pipeline uploads
+    // again.
+    bool    m_dssMeshUploaded{false};
     int     m_dssMeshCols{0};
     quint64 m_dssLutToken{~0ull};
     quint64 m_dssUploadedRowGeneration{~0ull};

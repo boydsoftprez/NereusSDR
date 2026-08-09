@@ -2287,9 +2287,6 @@ void SpectrumWidget::setDssAngle(int pct)
     const int v = std::clamp(pct, 0, 100);
     if (m_dssAngle == v) { return; }
     m_dssAngle = v;
-    // The mesh column count is a function of the shape, so a large enough
-    // angle change invalidates the vertex buffers. Task 7 reallocates them.
-    m_dssMeshNeedsResize = true;
     m_dss.invalidate();
     markOverlayDirty();
     scheduleSettingsSave();
@@ -8089,11 +8086,23 @@ void SpectrumWidget::rebuildDssMeshIfNeeded(QRhiResourceUpdateBatch* batch)
 {
     if (!m_dssMeshReady || !batch) { return; }
     const int wanted = dssMeshColsFor(dssShape());
-    if (!m_dssMeshNeedsResize && wanted == m_dssMeshCols
-        && m_dssMeshVbo->size() > 0) {
+    // Skip only when the geometry currently ON THE GPU is already right.
+    //
+    // The condition is deliberately "have we uploaded, and is the column
+    // count still the one we uploaded for", NOT a dirty flag plus a size
+    // check. initDssMeshPipeline() sets m_dssMeshCols and creates a
+    // correctly sized but EMPTY buffer, so a guard keyed on
+    // "wanted == m_dssMeshCols && vbo->size() > 0" is satisfied on the very
+    // first call and skips the only code path that ever uploads vertices.
+    // The mesh would then draw undefined GPU memory forever.
+    //
+    // Keying on m_dssMeshUploaded also fixes the converse waste: the vertex
+    // data is a pure function of the column count, so an angle change that
+    // does not cross a dssMeshColsFor boundary needs no work at all. Without
+    // this, a slider drag re-uploads tens of MiB of identical data per tick.
+    if (m_dssMeshUploaded && wanted == m_dssMeshCols) {
         return;
     }
-    m_dssMeshNeedsResize = false;
 
     QVector<float> fill;
     QVector<float> line;
@@ -8115,6 +8124,7 @@ void SpectrumWidget::rebuildDssMeshIfNeeded(QRhiResourceUpdateBatch* batch)
     }
     batch->uploadStaticBuffer(m_dssMeshVbo, 0, fillBytes, fill.constData());
     batch->uploadStaticBuffer(m_dssMeshLineVbo, 0, lineBytes, line.constData());
+    m_dssMeshUploaded = true;
 }
 
 // Uploads the ring texture. Only the newest row changes per frame under
@@ -9080,6 +9090,7 @@ void SpectrumWidget::releaseResources()
     delete m_dssHeightSampler;   m_dssHeightSampler = nullptr;
     delete m_dssPaletteSampler;  m_dssPaletteSampler = nullptr;
     m_dssMeshReady = false;
+    m_dssMeshUploaded = false;
     m_dssMeshCols = 0;
     m_dssLutToken = ~0ull;
     m_dssUploadedRowGeneration = ~0ull;
