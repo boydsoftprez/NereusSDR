@@ -4954,6 +4954,21 @@ float SpectrumWidget::dssSpanDb() const
     return std::max(1.0f, m_dynamicRange);
 }
 
+// From AetherSDR SpectrumWidget.cpp:14195 [@1872028c] (the writeDssMeshUbo-
+// equivalent inline `std::min(rangeDb, DssRenderer::kColorSpanDb)`) and
+// SpectrumWidget.cpp:11889-11890 [@1872028c] (buildDssImage()'s own local
+// `colorRangeDb`, same expression against the CPU fallback's `rangeDb`).
+// Review-round fix: the first pass of this task wrote kDssColorSpanDb
+// (formerly kColorSpanDb) unconditionally, uncapped by the actual dBm
+// span. At a narrow dBm range (e.g. 20 dB) that stretches the colormap's
+// 45 dB aperture across only 20 dB of real signal, washing the surface out
+// relative to upstream. The span can only ever narrow the aperture, never
+// widen it past kDssColorSpanDb, hence min() rather than the span alone.
+float SpectrumWidget::dssColorRangeDb() const
+{
+    return std::min(dssSpanDb(), kDssColorSpanDb);
+}
+
 // Build the wide channel from the off-screen DDC bins of the SAME FFT frame.
 //
 // The window is sized for the WIDEST angle the slider allows rather than the
@@ -8462,7 +8477,10 @@ void SpectrumWidget::writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
     //-KG4VCF [v0.5.3] Always one: our producer appends a single row per
     // waterfall tick. Permitted tier 1 deviation 2 of 2, design doc 2.3.
     ubo[i++] = 1.0f;                                  // scrollDistanceRows
-    ubo[i++] = kDssColorSpanDb;
+    // colorRangeDb: dssSpanDb() capped at kDssColorSpanDb, never the
+    // constant alone -- see dssColorRangeDb()'s comment (review-round fix;
+    // AetherSDR SpectrumWidget.cpp:14195 [@1872028c]).
+    ubo[i++] = dssColorRangeDb();
     ubo[i++] = static_cast<float>(m_dss.rowCount());
     ubo[i++] = static_cast<float>(kDssVisibleRows);
     ubo[i++] = specRect.width()  * dpr;

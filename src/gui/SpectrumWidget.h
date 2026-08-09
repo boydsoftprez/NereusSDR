@@ -619,6 +619,13 @@ public:
     float dssFloorDbm() const;
     // The dBm display span the surface height maps across.
     float dssSpanDb() const;
+    // The dBm span the COLOUR mapping (not the height mapping) reads
+    // across: dssSpanDb() capped at kDssColorSpanDb. A stable aperture
+    // independent of the Ref-level height span, so a wide dBm range does
+    // not stretch the colormap thinner than kDssColorSpanDb and wash the
+    // surface out relative to the reference implementation -- see the
+    // review-round fix note on writeDssMeshUbo()'s colorRangeDb field.
+    float dssColorRangeDb() const;
     // Windows the off-screen DDC bins of `fullBins` (the same FFT frame
     // that produced the on-screen row) into the wide channel that fills the
     // wedge beside the exact-channel trapezoid. Public so it is directly

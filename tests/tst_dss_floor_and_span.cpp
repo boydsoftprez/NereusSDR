@@ -1,15 +1,18 @@
 // From AetherSDR SpectrumWidget.cpp:12743-12784 [@1872028c] (dssRowSpanTarget
-// shape) plus NereusSDR-original floor/span/wide-channel logic. Task 9 of the
+// shape) and SpectrumWidget.cpp:14195 [@1872028c] (colorRangeDb's std::min
+// cap) plus NereusSDR-original floor/span/wide-channel logic. Task 9 of the
 // 3D stacked-trace spectrum plan (design doc docs/architecture/2026-08-08-
 // 3d-stacked-trace-spectrum-design.md, plan docs/architecture/2026-08-08-3d-
 // stacked-trace-spectrum-plan.md).
 //
 // Pins: the 3D Floor control offsets the measured noise floor downward: the
-// dBm span tracks m_refLevel/m_dynamicRange; buildDssWideRow() windows the
-// off-screen DDC bins of a full-frame snapshot, sized for the WIDEST angle
-// so a runtime angle change never invalidates retained rows, and returns
-// empty at full DDC width (no span available); and dssRowSpanTarget() scales
-// the available overhang by the 3D Span percentage.
+// dBm span tracks m_refLevel/m_dynamicRange; the colour aperture caps at
+// kDssColorSpanDb but narrows further with a tighter dBm range, never
+// widening past the cap; buildDssWideRow() windows the off-screen DDC bins
+// of a full-frame snapshot, sized for the WIDEST angle so a runtime angle
+// change never invalidates retained rows, and returns empty at full DDC
+// width (no span available); and dssRowSpanTarget() scales the available
+// overhang by the 3D Span percentage.
 
 #include <QTest>
 #include <QVector>
@@ -40,6 +43,22 @@ private slots:
         SpectrumWidget w;
         w.setDbmRange(-140.0f, -40.0f);
         QVERIFY(std::abs(w.dssSpanDb() - 100.0f) < 0.01f);
+    }
+
+    // Colour reads a STABLE aperture (kDssColorSpanDb, 45 dB) independent of
+    // the height mapping's own dBm span, but that aperture can only ever be
+    // narrowed by a tighter display range, never widened past it -- upstream
+    // AetherSDR SpectrumWidget.cpp:14195 [@1872028c] writes
+    // std::min(rangeDb, DssRenderer::kColorSpanDb), not the constant alone.
+    // A wide range (100 dB) hits the cap; a narrow one (20 dB, below the
+    // cap) tracks the span instead, so the colormap never stretches thinner
+    // than the real dBm range in front of it.
+    void colorRangeDb_capsAtTheStableApertureButNeverExceedsANarrowSpan() {
+        SpectrumWidget w;
+        w.setDbmRange(-140.0f, -40.0f);   // 100 dB span -- wider than the cap
+        QVERIFY(std::abs(w.dssColorRangeDb() - 45.0f) < 0.01f);
+        w.setDbmRange(-30.0f, -10.0f);    // 20 dB span -- narrower than the cap
+        QVERIFY(std::abs(w.dssColorRangeDb() - 20.0f) < 0.01f);
     }
 
     // At full DDC width there is nothing outside the view, so the span
