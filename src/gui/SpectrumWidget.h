@@ -1037,6 +1037,10 @@ public:
     // test binary can round-trip settings and call dbmToRgb directly.
     void saveSettingsForTest()              { saveSettings(); }
     void loadSettingsForTest()              { loadSettings(); }
+    /// The MOX tune gate is the property under test; synthesising a press,
+    /// a wheel notch and a spot-label hit would test Qt's event delivery
+    /// instead. Every emitter routes through requestTune, which is greppable.
+    void requestTuneForTest(double hz)      { requestTune(hz); }
     QRgb dbmToRgbForTest(float dbm) const  { return dbmToRgb(dbm); }
     void setWfLowThresholdForTest(float dbm)  { m_wfLowThreshold  = dbm; }
     void setWfHighThresholdForTest(float dbm) { m_wfHighThreshold = dbm; }
@@ -2432,6 +2436,25 @@ private:
     void applyViewWindow(double centreHz, double bandwidthHz);
 
     void notifyTxViewWindow();
+
+    /// THE only place frequencyClicked may be emitted.
+    ///
+    /// Withheld while this pan is showing transmit, for the reason the
+    /// release branch already gave: panning and zooming during transmit are
+    /// new on this branch, so a pointer gesture over the pan can now move a
+    /// keyed transmitter into an antenna and an amplifier.
+    ///
+    /// That gate went on the short-pan-release branch alone, and it was not
+    /// the only way in. A press inside the passband sets m_draggingVfo and
+    /// mouseMoveEvent tunes on every move; a spot label tunes on press; the
+    /// wheel tunes on every notch. Codex found all three on PR #317, and the
+    /// lesson is the same one applyViewWindow already learned on this branch:
+    /// a rule enforced at one of several call sites is a rule that holds
+    /// until someone adds the next call site. Routed rather than repeated.
+    ///
+    /// Menu actions go through it too. The hazard is the radio moving while
+    /// keyed, which does not care whether the operator meant it.
+    void requestTune(double hz);
 
     bool   m_draggingDbmRange{false};
     float  m_dragStartFloor{0.0f};

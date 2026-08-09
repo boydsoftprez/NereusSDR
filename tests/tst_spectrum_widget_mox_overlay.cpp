@@ -32,6 +32,9 @@ private slots:
     void setTxFilterVisible_storesState();
     void grids_are_independent_across_mox();
     void txGrid_keys_are_per_pan();
+    void no_pointer_path_tunes_while_keyed();
+    void keyed_save_leaves_the_receive_bandwidth_alone();
+    void txGrid_load_accepts_what_the_drag_can_produce();
 };
 
 // 1. Fresh widget has MOX overlay off
@@ -182,6 +185,87 @@ void TestSpectrumWidgetMoxOverlay::txGrid_keys_are_per_pan()
     QCOMPARE(s.value(QStringLiteral("DisplayTxGridRefLevel"), QString())
                  .toString(),
              pan0Ref);
+}
+
+// Not one pointer path may move the radio while this pan is keyed.
+//
+// The original guard went on the short-pan-release branch alone, and that was
+// not the only way in: a press inside the passband sets m_draggingVfo and
+// mouseMoveEvent tunes on every move, a spot label tunes on press, and the
+// wheel tunes on every notch. Codex found all three on PR #317.
+//
+// Asserted through requestTune's public effect rather than by synthesising
+// mouse events: the contract being pinned is that frequencyClicked cannot
+// escape while m_moxOverlay is set, whatever calls it. Every emitter is
+// routed through that one function, which is checkable by grep and is what
+// makes this test cover the paths it cannot drive.
+void TestSpectrumWidgetMoxOverlay::no_pointer_path_tunes_while_keyed()
+{
+    SpectrumWidget w;
+    QSignalSpy spy(&w, &SpectrumWidget::frequencyClicked);
+
+    w.requestTuneForTest(14200000.0);
+    QCOMPARE(spy.count(), 1);       // receive: tunes, as always
+
+    w.setMoxOverlay(true);
+    w.requestTuneForTest(14250000.0);
+    QCOMPARE(spy.count(), 1);       // keyed: withheld
+
+    w.setMoxOverlay(false);
+    w.requestTuneForTest(14300000.0);
+    QCOMPARE(spy.count(), 2);       // un-keyed: tunes again
+    QCOMPARE(spy.at(1).at(0).toDouble(), 14300000.0);
+}
+
+// A save that lands mid-transmission must not write the transmit span into
+// the receive bandwidth key.
+//
+// The direction-aware save protected the dBm pair and left DisplayBandwidth
+// reading the live m_bandwidthHz, which IS the transmit span while keyed. Any
+// setting change during a transmission put the transmit zoom in the receive
+// key and the next launch came up with the receive pan at a transmit width.
+// Found by Codex on PR #317.
+void TestSpectrumWidgetMoxOverlay::keyed_save_leaves_the_receive_bandwidth_alone()
+{
+    auto& s = AppSettings::instance();
+
+    SpectrumWidget w;
+    w.setPanIndex(0);
+    w.setFrequencyRange(14200000.0, 192000.0);   // the receive span
+    w.saveSettingsForTest();
+    const QString rxStored =
+        s.value(QStringLiteral("DisplayBandwidth"), QString()).toString();
+    QCOMPARE(rxStored.toFloat(), 192000.0f);
+
+    w.setMoxOverlay(true);
+    w.setFrequencyRange(14200000.0, 8000.0);     // a transmit span
+    w.saveSettingsForTest();
+
+    QCOMPARE(s.value(QStringLiteral("DisplayBandwidth"), QString())
+                 .toString().toFloat(),
+             192000.0f);
+}
+
+// The loader's bounds are the drag's bounds.
+//
+// They were [-160, +20] while the drag clamps to Thetis's [-200, +200], and
+// +20 is exactly the transmit grid's default reference level. So an operator
+// who dragged a pinned transmit scale UP saved the fix and had it silently
+// discarded on the next launch. Found by Codex on PR #317.
+void TestSpectrumWidgetMoxOverlay::txGrid_load_accepts_what_the_drag_can_produce()
+{
+    auto& s = AppSettings::instance();
+    s.setValue(QStringLiteral("DisplayTxGridRefLevel"),
+               QStringLiteral("60"));            // above the old +20 ceiling
+    s.setValue(QStringLiteral("DisplayTxGridDynamicRange"),
+               QStringLiteral("100"));
+
+    SpectrumWidget w;
+    w.setPanIndex(0);
+    w.loadSettingsForTest();
+    w.setMoxOverlay(true);                       // swap the transmit grid in
+
+    QCOMPARE(w.refLevel(), 60.0f);
 }
 
 QTEST_MAIN(TestSpectrumWidgetMoxOverlay)

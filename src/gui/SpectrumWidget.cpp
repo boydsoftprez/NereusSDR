@@ -931,7 +931,15 @@ void SpectrumWidget::loadSettings()
             rawValue(QStringLiteral("DisplayTxGridRefLevel")).toFloat(&okRef);
         const float rng =
             rawValue(QStringLiteral("DisplayTxGridDynamicRange")).toFloat(&okRange);
-        if (okRef && ref >= -160.0f && ref <= 20.0f)   { m_txRefLevel     = ref; }
+        // Bounds are the DRAG's bounds, not a second opinion about them.
+        //
+        // They were [-160, +20] while the drag handler clamped to Thetis's
+        // [-200, +200]. The +20 half was the worse end: it is exactly the
+        // transmit grid's default reference level, so an operator who dragged
+        // the pinned scale UP to fix it saved a value the loader then threw
+        // away, and the next launch came back to the same pinned grid with no
+        // sign anything had happened. Found by Codex on PR #317.
+        if (okRef && ref >= -200.0f && ref <= 200.0f)  { m_txRefLevel     = ref; }
         if (okRange && rng >= 10.0f && rng <= 200.0f)  { m_txDynamicRange = rng; }
 
         bool okBw = false;
@@ -1088,7 +1096,16 @@ void SpectrumWidget::saveSettings()
         writeFloat(QStringLiteral("DisplayGridMin"), rxRef - rxRange);
     }
     writeFloat(QStringLiteral("DisplaySpectrumFrac"), m_spectrumFrac);
-    writeFloat(QStringLiteral("DisplayBandwidth"), static_cast<float>(m_bandwidthHz));  // Phase 3G-12
+    // The RECEIVE span, for the same reason as the grid above. While keyed
+    // m_bandwidthHz is the TRANSMIT span, so a save landing mid-transmission
+    // wrote the transmit zoom into the receive key and the next launch came
+    // up with the receive pan at a transmit width. The 500 ms debounce makes
+    // that easy to hit: any dBm-strip release or setting change while keyed
+    // is enough. Found by Codex on PR #317, alongside the grid half of it
+    // that this branch had already fixed and this line had been left out of.
+    writeFloat(QStringLiteral("DisplayBandwidth"),                        // Phase 3G-12
+               static_cast<float>(m_moxOverlay ? m_rxViewBandwidthHz
+                                               : m_bandwidthHz));
     writeInt(QStringLiteral("DisplayWfColorGain"), m_wfColorGain);
     writeInt(QStringLiteral("DisplayWfBlackLevel"), m_wfBlackLevel);
     writeFloat(QStringLiteral("DisplayWfHighLevel"), m_wfHighThreshold);
@@ -6357,7 +6374,7 @@ void SpectrumWidget::showSpotClusterPopup(const SpotCluster& cluster, const QPoi
             // NereusSDR signal contract: frequencyClicked(double hz).
             // AetherSDR emits MHz; multiply by 1e6 to match the Hz signature.
             const double freqHz = spot.freqMhz * 1.0e6;
-            emit frequencyClicked(freqHz);
+            requestTune(freqHz);
             if (spot.source == "Memory") {
                 emit spotTriggered(spot.index);
             }
@@ -7161,13 +7178,13 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                         : QString("Apply %1").arg(call);
                     menu.addAction(title, this,
                         [this, freqHz, spotIndex]() {
-                            emit frequencyClicked(freqHz);
+                            requestTune(freqHz);
                             emit spotTriggered(spotIndex);
                         });
                 } else {
                     menu.addAction(QString("Tune to %1").arg(call), this,
                         [this, freqHz]() {
-                            emit frequencyClicked(freqHz);
+                            requestTune(freqHz);
                         });
                     menu.addAction(QStringLiteral("Copy Callsign"), this,
                         [call]() {
@@ -7271,7 +7288,7 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             if (hr.rect.contains(pos)) {
                 // NereusSDR signal contract: frequencyClicked(double hz).
                 // AetherSDR emits MHz; multiply by 1e6 to match Hz signature.
-                emit frequencyClicked(hr.freqMhz * 1.0e6);
+                requestTune(hr.freqMhz * 1.0e6);
                 // Notify the radio that a spot was clicked (#341)
                 if (hr.markerIndex >= 0 && hr.markerIndex < m_spotMarkers.size()) {
                     emit spotTriggered(m_spotMarkers[hr.markerIndex].index);
@@ -7685,7 +7702,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         // From AetherSDR SpectrumWidget.cpp:1222-1228
         double hz = xToHz(mx, specRect);
         hz = std::round(hz / m_stepHz) * m_stepHz;
-        emit frequencyClicked(hz);
+        requestTune(hz);
         return;
     }
 
@@ -7974,6 +7991,14 @@ void SpectrumWidget::applyViewWindow(double centreHz, double bandwidthHz)
     notifyTxViewWindow();
 }
 
+void SpectrumWidget::requestTune(double hz)
+{
+    // See the header. One gate, one emitter, so the next tune path added
+    // inherits the safety rule instead of having to remember it.
+    if (m_moxOverlay) { return; }
+    emit frequencyClicked(hz);
+}
+
 void SpectrumWidget::notifyTxViewWindow()
 {
     if (!m_moxOverlay || m_bandwidthHz <= 0.0) { return; }
@@ -8048,6 +8073,12 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
             // Panning and zooming the view stay available while keyed; it
             // is only the retune that is withheld. Bench 2026-08-05: "the
             // tune jumps when I let go".
+            //
+            // requestTune now carries the same gate for every tune path, so
+            // the check here is redundant for the frequencyClicked branches.
+            // It stays because ddcRetuneRequested below is NOT one of them
+            // and moves the slice just as surely: its own comment records
+            // that MainWindow forwards it to slice frequency.
             if (dx <= 4 && !m_moxOverlay) {
                 int w = width();
                 int specH = static_cast<int>(height() * m_spectrumFrac);
@@ -8066,7 +8097,7 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
                     if (std::abs(hz - m_ddcCenterHz) <= halfBwHz) {
                         // Click landed inside the listenable island —
                         // standard slice retune.
-                        emit frequencyClicked(hz);
+                        requestTune(hz);
                     } else {
                         // Click landed in a wing — operator wants the
                         // clicked Hz to become the new DDC center.
@@ -8075,7 +8106,7 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
                         emit ddcRetuneRequested(hz);
                     }
                 } else {
-                    emit frequencyClicked(hz);
+                    requestTune(hz);
                 }
             }
         }
@@ -8230,7 +8261,7 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
         int steps = (delta > 0) ? 1 : -1;
         double newHz = m_vfoHz + steps * m_stepHz;
         newHz = std::max(newHz, 100000.0);
-        emit frequencyClicked(newHz);
+        requestTune(newHz);
     }
 
     update();

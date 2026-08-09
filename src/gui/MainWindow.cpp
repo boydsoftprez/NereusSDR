@@ -3825,13 +3825,51 @@ void MainWindow::buildUI()
                     // fall edge disconnects it explicitly as well, because a
                     // pan that survives must stop re-clipping once receive
                     // owns it again.
-                    connect(sw, &SpectrumWidget::txViewWindowChanged, sw,
+                    auto syncTxAnalyzerToView =
                             [this, sw, carrierHz](double centreHz, double bwHz) {
                         if (!m_txAnalyzer || bwHz <= 0.0) { return; }
 
-                        // The window the operator is looking at, expressed
-                        // RELATIVE TO THE CARRIER, because that is where the
-                        // siphon's baseband sits.
+                        // Nothing exists outside the siphon's baseband.
+                        constexpr double kHalfBaseband = 48000.0;
+
+                        // Clamp the VIEW, not only the analyzer's span.
+                        //
+                        // Clamping lo/hi alone left the widget showing a
+                        // window the analyzer cannot fill:
+                        // updateSpectrumFromTxPixels then resampled the
+                        // clipped bins across the whole axis, stretching and
+                        // mislabelling them, and a window driven almost
+                        // entirely outside the baseband tripped the
+                        // too-narrow return below and left the PREVIOUS
+                        // mapping sitting under a new axis. Found by Codex
+                        // on PR #317.
+                        //
+                        // Pulling the window back inside the baseband is the
+                        // honest answer: the transmit display genuinely
+                        // cannot show more than 96 kHz, so the operator is
+                        // stopped at the edge rather than shown a stretch.
+                        //
+                        // Re-entrant by exactly one pass. The push below
+                        // re-emits this signal synchronously with the
+                        // clamped values, that pass finds nothing left to
+                        // clamp and configures the analyzer, and
+                        // applyViewWindow emits nothing when nothing moved.
+                        const double viewBw = qMin(bwHz, 2.0 * kHalfBaseband);
+                        double lo = centreHz - viewBw / 2.0 - carrierHz;
+                        double hi = lo + viewBw;
+                        if (lo < -kHalfBaseband) { lo = -kHalfBaseband; hi = lo + viewBw; }
+                        if (hi >  kHalfBaseband) { hi =  kHalfBaseband; lo = hi - viewBw; }
+
+                        const double clampedCentre = carrierHz + (lo + hi) / 2.0;
+                        if (!qFuzzyCompare(clampedCentre, centreHz)
+                            || !qFuzzyCompare(viewBw, bwHz)) {
+                            sw->setDisplayWindowPreservingHistory(clampedCentre,
+                                                                  viewBw);
+                            return;
+                        }
+
+                        // lo / hi are RELATIVE TO THE CARRIER, because that
+                        // is where the siphon's baseband sits.
                         //
                         // Asymmetric on purpose. A symmetric +/-half clip is
                         // only correct while the view is centred on the
@@ -3842,14 +3880,6 @@ void MainWindow::buildUI()
                         // changes continuously while dragging, the trace
                         // slides around under the cursor. Bench 2026-08-05,
                         // "the passband jitters when I drag back and forth".
-                        double lo = centreHz - bwHz / 2.0 - carrierHz;
-                        double hi = centreHz + bwHz / 2.0 - carrierHz;
-
-                        // Nothing exists outside the baseband, so asking for
-                        // it would clip to nothing.
-                        constexpr double kHalfBaseband = 48000.0;
-                        lo = qMax(lo, -kHalfBaseband);
-                        hi = qMin(hi,  kHalfBaseband);
                         if (hi - lo < 1000.0) { return; }
 
                         // Quantised to 100 Hz. SetAnalyzer reconfigures the
@@ -3866,7 +3896,14 @@ void MainWindow::buildUI()
                         // operator is reading.
                         sw->setTxCenterFrequency(carrierHz + (loQ + hiQ) / 2.0);
                         sw->setTxSampleRate(static_cast<double>(hiQ - loQ));
-                    });
+                    };
+
+                    // Context object is `sw`, so this dies with the pan; the
+                    // fall edge disconnects it explicitly as well, because a
+                    // pan that survives must stop re-clipping once receive
+                    // owns it again.
+                    connect(sw, &SpectrumWidget::txViewWindowChanged, sw,
+                            syncTxAnalyzerToView);
 
                     // Centre on the carrier, but keep whatever SPAN
                     // setMoxOverlay just loaded from the transmit store.
@@ -3876,6 +3913,17 @@ void MainWindow::buildUI()
                     // not something to re-impose every key-up.
                     sw->setDisplayWindowPreservingHistory(carrierHz,
                                                           sw->bandwidth());
+
+                    // Then sync the analyzer explicitly, rather than
+                    // assuming the call above moved something.
+                    //
+                    // When the receive view already sat on the carrier at the
+                    // transmit span, that call changes nothing, applyViewWindow
+                    // returns without emitting, and the analyzer keeps the
+                    // hard-coded +/-4 kHz seed set further up while the pan
+                    // draws the restored wider axis. Every transmission after
+                    // the first zoom hit it. Found by Codex on PR #317.
+                    syncTxAnalyzerToView(sw->centerFrequency(), sw->bandwidth());
 
                     // PR #212 follow-up bench fix (KG4VCF, 2026-05-10):
                     // disable Clarity so the waterfall AGC takes over for
