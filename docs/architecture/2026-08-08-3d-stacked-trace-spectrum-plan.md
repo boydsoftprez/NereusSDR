@@ -27,6 +27,7 @@ Every task's requirements implicitly include this section.
 - **New file headers:** copy the attribution block from `src/gui/SpectrumOverlayMenu.h:1-24` verbatim, changing only the file path on line 3 and the Modification-history date and description. Do not retype it from memory.
 - **No `QSettings`.** Use `AppSettings::instance()`. Booleans persist as the strings `"True"` / `"False"`.
 - **C++ style:** braces on all control flow, no raw `new`/`delete` outside Qt parent ownership, `constexpr` not `#define`, members `m_camelCase`, constants `kPascalCase`.
+- **Line numbers this plan cites for NereusSDR files are stale by design; find things by NAME.** Every task in this epic adds code to `SpectrumWidget.{h,cpp}`, so cites written when the plan was authored have shifted, and will keep shifting. Two measured examples: `SliceMarkerGeometry` moved from `:989` to `:1041`, and the `settingsKey` helper from `:578` to `:603`. Treat a NereusSDR line cite as a hint about roughly where to look and grep for the symbol. Upstream AetherSDR cites are the opposite: those are pinned at `1872028c` and are exact, so a mismatch there is a real discrepancy worth reporting.
 - **Existing NereusSDR names this plan depends on, all verified 2026-08-08.** Use these exactly; do not invent neighbours.
   - Noise floor: `m_nfLerpAverage` (smoothed, use this) and `m_nfFftBinAverage` (per-frame, do not use for the surface anchor).
   - dBm range: `m_refLevel` (top, dBm) plus `m_dynamicRange` (depth, dB). There is no floor/ceiling pair.
