@@ -1104,10 +1104,28 @@ public slots:
     /// Public so tests can assert both terms are present. Bench 2026-08-08
     /// found each one alone puts the wings off the panel: with only term 1
     /// they saturate, and term 2 is what brings them onto the island's scale.
+    ///
+    /// `detector` is the one that produced the DDC pixels this wing sits
+    /// beside, and it is not decoration: Average / Sample / RMS are handed
+    /// invEnb and divide the window ENB out of the island
+    /// (SpectrumDetector.cpp cases 2, 3, 4), while Peak and Rosenfell take a
+    /// max and leave it in. The island's effective noise reference therefore
+    /// differs by the ENB depending on which one is selected, and the trace
+    /// and waterfall planes select independently.
     static float widebandFftNormalisationDb();
-    float widebandBandwidthNormalisationDb() const;
-    float widebandTotalCalibrationDb() const;
+    float widebandBandwidthNormalisationDb(SpectrumDetector detector) const;
+    float widebandTotalCalibrationDb(SpectrumDetector detector) const;
 
+    /// Half-width of the DDC span actually drawn, kDdcClipFraction of the
+    /// rate already removed from each side.
+    ///
+    /// One definition for three consumers: the island pixel geometry, the
+    /// dashed boundary markers, and the click router that decides whether a
+    /// click retunes the slice or the DDC. They disagreed before this
+    /// existed, so each 4% edge strip painted wideband data while the marker
+    /// sat outside it and a click there still retuned the slice. Meaningful
+    /// only in extended mode, which is the only place all three use it.
+    double ddcIslandHalfSpanHz() const;
 
     /// Pixel span [first, last] the DDC actually covers inside the current
     /// display window; the wings are everything outside it.
@@ -1557,9 +1575,15 @@ private:
     /// frame has arrived (P1 boards, wideband disabled, or the first frames
     /// after a zoom-out): a wing showing the DDC's spectrum repeated would
     /// be a display that invents signals.
+    ///
+    /// `detector` is the one that produced this plane's island pixels; it
+    /// picks the DDC noise reference the wings are calibrated against. Passed
+    /// per call rather than read off a member because the trace and the
+    /// waterfall choose their detectors independently.
     void fillWidebandWings(QVector<float>& linearPixels,
                            int islandFirstPx, int islandLastPx,
-                           double dbmOffset) const;
+                           double dbmOffset,
+                           SpectrumDetector detector) const;
 
     /// Divisor for a REAL transform's peak: a real sinusoid splits its
     /// energy between +f and -f, and an r2c transform returns only the

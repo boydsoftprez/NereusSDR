@@ -2774,7 +2774,7 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
                                      static_cast<double>(sliceCount),
                                      0.0);
     fillWidebandWings(m_displayLinearPixels, islandFirstPx, islandLastPx,
-                      dbmOffset);
+                      dbmOffset, m_spectrumDetector);
     m_spectrumAvenger.apply(m_displayLinearPixels,
                             avengerMode(m_spectrumAveraging),
                             static_cast<double>(m_spectrumAverageAlpha),
@@ -2845,7 +2845,7 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // edge while the trace above it ran the full width would read as the
     // wings having no history rather than as a boundary.
     fillWidebandWings(m_wfDisplayLinearPixels, islandFirstPx, islandLastPx,
-                      dbmOffset);
+                      dbmOffset, m_waterfallDetector);
     m_waterfallAvenger.apply(m_wfDisplayLinearPixels,
                              avengerMode(m_waterfallAveraging),
                              static_cast<double>(m_waterfallAverageAlpha),
@@ -3464,8 +3464,11 @@ void SpectrumWidget::drawExtendedIslandBounds(QPainter& p, const QRect& specRect
         return;
     }
 
-    const double ddcLowHz  = m_ddcCenterHz - m_sampleRateHz / 2.0;
-    const double ddcHighHz = m_ddcCenterHz + m_sampleRateHz / 2.0;
+    // The CLIPPED edges, which is where the island actually stops. Drawing
+    // the markers at the raw rate/2 put them 4% of the DDC rate out into the
+    // wings, so they marked a boundary that is not there.
+    const double ddcLowHz  = m_ddcCenterHz - ddcIslandHalfSpanHz();
+    const double ddcHighHz = m_ddcCenterHz + ddcIslandHalfSpanHz();
     const double windowLow  = m_centerHz - m_bandwidthHz / 2.0;
     const double windowHigh = m_centerHz + m_bandwidthHz / 2.0;
 
@@ -4630,9 +4633,13 @@ void SpectrumWidget::setWidebandBins(int adcIndex, const QVector<float>& dbmBins
 // real-vs-complex split.
 //
 // Reads the window sum from the engine rather than assuming an unwindowed
-// block: WidebandFftEngine gained a Blackman-Harris 7-term window on
-// 2026-08-08, which lowers the coherent gain by about 24 dB. Hardcoding N
-// here would have left the wings that far out the moment the window landed.
+// block: WidebandFftEngine gained a Hann window on 2026-08-08, which halves
+// the coherent gain (about 6 dB). Hardcoding N here would have left the wings
+// that far out the moment the window landed, and would have to be revisited
+// again on any future window change. Blackman-Harris 7-term was tried the
+// same day and rejected on the bench for its 2.63-bin ENB; had it stayed, the
+// figure would have been about 24 dB rather than 6, which is the point of
+// reading it rather than writing it down.
 float SpectrumWidget::widebandFftNormalisationDb()
 {
     const double coherentPeak =
@@ -4667,26 +4674,53 @@ float SpectrumWidget::widebandFftNormalisationDb()
 // Note this is a power-DENSITY match, so it is the NOISE FLOORS either side
 // of the boundary that line up. A narrow carrier in a wing reads low by the
 // same factor; the wideband bin is 160x too coarse to resolve one anyway.
-float SpectrumWidget::widebandBandwidthNormalisationDb() const
+float SpectrumWidget::widebandBandwidthNormalisationDb(
+    SpectrumDetector detector) const
 {
     // NOISE bandwidth on both sides, not bin spacing. The wideband transform
     // is zero-padded, so its bins sit 4x closer together than the bandwidth
     // each one integrates -- using the spacing here would under-correct by
     // exactly that padding factor and put the wings 6 dB hot.
+    //
+    // The wing side is always a peak: fillWidebandWings takes a max over the
+    // bins under a pixel and the engine applies no detector of its own, so
+    // the window ENB stays in.
     const double wbNoiseBwHz =
         (m_widebandAdcRateHz
          / static_cast<double>(WidebandFftEngine::kCaptureSamples))
         * WidebandFftEngine::windowEnbBins();
-    const double ddcNoiseBwHz = binWidthHz() * qMax(m_fftWindowEnb, 1e-9);
+
+    // The island side depends on which detector produced it, which is what
+    // this argument is for.
+    //
+    // applySpectrumDetector is handed invEnb = 1 / m_fftWindowEnb, and only
+    // Average, Sample and RMS actually apply it (SpectrumDetector.cpp cases
+    // 2, 3 and 4 multiply by invEnb; the Peak and Rosenfell cases at 0 and 1
+    // take a max and never touch it). So under those three the island pixels
+    // have already had the window ENB divided out and their effective noise
+    // reference is the bare bin width; under Peak and Rosenfell the ENB is
+    // still in and the reference is binWidth * ENB.
+    //
+    // Using one reference for both left the wings high by exactly the DDC
+    // window ENB whenever a normalising detector was selected: about 1.8 dB
+    // on Hann, and near 5.8 dB on Flat-Top. Found by Codex on PR #318.
+    const bool detectorDividesOutEnb = (detector == SpectrumDetector::Average
+                                     || detector == SpectrumDetector::Sample
+                                     || detector == SpectrumDetector::RMS);
+    const double ddcNoiseBwHz = detectorDividesOutEnb
+        ? binWidthHz()
+        : binWidthHz() * qMax(m_fftWindowEnb, 1e-9);
+
     if (wbNoiseBwHz <= 0.0 || ddcNoiseBwHz <= 0.0) {
         return 0.0f;
     }
     return -10.0f * std::log10(static_cast<float>(wbNoiseBwHz / ddcNoiseBwHz));
 }
 
-float SpectrumWidget::widebandTotalCalibrationDb() const
+float SpectrumWidget::widebandTotalCalibrationDb(SpectrumDetector detector) const
 {
-    return widebandFftNormalisationDb() + widebandBandwidthNormalisationDb();
+    return widebandFftNormalisationDb()
+         + widebandBandwidthNormalisationDb(detector);
 }
 
 void SpectrumWidget::setWidebandAdcIndex(int adcIndex)
@@ -4734,6 +4768,15 @@ double SpectrumWidget::maxZoomOutBandwidthHz() const
 // m_centerHz +/- m_bandwidthHz/2, that is the listenable island; everything
 // else is wing. Not extended -> the island is the whole panel, so every
 // caller degrades to the pre-existing behaviour by construction.
+// Clipped half-span, not the full rate: the outer kDdcClipFraction of the DDC
+// is filter skirt and is not drawn. Three things have to agree on this number
+// or the display contradicts itself in the 4% strips, so there is one
+// definition of it. See the header.
+double SpectrumWidget::ddcIslandHalfSpanHz() const
+{
+    return m_sampleRateHz * (0.5 - kDdcClipFraction);
+}
+
 std::pair<int, int> SpectrumWidget::listenableIslandPixels(int displayWidth) const
 {
     if (displayWidth <= 0) {
@@ -4743,11 +4786,9 @@ std::pair<int, int> SpectrumWidget::listenableIslandPixels(int displayWidth) con
         return {0, displayWidth - 1};
     }
 
-    // Clipped half-span, not the full rate: the outer kDdcClipFraction of
-    // the DDC is filter skirt and is not drawn. The geometry has to agree
-    // with the bin range updateSpectrumLinear feeds the detector, or the
-    // island's signals would land at the wrong frequencies.
-    const double ddcHalfSpanHz = m_sampleRateHz * (0.5 - kDdcClipFraction);
+    // Has to agree with the bin range updateSpectrumLinear feeds the
+    // detector, or the island's signals would land at the wrong frequencies.
+    const double ddcHalfSpanHz = ddcIslandHalfSpanHz();
     const double displayLowHz = m_centerHz - m_bandwidthHz / 2.0;
     const double ddcLowHz     = m_ddcCenterHz - ddcHalfSpanHz;
     const double ddcHighHz    = m_ddcCenterHz + ddcHalfSpanHz;
@@ -4778,7 +4819,8 @@ std::pair<int, int> SpectrumWidget::listenableIslandPixels(int displayWidth) con
 //   max += preamp_offset;
 void SpectrumWidget::fillWidebandWings(QVector<float>& linearPixels,
                                        int islandFirstPx, int islandLastPx,
-                                       double dbmOffset) const
+                                       double dbmOffset,
+                                       SpectrumDetector detector) const
 {
     const int width = static_cast<int>(linearPixels.size());
     if (width <= 0 || m_bandwidthHz <= 0.0) {
@@ -4814,6 +4856,9 @@ void SpectrumWidget::fillWidebandWings(QVector<float>& linearPixels,
     const double floorLinear = toLinear(m_refLevel - m_dynamicRange);
 
     const bool haveBins = !bins.isEmpty() && binWidthHz > 0.0;
+    // Hoisted: it depends only on the detector and the two rates, none of
+    // which move inside the loop.
+    const float calDb = widebandTotalCalibrationDb(detector);
 
     for (int x = 0; x < width; ++x) {
         if (x >= islandFirstPx && x <= islandLastPx) {
@@ -4850,7 +4895,7 @@ void SpectrumWidget::fillWidebandWings(QVector<float>& linearPixels,
             peakDb = std::max(peakDb, bins[b]);
         }
         linearPixels[x] = static_cast<float>(
-            toLinear(static_cast<double>(peakDb + widebandTotalCalibrationDb())));
+            toLinear(static_cast<double>(peakDb + calDb)));
     }
 }
 
@@ -7741,7 +7786,12 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
                 // frequencyClicked behavior — no regression to non-extended
                 // pan tuning.
                 if (m_extendedMode && m_sampleRateHz > 0.0) {
-                    const double halfBwHz = m_sampleRateHz * 0.5;
+                    // The CLIPPED half-span, matching what is painted. The
+                    // raw rate/2 left each 4% edge strip showing wideband
+                    // survey data while a click there still retuned the
+                    // slice, which is the one thing the operator can see is
+                    // wrong only after the radio has moved.
+                    const double halfBwHz = ddcIslandHalfSpanHz();
                     if (std::abs(hz - m_ddcCenterHz) <= halfBwHz) {
                         // Click landed inside the listenable island —
                         // standard slice retune.

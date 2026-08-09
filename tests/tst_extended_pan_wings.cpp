@@ -238,8 +238,8 @@ private slots:
     {
         // Term 1: coherent-gain reference. The contract is that it follows
         // the analysis window's sum, not a bare sample count -- the engine
-        // windows with Blackman-Harris 7-term, and hardcoding N would have
-        // left the wings badly off the moment that window landed.
+        // windows with Hann, and hardcoding N would have left the wings
+        // badly off the moment that window landed.
         const double coherentPeak = WidebandFftEngine::windowSum() / 2.0;
         const float expectedFft =
             -20.0f * std::log10(static_cast<float>(coherentPeak));
@@ -256,10 +256,10 @@ private slots:
         SpectrumWidget sw;
         sw.setSampleRate(192000.0);
         sw.setWidebandAdcRateHz(122880000.0);
-        const float bw = sw.widebandBandwidthNormalisationDb();
+        const float bw = sw.widebandBandwidthNormalisationDb(SpectrumDetector::Peak);
         QVERIFY2(bw < 0.0f, "bandwidth term must pull the wideband side down");
 
-        QVERIFY2(std::abs(sw.widebandTotalCalibrationDb() - (fft + bw)) < 0.001f,
+        QVERIFY2(std::abs(sw.widebandTotalCalibrationDb(SpectrumDetector::Peak) - (fft + bw)) < 0.001f,
                  "total is not the sum of the two terms");
     }
 
@@ -291,11 +291,11 @@ private slots:
         const float expected = -10.0f * std::log10(
             static_cast<float>(engine.noiseBandwidthHz() / ddcNoiseBw));
 
-        QVERIFY2(std::abs(sw.widebandBandwidthNormalisationDb() - expected) < 0.05f,
+        QVERIFY2(std::abs(sw.widebandBandwidthNormalisationDb(SpectrumDetector::Peak) - expected) < 0.05f,
                  qPrintable(QStringLiteral("bandwidth term is %1 dB, expected "
                                            "%2 from the engine's capture-based "
                                            "noise bandwidth")
-                                .arg(sw.widebandBandwidthNormalisationDb())
+                                .arg(sw.widebandBandwidthNormalisationDb(SpectrumDetector::Peak))
                                 .arg(expected)));
 
         // And the padded figure is a materially different number, so the
@@ -315,9 +315,9 @@ private slots:
         sw.setWidebandAdcRateHz(122880000.0);
 
         sw.setSampleRate(192000.0);
-        const float at192 = sw.widebandBandwidthNormalisationDb();
+        const float at192 = sw.widebandBandwidthNormalisationDb(SpectrumDetector::Peak);
         sw.setSampleRate(384000.0);
-        const float at384 = sw.widebandBandwidthNormalisationDb();
+        const float at384 = sw.widebandBandwidthNormalisationDb(SpectrumDetector::Peak);
 
         // Doubling the DDC rate doubles its bin width, halving the ratio:
         // 3.01 dB less correction.
@@ -344,6 +344,93 @@ private slots:
         QCOMPARE(sw.widebandAdcRateHz(), 153600000.0);
         sw.setWidebandAdcRateHz(-1.0);
         QCOMPARE(sw.widebandAdcRateHz(), 153600000.0);
+    }
+
+    // The island's noise reference depends on which detector produced it.
+    //
+    // applySpectrumDetector is handed invEnb = 1 / windowEnb and only
+    // Average, Sample and RMS apply it (SpectrumDetector.cpp cases 2, 3, 4);
+    // Peak and Rosenfell take a max and leave the window ENB in. So under a
+    // normalising detector the island pixels are already ENB-corrected and
+    // the wings must be referred to the bare bin width instead.
+    //
+    // One unconditional reference left the wings high by exactly the DDC
+    // window ENB whenever Average / Sample / RMS was selected. Found by Codex
+    // on PR #318.
+    void bandwidth_term_follows_the_detector()
+    {
+        SpectrumWidget sw;
+        sw.setSampleRate(192000.0);
+        sw.setWidebandAdcRateHz(122880000.0);
+
+        // m_fftWindowEnb is only written by a frame, so push one. Hann's
+        // 1.5 is the interesting case: with the default 1.0 the two branches
+        // coincide and the test could not fail.
+        constexpr double kHannEnb = 1.5;
+        QVector<float> bins(4096, 1.0e-12f);
+        sw.updateSpectrumLinear(0, bins, kHannEnb, 0.0);
+
+        const float peak = sw.widebandBandwidthNormalisationDb(
+            SpectrumDetector::Peak);
+        const float average = sw.widebandBandwidthNormalisationDb(
+            SpectrumDetector::Average);
+
+        // Average divides ENB out of the island, shrinking its reference
+        // bandwidth, so the wings need that much MORE pulling down.
+        const float expectedGap = 10.0f * std::log10(float(kHannEnb));
+        QVERIFY2(std::abs((peak - average) - expectedGap) < 0.01f,
+                 qPrintable(QStringLiteral("Peak and Average differ by %1 dB, "
+                                           "expected %2 (the window ENB)")
+                                .arg(peak - average).arg(expectedGap)));
+
+        // Rosenfell is a peak-family detector and must track Peak, not
+        // Average. Sample and RMS are normalising and must track Average.
+        QCOMPARE(sw.widebandBandwidthNormalisationDb(SpectrumDetector::Rosenfell),
+                 peak);
+        QCOMPARE(sw.widebandBandwidthNormalisationDb(SpectrumDetector::Sample),
+                 average);
+        QCOMPARE(sw.widebandBandwidthNormalisationDb(SpectrumDetector::RMS),
+                 average);
+    }
+
+    // One clipped half-span, shared by the paint, the markers and the click
+    // router.
+    //
+    // The island is drawn kDdcClipFraction narrower than the DDC rate at each
+    // edge, but drawExtendedIslandBounds used rate/2 for its markers and the
+    // click router used rate/2 for its hit test. That left each 4% strip
+    // painting wideband survey data while a click in it retuned the slice
+    // rather than the DDC, with the boundary marker drawn outside the
+    // boundary. Found by Codex on PR #318.
+    void island_half_span_is_one_number()
+    {
+        SpectrumWidget sw;
+        sw.setExtendedViewAllowed(true);
+        sw.setSampleRate(192000.0);
+        sw.setDdcCenterFrequency(14200000.0);
+        sw.setFrequencyRange(14200000.0, 1920000.0);   // 10x past the DDC
+        QVERIFY2(sw.extendedMode(), "test needs extended mode engaged");
+
+        const double half = sw.ddcIslandHalfSpanHz();
+        QVERIFY2(half < 192000.0 * 0.5,
+                 "half-span is not clipped, so the three consumers cannot "
+                 "disagree and this test proves nothing");
+        QCOMPARE(half, 192000.0 * (0.5 - SpectrumWidget::kDdcClipFraction));
+
+        // The painted island has to land on that same number: convert its
+        // pixel edges back to Hz and they must bracket the clipped span, not
+        // the raw one.
+        constexpr int kWidth = 1000;
+        const auto [first, last] = sw.listenableIslandPixels(kWidth);
+        const double hzPerPixel = 1920000.0 / double(kWidth);
+        const double displayLowHz = 14200000.0 - 1920000.0 / 2.0;
+        const double islandLowHz  = displayLowHz + first * hzPerPixel;
+        const double islandHighHz = displayLowHz + (last + 1) * hzPerPixel;
+
+        QVERIFY2(std::abs(islandLowHz - (14200000.0 - half)) <= hzPerPixel,
+                 "painted island's low edge is not the clipped half-span");
+        QVERIFY2(std::abs(islandHighHz - (14200000.0 + half)) <= hzPerPixel,
+                 "painted island's high edge is not the clipped half-span");
     }
 };
 
