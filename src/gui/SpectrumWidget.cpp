@@ -2716,7 +2716,6 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     }
 
     const int sliceCount = lastBin - firstBin + 1;
-    if (sliceCount <= 0) { return; }
 
     // Extended pan (Sub-Epic F Task 8, finished 2026-08-08): the DDC only
     // covers part of the window once the operator zooms past its rate, so it
@@ -2732,9 +2731,22 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     const auto [islandFirstPx, islandLastPx] =
         listenableIslandPixels(displayWidth);
     const int islandWidth = islandLastPx - islandFirstPx + 1;
-    if (islandWidth <= 0) { return; }
 
-    const double pixPerBin = static_cast<double>(islandWidth) / sliceCount;
+    // Pan far enough into a wing and the DDC leaves the window entirely.
+    // That is a legitimate extended-view state, not an error: the wideband
+    // plane still covers every pixel, so there is a full frame to draw and
+    // returning here would freeze the survey on whatever was last rendered.
+    // The clip above can also invert the bin range on its own once
+    // visibleBinRange has clamped both ends to the same terminal bin.
+    //
+    // Outside extended mode an empty slice still means nothing to draw, and
+    // that path returns exactly as it always did. Found by Codex on PR #318.
+    const bool islandVisible = (sliceCount > 0) && (islandWidth > 0);
+    if (!islandVisible && !m_extendedMode) { return; }
+
+    const double pixPerBin = islandVisible
+        ? static_cast<double>(islandWidth) / sliceCount
+        : 1.0;
     const double binPerPix = (pixPerBin > 0.0) ? 1.0 / pixPerBin : 1.0;
     const double invEnb    = 1.0 / m_fftWindowEnb;
     // dbmOffset folded into the avenger's power-domain scale so that
@@ -2762,17 +2774,20 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     if (m_spectrumAvenger.numPixels() != displayWidth) {
         m_spectrumAvenger.resize(displayWidth);
     }
-    NereusSDR::applySpectrumDetector(m_spectrumDetector,
-                                     sliceCount,
-                                     islandWidth,
-                                     pixPerBin,
-                                     binPerPix,
-                                     m_fullLinearBins.constData() + firstBin,
-                                     m_displayLinearPixels.data() + islandFirstPx,
-                                     invEnb,
-                                     0.0,
-                                     static_cast<double>(sliceCount),
-                                     0.0);
+    if (islandVisible) {
+        NereusSDR::applySpectrumDetector(m_spectrumDetector,
+                                         sliceCount,
+                                         islandWidth,
+                                         pixPerBin,
+                                         binPerPix,
+                                         m_fullLinearBins.constData() + firstBin,
+                                         m_displayLinearPixels.data() + islandFirstPx,
+                                         invEnb,
+                                         0.0,
+                                         static_cast<double>(sliceCount),
+                                         0.0);
+    }
+    // Always, including the no-island case, where it owns every pixel.
     fillWidebandWings(m_displayLinearPixels, islandFirstPx, islandLastPx,
                       dbmOffset, m_spectrumDetector);
     m_spectrumAvenger.apply(m_displayLinearPixels,
@@ -2830,17 +2845,19 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     if (m_waterfallAvenger.numPixels() != displayWidth) {
         m_waterfallAvenger.resize(displayWidth);
     }
-    NereusSDR::applySpectrumDetector(m_waterfallDetector,
-                                     sliceCount,
-                                     islandWidth,
-                                     pixPerBin,
-                                     binPerPix,
-                                     m_fullLinearBins.constData() + firstBin,
-                                     m_wfDisplayLinearPixels.data() + islandFirstPx,
-                                     invEnb,
-                                     0.0,
-                                     static_cast<double>(sliceCount),
-                                     0.0);
+    if (islandVisible) {
+        NereusSDR::applySpectrumDetector(m_waterfallDetector,
+                                         sliceCount,
+                                         islandWidth,
+                                         pixPerBin,
+                                         binPerPix,
+                                         m_fullLinearBins.constData() + firstBin,
+                                         m_wfDisplayLinearPixels.data() + islandFirstPx,
+                                         invEnb,
+                                         0.0,
+                                         static_cast<double>(sliceCount),
+                                         0.0);
+    }
     // Wings go into the waterfall too: a waterfall that stopped at the DDC
     // edge while the trace above it ran the full width would read as the
     // wings having no history rather than as a boundary.
@@ -4793,6 +4810,17 @@ std::pair<int, int> SpectrumWidget::listenableIslandPixels(int displayWidth) con
     const double ddcLowHz     = m_ddcCenterHz - ddcHalfSpanHz;
     const double ddcHighHz    = m_ddcCenterHz + ddcHalfSpanHz;
     const double hzPerPixel   = m_bandwidthHz / static_cast<double>(displayWidth);
+
+    // No overlap at all: the operator has panned far enough into a wing that
+    // the DDC is off the window entirely. Say so with an empty span rather
+    // than clamping both ends together, which manufactured a one-pixel island
+    // at whichever edge was nearest and put DDC bins on a pixel the DDC does
+    // not cover. Callers read an empty span as "the wideband plane owns every
+    // pixel". Found by Codex on PR #318.
+    const double displayHighHz = m_centerHz + m_bandwidthHz / 2.0;
+    if (ddcHighHz < displayLowHz || ddcLowHz > displayHighHz) {
+        return {0, -1};
+    }
 
     int first = static_cast<int>(std::floor((ddcLowHz - displayLowHz) / hzPerPixel));
     int last  = static_cast<int>(std::ceil((ddcHighHz - displayLowHz) / hzPerPixel)) - 1;

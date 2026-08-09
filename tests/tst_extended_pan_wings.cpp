@@ -156,20 +156,30 @@ private slots:
                                 .arg(centre)));
     }
 
-    // The island can run off the edge of the window when the operator pans;
-    // the span must clamp rather than produce out-of-range pixel indices that
-    // the detector would write through.
-    void island_clamps_when_the_ddc_leaves_the_window()
+    // The island can run PARTWAY off the edge when the operator pans; the
+    // span must clamp rather than produce out-of-range pixel indices that the
+    // detector would write through.
+    //
+    // This case used to be tested with the DDC 5 MHz off-screen and asserted
+    // `first <= last`, which described the defect rather than the contract:
+    // clamping both ends together produced a one-pixel island at the nearest
+    // edge, putting DDC bins on a pixel the DDC does not cover. The
+    // no-overlap case is now its own test below. What stays here is the case
+    // that really is a clamp, where the DDC straddles the window edge.
+    void island_clamps_when_the_ddc_straddles_the_edge()
     {
         SpectrumWidget sw;
         configureExtendedPan(sw);
-        sw.setDdcCenterFrequency(14200000.0 - 5000000.0);  // far off-screen
+        // Window is 1.92 MHz wide around 14.2 MHz, so its low edge is at
+        // 13.24 MHz. Park the 192 kHz DDC on that edge: half in, half out.
+        sw.setDdcCenterFrequency(14200000.0 - 1920000.0 / 2.0);
 
         const int width = 1000;
         const auto [first, last] = sw.listenableIslandPixels(width);
         QVERIFY(first >= 0);
         QVERIFY(last <= width - 1);
-        QVERIFY(first <= last);
+        QVERIFY2(first < last, "a straddling DDC still covers real pixels");
+        QCOMPARE(first, 0);   // clamped at the window edge, not off it
     }
 
     // Defect 2, the data-flow end: the bins must survive the trip in and be
@@ -391,6 +401,41 @@ private slots:
                  average);
         QCOMPARE(sw.widebandBandwidthNormalisationDb(SpectrumDetector::RMS),
                  average);
+    }
+
+    // Pan far enough into a wing and the DDC leaves the window entirely.
+    //
+    // Clamping both endpoints together manufactured a one-pixel island at
+    // whichever edge was nearest, putting DDC bins on a pixel the DDC does not
+    // cover. Worse, the matching clamp in visibleBinRange plus the 4% clip
+    // drove sliceCount negative, so updateSpectrumLinear returned before the
+    // wings were filled and the whole survey froze on stale pixels. Found by
+    // Codex on PR #318.
+    void island_is_empty_when_the_ddc_is_off_screen()
+    {
+        SpectrumWidget sw;
+        sw.setExtendedViewAllowed(true);
+        sw.setSampleRate(192000.0);
+        sw.setDdcCenterFrequency(14200000.0);
+
+        // 400 kHz window, so extended mode engages, parked 5 MHz away: the
+        // DDC's 192 kHz cannot reach it.
+        sw.setFrequencyRange(19200000.0, 400000.0);
+        QVERIFY2(sw.extendedMode(), "test needs extended mode engaged");
+
+        const auto [first, last] = sw.listenableIslandPixels(1000);
+        QVERIFY2(last < first,
+                 qPrintable(QStringLiteral("expected an empty island, got "
+                                           "[%1, %2] which is %3 pixel(s) of "
+                                           "DDC data outside the DDC")
+                                .arg(first).arg(last).arg(last - first + 1)));
+
+        // And the window still resolves to a full-width wing region: an empty
+        // island means the wideband plane owns every pixel, which is what
+        // fillWidebandWings keys off.
+        QVERIFY2(first == 0 && last == -1,
+                 "empty island must be the canonical {0, -1}, since that is "
+                 "the shape fillWidebandWings treats as 'no island'");
     }
 
     // One clipped half-span, shared by the paint, the markers and the click

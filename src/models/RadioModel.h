@@ -353,6 +353,20 @@ public:
     /// range has to be counted against that one bank.
     int chainForStream(int stream) const;
 
+    /// The PHYSICAL ADC behind a stream, with none of chainForStream's fold.
+    ///
+    /// Use these two and not the chain pair whenever the question is about the
+    /// ADC itself rather than the preselector in front of it. The wideband
+    /// display is the case that forced the split: widebandSpectrumReady
+    /// carries the physical index off the wire, so keying the paint off a
+    /// chain index made an extended pan on ADC1 render ADC0's survey on any
+    /// board where the fold applies (ANAN-100D, ANAN-200D). Codex, PR #318.
+    ///
+    /// Same -1 conventions as the chain pair: not a stream, unknown slice, or
+    /// a slice that has not bound a stream.
+    int adcForStream(int stream) const;
+    int sliceAdcIndex(int sliceId) const;
+
     /// The wideband state a chain should actually be in, as opposed to what
     /// one slice just asked for.
     ///

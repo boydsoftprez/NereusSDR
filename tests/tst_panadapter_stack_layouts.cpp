@@ -330,6 +330,35 @@ private slots:
             }
         }
     }
+
+    // Quitting with a pan still floating must not lose its geometry.
+    //
+    // dockPanadapter saves, and the window's close box saves, but
+    // dockAllFloatingPans did not, and that is the path the destructor takes.
+    // So the ordinary way to end a session was the one way guaranteed to
+    // discard the last move or resize. Found by Codex on PR #318.
+    void floating_geometry_survives_stack_teardown()
+    {
+        auto& s = AppSettings::instance();
+        const QString key =
+            QStringLiteral("FloatingPan_pan-0_Geometry");
+        s.setValue(key, QString());
+
+        {
+            PanadapterStack stack;
+            stack.applyLayout(QStringLiteral("1"),
+                              MainWindow::panIdsForLayout(QStringLiteral("1")));
+            stack.floatPanadapter(QStringLiteral("pan-0"));
+            QVERIFY2(!s.value(key, QString()).toString().isEmpty()
+                         || true,
+                     "float itself need not save; teardown must");
+            s.setValue(key, QString());   // ignore anything the float wrote
+        }   // stack destructs here, still holding a floating pan
+
+        QVERIFY2(!s.value(key, QString()).toString().isEmpty(),
+                 "tearing the stack down with a pan floating discarded its "
+                 "geometry");
+    }
 };
 
 QTEST_MAIN(TestPanadapterStackLayouts)

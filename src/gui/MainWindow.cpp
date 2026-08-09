@@ -1609,15 +1609,23 @@ void MainWindow::refreshPanStatusOverlays()
 
         // Extended-pan wings read one ADC's wideband bins, and
         // widebandSpectrumReady fans every ADC at every pan, so the pan has
-        // to be told which one is its own. The chain index IS the ADC index
-        // on this path: it is what RadioModel hands
-        // P2RadioConnection::setWidebandEnabled to turn the stream on
-        // (RadioModel.cpp, Sub-Epic F Task 11), so keying the paint off the
-        // same number is what makes the pan draw the ADC it asked to have
-        // enabled. -1 (slice bound to no stream) leaves the last answer
-        // alone rather than snapping the wings to ADC0.
-        if (chain >= 0 && applet->spectrumWidget()) {
-            applet->spectrumWidget()->setWidebandAdcIndex(chain);
+        // to be told which one is its own.
+        //
+        // The PHYSICAL ADC, not the chain. An earlier version of this passed
+        // `chain` on the grounds that it is the number RadioModel hands
+        // setWidebandEnabled. That is true and it is still the wrong number
+        // to paint by: chainForStream deliberately folds ADC1 onto chain 0 on
+        // a board with more ADCs than preselector banks (ANAN-100D,
+        // ANAN-200D), while widebandSpectrumReady carries the physical index
+        // straight off the wire. On those boards a pan fed by ADC1 drew
+        // ADC0's survey in its wings either side of a perfectly correct DDC
+        // island. Found by Codex on PR #318.
+        //
+        // -1 (slice bound to no stream) leaves the last answer alone rather
+        // than snapping the wings to ADC0.
+        const int adc = m_radioModel->sliceAdcIndex(sliceId);
+        if (adc >= 0 && applet->spectrumWidget()) {
+            applet->spectrumWidget()->setWidebandAdcIndex(adc);
         }
     }
 }

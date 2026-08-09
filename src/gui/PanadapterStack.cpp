@@ -571,6 +571,12 @@ QStringList PanadapterStack::dockAllFloatingPans()
         if (!floater) { continue; }
 
         QObject::disconnect(floater, nullptr, this, nullptr);
+        // Before anything else, because this path is also the destructor's,
+        // and quitting with a pan still floating is the ordinary way to end a
+        // session. dockPanadapter and the window's close box both save; this
+        // one did not, so the last move or resize of the day was the one
+        // guaranteed to be lost. Found by Codex on PR #318.
+        floater->saveWindowGeometry();
         if (PanadapterApplet* applet = floater->applet()) {
             QObject::disconnect(applet, &PanadapterApplet::dockRequested,
                                 this, nullptr);

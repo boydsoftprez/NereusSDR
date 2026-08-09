@@ -11134,6 +11134,33 @@ int RadioModel::sliceChainIndex(int sliceId) const
 // no chain 1: with every stream folded onto chain 0, republishAlexAdcSlices
 // finds chain 1 empty and pushes -1 for it.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// adcForStream: the same lookup WITHOUT the fold to chain 0.
+//
+// Everything above explains why chainForStream folds ADC1 onto chain 0 on a
+// one-bank board, and that fold is right for every filter question. It is
+// wrong for the wideband display, which is not a filter question: the
+// wideband capture comes off a physical ADC and widebandSpectrumReady carries
+// that physical index straight off the wire. Feeding a chain index to
+// SpectrumWidget::setWidebandAdcIndex made an extended pan on ADC1 paint
+// ADC0's survey either side of a correct DDC island, on exactly the
+// ANAN-100D / 200D boards the fold exists for. Found by Codex on PR #318.
+// ---------------------------------------------------------------------------
+int RadioModel::adcForStream(int stream) const
+{
+    if (stream < 0 || stream >= static_cast<int>(m_streamAdc.size())) {
+        return -1;
+    }
+    return m_streamAdc[static_cast<size_t>(stream)];
+}
+
+int RadioModel::sliceAdcIndex(int sliceId) const
+{
+    SliceModel* s = sliceById(sliceId);
+    if (s == nullptr) { return -1; }
+    return adcForStream(s->streamIndex());
+}
+
 int RadioModel::chainForStream(int stream) const
 {
     if (stream < 0 || stream >= static_cast<int>(m_streamAdc.size())) {
