@@ -1416,6 +1416,19 @@ signals:
     // pipeline). See peakDbmInSlicePassband doc.
     void spectrumFrameRendered();
 
+    /// The transmit view window moved or resized. Carries the window the
+    /// analyzer must now cover.
+    ///
+    /// Thetis derives analyzer span and display window from ONE zoom state
+    /// (specHPSDR.cs initAnalyzer), so its pixels always cover exactly what
+    /// is on screen. Ours are set independently, which is fine until the
+    /// operator zooms mid-transmission: the analyzer stays clipped to the
+    /// span chosen at key-down, the pan shows something wider, and
+    /// SpectrumWidget stretches one across the other -- the trace then sits
+    /// wherever that stretch puts it rather than on frequency. Bench
+    /// 2026-08-05, "zoom out and the tone is stuck where key down occurred".
+    void txViewWindowChanged(double centerHz, double bandwidthHz);
+
     // Phase 3Q-8: emitted on a left-click while not Connected.
     // MainWindow wires this to showConnectionPanel().
     void disconnectedClickRequest();
@@ -1517,6 +1530,9 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    /// Swallowed over the dBm strip, where right-drag adjusts the range;
+    /// ignored elsewhere so PanadapterApplet still gets the pan menu.
+    void contextMenuEvent(QContextMenuEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void leaveEvent(QEvent* event) override;
 
@@ -2051,6 +2067,18 @@ private:
     // the transmit grid at all, whether or not anyone remembered to gate it.
     // Bench 2026-08-05, JJ KG4VCF: "we need a dynamic range for transmit and
     // a dynamic range for receive just like Thetis has".
+    // The view window is stored per direction for the same reason the grid
+    // is: re-imposing a default on every rise edge throws away whatever the
+    // operator did last transmission. Bench 2026-08-05, zooming out during
+    // transmit held for that cycle and snapped back on the next.
+    //
+    // Only the SPAN is really remembered for transmit -- the centre is
+    // recomputed from the carrier on each key-up, since the carrier moves.
+    double m_rxViewCenterHz{0.0};
+    double m_rxViewBandwidthHz{0.0};
+    double m_txViewCenterHz{0.0};
+    double m_txViewBandwidthHz{8000.0};   // Thetis +/-4 kHz seed
+
     float m_rxRefLevel{-48.0f};
     float m_rxDynamicRange{68.0f};
     float m_txRefLevel{20.0f};      // Thetis tx_spectrum_grid_max
@@ -2368,6 +2396,45 @@ private:
     bool   m_draggingDbm{false};
     int    m_dragStartY{0};
     float  m_dragStartRef{0.0f};
+
+    /// Right-drag on the dBm strip: move the TOP only, leaving the floor
+    /// where it is, so the range stretches instead of sliding.
+    ///
+    /// From Thetis PanDisplay.cs [v2.10.3.15]: left-press on
+    /// dBmScalePanadapterRegion sets gridminmaxadjust (:4105-4115, max AND
+    /// min move together), right-press sets gridmaxadjust (:4424-4431, max
+    /// only). Two modes on the same strip, chosen by button. We had only
+    /// the pan, with range relegated to the scroll wheel.
+    /// True when `pos` is on the dBm strip: right of the strip edge and
+    /// above the spectrum/waterfall divider. Shared by the press handler and
+    /// contextMenuEvent so the two cannot disagree about where the strip is.
+    bool isOnDbmStrip(const QPoint& pos) const;
+
+    /// Emit txViewWindowChanged when transmitting and the window actually
+    /// moved. Called from every site that writes m_centerHz / m_bandwidthHz
+    /// so no zoom path can silently leave the analyzer behind.
+    /// THE only place m_centerHz / m_bandwidthHz may be written.
+    ///
+    /// The transmit display has two things that must agree: the window on
+    /// screen, and the span the WDSP analyzer is clipped to. Thetis gets
+    /// that for free because initAnalyzer derives both from one zoom state.
+    /// Ours are separate objects, so agreement depends on every writer
+    /// remembering to announce itself -- and on 2026-08-05 six separate
+    /// defects came from writers that did not: a stuck tone, a stretched
+    /// axis, a jittering passband.
+    ///
+    /// Routing every write through here makes the announcement structural
+    /// rather than remembered. A new zoom or pan path added later cannot
+    /// silently desync the analyzer, because it cannot change the window
+    /// without going through this.
+    ///
+    /// Pass the current value for whichever of the two is not changing.
+    void applyViewWindow(double centreHz, double bandwidthHz);
+
+    void notifyTxViewWindow();
+
+    bool   m_draggingDbmRange{false};
+    float  m_dragStartFloor{0.0f};
     QPoint m_mousePos;              // for cursor frequency display
     bool   m_mouseInWidget{false};
 

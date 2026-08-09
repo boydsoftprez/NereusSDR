@@ -781,8 +781,6 @@ private:
     // (sample rate, center, bandwidth, DDC center) need to flip on MOX
     // edge and restore on un-key.
     double              m_savedSpectrumSampleRate{0.0};
-    double              m_savedSpectrumCenterHz{0.0};
-    double              m_savedSpectrumBandwidth{0.0};
     double              m_savedSpectrumDdcHz{0.0};
 
     /// Last centre + sample rate RadioModel published for each stream, kept

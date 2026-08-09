@@ -927,6 +927,12 @@ void SpectrumWidget::loadSettings()
                                   QString()).toString().toFloat(&okRange);
         if (okRef && ref >= -160.0f && ref <= 20.0f)   { m_txRefLevel     = ref; }
         if (okRange && rng >= 10.0f && rng <= 200.0f)  { m_txDynamicRange = rng; }
+
+        bool okBw = false;
+        const double bw = s.value(QStringLiteral("DisplayTxViewBandwidth"),
+                                  QString()).toString().toDouble(&okBw);
+        // Wide enough to see, narrow enough to be a transmit view.
+        if (okBw && bw >= 1000.0 && bw <= 500000.0) { m_txViewBandwidthHz = bw; }
     }
     // The receive store mirrors whatever the live pair loaded above, since
     // the widget always comes up in receive.
@@ -1065,8 +1071,16 @@ void SpectrumWidget::saveSettings()
         s.setValue(settingsKey(key, m_panIndex), QString::number(val));
     };
 
-    writeFloat(QStringLiteral("DisplayGridMax"), m_refLevel);
-    writeFloat(QStringLiteral("DisplayGridMin"), m_refLevel - m_dynamicRange);
+    // The RECEIVE store, not the live pair. While transmitting the live pair
+    // IS the transmit grid, so writing it here would put transmit values
+    // into the receive keys and the operator's receive scale would be gone
+    // after any save that happened to land mid-transmission.
+    {
+        const float rxRef   = m_moxOverlay ? m_rxRefLevel     : m_refLevel;
+        const float rxRange = m_moxOverlay ? m_rxDynamicRange : m_dynamicRange;
+        writeFloat(QStringLiteral("DisplayGridMax"), rxRef);
+        writeFloat(QStringLiteral("DisplayGridMin"), rxRef - rxRange);
+    }
     writeFloat(QStringLiteral("DisplaySpectrumFrac"), m_spectrumFrac);
     writeFloat(QStringLiteral("DisplayBandwidth"), static_cast<float>(m_bandwidthHz));  // Phase 3G-12
     writeInt(QStringLiteral("DisplayWfColorGain"), m_wfColorGain);
@@ -1164,6 +1178,8 @@ void SpectrumWidget::saveSettings()
                QString::number(m_moxOverlay ? m_refLevel : m_txRefLevel));
     s.setValue(QStringLiteral("DisplayTxGridDynamicRange"),
                QString::number(m_moxOverlay ? m_dynamicRange : m_txDynamicRange));
+    s.setValue(QStringLiteral("DisplayTxViewBandwidth"),
+               QString::number(m_moxOverlay ? m_bandwidthHz : m_txViewBandwidthHz));
     s.setValue(QStringLiteral("BandPlanFontSize"),
                QString::number(m_bandPlanFontSize));
     writeInt(QStringLiteral("DisplayFreqLabelAlign"), static_cast<int>(m_freqLabelAlign));
@@ -1296,8 +1312,7 @@ void SpectrumWidget::setDisplayWindowPreservingHistory(double centerHz,
         && qFuzzyCompare(m_bandwidthHz, bandwidthHz)) {
         return;
     }
-    m_centerHz    = centerHz;
-    m_bandwidthHz = bandwidthHz;
+    applyViewWindow(centerHz, bandwidthHz);
     update();
 }
 
@@ -1332,8 +1347,7 @@ void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
         reprojectWaterfall(oldCenterHz, oldBandwidthHz, newCenterHz, newBandwidthHz);
     }
 
-    m_centerHz = centerHz;
-    m_bandwidthHz = bandwidthHz;
+    applyViewWindow(centerHz, bandwidthHz);
     updateVfoPositions();
 #ifdef NEREUS_GPU_SPECTRUM
     // Band-plan strip depends on m_centerHz/m_bandwidthHz — invalidate the
@@ -1432,6 +1446,8 @@ void SpectrumWidget::setDbmRange(float minDbm, float maxDbm)
 {
     m_refLevel = maxDbm;
     m_dynamicRange = maxDbm - minDbm;
+    // Same reason as the drag: the scale is cached chrome, the trace is not.
+    markOverlayDirty();
     update();
     // Note: callers that invoke setDbmRange deliberately (Copy button, user drag)
     // schedule their own save. The NF-aware grid onNoiseFloorChanged() avoids
@@ -5553,17 +5569,41 @@ void SpectrumWidget::setMoxOverlay(bool isTx)
     // caught holding the wrong grid: there is exactly one place the swap
     // happens and it is the same flag every renderer already branches on.
     if (isTx) {
-        m_rxRefLevel     = m_refLevel;
-        m_rxDynamicRange = m_dynamicRange;
-        m_refLevel       = m_txRefLevel;
-        m_dynamicRange   = m_txDynamicRange;
+        m_rxRefLevel        = m_refLevel;
+        m_rxDynamicRange    = m_dynamicRange;
+        m_rxViewCenterHz    = m_centerHz;
+        m_rxViewBandwidthHz = m_bandwidthHz;
+        m_refLevel          = m_txRefLevel;
+        m_dynamicRange      = m_txDynamicRange;
+        // Centre is re-aimed at the carrier by the caller; the SPAN is what
+        // carries over, so a zoom made last transmission survives.
+        if (m_txViewBandwidthHz > 0.0) { m_bandwidthHz = m_txViewBandwidthHz; }
     } else {
-        m_txRefLevel     = m_refLevel;
-        m_txDynamicRange = m_dynamicRange;
-        m_refLevel       = m_rxRefLevel;
-        m_dynamicRange   = m_rxDynamicRange;
+        m_txRefLevel        = m_refLevel;
+        m_txDynamicRange    = m_dynamicRange;
+        m_txViewCenterHz    = m_centerHz;
+        m_txViewBandwidthHz = m_bandwidthHz;
+        m_refLevel          = m_rxRefLevel;
+        m_dynamicRange      = m_rxDynamicRange;
+        if (m_rxViewBandwidthHz > 0.0) {
+            m_centerHz    = m_rxViewCenterHz;
+            m_bandwidthHz = m_rxViewBandwidthHz;
+        }
     }
-    scheduleSettingsSave();
+    // Deliberately NO scheduleSettingsSave() here.
+    //
+    // onNoiseFloorChanged moves the live receive grid at 500 ms cadence and
+    // pointedly does not save, so its tracking reverts on restart and the
+    // operator's own scale survives (SpectrumWidget.cpp, "do NOT call
+    // scheduleSettingsSave() here"). Saving from the MOX edge launders that
+    // drift into persistence: every transmission would bake whatever the
+    // tracker last did into DisplayGridMax/Min, and the receive scale the
+    // operator chose would erode away a few dB per key-up.
+    //
+    // Bench 2026-08-05, JJ KG4VCF: receive stopped reaching -1xx dBm and
+    // bottomed out around -90 after a few transmissions. Deliberate changes
+    // -- a strip drag, a Setup edit -- schedule their own save, which is
+    // where both grids get written.
 
     m_moxOverlay = isTx;
     markOverlayDirty();
@@ -7013,6 +7053,24 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
     }
 
     if (event->button() == Qt::RightButton) {
+        // The dBm strip claims right-press first: on that strip a right drag
+        // adjusts the RANGE (Thetis gridmaxadjust, PanDisplay.cs:4424-4431
+        // [v2.10.3.15]), and the notch / spot / overlay menus below would
+        // otherwise swallow it before the strip hit-test further down ever
+        // ran. The strip is 36 px of the right edge above the divider, so
+        // this takes nothing away from the menus.
+        {
+            if (isOnDbmStrip(QPoint(mx, my))) {
+                m_draggingDbmRange = true;
+                m_dragStartY       = my;
+                m_dragStartRef     = m_refLevel;
+                m_dragStartFloor   = m_refLevel - m_dynamicRange;
+                setCursor(Qt::SizeVerCursor);
+                event->accept();
+                return;
+            }
+        }
+
         // Ctrl + right-click adds a notch at the clicked frequency; Shift
         // makes it narrow.  Checked before the spot menu and the overlay
         // menu, so plain right-click behaviour is unchanged when Ctrl is
@@ -7257,10 +7315,17 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             return;
         }
 
-        // Below arrows: start drag-pan (existing behavior)
-        m_draggingDbm = true;
-        m_dragStartY = my;
+        // Below arrows: left pans the window, right stretches it.
+        // From Thetis PanDisplay.cs:4105-4115 [v2.10.3.15] (left ->
+        // gridminmaxadjust) and :4424-4431 (right -> gridmaxadjust).
+        m_dragStartY   = my;
         m_dragStartRef = m_refLevel;
+        if (event->button() == Qt::RightButton) {
+            m_draggingDbmRange = true;
+            m_dragStartFloor   = m_refLevel - m_dynamicRange;
+        } else {
+            m_draggingDbm = true;
+        }
         setCursor(Qt::SizeVerCursor);
         return;
     }
@@ -7492,11 +7557,92 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         return;
     }
 
+    // A drag ends when its button is no longer held, whether or not a
+    // release event ever reached us. On macOS a right-press that the window
+    // system turns into a context-menu gesture can swallow the matching
+    // release, and the drag flag then stays set forever: every subsequent
+    // mouse move keeps dragging the scale with no button down and no way to
+    // stop. Bench 2026-08-05, "i cant let go, it just goes up and down no
+    // matter where the mouse is". Checking the live button state costs
+    // nothing and cannot get stuck.
+    if (m_draggingDbm && !(event->buttons() & Qt::LeftButton)) {
+        m_draggingDbm = false;
+        setCursor(Qt::ArrowCursor);
+    }
+    if (m_draggingDbmRange && !(event->buttons() & Qt::RightButton)) {
+        m_draggingDbmRange = false;
+        setCursor(Qt::ArrowCursor);
+    }
+
     if (m_draggingDbm) {
-        int dy = my - m_dragStartY;
-        float dbPerPixel = m_dynamicRange / static_cast<float>(specH);
-        m_refLevel = m_dragStartRef + static_cast<float>(dy) * dbPerPixel;
-        m_refLevel = qBound(-160.0f, m_refLevel, 20.0f);
+        // From Thetis PanDisplay.cs:3688-3699 [v2.10.3.15]:
+        //     int delta_y = e.Y - grid_minmax_drag_start_point.Y;
+        //     double delta_db = ((double)delta_y / 10) * 5;
+        //     val += (decimal)delta_db;  min_val += (decimal)delta_db;
+        //     if (val > 200) val = 200;
+        //     if (min_val < -200) min_val = -200;
+        //
+        // A FIXED half-dB per pixel, not a fraction of the current range.
+        // Ours scaled by m_dynamicRange / specH, which on a 49 dB receive
+        // window came out around 0.13 dB per pixel -- roughly a quarter of
+        // Thetis's, so the scale barely moved and the drag felt dead. It
+        // also meant the drag's feel changed with the zoom level, which
+        // Thetis's does not.
+        static constexpr float kDbPerPixel = 0.5f;
+
+        const int dy = my - m_dragStartY;
+        float newRef = m_dragStartRef + static_cast<float>(dy) * kDbPerPixel;
+
+        // Thetis's own limits. The old +20 ceiling was the reason dragging
+        // up did nothing at all while transmitting: the transmit grid's
+        // reference level IS +20 (display.cs:1887 tx_spectrum_grid_max), so
+        // the drag started already pinned against the stop.
+        // Bench 2026-08-05.
+        newRef = qBound(-200.0f + m_dynamicRange, newRef, 200.0f);
+        m_refLevel = newRef;
+        // The scale labels and grid lines live in the CACHED overlay texture
+        // (renderGpuFrame draws them only under `if (m_overlayStaticDirty)`),
+        // while the trace is vertex geometry rebuilt every frame. update()
+        // alone therefore moved the trace and left the numbers frozen at
+        // whatever range was live when something else last invalidated the
+        // overlay -- which is the whole complaint: "the spectrum goes up and
+        // down but the scale does not adjust". Bench 2026-08-05.
+        markOverlayDirty();
+        update();
+        return;
+    }
+
+    if (m_draggingDbmRange) {
+        // From Thetis PanDisplay.cs:3702-3712 [v2.10.3.15]:
+        //     if (gridmaxadjust) {
+        //         int delta_y = e.Y - grid_minmax_drag_start_point.Y;
+        //         double delta_db = ((double)delta_y / 10) * 5;
+        //         decimal val = grid_minmax_max_y;  val += (decimal)delta_db;
+        //         if (val > 200) val = 200;
+        //         SpectrumGridMax = (int)val;
+        //     }
+        // Only the ceiling moves; the floor is untouched, so the RANGE is
+        // what changes. Same half-dB per pixel as the pan.
+        static constexpr float kDbPerPixel = 0.5f;
+
+        const int dy = my - m_dragStartY;
+        float newRef = m_dragStartRef + static_cast<float>(dy) * kDbPerPixel;
+        newRef = qMin(newRef, 200.0f);
+
+        // The floor stays put, so guard the range rather than the ceiling:
+        // a ceiling dragged to or below the floor would invert the scale.
+        float newRange = newRef - m_dragStartFloor;
+        if (newRange < 10.0f) {
+            newRange = 10.0f;
+            newRef   = m_dragStartFloor + newRange;
+        } else if (newRange > 200.0f) {
+            newRange = 200.0f;
+            newRef   = m_dragStartFloor + newRange;
+        }
+
+        m_refLevel     = newRef;
+        m_dynamicRange = newRange;
+        markOverlayDirty();
         update();
         return;
     }
@@ -7541,11 +7687,11 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         double factor = 1.0 + dx * 0.003;  // 0.3% per pixel
         double newBw = m_bwDragStartBw * factor;
         newBw = std::clamp(newBw, 1000.0, m_sampleRateHz);
-        m_bandwidthHz = newBw;
-        // Recenter on VFO when zooming so the signal stays visible
+        // Recenter on VFO when zooming so the signal stays visible.
         // Only emit centerChanged if center actually moved — avoids DDC retune per drag frame
-        if (!qFuzzyCompare(m_centerHz, m_vfoHz)) {
-            m_centerHz = m_vfoHz;
+        const bool centreMoved = !qFuzzyCompare(m_centerHz, m_vfoHz);
+        applyViewWindow(centreMoved ? m_vfoHz : m_centerHz, newBw);
+        if (centreMoved) {
             emit centerChanged(m_centerHz);
         }
         updateVfoPositions();
@@ -7574,7 +7720,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         // From AetherSDR SpectrumWidget.cpp:1230-1237
         double deltaPx = mx - m_panDragStartX;
         double deltaHz = -(deltaPx / static_cast<double>(specRect.width())) * m_bandwidthHz;
-        m_centerHz = m_panDragStartCenter + deltaHz;
+        applyViewWindow(m_panDragStartCenter + deltaHz, m_bandwidthHz);
         emit centerChanged(m_centerHz);
         updateVfoPositions();
 #ifdef NEREUS_GPU_SPECTRUM
@@ -7798,8 +7944,71 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
     QWidget::mouseMoveEvent(event);
 }
 
+void SpectrumWidget::applyViewWindow(double centreHz, double bandwidthHz)
+{
+    const bool moved   = !qFuzzyCompare(m_centerHz, centreHz);
+    const bool resized = !qFuzzyCompare(m_bandwidthHz, bandwidthHz);
+    if (!moved && !resized) { return; }
+
+    // The ONLY direct writes to these two in the whole class, apart from
+    // setMoxOverlay's swap. Everything else routes through here.
+    m_centerHz    = centreHz;
+    m_bandwidthHz = bandwidthHz;
+
+    // The scale and grid are cached chrome; the trace is not. Without this
+    // the numbers stay frozen while the trace moves.
+    markOverlayDirty();
+
+    // Structural, not remembered: any zoom or pan path added later inherits
+    // this because it cannot change the window without coming through here.
+    notifyTxViewWindow();
+}
+
+void SpectrumWidget::notifyTxViewWindow()
+{
+    if (!m_moxOverlay || m_bandwidthHz <= 0.0) { return; }
+    emit txViewWindowChanged(m_centerHz, m_bandwidthHz);
+}
+
+bool SpectrumWidget::isOnDbmStrip(const QPoint& pos) const
+{
+    if (effectiveStripW() <= 0) { return false; }
+    const int specH = specHFromHeight(height(), m_spectrumFrac,
+                                      kFreqScaleH + kDividerH);
+    return pos.x() >= width() - kDbmStripW && pos.y() < specH;
+}
+
+void SpectrumWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    // A right press on the dBm strip is a range drag (Thetis gridmaxadjust,
+    // PanDisplay.cs:4424-4431 [v2.10.3.15]), so swallow the context menu
+    // there. Without this the pan menu opens on top of the gesture: Qt
+    // synthesises this event independently of mousePressEvent, so accepting
+    // the press is not enough, and it propagates to PanadapterApplet, whose
+    // contextMenuEvent builds the pan menu. Bench 2026-08-05.
+    if (isOnDbmStrip(event->pos())) {
+        event->accept();
+        return;
+    }
+    // Anywhere else, let it reach the pan applet as before.
+    event->ignore();
+    QRhiWidget::contextMenuEvent(event);
+}
+
 void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
 {
+    // Outside the LeftButton gate below, which never sees a right release.
+    // Deliberately not filtered on which button was released: the point is
+    // to end the gesture, and being fussy about that is how it got stuck.
+    if (m_draggingDbmRange) {
+        m_draggingDbmRange = false;
+        setCursor(Qt::ArrowCursor);
+        emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
+        scheduleSettingsSave();
+        event->accept();
+        return;
+    }
+
     // Sub-epic E: time-scale drag end
     // From AetherSDR SpectrumWidget.cpp:2382-2387 [@0cd4559]
     //   note: drag release does NOT auto-resume to live — m_wfLive is only
@@ -7818,7 +8027,18 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         // From AetherSDR SpectrumWidget.cpp:1427-1457 — 4px Manhattan threshold
         if (m_draggingPan) {
             int dx = std::abs(static_cast<int>(event->position().x()) - m_panDragStartX);
-            if (dx <= 4) {
+            // NOT while transmitting. A release that moved less than the
+            // 4 px threshold is read as a click-to-tune and retunes the VFO
+            // -- which, keyed into an antenna and an amplifier, is not
+            // something a stray click should be able to do. The panadapter
+            // was effectively read-only during transmit until this branch
+            // made it pannable and zoomable, so the exposure is new even
+            // though the code is not.
+            //
+            // Panning and zooming the view stay available while keyed; it
+            // is only the retune that is withheld. Bench 2026-08-05: "the
+            // tune jumps when I let go".
+            if (dx <= 4 && !m_moxOverlay) {
                 int w = width();
                 int specH = static_cast<int>(height() * m_spectrumFrac);
                 QRect specRect(0, 0, w - effectiveStripW(), specH);
@@ -7959,6 +8179,7 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
             const float bottom = m_refLevel - m_dynamicRange;
             m_dynamicRange = qBound(10.0f, m_dynamicRange - notches * 5.0f, 200.0f);
             m_refLevel = bottom + m_dynamicRange;
+            markOverlayDirty();   // cached scale; see the drag handler
             emit dbmRangeChangeRequested(bottom, m_refLevel);
             update();
             scheduleSettingsSave();
@@ -7981,9 +8202,8 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
         double factor = (delta > 0) ? 0.8 : 1.25;
         double newBw = m_bandwidthHz * factor;
         newBw = std::clamp(newBw, 1000.0, m_sampleRateHz);
-        m_bandwidthHz = newBw;
         // Recenter on VFO when zooming
-        m_centerHz = m_vfoHz;
+        applyViewWindow(m_vfoHz, newBw);
         emit centerChanged(m_centerHz);
         emit bandwidthChangeRequested(newBw);
         updateVfoPositions();
@@ -9101,10 +9321,10 @@ void SpectrumWidget::setVfoFrequency(double hz)
 
         bool needsScroll = false;
         if (hz < leftEdge + margin) {
-            m_centerHz = hz + m_bandwidthHz / 2.0 - margin;
+            applyViewWindow(hz + m_bandwidthHz / 2.0 - margin, m_bandwidthHz);
             needsScroll = true;
         } else if (hz > rightEdge - margin) {
-            m_centerHz = hz - m_bandwidthHz / 2.0 + margin;
+            applyViewWindow(hz - m_bandwidthHz / 2.0 + margin, m_bandwidthHz);
             needsScroll = true;
         }
 
@@ -9134,7 +9354,7 @@ void SpectrumWidget::setVfoFrequency(double hz)
 
 void SpectrumWidget::recenterOnVfo()
 {
-    m_centerHz = m_vfoHz;
+    applyViewWindow(m_vfoHz, m_bandwidthHz);
     m_vfoOffScreen = VfoOffScreen::None;
     emit centerChanged(m_centerHz);
     updateVfoPositions();

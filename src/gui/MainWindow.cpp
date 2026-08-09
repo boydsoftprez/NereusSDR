@@ -3704,8 +3704,6 @@ void MainWindow::buildUI()
                     // window itself, so centre and bandwidth have to come
                     // back on un-key or the receive pan would stay parked
                     // on a 3 kHz slice of the band.
-                    m_savedSpectrumCenterHz   = sw->centerFrequency();
-                    m_savedSpectrumBandwidth  = sw->bandwidth();
 
                     // The transmit grid is SpectrumWidget's own business now.
                     // setMoxOverlay(true) below parks the receive pair and
@@ -3811,8 +3809,73 @@ void MainWindow::buildUI()
                     // span handed to visibleBinRange is the window width.
                     sw->setTxCenterFrequency(carrierHz);
                     sw->setTxSampleRate(2.0 * kTxDisplayHalfSpanHz);
-                    sw->setDisplayWindowPreservingHistory(
-                        carrierHz, 2.0 * kTxDisplayHalfSpanHz);
+                    // Keep the analyzer's span equal to whatever window is
+                    // on screen, for as long as transmit owns this pan.
+                    //
+                    // Thetis gets this for free: initAnalyzer derives span
+                    // and window from one zoom state, so they cannot drift
+                    // apart. Ours are separate, and a zoom made
+                    // mid-transmission left the analyzer clipped to the span
+                    // chosen at key-down while the pan showed something
+                    // wider -- 8 kHz of bins stretched across 55 kHz of
+                    // axis, with the trace wherever that stretch put it.
+                    // Bench 2026-08-05.
+                    //
+                    // Context object is `sw`, so this dies with the pan; the
+                    // fall edge disconnects it explicitly as well, because a
+                    // pan that survives must stop re-clipping once receive
+                    // owns it again.
+                    connect(sw, &SpectrumWidget::txViewWindowChanged, sw,
+                            [this, sw, carrierHz](double centreHz, double bwHz) {
+                        if (!m_txAnalyzer || bwHz <= 0.0) { return; }
+
+                        // The window the operator is looking at, expressed
+                        // RELATIVE TO THE CARRIER, because that is where the
+                        // siphon's baseband sits.
+                        //
+                        // Asymmetric on purpose. A symmetric +/-half clip is
+                        // only correct while the view is centred on the
+                        // carrier; pan away and the analyzer covers
+                        // carrier +/- half while the widget is told the bins
+                        // are centred on the panned centre. The two disagree
+                        // by exactly the pan offset, and since that offset
+                        // changes continuously while dragging, the trace
+                        // slides around under the cursor. Bench 2026-08-05,
+                        // "the passband jitters when I drag back and forth".
+                        double lo = centreHz - bwHz / 2.0 - carrierHz;
+                        double hi = centreHz + bwHz / 2.0 - carrierHz;
+
+                        // Nothing exists outside the baseband, so asking for
+                        // it would clip to nothing.
+                        constexpr double kHalfBaseband = 48000.0;
+                        lo = qMax(lo, -kHalfBaseband);
+                        hi = qMin(hi,  kHalfBaseband);
+                        if (hi - lo < 1000.0) { return; }
+
+                        // Quantised to 100 Hz. SetAnalyzer reconfigures the
+                        // analyzer, and recomputing it on every mouse-move
+                        // pixel (about 40 Hz of window per pixel at this
+                        // zoom) thrashes it for sub-bin changes nobody can
+                        // see.
+                        const int loQ = static_cast<int>(std::round(lo / 100.0)) * 100;
+                        const int hiQ = static_cast<int>(std::round(hi / 100.0)) * 100;
+
+                        m_txAnalyzer->setSpectrumWindow(loQ, hiQ);
+                        // Tell the widget where those bins actually sit, so
+                        // visibleBinRange maps them to the same axis the
+                        // operator is reading.
+                        sw->setTxCenterFrequency(carrierHz + (loQ + hiQ) / 2.0);
+                        sw->setTxSampleRate(static_cast<double>(hiQ - loQ));
+                    });
+
+                    // Centre on the carrier, but keep whatever SPAN
+                    // setMoxOverlay just loaded from the transmit store.
+                    // Forcing the +/-4 kHz seed here is what made a zoom
+                    // made during one transmission vanish on the next
+                    // (bench 2026-08-05): the seed is a first-run default,
+                    // not something to re-impose every key-up.
+                    sw->setDisplayWindowPreservingHistory(carrierHz,
+                                                          sw->bandwidth());
 
                     // PR #212 follow-up bench fix (KG4VCF, 2026-05-10):
                     // disable Clarity so the waterfall AGC takes over for
@@ -3933,12 +3996,12 @@ void MainWindow::buildUI()
                     // clearing the analyzer's span clip in the same breath
                     // keeps the two from disagreeing if the next key-up
                     // finds a different filter.
+                    disconnect(sw, &SpectrumWidget::txViewWindowChanged,
+                               sw, nullptr);
                     sw->setTxCenterFrequency(0.0);
                     m_txAnalyzer->setSpectrumWindow(0, 0);
-                    if (m_savedSpectrumBandwidth > 0.0) {
-                        sw->setDisplayWindowPreservingHistory(
-                            m_savedSpectrumCenterHz, m_savedSpectrumBandwidth);
-                    }
+                    // Receive window comes back via setMoxOverlay(false)'s
+                    // swap, same as the grid. No restore needed here.
                     // Symmetric AGC reset on un-key so the waterfall
                     // snaps back to the RX dynamic range without the
                     // same 3 s saturation pause in the other direction.
