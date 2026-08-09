@@ -84,6 +84,73 @@ private slots:
                  "hardcoded/ignored parameter");
     }
 
+    // Fast-follow (post-review): drawDbmScale3D, buildDssImage (Task 10),
+    // and writeDssMeshUbo (Task 9) all read dssSpanDb() rounded to the
+    // nearest 0.5 dB, via one shared, named accessor -- dssRoundedSpanDb().
+    // Pins the accessor's own arithmetic. 33.25 is deliberately not a
+    // 0.5 dB multiple, and both -140.0f/-106.75f and 33.25/33.5 are exactly
+    // representable in float32 (0.75 and 0.25 are both binary fractions),
+    // so this can use a tight tolerance rather than a loose one.
+    void roundedSpanDb_roundsToNearestHalfDb() {
+        SpectrumWidget w;
+        w.setDbmRange(-140.0f, -106.75f);
+        QVERIFY2(std::abs(w.dssSpanDb() - 33.25f) < 1e-6f,
+                 "precondition: raw span is exactly 33.25 (not a 0.5 dB multiple)");
+        QVERIFY2(std::abs(w.dssRoundedSpanDb() - 33.5f) < 1e-6f,
+                 "dssRoundedSpanDb() must round 33.25 to the nearest 0.5 dB (33.5)");
+    }
+
+    // The actual "agreement" pin the review asked for. writeDssMeshUbo()
+    // cannot be called from a unit test (it needs a live QRhi resource
+    // batch and m_dssUbo -- see task-9-report.md's own empirical-only
+    // verification of that function), so this proves the strongest thing
+    // that IS directly testable: drawDbmScale3D's real, black-box rendered
+    // output is IDENTICAL to an image independently reconstructed from
+    // public pieces using dssRoundedSpanDb() -- the exact same accessor
+    // writeDssMeshUbo's source now calls for its rangeDb field (confirmed
+    // by reading SpectrumWidget.cpp directly, not assumed). If
+    // drawDbmScale3D ever reverts to computing its own independent
+    // rounding (or drops rounding entirely) while writeDssMeshUbo keeps
+    // calling dssRoundedSpanDb(), the two would generally still LOOK
+    // similar but no longer be governed by the same source of truth --
+    // this test catches that divergence at the drawDbmScale3D end because
+    // it is the only end a unit test can reach.
+    void render3D_matchesTheRoundedSpanNotTheRawSpan() {
+        SpectrumWidget w;
+        w.setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode3D));
+        // Not a 0.5 dB multiple, so a caller that forgot to round would
+        // disagree with dssRoundedSpanDb() by a measurable, non-tiny 0.25 dB.
+        w.setDbmRange(-140.0f, -106.75f);
+        w.setMeasuredNoiseFloorForTest(-120.0f);
+        const float floorDbm = w.dssFloorDbm();
+        const float rounded = w.dssRoundedSpanDb();
+        QVERIFY2(std::abs(rounded - w.dssSpanDb()) > 0.01f,
+                 "precondition: rounding actually changes the value for this input");
+
+        const QRect rect(0, 0, 200, 280);
+
+        QImage actual(200, 300, QImage::Format_ARGB32_Premultiplied);
+        actual.fill(Qt::transparent);
+        {
+            QPainter p(&actual);
+            w.drawDbmScale3DForTest(p, rect, floorDbm);
+        }
+
+        // Independently reconstructed via the SAME two public pieces
+        // drawDbmScale3D itself is built from (chrome, then labels at
+        // floorDbm+span/span), fed the rounded span read through the public
+        // accessor rather than duplicating drawDbmScale3D's own formula.
+        QImage expected(200, 300, QImage::Format_ARGB32_Premultiplied);
+        expected.fill(Qt::transparent);
+        {
+            QPainter p(&expected);
+            w.drawDbmScaleChromeForTest(p, rect);
+            w.drawDbmScaleLabelsForTest(p, rect, floorDbm + rounded, rounded);
+        }
+
+        QCOMPARE(actual, expected);
+    }
+
     void drawDbmScale3D_paintsWithoutCrashing() {
         SpectrumWidget w;
         w.setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode3D));

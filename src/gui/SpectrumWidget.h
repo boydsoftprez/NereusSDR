@@ -619,6 +619,13 @@ public:
     float dssFloorDbm() const;
     // The dBm display span the surface height maps across.
     float dssSpanDb() const;
+    // dssSpanDb() rounded to the nearest 0.5 dB. The scale (drawDbmScale3D),
+    // the CPU fallback surface (buildDssImage), and the GPU mesh's rangeDb
+    // uniform (writeDssMeshUbo) must all read the SAME rounded value, or
+    // their pixel mappings disagree by up to 0.25 dB whenever the configured
+    // dBm range is not already an exact 0.5 dB multiple -- Task 11 fast-
+    // follow, closing a gap where writeDssMeshUbo wrote the unrounded value.
+    float dssRoundedSpanDb() const;
     // The dBm span the COLOUR mapping (not the height mapping) reads
     // across: dssSpanDb() capped at kDssColorSpanDb. A stable aperture
     // independent of the Ref-level height span, so a wide dBm range does
@@ -671,6 +678,13 @@ public:
     void drawDbmScaleLabelsForTest(QPainter& p, const QRect& specRect,
                                    float topDbm, float rangeDb) {
         drawDbmScaleLabels(p, specRect, topDbm, rangeDb);
+    }
+    // Lets a test independently reconstruct drawDbmScale3D's exact output
+    // (chrome, then labels at floorDbm+dssRoundedSpanDb()) from public
+    // pieces alone, to cross-check that drawDbmScale3D really uses the
+    // rounded span rather than an independently-diverged computation.
+    void drawDbmScaleChromeForTest(QPainter& p, const QRect& specRect) {
+        drawDbmScaleChrome(p, specRect);
     }
 
     void setWfOpacity(int percent);          // 0..100

@@ -4320,8 +4320,10 @@ void SpectrumWidget::drawDbmScale3D(QPainter& p, const QRect& specRect,
     drawDbmScaleChrome(p, specRect);
     // Round the span the same way the mesh/CPU surface do (buildDssImage /
     // renderGpuFrame use std::round(span*2)/2) so labels and surface agree to
-    // the pixel instead of a sub-dB top/bottom skew (#3937).
-    const float span = std::round(dssSpanDb() * 2.0f) / 2.0f;
+    // the pixel instead of a sub-dB top/bottom skew (#3937). NereusSDR names
+    // this rounding once, dssRoundedSpanDb() (Task 11 fast-follow), and all
+    // three consumers call it rather than independently inlining it.
+    const float span = dssRoundedSpanDb();
     drawDbmScaleLabels(p, specRect, floorDbm + span, span);
 }
 
@@ -5096,6 +5098,25 @@ float SpectrumWidget::dssSpanDb() const
     return std::max(1.0f, m_dynamicRange);
 }
 
+// Task 11 fast-follow. Upstream inlines std::round(span*2.0f)/2.0f
+// independently at each of drawDbmScale3D's, buildDssImage's, and
+// writeDssMeshUbo's own call sites (three separate occurrences of the
+// identical formula, not a shared function -- see drawDbmScale3D's own
+// ported doc comment, "buildDssImage / renderGpuFrame use
+// std::round(span*2)/2"). NereusSDR names it once, here, and routes all
+// three consumers through it: a code review caught writeDssMeshUbo's
+// rangeDb field still writing the RAW dssSpanDb() while the scale and the
+// CPU fallback both rounded, so whenever the configured dBm range was not
+// already an exact 0.5 dB multiple the GPU mesh's front-ridge height
+// mapping (dss_mesh.vert's rangeDb) disagreed with the drawn scale by up
+// to 0.25 dB -- several pixels on a tall strip at a narrow range. A single
+// named accessor makes that class of drift structurally impossible to
+// reintroduce at any one call site without an intentional edit.
+float SpectrumWidget::dssRoundedSpanDb() const
+{
+    return std::round(dssSpanDb() * 2.0f) / 2.0f;
+}
+
 // From AetherSDR SpectrumWidget.cpp:14195 [@1872028c] (the writeDssMeshUbo-
 // equivalent inline `std::min(rangeDb, DssRenderer::kColorSpanDb)`) and
 // SpectrumWidget.cpp:11889-11890 [@1872028c] (buildDssImage()'s own local
@@ -5285,7 +5306,10 @@ quint64 SpectrumWidget::dssPaletteToken() const
 const QImage& SpectrumWidget::buildDssImage(const QSize& px, int scaleStripPx)
 {
     const float floorDbm = dssFloorDbm();
-    const float rangeDb  = std::round(dssSpanDb() * 2.0f) / 2.0f;
+    // dssRoundedSpanDb() (Task 11 fast-follow): named once so this CPU
+    // fallback, the 3D scale, and the GPU mesh's rangeDb uniform all read
+    // the identical rounded span rather than three independent inlines.
+    const float rangeDb  = dssRoundedSpanDb();
 
     // Same mapping as the GPU mesh: a stable colour aperture independent of
     // the Ref-level height span, gamma-shaped by "3D Gain". Uses
@@ -8657,7 +8681,14 @@ void SpectrumWidget::writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
     // rowOffset: ring scroll plus a half texel so Nearest lands on centres.
     ubo[i++] = (m_dss.headRing() + 0.5f) / static_cast<float>(m_dss.rows());
     ubo[i++] = dssFloorDbm();
-    ubo[i++] = dssSpanDb();
+    // dssRoundedSpanDb() (Task 11 fast-follow): this field originally wrote
+    // the raw dssSpanDb() here while drawDbmScale3D() and buildDssImage()
+    // both rounded to the nearest 0.5 dB, so this GPU mesh's rangeDb
+    // (dss_mesh.vert's front-ridge height mapping) could disagree with the
+    // drawn scale and the CPU fallback by up to 0.25 dB whenever
+    // m_dynamicRange was not already an exact 0.5 dB multiple. All three
+    // now read the identical named, rounded value.
+    ubo[i++] = dssRoundedSpanDb();
     ubo[i++] = 0.6f;                                  // zCurve: lift the floor band
     ubo[i++] = shape.backWidthFrac;
     ubo[i++] = shape.depthSpanFrac;
