@@ -15,6 +15,7 @@
 #include <QtTest/QtTest>
 
 #include "gui/SpectrumWidget.h"
+#include "core/AppSettings.h"
 
 using namespace NereusSDR;
 
@@ -30,6 +31,7 @@ private slots:
     void setTxAttenuatorOffsetDb_storesValue();
     void setTxFilterVisible_storesState();
     void grids_are_independent_across_mox();
+    void txGrid_keys_are_per_pan();
 };
 
 // 1. Fresh widget has MOX overlay off
@@ -142,6 +144,44 @@ void TestSpectrumWidgetMoxOverlay::grids_are_independent_across_mox()
     w.setMoxOverlay(true);
     QCOMPARE(w.refLevel(), txRef);
     QCOMPARE(w.dynamicRange(), txRange);
+}
+
+// The transmit grid keys are per pan, like every other display setting.
+//
+// They shipped as bare globals, which every pan read at startup AND wrote on
+// every save while holding its own copy. Only the transmitting pan's copy
+// ever changes, so the next save from any OTHER pan put the startup value
+// back and the operator's drag silently reverted. Fails on the bare-key
+// version: pan 1's save lands on pan 0's key.
+void TestSpectrumWidgetMoxOverlay::txGrid_keys_are_per_pan()
+{
+    auto& s = AppSettings::instance();
+
+    SpectrumWidget pan0;
+    pan0.setPanIndex(0);
+    pan0.setMoxOverlay(true);
+    pan0.setDbmRange(-70.0f, 10.0f);     // pan 0's transmit grid
+    pan0.saveSettingsForTest();
+
+    const QString pan0Ref =
+        s.value(QStringLiteral("DisplayTxGridRefLevel"), QString()).toString();
+    QVERIFY2(!pan0Ref.isEmpty(), "pan 0 did not write a transmit grid at all");
+
+    SpectrumWidget pan1;
+    pan1.setPanIndex(1);
+    pan1.setMoxOverlay(true);
+    pan1.setDbmRange(-100.0f, -20.0f);   // a visibly different one
+    pan1.saveSettingsForTest();
+
+    // Pan 1 wrote its own key...
+    QCOMPARE(s.value(QStringLiteral("DisplayTxGridRefLevel_1"), QString())
+                 .toString().toFloat(),
+             -20.0f);
+    // ...and left pan 0's alone. This is the assertion the bare-key version
+    // cannot pass.
+    QCOMPARE(s.value(QStringLiteral("DisplayTxGridRefLevel"), QString())
+                 .toString(),
+             pan0Ref);
 }
 
 QTEST_MAIN(TestSpectrumWidgetMoxOverlay)

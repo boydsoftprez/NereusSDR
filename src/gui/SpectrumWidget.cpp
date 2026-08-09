@@ -919,18 +919,24 @@ void SpectrumWidget::loadSettings()
     // deliberate drag heals to the Thetis seed instead of persisting: an
     // unusable transmit grid is self-trapping, because the strip the
     // operator would drag to fix it is the thing that stopped drawing.
+    //
+    // Per pan, through rawValue, like every other key in this function. These
+    // three shipped as bare global keys, which every pan then read AND wrote
+    // while holding its own member: a pan that never transmitted would carry
+    // the value it loaded at startup and put it back on its next save,
+    // silently reverting a transmit-grid drag made on the pan that did.
     {
         bool okRef = false, okRange = false;
-        const float ref = s.value(QStringLiteral("DisplayTxGridRefLevel"),
-                                  QString()).toString().toFloat(&okRef);
-        const float rng = s.value(QStringLiteral("DisplayTxGridDynamicRange"),
-                                  QString()).toString().toFloat(&okRange);
+        const float ref =
+            rawValue(QStringLiteral("DisplayTxGridRefLevel")).toFloat(&okRef);
+        const float rng =
+            rawValue(QStringLiteral("DisplayTxGridDynamicRange")).toFloat(&okRange);
         if (okRef && ref >= -160.0f && ref <= 20.0f)   { m_txRefLevel     = ref; }
         if (okRange && rng >= 10.0f && rng <= 200.0f)  { m_txDynamicRange = rng; }
 
         bool okBw = false;
-        const double bw = s.value(QStringLiteral("DisplayTxViewBandwidth"),
-                                  QString()).toString().toDouble(&okBw);
+        const double bw =
+            rawValue(QStringLiteral("DisplayTxViewBandwidth")).toDouble(&okBw);
         // Wide enough to see, narrow enough to be a transmit view.
         if (okBw && bw >= 1000.0 && bw <= 500000.0) { m_txViewBandwidthHz = bw; }
     }
@@ -1174,11 +1180,15 @@ void SpectrumWidget::saveSettings()
     // Transmit grid persists independently of receive. While transmitting the
     // LIVE pair is the transmit one, so read the store that is not currently
     // live rather than the member directly.
-    s.setValue(QStringLiteral("DisplayTxGridRefLevel"),
+    //
+    // Per pan, matching the load side. A bare key here made every pan a
+    // writer of one shared value, so the last pan to save won and the
+    // transmitting pan's drag was the thing most likely to be overwritten.
+    s.setValue(settingsKey(QStringLiteral("DisplayTxGridRefLevel"), m_panIndex),
                QString::number(m_moxOverlay ? m_refLevel : m_txRefLevel));
-    s.setValue(QStringLiteral("DisplayTxGridDynamicRange"),
+    s.setValue(settingsKey(QStringLiteral("DisplayTxGridDynamicRange"), m_panIndex),
                QString::number(m_moxOverlay ? m_dynamicRange : m_txDynamicRange));
-    s.setValue(QStringLiteral("DisplayTxViewBandwidth"),
+    s.setValue(settingsKey(QStringLiteral("DisplayTxViewBandwidth"), m_panIndex),
                QString::number(m_moxOverlay ? m_bandwidthHz : m_txViewBandwidthHz));
     s.setValue(QStringLiteral("BandPlanFontSize"),
                QString::number(m_bandPlanFontSize));
