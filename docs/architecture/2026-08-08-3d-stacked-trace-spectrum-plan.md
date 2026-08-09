@@ -2298,6 +2298,11 @@ In the `#ifdef NEREUS_GPU_SPECTRUM` block of `SpectrumWidget.h`:
     QRhiSampler*                m_dssHeightSampler{nullptr};
     QRhiSampler*                m_dssPaletteSampler{nullptr};
     bool    m_dssMeshReady{false};
+    // False until rebuildDssMeshIfNeeded() has actually pushed vertices
+    // for m_dssMeshCols. Guards the first-upload case that a plain dirty
+    // flag misses, and is reset on teardown so a rebuilt pipeline uploads
+    // again.
+    bool    m_dssMeshUploaded{false};
     int     m_dssMeshCols{0};
     quint64 m_dssLutToken{~0ull};
     quint64 m_dssUploadedRowGeneration{~0ull};
@@ -2436,11 +2441,23 @@ void SpectrumWidget::rebuildDssMeshIfNeeded(QRhiResourceUpdateBatch* batch)
 {
     if (!m_dssMeshReady || !batch) { return; }
     const int wanted = dssMeshColsFor(dssShape());
-    if (!m_dssMeshNeedsResize && wanted == m_dssMeshCols
-        && m_dssMeshVbo->size() > 0) {
+    // Skip only when the geometry currently ON THE GPU is already right.
+    //
+    // The condition is deliberately "have we uploaded, and is the column
+    // count still the one we uploaded for", NOT a dirty flag plus a size
+    // check. initDssMeshPipeline() sets m_dssMeshCols and creates a
+    // correctly sized but EMPTY buffer, so a guard keyed on
+    // "wanted == m_dssMeshCols && vbo->size() > 0" is satisfied on the very
+    // first call and skips the only code path that ever uploads vertices.
+    // The mesh would then draw undefined GPU memory forever.
+    //
+    // Keying on m_dssMeshUploaded also fixes the converse waste: the vertex
+    // data is a pure function of the column count, so an angle change that
+    // does not cross a dssMeshColsFor boundary needs no work at all. Without
+    // this, a slider drag re-uploads tens of MiB of identical data per tick.
+    if (m_dssMeshUploaded && wanted == m_dssMeshCols) {
         return;
     }
-    m_dssMeshNeedsResize = false;
 
     QVector<float> fill;
     QVector<float> line;
@@ -2465,6 +2482,7 @@ void SpectrumWidget::rebuildDssMeshIfNeeded(QRhiResourceUpdateBatch* batch)
     }
     batch->uploadStaticBuffer(m_dssMeshVbo, 0, fillBytes, fill.constData());
     batch->uploadStaticBuffer(m_dssMeshLineVbo, 0, lineBytes, line.constData());
+    m_dssMeshUploaded = true;
 }
 ```
 
