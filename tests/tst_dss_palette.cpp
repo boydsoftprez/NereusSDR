@@ -93,9 +93,27 @@ private slots:
     // around -120..-60), so ANY raw 0..1 strength saturates its `adjusted`
     // clamp to 1.0 regardless of the wfColorGain/wfBlackLevel sliders,
     // making the bug invisible at any single low/mid/high point in
-    // isolation. Multiple probes close that hole: see task-8-report.md
-    // "Verification 2" for the full mutation trace (both the naive miss and
-    // the realistic catch).
+    // isolation. Multiple probes close that hole for mutations that vary
+    // with strength; they do NOT close it for the fully saturated case.
+    //
+    // Coverage boundary, recorded explicitly per review so a later
+    // maintainer does not assume this one test guards every recoupling
+    // shape: this test catches a mutation that maps strength across a
+    // representative dBm span before handing off to dbmToRgb() (e.g.
+    // `dbmToRgb(-140.0f + s * 140.0f)`), which is what an actual wrong port
+    // of uploadDssPaletteLut would plausibly look like. It CANNOT catch a
+    // literal straight-through recoupling, `return dbmToRgb(s);` -- that
+    // mutation saturates every probe in [0,1] to the same top-of-gradient
+    // colour regardless of scheme/gain, so every QCOMPARE above still
+    // passes. The straight-through shape is instead caught by
+    // gain50_isLinear / gain100_liftsTowardTheFloor /
+    // gain0_coloursOnlyTheStrongest above, which fail because the
+    // saturated output stops varying with `s` (and with `m_dssGain`) at
+    // all, not because of anything this test asserts. Do not weaken those
+    // three on the assumption this test alone covers recoupling; between
+    // them they cover both the strength-dependent and the fully-saturated
+    // mutation shapes. Both mutation runs are recorded with real output in
+    // task-8-report.md "Verification 2".
     void waterfallKnobs_doNotMove3DColours() {
         static const float kProbes[] = {0.1f, 0.4f, 0.7f, 0.9f};
         SpectrumWidget w;
@@ -137,12 +155,36 @@ private slots:
 
     // The LUT re-bakes only on a real change, never on the per-frame floor
     // / range jitter.
+    //
+    // Tests both halves of "folds scheme and gain ONLY": the FOLDS half
+    // (token reacts to scheme/gain) and the ONLY half (token ignores
+    // wfColorGain/wfBlackLevel). A review pass on this task found the
+    // original version only tested the former -- the exclusion held by
+    // construction (dssPaletteToken()'s body is two lines and structurally
+    // cannot read those fields), but a future edit that widens it, e.g.
+    // copying upstream's differently-scoped 5-field dssPaletteToken() at
+    // SpectrumWidget.cpp:11721-11733 [@1872028c], would pass every other
+    // test in this file. Mutation-checked: see task-8-report.md
+    // "Verification 4".
     void paletteToken_foldsSchemeAndGainOnly() {
         SpectrumWidget w;
         w.setWfColorScheme(WfColorScheme::Enhanced);
         w.setDssGain(70);
         const quint64 base = w.dssPaletteToken();
         QCOMPARE(w.dssPaletteToken(), base);
+
+        // ONLY half: sweeping the waterfall knobs across both ends of their
+        // documented ranges (0-100 / 0-125) must never move the token.
+        w.setWfColorGain(0);
+        QCOMPARE(w.dssPaletteToken(), base);
+        w.setWfColorGain(100);
+        QCOMPARE(w.dssPaletteToken(), base);
+        w.setWfBlackLevel(0);
+        QCOMPARE(w.dssPaletteToken(), base);
+        w.setWfBlackLevel(125);
+        QCOMPARE(w.dssPaletteToken(), base);
+
+        // FOLDS half: scheme and gain are the only things that DO move it.
         w.setDssGain(71);
         QVERIFY(w.dssPaletteToken() != base);
         w.setDssGain(70);
