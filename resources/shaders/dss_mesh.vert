@@ -1,5 +1,24 @@
 #version 440
 
+// =================================================================
+// resources/shaders/dss_mesh.vert  (NereusSDR)
+// =================================================================
+//
+// Ported byte-for-byte from AetherSDR (ten9876/AetherSDR, GPLv3) shader
+// source: resources/shaders/dss_mesh.vert [@1872028c]. AetherSDR has no
+// per-file shader headers; project-level citation per
+// docs/attribution/HOW-TO-PORT.md rule 6.
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-08-08 — Ported byte-for-byte for NereusSDR by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code. One NereusSDR comment-only deviation below
+//                 (`//-KG4VCF [v0.5.3]`, pinning scrollDistanceRows to 1.0
+//                 for NereusSDR's one-row-per-waterfall-tick producer);
+//                 no GLSL statement was changed.
+// =================================================================
+
 // 3DSS GPU height-map mesh. Each vertex carries its grid position (u = column,
 // v = row/depth) and an edge tag. The height comes from a ring-buffered dBm
 // texture; geometry is a receding perspective trapezoid built entirely on the

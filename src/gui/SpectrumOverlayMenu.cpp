@@ -1,3 +1,35 @@
+// =================================================================
+// src/gui/SpectrumOverlayMenu.cpp  (NereusSDR)
+// =================================================================
+//
+// Source attribution (AetherSDR — GPLv3):
+//
+//   Copyright (C) 2024-2026  Jeremy (KK7GWY) / AetherSDR contributors
+//       — per https://github.com/ten9876/AetherSDR (GPLv3; see LICENSE
+//       and About dialog for the live contributor list)
+//
+//   This file is a port or structural derivative of AetherSDR source.
+//   AetherSDR is licensed under the GNU General Public License v3.
+//   NereusSDR is also GPLv3. Attribution follows GPLv3 §5 requirements.
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
+//                 J.J. Boyd (KG4VCF), with AI-assisted transformation
+//                 via Anthropic Claude Code.
+//                 Overlay-menu pattern from AetherSDR
+//                 `src/gui/SpectrumOverlayMenu.{h,cpp}`.
+//   2026-08-08 — Final-review fix I4 (3D stacked-trace spectrum plan):
+//                 added this header, missing since the file's 2026-04-24
+//                 creation even though the sibling .h always carried it.
+//                 Newly consequential once Task 13 (same plan) added the
+//                 3D VIEW control section below -- 214 lines including
+//                 labels, ranges, defaults, and tooltip strings ported
+//                 verbatim from AetherSDR `src/gui/SpectrumOverlayMenu.cpp`
+//                 [@1872028c]. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+// =================================================================
+
 #include "SpectrumOverlayMenu.h"
 
 #include <QVBoxLayout>
@@ -467,7 +499,7 @@ void SpectrumOverlayMenu::setDssValues(int mode, int floor, int gain, int span,
     }
 }
 
-// From AetherSDR SpectrumOverlayMenu.cpp:2250-2273 [@1872028c] -- both
+// From AetherSDR SpectrumOverlayMenu.cpp:2250-2275 [@1872028c] -- both
 // tooltip variants (GPU-mesh-supported / CPU-fallback-unavailable) verbatim.
 void SpectrumOverlayMenu::setDssRowSpanSupported(bool supported)
 {

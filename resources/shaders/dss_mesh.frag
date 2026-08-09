@@ -1,5 +1,21 @@
 #version 440
 
+// =================================================================
+// resources/shaders/dss_mesh.frag  (NereusSDR)
+// =================================================================
+//
+// Ported byte-for-byte from AetherSDR (ten9876/AetherSDR, GPLv3) shader
+// source: resources/shaders/dss_mesh.frag [@1872028c]. AetherSDR has no
+// per-file shader headers; project-level citation per
+// docs/attribution/HOW-TO-PORT.md rule 6.
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-08-08 — Ported byte-for-byte for NereusSDR by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code. No NereusSDR deviations.
+// =================================================================
+
 // Companion to dss_mesh.vert. Fill vertices (edge >= 0) draw the original
 // full-height coloured curtains on phase-stable geometry. Outline vertices
 // (edge < 0) draw the retained traces.
