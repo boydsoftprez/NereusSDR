@@ -4207,9 +4207,13 @@ scale is Ref-anchored so the whole window slides. In 3D nothing reads
 and the 3D view has no opinion about it.
 
 Wire the plain drag to 3D Floor in 3D mode. That is the true analogue: drag
-down to reveal more noise, up to hide it. Ctrl-drag needs NO change, because
-the span-zoom gesture writes `m_dynamicRange`, which `dssSpanDb()` already
-reads.
+down to reveal more noise, up to hide it. CORRECTION, 2026-08-09: I originally wrote here that Ctrl-drag span-zoom
+"already works in 3D since dssSpanDb() reads m_dynamicRange". That was wrong,
+and the Task 16 implementer caught it. NereusSDR has NO Ctrl-drag gesture on
+the dBm strip in either mode: `m_draggingDbmRange` has seven hits in upstream
+at the pin and zero here, so the gesture was simply never ported. Nothing to
+preserve, nothing regressed by Task 16, but the gesture is a genuine missing
+upstream feature affecting 2D as much as 3D. Tracked separately below.
 
 Rescale the travel. The 2D formula is `m_dynamicRange / specH` dB per pixel,
 tuned for a range spanning -160..+20. 3D Floor spans 0..24, so reusing it would
@@ -4251,3 +4255,18 @@ truth from the moment the third surface exists.
 
 Follow `AppletWidget`'s established shape; register with
 `AppletVisibilityController` so it can be shown and hidden like its siblings.
+
+## Gap found during Task 16: Ctrl-drag dBm span-zoom was never ported
+
+AetherSDR gates a second dBm-strip gesture behind Ctrl (and Meta on macOS)
+that zooms the amplitude span, anchored at the bottom, via a separate
+`m_draggingDbmRange` flag. NereusSDR has no equivalent: the plain drag is the
+only gesture on that strip.
+
+This is not a 3D issue and not something this epic broke. It affects the 2D
+panadapter equally and has presumably been absent since the strip was first
+ported. Adding it is additive rather than a behaviour change, since no operator
+can currently be relying on a gesture that does nothing.
+
+Left out of scope pending a decision, since it is a general display gesture
+rather than part of the 3D work.
