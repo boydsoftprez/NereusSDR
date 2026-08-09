@@ -4268,5 +4268,15 @@ panadapter equally and has presumably been absent since the strip was first
 ported. Adding it is additive rather than a behaviour change, since no operator
 can currently be relying on a gesture that does nothing.
 
-Left out of scope pending a decision, since it is a general display gesture
-rather than part of the 3D work.
+RESOLVED 2026-08-09: ported (Task 19, commit 392aa6ee). All three applicable
+upstream sites carried over; the fourth is upstream's PerfTelemetry
+repaint-suppression aggregator, which has no counterpart here.
+
+Ctrl-drag behaves identically in 2D and 3D, including the `m_refLevel`
+recompute. That was decided on primary-source evidence rather than taste:
+upstream's move handler does no `is3D` branching on this gesture, while the
+adjacent floor-drag arm two lines away in the same press handler IS gated on
+`is3D`, so the asymmetry is deliberate upstream. It is also the architecturally
+coherent choice, since `m_refLevel` and `m_dynamicRange` describe the top and
+depth of one window, unlike Task 16's floor-depth and ref-level which are
+unrelated quantities.
