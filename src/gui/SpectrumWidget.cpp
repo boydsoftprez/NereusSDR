@@ -7318,11 +7318,37 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                     this, [this](double freqHz) {
                         emit notchCreateRequested(freqHz, false);
                     });
+            // 3D VIEW section (Task 13): six signals wired straight to the
+            // Task 6 setters -- see the "Consumes: SpectrumWidget setters"
+            // interface note in the plan. Persistence (AppSettings/
+            // PanadapterModel round-trip) is Task 14's scope, not this
+            // one's; each setter below already calls scheduleSettingsSave()
+            // itself (SpectrumWidget.cpp, Task 6).
+            connect(m_overlayMenu, &SpectrumOverlayMenu::spectrumRenderModeChanged,
+                    this, &SpectrumWidget::setSpectrumRenderMode);
+            connect(m_overlayMenu, &SpectrumOverlayMenu::dssFloorDepthChanged,
+                    this, &SpectrumWidget::setDssFloorDepth);
+            connect(m_overlayMenu, &SpectrumOverlayMenu::dssGainChanged,
+                    this, &SpectrumWidget::setDssGain);
+            connect(m_overlayMenu, &SpectrumOverlayMenu::dssRowSpanChanged,
+                    this, &SpectrumWidget::setDssRowSpan);
+            connect(m_overlayMenu, &SpectrumOverlayMenu::dssAngleChanged,
+                    this, &SpectrumWidget::setDssAngle);
+            connect(m_overlayMenu, &SpectrumOverlayMenu::dssSliceShadowChanged,
+                    this, &SpectrumWidget::setThreeDSliceDepth);
         }
         m_overlayMenu->setValues(m_wfColorGain, m_wfBlackLevel, false,
                                   static_cast<int>(m_wfColorScheme),
                                   m_fillAlpha, m_panFill, false,
                                   m_refLevel, m_dynamicRange, m_ctunEnabled);
+        // Re-seed every popup (not just at construction): the 3D VIEW
+        // section reflects whatever the operator last set, and row-span
+        // support can change across the widget's lifetime if the GPU mesh
+        // pipeline comes up or falls back (Task 10's RGBA16F check).
+        m_overlayMenu->setDssValues(spectrumRenderMode(), dssFloorDepth(),
+                                     dssGain(), dssRowSpan(), dssAngle(),
+                                     threeDSliceDepth());
+        m_overlayMenu->setDssRowSpanSupported(dssMeshReady());
         // The frequency under the cursor, captured at popup time: the
         // popup outlives the press, and by the time the button is clicked
         // the pointer has moved onto the popup itself.

@@ -6270,6 +6270,21 @@ nereus_add_test(tst_dss_dbm_scale)
 # [@1872028c].
 nereus_add_test(tst_dss_slice_shadow)
 
+# ── 3D stacked-trace spectrum plan, Task 13: the 3D VIEW control section ─
+# Pins SpectrumOverlayMenu's "3D VIEW" section: the Spectrum render-mode
+# combo plus 3D Floor / 3D Gain / 3D Span / 3D Angle / 3D Slice Shadow, with
+# upstream's exact labels, ranges, defaults and tooltip wording for the five
+# ported controls and the NereusSDR-original 3D Angle slider. setDssValues
+# seeds all six widgets without echoing back out through the change
+# signals, and setDssRowSpanSupported greys out only the 3D Span row on the
+# CPU-fallback render path. The final test right-clicks a real SpectrumWidget
+# (same idiom as tst_notch_hit_test.cpp) to prove the six connect() calls in
+# SpectrumWidget.cpp reach the real Task 6 setters, not a parallel test-only
+# wiring.
+# Source: AetherSDR src/gui/SpectrumOverlayMenu.cpp:1874-1943, :2250-2273
+# [@1872028c].
+nereus_add_test(tst_dss_overlay_menu)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
