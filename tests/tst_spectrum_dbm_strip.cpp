@@ -18,6 +18,10 @@ private slots:
     void arrowHit_outsideReturnsNegativeOne();
     void adaptiveStepDb_selectsByRange_data();
     void adaptiveStepDb_selectsByRange();
+    void dssRoundedLabelSet_emptyWhenRangeNonPositive();
+    void dssRoundedLabelSet_matchesKnownValues();
+    void dssRoundedLabelSet_subStepShiftLeavesSetUnchanged();
+    void dssRoundedLabelSet_fullStepShiftChangesSet();
 };
 
 void TestSpectrumDbmStrip::stripRect_occupiesRightEdge()
@@ -83,6 +87,51 @@ void TestSpectrumDbmStrip::adaptiveStepDb_selectsByRange()
     QFETCH(float, dynamicRange);
     QFETCH(float, expectedStep);
     QCOMPARE(adaptiveStepDb(dynamicRange), expectedStep);
+}
+
+// I2 fix (final review of the 3D stacked-trace spectrum plan): unit tests
+// for the pure label-set generator that lets SpectrumWidget's GPU-path 3D
+// dBm-scale overlay-cache staleness check ask "would the operator see
+// different text" without a QPainter. See tst_dss_dbm_scale.cpp for the
+// SpectrumWidget-level integration test that binds this to the actual
+// overlay-dirty behaviour.
+void TestSpectrumDbmStrip::dssRoundedLabelSet_emptyWhenRangeNonPositive()
+{
+    QCOMPARE(dssRoundedLabelSet(-40.0f, 0.0f),  QVector<int>());
+    QCOMPARE(dssRoundedLabelSet(-40.0f, -10.0f), QVector<int>());
+}
+
+void TestSpectrumDbmStrip::dssRoundedLabelSet_matchesKnownValues()
+{
+    // rangeDb=100 -> adaptiveStepDb=20 (see adaptiveStepDb_selectsByRange
+    // above). topDbm=-30 -> bottomDbm=-130, a 20 dB grid line, so
+    // firstLabel is picked deliberately 10 dB clear of any boundary in
+    // either direction (unlike e.g. topDbm=-40/bottomDbm=-140, which sits
+    // exactly ON a grid line and is far more sensitive to float noise --
+    // ceil() snaps to a different multiple for even a 0.01 dB nudge across
+    // an exact boundary).
+    const QVector<int> labels = dssRoundedLabelSet(-30.0f, 100.0f);
+    const QVector<int> expected{-120, -100, -80, -60, -40, -130};
+    QCOMPARE(labels, expected);
+}
+
+void TestSpectrumDbmStrip::dssRoundedLabelSet_subStepShiftLeavesSetUnchanged()
+{
+    // A sub-tenth-dB shift, safely clear of the nearest 20 dB grid line
+    // (10 dB away at topDbm=-30), must not move a single rounded label.
+    // Precondition tst_dss_dbm_scale.cpp's
+    // overlayFreshness_ignoresSubLabelFloorDrift relies on.
+    QCOMPARE(dssRoundedLabelSet(-30.05f, 100.0f),
+             dssRoundedLabelSet(-30.0f, 100.0f));
+}
+
+void TestSpectrumDbmStrip::dssRoundedLabelSet_fullStepShiftChangesSet()
+{
+    // A full 20 dB shift (one adaptive step at this range) must change
+    // the set. Precondition
+    // overlayFreshness_dirtiesOnLabelChangingFloorShift relies on.
+    QVERIFY(dssRoundedLabelSet(-10.0f, 100.0f)
+            != dssRoundedLabelSet(-30.0f, 100.0f));
 }
 
 QTEST_APPLESS_MAIN(TestSpectrumDbmStrip)

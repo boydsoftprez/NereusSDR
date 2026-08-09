@@ -154,6 +154,14 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QFile>
+// Pre-existing CPU-build gap (predates the 3DSS port): m_waterfallTickerThread
+// calls QThread::start()/quit()/wait() and connects &QThread::started /
+// &QThread::finished, all needing the complete type. The GPU build got this
+// transitively through <rhi/qrhi.h>'s Qt-private includes; CPU-only never
+// pulled it in, so <QThread> was only ever forward-declared and the build
+// failed with -DNEREUS_GPU_SPECTRUM=OFF. Caught while verifying that
+// configuration for this fix wave.
+#include <QThread>
 
 #ifdef NEREUS_GPU_SPECTRUM
 #include <rhi/qshader.h>
@@ -1037,6 +1045,19 @@ void SpectrumWidget::loadSettings()
     // mirror keeps whatever value the band-change push last set until the
     // next one arrives.
     {
+        // Direct assignment, not setSpectrumRenderMode(mode): that setter's
+        // ring-clear-on-leaving-3D (m_dss.clear()/m_dssRowsPushed=0),
+        // markOverlayDirty()/update(), and spectrumRenderModeChanged signal
+        // all assume a LIVE transition an observer might care about.
+        // loadSettings() runs once at construction, before this widget has
+        // painted a frame or wired any observer to that signal, so skipping
+        // them here is inert today. It will stop being inert once Phase 3F
+        // (multi-panadapter) can call loadSettings() again on an
+        // already-live widget to re-home it onto a different pan's
+        // persisted config -- migrating a 3D pan's widget onto a 2D pan's
+        // settings would then leave a stale ring behind and never notify
+        // whatever had been listening for the mode change. Route through
+        // setSpectrumRenderMode() once that reuse path exists.
         const int modeRaw = readInt(QStringLiteral("DisplaySpectrumRenderMode"), 0);
         m_spectrumRenderMode = static_cast<SpectrumRenderMode>(
             qBound(0, modeRaw, static_cast<int>(SpectrumRenderMode::Count) - 1));
@@ -2028,6 +2049,49 @@ void SpectrumWidget::processNoiseFloor()
     }
 }
 
+#ifdef NEREUS_GPU_SPECTRUM
+// I2 fix (final review of the 3D stacked-trace spectrum port,
+// docs/architecture/2026-08-08-3d-stacked-trace-spectrum-plan.md):
+// NereusSDR-original -- AetherSDR has no overlay cache to keep fresh.
+//
+// The 3D dBm-scale strip is baked into m_overlayStatic only when
+// m_overlayStaticDirty is set (renderGpuFrame's overlay block calls
+// drawDbmScale3D(..., dssFloorDbm()) inside that guard), but dssFloorDbm()
+// == m_nfLerpAverage - m_dssFloorDepth re-lerps every frame in
+// processNoiseFloor() above without dirtying anything. Left unchecked, the
+// baked strip goes stale after any floor shift (e.g. a band change) and
+// stays stale indefinitely -- nothing else re-dirties it for this reason.
+//
+// Dirty ONLY when the ROUNDED LABEL SET drawDbmScaleLabels() would actually
+// draw has changed -- not on every sub-pixel lerp step. m_overlayStaticDirty
+// is one flag for the WHOLE cached overlay (grid, band plan, freq scale,
+// etc.), and the perf-fix comments around the overlay-rebuild block further
+// down in this file identify that rebuild as the dominant per-paint cost;
+// dirtying unconditionally here would rebuild all of it every frame and
+// regress every GPU user, including 2D ones (processNoiseFloor runs
+// regardless of render mode).
+void SpectrumWidget::updateDssScaleOverlayFreshness()
+{
+    if (!m_dbmScaleVisible
+            || m_spectrumRenderMode != SpectrumRenderMode::Mode3D) {
+        return;
+    }
+    const float floorDbm = dssFloorDbm();
+    const float span = dssRoundedSpanDb();
+    if (m_dssLastBakedFloorDbm.has_value()) {
+        const QVector<int> bakedLabels = NereusSDR::DbmStrip::dssRoundedLabelSet(
+            *m_dssLastBakedFloorDbm + span, span);
+        const QVector<int> liveLabels = NereusSDR::DbmStrip::dssRoundedLabelSet(
+            floorDbm + span, span);
+        if (bakedLabels == liveLabels) {
+            return;
+        }
+    }
+    m_dssLastBakedFloorDbm = floorDbm;
+    markOverlayDirty();
+}
+#endif
+
 // ---- NF-aware grid (Task 2.9) ----
 // From Thetis setup.cs:24202-24213 [v2.10.3.13]
 // — RX1 scope dropped; NereusSDR applies as global panadapter default
@@ -2370,6 +2434,19 @@ void SpectrumWidget::setDssRowSpan(int pct)
     const int v = std::clamp(pct, 0, 100);
     if (m_dssRowSpan == v) { return; }
     m_dssRowSpan = v;
+    // Deliberately no m_dss.invalidate() / markOverlayDirty() here, unlike
+    // setDssFloorDepth/setDssGain/setDssAngle/setSpectrumRenderMode above.
+    // rowSpanFactor (dssRowSpanTarget(), fed from m_dssRowSpan) is written
+    // into the mesh UBO fresh every GPU frame from writeDssMeshUbo() --
+    // there is no cached geometry or baked overlay pixel that depends on
+    // its value, so the very next frame already reflects a change with no
+    // invalidation needed. The CPU fallback (buildDssImage()) takes no
+    // row-span input at all and always draws the classic narrowing
+    // trapezoid regardless -- see dssRowSpanSupported() in
+    // DssMeshGeometry.h for the same "GPU-mesh-only" fact stated from the
+    // control-enablement side. Do not "fix" this by adding the calls its
+    // siblings have; span is the one 3D control that genuinely does not
+    // need them.
     scheduleSettingsSave();
     update();
     emit dssRowSpanChanged(m_dssRowSpan);
@@ -3084,6 +3161,12 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // m_showNoiseFloor) so the lerp/fft state stays current even when the
     // overlay is toggled off — saves a cold-start visual jump on toggle on.
     processNoiseFloor();
+#ifdef NEREUS_GPU_SPECTRUM
+    // I2 fix: dirty the cached 3D dBm-scale strip only when the floor just
+    // updated above actually moved its rounded label set. See
+    // updateDssScaleOverlayFreshness() for the full rationale.
+    updateDssScaleOverlayFreshness();
+#endif
 
     // 2026-05-25 perf fix: this block USED to force the ENTIRE GPU
     // overlay texture (freq scale, dBm strip, bandplan, time scale,
@@ -5250,7 +5333,8 @@ float SpectrumWidget::dssRowSpanTarget(double targetBandwidthMhz) const
 // / dss_mesh.frag both declare [8]); the builder below truncates to this
 // many rather than ever overrunning writeDssMeshUbo()'s UBO write.
 // From AetherSDR SpectrumWidget.cpp:14219-14225 [@1872028c]
-// (kShadowBandsOffset/kShadowStylesOffset sized off DssMesh::kShadowSlices,
+// (kShadowBandsOffset/kShadowStylesOffset sized off
+// SpectrumWidget::kDssMeshShadowSlices [SpectrumWidget.h:2018],
 // upstream's own name for this same fixed budget).
 static constexpr int kDssShadowSlices = 8;
 
@@ -7398,7 +7482,17 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         m_overlayMenu->setDssValues(spectrumRenderMode(), dssFloorDepth(),
                                      dssGain(), dssRowSpan(), dssAngle(),
                                      threeDSliceDepth());
-        m_overlayMenu->setDssRowSpanSupported(dssMeshReady());
+        // dssMeshReady() alone is build-safe (CPU build hardcodes false), but
+        // route through dssRowSpanSupported() anyway to match upstream's two
+        // independent gates (compile-time GPU build + runtime mesh-ready)
+        // explicitly rather than folding them together implicitly.
+#ifdef NEREUS_GPU_SPECTRUM
+        m_overlayMenu->setDssRowSpanSupported(
+            dssRowSpanSupported(/*gpuSpectrumBuild=*/true, dssMeshReady()));
+#else
+        m_overlayMenu->setDssRowSpanSupported(
+            dssRowSpanSupported(/*gpuSpectrumBuild=*/false, dssMeshReady()));
+#endif
         // The frequency under the cursor, captured at popup time: the
         // popup outlives the press, and by the time the button is clicked
         // the pointer has moved onto the popup itself.

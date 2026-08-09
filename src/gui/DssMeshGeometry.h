@@ -173,10 +173,6 @@ inline constexpr int kDssMeshUboFloats =
 
 // ─── Outline pipeline selection ─────────────────────────────────────────
 // From AetherSDR src/gui/SpectrumPreviewLogic.h:11-56 [@1872028c].
-//
-// Task 7 brief note: this file also declares `dssRowSpanSupported`
-// (SpectrumPreviewLogic.h:19-31), deliberately NOT ported here -- it
-// belongs with the 3D Span control wiring in a later task.
 
 enum class DssOutlinePipelineMode {
     DedicatedRibbonPipeline,
@@ -198,7 +194,7 @@ constexpr DssOutlinePipelineMode dssOutlinePipelineModeForBackend(
 // pipeline type purely so the selection stays testable without a QRhi device:
 // SpectrumWidget instantiates it with QRhiGraphicsPipeline*. Keeping the
 // selection here rather than as a ternary at the draw site is what lets
-// the unit test pin the mapping the renderer actually uses.
+// spectrum_preview_logic_test pin the mapping the renderer actually uses.
 // dedicatedPipeline is null on OpenGL — never created — so the shared-fill
 // answer must not depend on it.
 template <typename PipelineT>
@@ -209,6 +205,29 @@ constexpr PipelineT* dssOutlinePipelineFor(DssOutlinePipelineMode mode,
     return mode == DssOutlinePipelineMode::SharedFillPipeline
         ? fillPipeline
         : dedicatedPipeline;
+}
+
+// Whether the "3D Span" control can actually affect the display.
+//
+// rowSpanFactor is a dss_mesh.vert uniform, so ONLY the GPU height-map mesh
+// honours it: DssRenderer::rebuild(), the CPU image fallback, ignores it and
+// always draws the narrowing trapezoid. Two independent ways to end up there --
+// a build configured with NEREUS_GPU_SPECTRUM=OFF (upstream: AETHER_GPU_SPECTRUM,
+// substituted here for this project's own build flag of the same purpose), and
+// a runtime without RGBA16F support leaving m_dssMeshReady false -- and BOTH
+// must disable the control, or it moves, labels and persists while nothing on
+// screen changes, which an operator cannot tell apart from "this source ships
+// no overhang". Ported verbatim, aside from the flag-name substitution noted
+// above, from AetherSDR src/gui/SpectrumPreviewLogic.h:19-31 [@1872028c].
+//
+// Deferred out of this file at Task 7 time ("belongs with the 3D Span control
+// wiring in a later task"); ported in now alongside the fix that wires
+// SpectrumWidget::dssMeshReady() into both build configurations, so the
+// caller (SpectrumWidget's 3D VIEW overlay-menu popup) has a single
+// GPU-build-and-CPU-build-safe answer to ask.
+constexpr bool dssRowSpanSupported(bool gpuSpectrumBuild, bool meshReady)
+{
+    return gpuSpectrumBuild && meshReady;
 }
 
 }  // namespace NereusSDR

@@ -24,6 +24,56 @@ class TestDssDbmScale : public QObject {
     Q_OBJECT
 
 private slots:
+    // I2 fix (final review): the GPU-path 3D dBm-scale overlay cache must
+    // dirty when the noise floor drifts far enough to change the rounded
+    // label set drawDbmScaleLabels() draws, but must NOT dirty on every
+    // sub-pixel lerp step (the overlay rebuild is this file's own
+    // documented dominant per-paint cost -- see the "2026-05-25 perf fix"
+    // comments in SpectrumWidget.cpp). floorDbm values below are chosen
+    // 10 dB clear of the nearest 20 dB grid line at this dbmRange (see
+    // tst_spectrum_dbm_strip.cpp's dssRoundedLabelSet_matchesKnownValues
+    // for why an exact-grid-line floor is the wrong precondition to test
+    // against) -- m_dssFloorDepth defaults to 6, so a -124 measured floor
+    // is a -130 dssFloorDbm().
+    void overlayFreshness_dirtiesOnLabelChangingFloorShift() {
+        SpectrumWidget w;
+        w.setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode3D));
+        w.setDbmRange(-140.0f, -40.0f);
+
+        w.setMeasuredNoiseFloorForTest(-124.0f);
+        w.refreshDssScaleOverlayFreshnessForTest();  // bakes the reference
+        w.clearOverlayStaticDirtyForTest();
+
+        // Full 20 dB shift (one adaptive step at this range -- see
+        // adaptiveStepDb_selectsByRange in tst_spectrum_dbm_strip.cpp):
+        // guaranteed to change the rounded label set.
+        w.setMeasuredNoiseFloorForTest(-104.0f);
+        w.refreshDssScaleOverlayFreshnessForTest();
+        QVERIFY2(w.overlayStaticDirtyForTest(),
+                 "a floor shift large enough to change the rounded label "
+                 "set must dirty the cached 3D dBm-scale overlay");
+    }
+
+    void overlayFreshness_ignoresSubLabelFloorDrift() {
+        SpectrumWidget w;
+        w.setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode3D));
+        w.setDbmRange(-140.0f, -40.0f);
+
+        w.setMeasuredNoiseFloorForTest(-124.0f);
+        w.refreshDssScaleOverlayFreshnessForTest();  // bakes the reference
+        w.clearOverlayStaticDirtyForTest();
+
+        // A lerp-sized drift (well under a tenth of a dB) that cannot
+        // cross a 20 dB grid line starting 10 dB clear of the nearest one.
+        w.setMeasuredNoiseFloorForTest(-124.05f);
+        w.refreshDssScaleOverlayFreshnessForTest();
+        QVERIFY2(!w.overlayStaticDirtyForTest(),
+                 "a sub-pixel floor drift that does not change any rounded "
+                 "label must NOT dirty the cached 3D dBm-scale overlay -- "
+                 "see the perf rationale in "
+                 "SpectrumWidget::updateDssScaleOverlayFreshness()");
+    }
+
     // In 3D the scale is anchored to the drifting noise floor, not to the
     // Ref level, so its labels must move when the floor moves. This is the
     // task brief's own given test; dssFloorDbm() itself is already pinned

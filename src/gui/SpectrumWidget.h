@@ -163,6 +163,8 @@ mw0lge@grange-lane.co.uk
 #include <QTimer>
 #include <QPropertyAnimation>
 
+#include <optional>
+
 #include "spectrum/ActivePeakHoldTrace.h"
 #include "spectrum/PeakBlobDetector.h"
 #include "spectrum/SpectrumAvenger.h"
@@ -1437,6 +1439,16 @@ public:
         m_overlayStaticDirty = false;
 #endif
     }
+    // I2 fix seam: runs the same GPU-path 3D dBm-scale overlay-cache
+    // freshness check updateSpectrumLinear() runs every frame (right
+    // after processNoiseFloor()), without needing a synthetic FFT frame.
+    // No-op on a CPU-only build -- nothing is cached there to go stale,
+    // matching overlayStaticDirtyForTest() above.
+    void refreshDssScaleOverlayFreshnessForTest() {
+#ifdef NEREUS_GPU_SPECTRUM
+        updateDssScaleOverlayFreshness();
+#endif
+    }
 
 signals:
     // 2026-05-22 bench fix: emitted after each updateSpectrumLinear
@@ -2153,6 +2165,23 @@ private:
     qint64 m_fpsLastUpdateMs{0};
     float  m_fpsDisplayValue{0.0f};
 
+    // Toggle for the in-spectrum perf overlay (drawn in a corner showing
+    // paint/gap/fft/overlay-rebuild timings + audio underruns + memory
+    // pressure).  Persisted via AppSettings key "ShowPerfOverlay"; View
+    // menu wires the setter.  Declared unconditionally (unlike the
+    // renderGpuFrame-only perf fields further down, guarded by
+    // NEREUS_GPU_SPECTRUM): showPerfOverlay()/setShowPerfOverlay() and the
+    // constructor's m_perfPollTimer setup are ordinary shared code, so a
+    // CPU-only build needs the same storage even though it has no GPU
+    // overlay to actually draw the HUD into -- same reasoning as
+    // dssMeshReady() above. This was a pre-existing CPU-build break
+    // (predates the 3DSS port) caught while verifying -DNEREUS_GPU_SPECTRUM=OFF
+    // for this fix wave.
+    bool m_showPerfOverlay{false};
+    // 1 Hz timer that polls memory pressure + drives perf overlay refresh.
+    // Owned by SpectrumWidget via Qt parent ownership.
+    QTimer* m_perfPollTimer{nullptr};
+
     // ---- VFO / filter overlay ----
     double m_vfoHz{0.0};
     int    m_filterLowHz{-2850};    // LSB default — from Thetis
@@ -2550,6 +2579,20 @@ private:
     bool   m_overlayStaticDirty{true};
     bool   m_overlayNeedsUpload{true};
 
+    // I2 fix (final review of the 3D stacked-trace spectrum port): dBm
+    // value of dssFloorDbm() as of the last time the 3D dBm-scale strip's
+    // label set was actually baked into m_overlayStatic. Compared each
+    // frame (updateDssScaleOverlayFreshness(), called from
+    // updateSpectrumLinear right after processNoiseFloor()) against the
+    // live dssFloorDbm() -- itself re-lerped every frame -- so the overlay
+    // is only marked dirty when the ROUNDED LABEL SET would actually
+    // change, not on every sub-pixel lerp step. std::nullopt means "never
+    // baked yet"; harmless, since m_overlayStaticDirty already starts
+    // true above and bakes the first real frame regardless of this check.
+    std::optional<float> m_dssLastBakedFloorDbm;
+    // I2 fix: the freshness check itself -- see m_dssLastBakedFloorDbm.
+    void updateDssScaleOverlayFreshness();
+
     // 2026-05-26 KG4VCF dual-layer overlay split.
     //
     // The static texture above carries chrome (grid, scales, bandplan,
@@ -2587,14 +2630,6 @@ private:
     // perf overlay can show if paint events are arriving on time.
     // A gap > the display period == main thread was blocked.
     qint64 m_lastPaintWallMs{0};
-    // Toggle for the in-spectrum perf overlay (drawn in a corner
-    // showing paint/gap/fft/overlay-rebuild timings + audio underruns
-    // + memory pressure).  Persisted via AppSettings key
-    // "ShowPerfOverlay"; View menu wires the setter.
-    bool m_showPerfOverlay{false};
-    // 1 Hz timer that polls memory pressure + drives perf overlay
-    // refresh.  Owned by SpectrumWidget via Qt parent ownership.
-    QTimer* m_perfPollTimer{nullptr};
 
     // ---- FFT spectrum GPU resources ----
     QRhiGraphicsPipeline*       m_fftLinePipeline{nullptr};
@@ -2619,7 +2654,6 @@ private:
     void uploadDssPaletteLut(QRhiResourceUpdateBatch* batch);
     void writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
                          const QRect& specRect, float dpr);
-    bool dssMeshReady() const { return m_dssMeshReady; }
 
     QRhiGraphicsPipeline*       m_dssFillPipeline{nullptr};
     QRhiGraphicsPipeline*       m_dssLinePipeline{nullptr};
@@ -2672,6 +2706,19 @@ private:
     int     m_dssFallbackTexH{0};
     quint64 m_dssFallbackUploadedGen{~0ull};
 
+#endif
+
+    // Whether the GPU 3DSS mesh pipeline is up and has data this frame.
+    // Deliberately declared OUTSIDE the NEREUS_GPU_SPECTRUM block above
+    // (unlike the GPU-only resources and helpers it reads) because callers
+    // such as the 3D VIEW overlay menu's "3D Span" control gate
+    // (dssRowSpanSupported(), DssMeshGeometry.h) need to ask this question
+    // in both build configurations. A CPU-only build has no GPU mesh at
+    // all, so the answer there is always false.
+#ifdef NEREUS_GPU_SPECTRUM
+    bool dssMeshReady() const { return m_dssMeshReady; }
+#else
+    bool dssMeshReady() const { return false; }
 #endif
 
     // Invalidate the GPU-path cached overlay texture so grid, labels,
