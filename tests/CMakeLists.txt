@@ -6299,6 +6299,22 @@ nereus_add_test(tst_dss_overlay_menu)
 # keys), so there is no upstream source to cite.
 nereus_add_test(tst_dss_persistence)
 
+# ── 3D stacked-trace spectrum plan, Task 15: Setup mirror + two-way sync ──
+# Pins Display3DSetupPage (Setup -> Display -> 3D View): the same six
+# controls Task 13 put in the right-click overlay menu, now also reachable
+# from the Setup dialog. An edit on the Setup page reaches SpectrumWidget;
+# an edit on SpectrumWidget (as the overlay menu would drive it) reaches
+# back to the Setup page's own widgets; and driving the round trip through
+# SpectrumWidget::dssAngleChanged (the new Task 15 signal) settles in
+# exactly one emission rather than an echo cascade between the two
+# surfaces. "Reset 3D to defaults" restores all six ship defaults. This is
+# a NereusSDR-original Setup-dialog page with no AetherSDR counterpart --
+# AetherSDR's own RadioSetupDialog has no 3D View section at all (verified
+# against the pinned commit; see the file header) -- so there is no
+# upstream source to cite for the page itself; labels/ranges/defaults
+# match the already-cited Task 13 overlay-menu row.
+nereus_add_test(tst_dss_setup_sync)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

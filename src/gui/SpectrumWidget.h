@@ -1537,6 +1537,30 @@ signals:
     // Same pattern as TxChannel::txFilterApplied (Plan 4 D8).
     void txFilterOverlayPainted(int xLeft, int xRight);
 
+    // ── 3DSS Setup-dialog mirror (3D Stacked-Trace Spectrum Plan Task 15) ──
+    // Two surfaces now edit the six DSS controls above: the Task 13
+    // right-click overlay menu and Setup -> Display -> 3D View
+    // (Display3DSetupPage). Each setter emits its matching signal here
+    // after its own state-settles/early-return guard (`if (m_field == v)
+    // { return; }`), so the Setup page can follow a change made through
+    // the overlay menu (or any other caller) the same way it already
+    // follows its own widgets, without a second polling path. Five of
+    // the six are NereusSDR-original signal infrastructure -- source-
+    // first governs DSP/radio logic, not this control-surface wiring.
+    // dssFloorDepthChanged borrows its guarded-emit shape from AetherSDR
+    // SpectrumWidget.h:799 [@1872028c] dssFloorDepthResolved (a real but
+    // narrower-purpose upstream signal that fed the SAME overlay menu
+    // back for a Flex/Kiwi source-dispatch reason NereusSDR's single-
+    // source model does not have) -- see docs/attribution/aethersdr-
+    // reconciliation.md, "3D Stacked-Trace Spectrum Plan" section, the
+    // Task 15 rows for this file, for the full citation.
+    void spectrumRenderModeChanged(int mode);
+    void dssFloorDepthChanged(int dB);
+    void dssGainChanged(int pct);
+    void dssRowSpanChanged(int pct);
+    void dssAngleChanged(int pct);
+    void threeDSliceDepthChanged(bool on);
+
 protected:
 #ifdef NEREUS_GPU_SPECTRUM
     void initialize(QRhiCommandBuffer* cb) override;

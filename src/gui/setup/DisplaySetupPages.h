@@ -73,6 +73,7 @@ namespace NereusSDR {
 
 class PanadapterModel;
 class ColorSwatchButton;
+class SpectrumWidget;
 
 // ---------------------------------------------------------------------------
 // Display > Spectrum Defaults
@@ -323,6 +324,72 @@ private:
     QLabel*         m_gridColorLabel{nullptr};  // placeholder color swatch
     QSlider*        m_lineWidthSlider{nullptr}; // 1–3
     QDoubleSpinBox* m_calOffsetSpin{nullptr};   // dBm offset
+};
+
+// ---------------------------------------------------------------------------
+// Display > 3D View
+//
+// 3D Stacked-Trace Spectrum Plan Task 15: mirrors the six controls the
+// Task 13 right-click overlay menu (SpectrumOverlayMenu "3D VIEW" section)
+// already exposes -- Spectrum render mode, 3D Floor, 3D Gain, 3D Span,
+// 3D Angle, 3D Slice Shadow -- into Setup -> Display, so an operator who
+// never right-clicks the panadapter still has full reach. Labels, ranges
+// and defaults match the overlay menu's already-cited AetherSDR-derived
+// values (docs/attribution/aethersdr-reconciliation.md, "3D Stacked-Trace
+// Spectrum Plan" section, Task 13 rows) verbatim, so both surfaces read the
+// same. The page itself has no AetherSDR Setup-dialog counterpart --
+// AetherSDR's own setup surface is SmartSDR-license-only and its
+// RadioSetupDialog has no 3D View section at all -- so it is NereusSDR-
+// original, per the design doc's divergence table (docs/architecture/
+// 2026-08-08-3d-stacked-trace-spectrum-design.md section 7).
+//
+// Constructed directly against a SpectrumWidget, not RadioModel like every
+// sibling page above: this keeps the page testable headlessly (tests/
+// tst_dss_setup_sync.cpp builds a bare SpectrumWidget with no RadioModel/
+// MainWindow in sight) and matches the Task 13 overlay menu's own
+// SpectrumWidget-first wiring. SetupDialog's production registration
+// passes model->spectrumWidget() through this same constructor.
+//
+// Two-way sync: this page's six widgets and the Task 13 overlay menu both
+// write the SAME live SpectrumWidget state, and SetupDialog is non-modal,
+// so the overlay menu can change that state while this page is open.
+// m_updatingFromModel guards both directions -- the same pattern
+// AudioTxInputPage.cpp uses for its Mic Gain <-> TxApplet mirror -- so a
+// push from either surface settles in one hop instead of echoing.
+// ---------------------------------------------------------------------------
+class Display3DSetupPage : public SetupPage {
+    Q_OBJECT
+public:
+    explicit Display3DSetupPage(SpectrumWidget* spectrumWidget, QWidget* parent = nullptr);
+
+    // Test seam: applies the six ship defaults without the confirmation
+    // QMessageBox the production "Reset 3D to defaults" click handler
+    // shows first. Mirrors the Phase 3G-9b "Reset to Smooth Defaults"
+    // split between the confirmed click handler and the underlying apply
+    // logic (SpectrumDefaultsPage::buildUI()'s resetBtn lambda).
+    void resetToDefaultsForTest();
+
+private:
+    void buildUI();
+    // Seeds all six widgets from the live SpectrumWidget getters, guarded
+    // against echoing back out through the "push to widget" connections
+    // buildUI() wires. Called once at construction (after buildUI()'s
+    // widgets exist) and by every SpectrumWidget "changed" signal handler.
+    void loadFromWidget();
+
+    SpectrumWidget* m_spectrumWidget{nullptr};
+
+    QComboBox* m_modeCombo{nullptr};
+    QSlider*   m_floorSlider{nullptr};
+    QSlider*   m_gainSlider{nullptr};
+    QSlider*   m_spanSlider{nullptr};
+    QSlider*   m_angleSlider{nullptr};
+    QCheckBox* m_sliceShadowCheck{nullptr};
+
+    // Guard flag for two-way sync with SpectrumWidget, mirroring the
+    // pattern AudioTxInputPage.cpp uses for its own bidirectional Mic Gain
+    // slider <-> TransmitModel mirror.
+    bool m_updatingFromModel{false};
 };
 
 } // namespace NereusSDR

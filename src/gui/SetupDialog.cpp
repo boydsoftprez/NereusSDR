@@ -667,6 +667,14 @@ void SetupDialog::buildTree()
     registerPage(display, "RX2 Display", [this] { return new Rx2DisplayPage(m_model); });
     registerPage(display, "TX Display",  [this] { return new TxDisplayPage(m_model);  });
 
+    // 3D Stacked-Trace Spectrum Plan Task 15: mirrors the Task 13 overlay
+    // menu's six 3D controls into Setup -> Display. Constructed against
+    // the SpectrumWidget directly (not RadioModel, unlike every page
+    // above) per Display3DSetupPage's own class-header comment.
+    registerPage(display, "3D View", [this]() -> QWidget* {
+        return new Display3DSetupPage(m_model ? m_model->spectrumWidget() : nullptr);
+    });
+
     tick("Display");
 
     // ── Transmit ──────────────────────────────────────────────────────────────

@@ -2330,6 +2330,10 @@ void SpectrumWidget::setSpectrumRenderMode(int mode)
     markOverlayDirty();
     scheduleSettingsSave();
     update();
+    // Task 15: announce the settled (normalized) value, not the raw
+    // possibly-out-of-range `mode` argument, so a listener never observes
+    // a value setSpectrumRenderMode() itself would have rejected.
+    emit spectrumRenderModeChanged(static_cast<int>(m_spectrumRenderMode));
 }
 
 void SpectrumWidget::setDssFloorDepth(int dB)
@@ -2341,6 +2345,13 @@ void SpectrumWidget::setDssFloorDepth(int dB)
     markOverlayDirty();
     scheduleSettingsSave();
     update();
+    // Guard shape (only emit once the resolved value actually settles)
+    // borrowed from AetherSDR SpectrumWidget.cpp:4628 [@1872028c]
+    // (setDssFloorDepthForSource's `if (resolvedDepth != previousResolvedDepth)
+    // emit dssFloorDepthResolved(...)`), which fed the same overlay menu back
+    // for a Flex/Kiwi source-dispatch reason this single-source build does
+    // not have -- the early-return guard above already does the settling.
+    emit dssFloorDepthChanged(m_dssFloorDepth);
 }
 
 void SpectrumWidget::setDssGain(int pct)
@@ -2351,6 +2362,7 @@ void SpectrumWidget::setDssGain(int pct)
     m_dss.invalidate();
     scheduleSettingsSave();
     update();
+    emit dssGainChanged(m_dssGain);
 }
 
 void SpectrumWidget::setDssRowSpan(int pct)
@@ -2360,6 +2372,7 @@ void SpectrumWidget::setDssRowSpan(int pct)
     m_dssRowSpan = v;
     scheduleSettingsSave();
     update();
+    emit dssRowSpanChanged(m_dssRowSpan);
 }
 
 void SpectrumWidget::setDssAngle(int pct)
@@ -2371,6 +2384,10 @@ void SpectrumWidget::setDssAngle(int pct)
     markOverlayDirty();
     scheduleSettingsSave();
     update();
+    // Task 15: lets Display3DSetupPage follow a change made through the
+    // overlay menu (or any other caller) the same way it follows its own
+    // slider -- see the round-trip guard in DisplaySetupPages.cpp.
+    emit dssAngleChanged(m_dssAngle);
 }
 
 void SpectrumWidget::setThreeDSliceDepth(bool on)
@@ -2379,6 +2396,7 @@ void SpectrumWidget::setThreeDSliceDepth(bool on)
     m_threeDSliceDepth = on;
     scheduleSettingsSave();
     update();
+    emit threeDSliceDepthChanged(m_threeDSliceDepth);
 }
 
 // Issue #230 fix: Clarity is a NereusSDR-only override modeled on

@@ -2320,4 +2320,265 @@ void TxDisplayPage::buildUI()
     contentLayout()->addStretch();
 }
 
+// ---------------------------------------------------------------------------
+// Display3DSetupPage
+// ---------------------------------------------------------------------------
+// 3D Stacked-Trace Spectrum Plan Task 15. See the class-header comment in
+// DisplaySetupPages.h for the full attribution and two-way-sync rationale.
+
+Display3DSetupPage::Display3DSetupPage(SpectrumWidget* spectrumWidget, QWidget* parent)
+    : SetupPage(QStringLiteral("3D View"), parent)
+    , m_spectrumWidget(spectrumWidget)
+{
+    buildUI();
+    loadFromWidget();
+
+    if (!m_spectrumWidget) { return; }
+
+    // SpectrumWidget -> this page. Each lambda guards with
+    // m_updatingFromModel AND QSignalBlocker (belt-and-suspenders, matching
+    // AudioTxInputPage::onModelMicGainDbChanged) so reflecting the change
+    // into this page's own widget cannot re-emit that widget's
+    // valueChanged/toggled/currentIndexChanged and walk back into the
+    // "push to widget" connections buildUI() wires below.
+    connect(m_spectrumWidget, &SpectrumWidget::spectrumRenderModeChanged,
+            this, [this](int mode) {
+        if (!m_modeCombo) { return; }
+        m_updatingFromModel = true;
+        {
+            QSignalBlocker block(m_modeCombo);
+            m_modeCombo->setCurrentIndex(qBound(0, mode, m_modeCombo->count() - 1));
+        }
+        m_updatingFromModel = false;
+    });
+    connect(m_spectrumWidget, &SpectrumWidget::dssFloorDepthChanged,
+            this, [this](int dB) {
+        if (!m_floorSlider) { return; }
+        m_updatingFromModel = true;
+        {
+            QSignalBlocker block(m_floorSlider);
+            m_floorSlider->setValue(dB);
+        }
+        m_updatingFromModel = false;
+    });
+    connect(m_spectrumWidget, &SpectrumWidget::dssGainChanged,
+            this, [this](int pct) {
+        if (!m_gainSlider) { return; }
+        m_updatingFromModel = true;
+        {
+            QSignalBlocker block(m_gainSlider);
+            m_gainSlider->setValue(pct);
+        }
+        m_updatingFromModel = false;
+    });
+    connect(m_spectrumWidget, &SpectrumWidget::dssRowSpanChanged,
+            this, [this](int pct) {
+        if (!m_spanSlider) { return; }
+        m_updatingFromModel = true;
+        {
+            QSignalBlocker block(m_spanSlider);
+            m_spanSlider->setValue(pct);
+        }
+        m_updatingFromModel = false;
+    });
+    connect(m_spectrumWidget, &SpectrumWidget::dssAngleChanged,
+            this, [this](int pct) {
+        if (!m_angleSlider) { return; }
+        m_updatingFromModel = true;
+        {
+            QSignalBlocker block(m_angleSlider);
+            m_angleSlider->setValue(pct);
+        }
+        m_updatingFromModel = false;
+    });
+    connect(m_spectrumWidget, &SpectrumWidget::threeDSliceDepthChanged,
+            this, [this](bool on) {
+        if (!m_sliceShadowCheck) { return; }
+        m_updatingFromModel = true;
+        {
+            QSignalBlocker block(m_sliceShadowCheck);
+            m_sliceShadowCheck->setChecked(on);
+        }
+        m_updatingFromModel = false;
+    });
+}
+
+void Display3DSetupPage::loadFromWidget()
+{
+    if (!m_spectrumWidget) { return; }
+
+    m_updatingFromModel = true;
+    if (m_modeCombo) {
+        QSignalBlocker block(m_modeCombo);
+        m_modeCombo->setCurrentIndex(
+            qBound(0, m_spectrumWidget->spectrumRenderMode(), m_modeCombo->count() - 1));
+    }
+    if (m_floorSlider) {
+        QSignalBlocker block(m_floorSlider);
+        m_floorSlider->setValue(m_spectrumWidget->dssFloorDepth());
+    }
+    if (m_gainSlider) {
+        QSignalBlocker block(m_gainSlider);
+        m_gainSlider->setValue(m_spectrumWidget->dssGain());
+    }
+    if (m_spanSlider) {
+        QSignalBlocker block(m_spanSlider);
+        m_spanSlider->setValue(m_spectrumWidget->dssRowSpan());
+    }
+    if (m_angleSlider) {
+        QSignalBlocker block(m_angleSlider);
+        m_angleSlider->setValue(m_spectrumWidget->dssAngle());
+    }
+    if (m_sliceShadowCheck) {
+        QSignalBlocker block(m_sliceShadowCheck);
+        m_sliceShadowCheck->setChecked(m_spectrumWidget->threeDSliceDepth());
+    }
+    m_updatingFromModel = false;
+}
+
+void Display3DSetupPage::buildUI()
+{
+    NereusSDR::Style::applyDarkPageStyle(this);
+
+    // Phase 3G-9b precedent (SpectrumDefaultsPage's "Reset to Smooth
+    // Defaults" button, above): a confirmation dialog gates the reset, and
+    // the actual apply logic is factored into a separate method
+    // (resetToDefaultsForTest here) so it is drivable without the modal
+    // QMessageBox in the loop.
+    auto* resetBtn = new QPushButton(QStringLiteral("Reset 3D to defaults"), this);
+    resetBtn->setToolTip(QStringLiteral(
+        "Restore Spectrum render mode, 3D Floor, 3D Gain, 3D Span, 3D Angle "
+        "and 3D Slice Shadow to their ship defaults (2D Waterfall / 6 dB / "
+        "70% / 100% / 50% / off)."));
+    connect(resetBtn, &QPushButton::clicked, this, [this]() {
+        const auto rc = QMessageBox::question(
+            this,
+            QStringLiteral("Reset 3D to defaults"),
+            QStringLiteral(
+                "This will restore Spectrum render mode, 3D Floor, 3D Gain, "
+                "3D Span, 3D Angle and 3D Slice Shadow to their ship "
+                "defaults.\n\nContinue?"),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (rc != QMessageBox::Yes) { return; }
+        resetToDefaultsForTest();
+    });
+    contentLayout()->addWidget(resetBtn);
+
+    auto* group = new QGroupBox(QStringLiteral("3D VIEW"), this);
+    auto* form  = new QFormLayout(group);
+    form->setSpacing(6);
+
+    // ── Spectrum render mode (2D waterfall vs 3DSS) ─────────────────────
+    // Labels/tooltip verbatim-matched to SpectrumOverlayMenu's "3D VIEW"
+    // section (Task 13; AetherSDR SpectrumOverlayMenu.cpp:1874-1943
+    // [@1872028c]) so an operator sees the same wording on both surfaces.
+    m_modeCombo = new QComboBox(group);
+    m_modeCombo->setObjectName(QStringLiteral("setup3DModeCombo"));
+    m_modeCombo->addItem(QStringLiteral("2D Waterfall"));       // SpectrumRenderMode::Mode2D
+    m_modeCombo->addItem(QStringLiteral("3D Stacked Trace"));   // SpectrumRenderMode::Mode3D
+    m_modeCombo->setToolTip(QStringLiteral(
+        "2D: FFT trace + waterfall.\n"
+        "3D: perspective stacked-trace spectrum stream."));
+    connect(m_modeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int idx) {
+        if (m_updatingFromModel || !m_spectrumWidget) { return; }
+        m_spectrumWidget->setSpectrumRenderMode(idx);
+    });
+    form->addRow(QStringLiteral("Spectrum:"), m_modeCombo);
+
+    // ── 3D floor depth -- how far below the noise floor to surface (dB) ──
+    {
+        auto row = makeSliderRow(0, 24, 6, QStringLiteral(" dB"), group);
+        m_floorSlider = row.slider;
+        m_floorSlider->setObjectName(QStringLiteral("setup3DFloorSlider"));
+        connect(m_floorSlider, &QSlider::valueChanged, this, [this](int v) {
+            if (m_updatingFromModel || !m_spectrumWidget) { return; }
+            m_spectrumWidget->setDssFloorDepth(v);
+        });
+        form->addRow(QStringLiteral("3D Floor:"), row.container);
+    }
+
+    // ── 3D gain -- how far down the strength range the colormap reaches ──
+    {
+        auto row = makeSliderRow(0, 100, 70, QStringLiteral("%"), group);
+        m_gainSlider = row.slider;
+        m_gainSlider->setObjectName(QStringLiteral("setup3DGainSlider"));
+        const QString gainTip = QStringLiteral(
+            "3D surface colour gain: how far down the signal range the "
+            "colormap reaches.\nHigher = colour down toward the noise "
+            "floor; lower = colour only on the strongest signals.");
+        m_gainSlider->setToolTip(gainTip);
+        row.spin->setToolTip(gainTip);
+        connect(m_gainSlider, &QSlider::valueChanged, this, [this](int v) {
+            if (m_updatingFromModel || !m_spectrumWidget) { return; }
+            m_spectrumWidget->setDssGain(v);
+        });
+        form->addRow(QStringLiteral("3D Gain:"), row.container);
+    }
+
+    // ── 3D span -- how far the near rows overhang the plot edges ────────
+    {
+        auto row = makeSliderRow(0, 100, 100, QStringLiteral("%"), group);
+        m_spanSlider = row.slider;
+        m_spanSlider->setObjectName(QStringLiteral("setup3DSpanSlider"));
+        const QString spanTip = QStringLiteral(
+            "3D surface width: how far the nearest traces overhang the "
+            "plot edges, using spectrum the radio sends from outside the "
+            "panadapter.\nHigher = the empty wedges beside the surface "
+            "close from the front; 0 = the classic narrowing trapezoid.");
+        m_spanSlider->setToolTip(spanTip);
+        row.spin->setToolTip(spanTip);
+        connect(m_spanSlider, &QSlider::valueChanged, this, [this](int v) {
+            if (m_updatingFromModel || !m_spectrumWidget) { return; }
+            m_spectrumWidget->setDssRowSpan(v);
+        });
+        form->addRow(QStringLiteral("3D Span:"), row.container);
+    }
+
+    // ── 3D angle, viewing elevation ──────────────────────────────────────
+    {
+        auto row = makeSliderRow(0, 100, 50, QStringLiteral("%"), group);
+        m_angleSlider = row.slider;
+        m_angleSlider->setObjectName(QStringLiteral("setup3DAngleSlider"));
+        const QString angleTip = QStringLiteral(
+            "Viewing angle for the 3D surface: low looks along the traces "
+            "edge-on, high looks down on them.\n50 is the classic fixed "
+            "angle.");
+        m_angleSlider->setToolTip(angleTip);
+        row.spin->setToolTip(angleTip);
+        connect(m_angleSlider, &QSlider::valueChanged, this, [this](int v) {
+            if (m_updatingFromModel || !m_spectrumWidget) { return; }
+            m_spectrumWidget->setDssAngle(v);
+        });
+        form->addRow(QStringLiteral("3D Angle:"), row.container);
+    }
+
+    // ── 3D slice shadow, perspective decal for slice passbands ──────────
+    m_sliceShadowCheck = new QCheckBox(QStringLiteral("3D Slice Shadow"), group);
+    m_sliceShadowCheck->setObjectName(QStringLiteral("setup3DSliceShadowCheck"));
+    m_sliceShadowCheck->setToolTip(QStringLiteral(
+        "Darken each slice's passband onto the 3D surface so it leans back\n"
+        "with the perspective, instead of drawing flat on top of it."));
+    connect(m_sliceShadowCheck, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_updatingFromModel || !m_spectrumWidget) { return; }
+        m_spectrumWidget->setThreeDSliceDepth(on);
+    });
+    form->addRow(QString(), m_sliceShadowCheck);
+
+    contentLayout()->addWidget(group);
+    contentLayout()->addStretch();
+}
+
+void Display3DSetupPage::resetToDefaultsForTest()
+{
+    if (!m_spectrumWidget) { return; }
+    m_spectrumWidget->setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode2D));
+    m_spectrumWidget->setDssFloorDepth(6);
+    m_spectrumWidget->setDssGain(70);
+    m_spectrumWidget->setDssRowSpan(100);
+    m_spectrumWidget->setDssAngle(50);
+    m_spectrumWidget->setThreeDSliceDepth(false);
+}
+
 } // namespace NereusSDR
