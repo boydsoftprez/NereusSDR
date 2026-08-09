@@ -264,6 +264,130 @@ private slots:
         QCOMPARE(pan.band(), Band::Band80m);
         QCOMPARE(sw.dssFloorDepth(), 4);  // and back again
     }
+
+    // ============================================================
+    // End-to-end save: live SpectrumWidget -> PanadapterModel
+    // (Task 15 fix-forward, coordinator review)
+    // ============================================================
+
+    // Catches: the exact bug the coordinator caught by grep --
+    // setDss3DFloorDepthForBand wired for recall only, never called from
+    // anywhere when the operator actually edits 3D Floor. Before this
+    // fix-forward, both bandChangeRecallsIntoTheLiveWidget_endToEnd above
+    // AND floorDepth_isRecalledPerBand/bandChange_pushesTheStoredDepth
+    // (which write directly through setDss3DFloorDepthForBand, bypassing
+    // the widget entirely) pass whether or not an operator edit ever
+    // reaches storage -- none of them drive the value through
+    // SpectrumWidget::setDssFloorDepth() the way the Task 13 overlay menu
+    // or the Task 15 Setup page actually would. This one does: it edits
+    // the WIDGET, not the model, then proves the edit survived a real
+    // band round trip by reading it back off the widget after leaving and
+    // returning to the same band -- the exact "set 18 on 80m, switch to
+    // 10m, switch back, get 4 instead of 18" bench shape from the review.
+    void operatorFloorEdit_savesAndSurvivesABandRoundTrip_endToEnd()
+    {
+        PanadapterModel pan;
+        SpectrumWidget sw;
+
+        pan.setCenterFrequency(3700000.0);  // 3.7 MHz -> 80m
+        QCOMPARE(pan.band(), Band::Band80m);
+
+        MainWindow::wireDss3DFloorRecallForTest(&pan, &sw);
+        QCOMPARE(sw.dssFloorDepth(), 6);  // 80m untouched yet: ship default
+
+        // Operator edit through the WIDGET -- exactly what the overlay
+        // menu / Setup page both ultimately call. This is the save path
+        // under test.
+        sw.setDssFloorDepth(18);
+        QCOMPARE(pan.dss3DFloorDepthForBand(Band::Band80m), 18);  // saved
+
+        pan.setCenterFrequency(28400000.0);  // 28.4 MHz -> 10m
+        QCOMPARE(pan.band(), Band::Band10m);
+        QCOMPARE(sw.dssFloorDepth(), 6);  // 10m untouched: recalls its own default
+
+        pan.setCenterFrequency(3700000.0);  // back to 80m
+        QCOMPARE(pan.band(), Band::Band80m);
+        QCOMPARE(sw.dssFloorDepth(), 18);  // the operator's edit survived
+    }
+
+    // Representative-shape coverage: a recall into a band nobody has ever
+    // operator-edited must not fabricate a persisted key for it. Does NOT,
+    // by itself, distinguish recallInProgress present vs. absent -- see
+    // the mutation-proven test below for that -- because
+    // PanadapterModel::setDss3DFloorDepthForBand already carries its own
+    // `if (slot.dss3DFloorDepth == depth) { return; }` early-return
+    // (Task 14), and a recall for band B, by construction, pushes exactly
+    // the value already stored for band B, so THIS specific scenario's
+    // write-back is already a no-op via that guard alone. Verified by
+    // mutation (task report's mutation log): with recallInProgress
+    // removed, this test still passes. Kept anyway as a real, useful,
+    // independent property (recall must not conjure a key for an
+    // untouched band) -- just not the one proving the guard itself works.
+    void bandChangeRecall_doesNotWriteAPerBandKey_endToEnd()
+    {
+        PanadapterModel pan;
+        SpectrumWidget sw;
+
+        pan.setDss3DFloorDepthForBand(Band::Band80m, 4);
+        pan.setCenterFrequency(3700000.0);  // 3.7 MHz -> 80m
+        QCOMPARE(pan.band(), Band::Band80m);
+
+        MainWindow::wireDss3DFloorRecallForTest(&pan, &sw);
+        QCOMPARE(sw.dssFloorDepth(), 4);  // initial recall landed
+
+        // Band10m has never been touched by an operator edit -- only ever
+        // reachable here through the recall path below.
+        pan.setCenterFrequency(28400000.0);  // 28.4 MHz -> 10m
+        QCOMPARE(pan.band(), Band::Band10m);
+        QCOMPARE(sw.dssFloorDepth(), 6);  // recall landed the ship default
+
+        QVERIFY(!AppSettings::instance().contains(
+            QStringLiteral("Display3DFloorDepth_") + bandKeyName(Band::Band10m)));
+    }
+
+    // THE mutation-proven test for recallInProgress: exploits
+    // SpectrumWidget::setDssFloorDepth's [0,24] clamp, which
+    // PanadapterModel::setDss3DFloorDepthForBand does not share (it has no
+    // clamp of its own -- it stores whatever int it is given). Neither
+    // live-editing UI surface can ever produce an out-of-range stored
+    // value (both sliders are range-limited to 0-24), but a value outside
+    // that range can still exist in storage today -- most plausibly a
+    // FUTURE code change narrowing the clamp, which would otherwise
+    // silently rewrite every existing user's out-of-range-under-the-NEW-
+    // clamp preference the next time they merely tune across a band
+    // boundary, with no operator action at all. Sets 30 (out of range)
+    // directly on Band10m -- standing in for "already on disk," since a
+    // stored value doesn't care how it got there -- then recalls into
+    // that band from a different one. The widget must clamp to 24 for
+    // display (dssFloorDepth() == 24, proving the recall genuinely
+    // reached the widget), but storage must still read back the
+    // ORIGINAL, unclamped 30: the clamped 24 is a widget-side display
+    // limit, not a correction to the operator's stored intent, and must
+    // never be written back over it.
+    //
+    // Mutation-proven (task report's mutation log): with recallInProgress
+    // removed, the save listener sees depth=24 (the clamped value) but
+    // Band10m's stored slot still holds 30, so `24 != 30` -- the ONE
+    // equality guard that saved every scenario above does NOT fire here
+    // -- and the write proceeds, corrupting storage to 24. This test
+    // goes red under that exact mutation; the test above does not.
+    void recallInProgress_stopsAClampedRecallFromCorruptingStorage_endToEnd()
+    {
+        PanadapterModel pan;
+        SpectrumWidget sw;
+
+        pan.setDss3DFloorDepthForBand(Band::Band10m, 30);  // out of [0,24]
+
+        pan.setCenterFrequency(3700000.0);  // 3.7 MHz -> 80m (elsewhere)
+        QCOMPARE(pan.band(), Band::Band80m);
+
+        MainWindow::wireDss3DFloorRecallForTest(&pan, &sw);
+
+        pan.setCenterFrequency(28400000.0);  // 28.4 MHz -> 10m: recall fires
+        QCOMPARE(pan.band(), Band::Band10m);
+        QCOMPARE(sw.dssFloorDepth(), 24);              // widget clamped for display
+        QCOMPARE(pan.dss3DFloorDepthForBand(Band::Band10m), 30);  // storage untouched
+    }
 };
 
 QTEST_MAIN(TestDssPersistence)

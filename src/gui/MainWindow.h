@@ -196,13 +196,18 @@ public:
                                              const QString& panId);
     static void fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
                                        const QVector<float>& bins);
-    /// 3D Stacked-Trace Spectrum Plan Task 14 fix-forward: wires 3D Floor's
-    /// per-band recall into a live SpectrumWidget. Pushes the value stored
-    /// for `pan`'s current band immediately, then keeps it synced on every
-    /// PanadapterModel::bandChanged() crossing. Extracted as a static seam
-    /// (rather than inlined at the MainWindow constructor call site) for
-    /// the same reason as the helpers above: MainWindow needs a full
-    /// RadioModel to construct, which no unit-test executable can afford.
+    /// 3D Stacked-Trace Spectrum Plan Task 14 fix-forward (recall) + Task 15
+    /// fix-forward (save): wires 3D Floor's per-band recall AND save into a
+    /// live SpectrumWidget. Recall: pushes the value stored for `pan`'s
+    /// current band immediately, then keeps it synced on every
+    /// PanadapterModel::bandChanged() crossing. Save: `spectrum`'s
+    /// dssFloorDepthChanged (an operator edit through either the overlay
+    /// menu or the Setup page) writes back to `pan`'s CURRENT band, guarded
+    /// against the recall push above re-triggering itself. Extracted as a
+    /// static seam (rather than inlined at the MainWindow constructor call
+    /// site) for the same reason as the helpers above: MainWindow needs a
+    /// full RadioModel to construct, which no unit-test executable can
+    /// afford.
     static void wireDss3DFloorRecallForTest(PanadapterModel* pan,
                                             SpectrumWidget* spectrum);
 

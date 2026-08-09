@@ -406,6 +406,7 @@ warren@wpratt.com
 #include <QShortcut>
 
 #include <cstdlib>
+#include <memory>
 
 // Cross-platform CPU usage readers — see readProcessCpuPercent and
 // readSystemCpuPercent below. POSIX side (macOS / Linux) shares
@@ -1002,14 +1003,63 @@ void MainWindow::fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
 // this push the widget would sit at its hardcoded ship default of 6 until
 // the operator's next band change), then keeps it synced on every
 // PanadapterModel::bandChanged() crossing.
+//
+// Task 15 fix-forward (coordinator review): the loop above is recall-only.
+// Task 14 built PanadapterModel::setDss3DFloorDepthForBand (the SAVE half)
+// but nothing ever called it -- confirmed by grep, only its own definition
+// and test call sites reference it. An operator dragging 3D Floor via
+// either live-editing surface (the Task 13 overlay menu or the Task 15
+// Setup page, both of which ultimately call SpectrumWidget::setDssFloorDepth)
+// saw the value appear to work, then silently lose it on the next band
+// change -- worse than not being per-band at all, since it looks like it
+// took effect. Closed below: SpectrumWidget::dssFloorDepthChanged (the new
+// Task 15 signal) now also drives a write back into the CURRENT band's
+// per-band store, using the exact same "current band" pan->band() the
+// recall lambda reads from -- PanadapterModel::setBand() updates m_band
+// strictly before emitting bandChanged(), so pan->band() is never stale
+// inside either lambda.
+//
+// recallInProgress guards the save path against the recall push above
+// re-triggering itself: pushing the stored value into the widget fires
+// dssFloorDepthChanged just like an operator edit would, and without this
+// guard that would be indistinguishable from a real edit. In the ordinary
+// case PanadapterModel::setDss3DFloorDepthForBand's own early-return
+// (`if (slot.dss3DFloorDepth == depth) { return; }`, Task 14) absorbs the
+// echo, since a recall for band B, by construction, pushes exactly the
+// value already stored for band B -- but SpectrumWidget::setDssFloorDepth
+// clamps to [0,24] and PanadapterModel does not, so a stored value outside
+// that range (unreachable through either live-editing UI surface today,
+// but not through storage itself -- see the mutation-proven test
+// recallInProgress_stopsAClampedRecallFromCorruptingStorage_endToEnd in
+// tst_dss_persistence.cpp) recalls as the CLAMPED value, `!=` the stored
+// one, and WOULD get written straight back over the operator's real
+// stored intent without this guard. Same shape as
+// Display3DSetupPage::m_updatingFromModel (Task 15): a push driven by "the
+// stored value, being recalled" must not be mistaken for "the operator
+// changed the value." Heap-allocated (std::shared_ptr, not a stack bool)
+// because both lambdas below outlive this function and must share the
+// same flag.
 void MainWindow::wireDss3DFloorRecallForTest(PanadapterModel* pan,
                                              SpectrumWidget* spectrum)
 {
     if (!pan || !spectrum) { return; }
-    spectrum->setDssFloorDepth(pan->dss3DFloorDepthForBand(pan->band()));
+
+    auto recallInProgress = std::make_shared<bool>(false);
+
+    auto pushRecall = [pan, spectrum, recallInProgress](NereusSDR::Band band) {
+        *recallInProgress = true;
+        spectrum->setDssFloorDepth(pan->dss3DFloorDepthForBand(band));
+        *recallInProgress = false;
+    };
+
+    pushRecall(pan->band());
     connect(pan, &PanadapterModel::bandChanged, spectrum,
-            [pan, spectrum](NereusSDR::Band newBand) {
-        spectrum->setDssFloorDepth(pan->dss3DFloorDepthForBand(newBand));
+            [pushRecall](NereusSDR::Band newBand) { pushRecall(newBand); });
+
+    connect(spectrum, &SpectrumWidget::dssFloorDepthChanged, pan,
+            [pan, recallInProgress](int depth) {
+        if (*recallInProgress) { return; }
+        pan->setDss3DFloorDepthForBand(pan->band(), depth);
     });
 }
 
