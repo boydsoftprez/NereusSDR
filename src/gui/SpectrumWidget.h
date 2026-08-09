@@ -291,6 +291,12 @@ struct WfGradientStop { float pos; int r, g, b; };
 // Returns gradient stops for a given color scheme.
 const WfGradientStop* wfSchemeStops(WfColorScheme scheme, int& count);
 
+// Interpolate a 0..1 position across a scheme's gradient stops. Extracted
+// from dbmToRgb()'s inline loop so the 3DSS palette can share the stops
+// without inheriting the waterfall gain / black-level window applied above
+// it. Behaviour is unchanged for dbmToRgb.
+QRgb interpolateWfGradient(float t, const WfGradientStop* stops, int count);
+
 // CPU-rendered spectrum + waterfall display widget.
 // Phase A: QPainter fallback (get something visible fast).
 // Phase B: Switch to QRhiWidget for GPU rendering.
@@ -596,6 +602,16 @@ public:
     void setThreeDSliceDepth(bool on);
     bool threeDSliceDepth() const { return m_threeDSliceDepth; }
     DssShape dssShape() const { return dssShapeForAngle(m_dssAngle); }
+
+    // Maps a normalised 0..1 surface strength to a colour, gamma-shaped by
+    // "3D Gain" alone. Deliberately independent of the waterfall gain /
+    // black-level knobs -- see the .cpp for why. Public so it is directly
+    // testable and so uploadDssPaletteLut() (GPU-only) has a CPU-callable
+    // sibling.
+    QRgb dssStrengthToRgb(float s) const;
+    // Folds the inputs that actually change dssStrengthToRgb()'s output, so
+    // the palette LUT re-bakes only on a real change.
+    quint64 dssPaletteToken() const;
 
     // Test seams. pushWaterfallRow() is private and normally driven by the
     // WaterfallTicker thread; these let the row-tee placement be proven

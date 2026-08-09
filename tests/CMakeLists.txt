@@ -6216,6 +6216,17 @@ target_compile_definitions(tst_dss_shader_contract PRIVATE
 # Source: AetherSDR src/gui/SpectrumWidget.h:78-82 [@1872028c].
 nereus_add_test(tst_dss_row_tee)
 
+# ── 3D stacked-trace spectrum plan, Task 8: palette LUT decoupling ───────
+# Pins that the 3DSS palette is baked from the shared scheme gradient stops,
+# gamma-shaped only by "3D Gain" -- never through dbmToRgb(), so the 2D
+# waterfall's gain / black-level sliders cannot silently reshape the 3D
+# surface. Also pins the gain-to-gamma identities (50 linear, 100 -> 0.25,
+# 0 -> 4), that every scheme still renders distinct colours in 3D, and that
+# the LUT re-bake token folds scheme + gain only (never per-frame jitter).
+# Source: AetherSDR src/gui/SpectrumWidget.cpp:11710-11733, :12713-12741
+# [@1872028c].
+nereus_add_test(tst_dss_palette)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

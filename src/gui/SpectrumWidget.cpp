@@ -334,6 +334,30 @@ const WfGradientStop* wfSchemeStops(WfColorScheme scheme, int& count)
     }
 }
 
+// Interpolate a 0..1 position across a scheme's gradient stops. Extracted
+// from dbmToRgb()'s inline loop so the 3DSS palette can share the stops
+// without inheriting the waterfall gain / black-level window applied above
+// it. Behaviour is unchanged for dbmToRgb.
+QRgb interpolateWfGradient(float t, const WfGradientStop* stops, int count)
+{
+    const float adjusted = qBound(0.0f, t, 1.0f);
+    // Find the two surrounding stops and interpolate
+    for (int i = 0; i < count - 1; ++i) {
+        if (adjusted <= stops[i + 1].pos) {
+            const float f = (adjusted - stops[i].pos)
+                          / (stops[i + 1].pos - stops[i].pos);
+            const int r = static_cast<int>(
+                stops[i].r + f * (stops[i + 1].r - stops[i].r));
+            const int g = static_cast<int>(
+                stops[i].g + f * (stops[i + 1].g - stops[i].g));
+            const int b = static_cast<int>(
+                stops[i].b + f * (stops[i + 1].b - stops[i].b));
+            return qRgb(r, g, b);
+        }
+    }
+    return qRgb(stops[count - 1].r, stops[count - 1].g, stops[count - 1].b);
+}
+
 // ---- SpectrumWidget ----
 
 SpectrumWidget::SpectrumWidget(QWidget* parent)
@@ -4906,20 +4930,50 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
     int stopCount = 0;
     const WfGradientStop* stops = wfSchemeStops(m_wfColorScheme, stopCount);
 
-    // Find the two surrounding stops and interpolate
-    for (int i = 0; i < stopCount - 1; ++i) {
-        if (adjusted <= stops[i + 1].pos) {
-            float t = (adjusted - stops[i].pos)
-                    / (stops[i + 1].pos - stops[i].pos);
-            int r = static_cast<int>(stops[i].r + t * (stops[i + 1].r - stops[i].r));
-            int g = static_cast<int>(stops[i].g + t * (stops[i + 1].g - stops[i].g));
-            int b = static_cast<int>(stops[i].b + t * (stops[i + 1].b - stops[i].b));
-            return qRgb(r, g, b);
-        }
-    }
-    return qRgb(stops[stopCount - 1].r,
-                stops[stopCount - 1].g,
-                stops[stopCount - 1].b);
+    return interpolateWfGradient(adjusted, stops, stopCount);
+}
+
+// ---- 3DSS surface colour (deliberately NOT dbmToRgb) ----
+// From AetherSDR SpectrumWidget.cpp:11710-11719 [@1872028c].
+QRgb SpectrumWidget::dssStrengthToRgb(float s) const
+{
+    // gamma in [0.25 .. 4]: gain=100 -> 0.25 (colour lifted to the noise floor),
+    // gain=50 -> 1.0 (linear), gain=0 -> 4 (colour only on the strongest peaks).
+    const float gamma = std::pow(4.0f, (50.0f - m_dssGain) / 50.0f);
+    int n = 0;
+    const WfGradientStop* stops = wfSchemeStops(m_wfColorScheme, n);
+    return interpolateWfGradient(
+        std::pow(std::clamp(s, 0.0f, 1.0f), gamma), stops, n);
+}
+
+// From AetherSDR SpectrumWidget.cpp:12727-12728 [@1872028c] -- this is
+// uploadDssPaletteLut()'s OWN inline token there (the actual GPU LUT
+// re-bake gate), promoted to a named, reusable, publicly-testable method.
+//
+// NereusSDR divergence, precisely stated: upstream ALSO has a separately
+// named 5-field `dssPaletteToken()` member (SpectrumWidget.cpp:11721-11733
+// [@1872028c]: "Fold the inputs that define the 3DSS surface colour so the
+// cached image recolours when any change. The surface now maps strength
+// through the scheme + "3D Gain" (dssStrengthToRgb); the waterfall
+// gain/black/min are kept here too since they still affect the
+// 2D/waterfall colour path.") -- but that member's one call site,
+// buildDssImage() (:11880-11894), belongs to the CPU-fallback cached-image
+// path Task 4 explicitly deferred ("image()/rebuild()/m_cache*, deferred to
+// Task 10" per docs/attribution/aethersdr-reconciliation.md). This task's
+// uploadDssPaletteLut() never calls that 5-field member; it computes the
+// inline 2-field token above instead, which is what this function actually
+// is. dssStrengthToRgb() never reads m_wfColorGain/m_wfBlackLevel/
+// m_wfMinDbm (nor does upstream's), so a 5-field token here would only
+// trigger spurious re-bakes -- of a LUT that would come out byte-identical
+// -- on every waterfall slider tick and every per-frame floor/range jitter.
+// See waterfallKnobs_doNotMove3DColours in tests/tst_dss_palette.cpp. If/
+// when Task 10 ports buildDssImage(), it should reconcile with this name
+// rather than silently shadowing it with the 5-field upstream meaning.
+quint64 SpectrumWidget::dssPaletteToken() const
+{
+    quint64 t = static_cast<quint64>(m_wfColorScheme);
+    t = t * 131 + static_cast<quint64>(m_dssGain);
+    return t;
 }
 
 // ---- VFO marker + filter passband overlay ----
@@ -8180,10 +8234,31 @@ void SpectrumWidget::uploadDssHeightRows(QRhiResourceUpdateBatch* batch)
     m_dssUploadedRowGeneration = m_dss.rowGeneration();
 }
 
-// Stub: Task 8 ("Palette LUT decoupled from waterfall knobs") fills this in.
+// From AetherSDR SpectrumWidget.cpp:12713-12741 [@1872028c], adapted to this
+// file's simpler single-argument signature (Task 7's stub takes no
+// floorDbm/rangeDb -- dssStrengthToRgb() operates on an already-normalised
+// 0..1 strength, so this upload path never needs the per-frame dBm floor or
+// range at all).
 void SpectrumWidget::uploadDssPaletteLut(QRhiResourceUpdateBatch* batch)
 {
-    Q_UNUSED(batch);
+    if (!m_dssPaletteTex || !batch) { return; }
+    // The 3D surface maps its stable colour aperture across the FULL colormap,
+    // independently of the Ref-level height span. This bypasses dbmToRgb()'s
+    // waterfall black-level window while preventing a high Ref level from
+    // compressing every real signal into blue. "3D Gain" gamma-shapes the LUT.
+    // Colour depends only on the scheme + that control (NOT the per-frame floor/
+    // range, which jitter every frame), so the LUT re-bakes only on a real change.
+    const quint64 token = dssPaletteToken();
+    if (token == m_dssLutToken) { return; }   // unchanged
+
+    QImage lut(256, 1, QImage::Format_RGBA8888);   // owns its data
+    for (int i = 0; i < 256; ++i) {
+        const QRgb c = dssStrengthToRgb(i / 255.0f);
+        lut.setPixelColor(i, 0, QColor(qRed(c), qGreen(c), qBlue(c)));
+    }
+    QRhiTextureSubresourceUploadDescription desc(lut);
+    batch->uploadTexture(m_dssPaletteTex, QRhiTextureUploadEntry(0, 0, desc));
+    m_dssLutToken = token;
 }
 
 // Stub: Task 9 ("Floor anchoring, wide feed, UBO writer") fills this in.
