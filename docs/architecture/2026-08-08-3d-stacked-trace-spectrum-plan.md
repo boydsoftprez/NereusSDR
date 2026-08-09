@@ -3235,7 +3235,15 @@ void SpectrumWidget::writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
     //-KG4VCF [v0.5.3] Always one: our producer appends a single row per
     // waterfall tick. Permitted tier 1 deviation 2 of 2, design doc 2.3.
     ubo[i++] = 1.0f;                                  // scrollDistanceRows
-    ubo[i++] = kDssColorSpanDb;
+    // Upstream caps the colour aperture at whichever is SMALLER, the stable
+    // 45 dB constant or the actually-configured dBm span
+    // (SpectrumWidget.cpp:14195 [@1872028c] writes
+    // std::min(rangeDb, DssRenderer::kColorSpanDb)). Writing the constant
+    // unconditionally would spread the colormap across a wider span than the
+    // display is showing whenever the operator narrows the dBm range below
+    // 45 dB, which m_dynamicRange permits down to 10, producing a visibly
+    // washed-out surface that does not match the port target.
+    ubo[i++] = std::min(dssSpanDb(), kDssColorSpanDb);
     ubo[i++] = static_cast<float>(m_dss.rowCount());
     ubo[i++] = static_cast<float>(kDssVisibleRows);
     ubo[i++] = specRect.width()  * dpr;
