@@ -129,6 +129,8 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QCoreApplication>
+#include <QEvent>
 #include <QDesktopServices>
 #include <QGuiApplication>
 #include <QHoverEvent>
@@ -350,7 +352,10 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // the final native surface.
 #ifdef Q_OS_MAC
     setApi(QRhiWidget::Api::Metal);
-    setAttribute(Qt::WA_NativeWindow);
+    // Was a bare setAttribute(Qt::WA_NativeWindow) here. The pair now goes
+    // through the helper so the float/dock path can re-assert both together
+    // after it re-realizes the native window; see the header.
+    applyNativeWindowIsolationPolicy();
     setAttribute(Qt::WA_Hover);  // Ensure HoverMove events are delivered
 #elif defined(Q_OS_WIN)
     setApi(QRhiWidget::Api::Direct3D11);
@@ -8674,6 +8679,57 @@ void SpectrumWidget::releaseResources()
 }
 
 #endif // NEREUS_GPU_SPECTRUM
+
+// ── Detach-safe RHI lifecycle (float / dock a pan) ───────────────────────
+// See SpectrumWidget.h for the bench report these three close.
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:2227-2247 [@1e0718ad]
+//   adapter: NereusSDR gates on NEREUS_GPU_SPECTRUM where upstream gates on
+//   AETHER_GPU_SPECTRUM. Upstream's comment records that gating this to
+//   Q_OS_MAC let the identical crash through on Windows, so it stays
+//   cross-platform here too.
+void SpectrumWidget::prepareForTopLevelChange()
+{
+#ifdef NEREUS_GPU_SPECTRUM
+    // QEvent::WindowAboutToChangeInternal is how QRhiWidgetPrivate
+    // deregisters its cleanup callback from the outgoing QRhi, and it does
+    // so identically on Metal, D3D and Vulkan.
+    QEvent event(QEvent::WindowAboutToChangeInternal);
+    QCoreApplication::sendEvent(this, &event);
+#endif
+}
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:7092-7110 [@1e0718ad]
+//   adapter: upstream also commits/clears a frequency preview here (its
+//   shutdown path shares this entry point); NereusSDR has no preview state
+//   to settle, so only the GPU teardown ports.
+void SpectrumWidget::resetGpuResources()
+{
+#ifdef NEREUS_GPU_SPECTRUM
+    // On macOS/Windows the GPU surface does not survive reparenting, so the
+    // pipelines have to go and be rebuilt by initialize() against the new
+    // window. On Linux (OpenGL) a repaint is enough.
+#ifndef Q_OS_LINUX
+    releaseResources();
+#endif
+#endif
+    update();
+}
+
+// From AetherSDR src/gui/SpectrumWidget.cpp:1843-1857 [@1e0718ad]
+//   adapter: upstream gates on an env-var escape hatch
+//   (nativeWindowPreferred(), AETHER_PAN_NO_NATIVE_WINDOW); NereusSDR has no
+//   such override today, so the policy applies unconditionally on macOS.
+void SpectrumWidget::applyNativeWindowIsolationPolicy()
+{
+#if defined(NEREUS_GPU_SPECTRUM) && defined(Q_OS_MAC)
+    // Order matters: block ancestor promotion *before* requesting the native
+    // window, so realizing the leaf's NSView cannot drag its QWidget tree
+    // native (redundant window-sized Core Animation backing stores).
+    setAttribute(Qt::WA_DontCreateNativeAncestors);
+    setAttribute(Qt::WA_NativeWindow);
+#endif
+}
 
 // ============================================================================
 // VFO Flag Widget Hosting (AetherSDR pattern)

@@ -16,6 +16,21 @@
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-08-08 — J.J. Boyd (KG4VCF). Two bench-reported defects.
+//                 (1) Extended pan: Sub-Epic F shipped the wideband DATA
+//                 path and never the paint, so the stored bins had no
+//                 reader and visibleBinRange()'s clamp stretched the DDC
+//                 trace across the whole panel once zoomed past the DDC
+//                 rate. Adds listenableIslandPixels() /
+//                 fillWidebandWings() / drawExtendedIslandBounds(); wing
+//                 frequency axis and dB calibration from Thetis
+//                 wbDisplay.cs:440, 2106, 4511, 4680-4704 [v2.10.3.15].
+//                 (2) A floated pan lost its render context. Adds
+//                 prepareForTopLevelChange() / resetGpuResources() /
+//                 applyNativeWindowIsolationPolicy(), ported from
+//                 AetherSDR src/gui/SpectrumWidget.cpp:1843-1857,
+//                 2227-2247, 7092-7110 [@1e0718ad]. AI-assisted
+//                 transformation via Anthropic Claude Code.
 // =================================================================
 
 /*  enums.cs
@@ -1061,7 +1076,70 @@ public slots:
     bool extendedViewAllowed() const { return m_extendedViewAllowed; }
     bool extendedMode() const { return m_extendedMode; }
 
+    // ── Detach-safe RHI lifecycle (float / dock a pan) ────────────────────
+    //
+    // Bench report 2026-08-08: floating a pan painted one frame and then
+    // logged "QRhiWidget: No QRhi" once per display tick forever, i.e. a
+    // frozen panadapter in the popped-out window. Confirmed on an ANAN-G2E:
+    // one `got CAMetalLayer, pixel size 2356x1702` followed by 30 warnings a
+    // second (the display timer's rate, one widget).
+    //
+    // A QRhiWidget's render context belongs to the top-level window it lives
+    // in, so moving one between windows is a teardown and a rebuild, not a
+    // reparent. The three calls below are that teardown, split the way
+    // AetherSDR splits them because each has to happen at a different point
+    // relative to the setParent() call.
+    //
+    // From AetherSDR src/gui/SpectrumWidget.cpp:2227-2247, 7092-7110,
+    // 1843-1857 [@1e0718ad].
+
+    /// Tell Qt's RHI machinery this widget is leaving its top-level, BEFORE
+    /// the reparent. QRhiWidget registers a cleanup callback on the current
+    /// backing-store QRhi; a direct reparent can miss Qt's own notification
+    /// and leave that callback pointing at a QRhiWidgetPrivate the old QRhi
+    /// will later fire against.
+    ///
+    /// Must be sent exactly once, before the move. refreshAfterReparent must
+    /// not re-send it.
+    void prepareForTopLevelChange();
+
+    /// Drop the pipelines/buffers/textures so initialize() rebuilds them
+    /// against the new window's surface. Linux/OpenGL survives the move, so
+    /// there it is just a repaint request.
+    void resetGpuResources();
+
+    /// Re-assert the native-window attributes as one unit.
+    ///
+    /// WA_NativeWindow gives the widget its own Metal leaf;
+    /// WA_DontCreateNativeAncestors stops realizing that leaf from dragging
+    /// the ancestor QWidget tree native behind it. They are set together,
+    /// here, so a reparent that re-realizes the native window can never
+    /// reassert one without the other. Idempotent; a no-op off macOS and on
+    /// non-GPU builds.
+    void applyNativeWindowIsolationPolicy();
+
 public:
+    /// Fraction of the DDC's spectrum discarded at EACH edge when drawing
+    /// the listenable island.
+    ///
+    /// From Thetis specHPSDR.cs:529 [v2.10.3.15] — `const double
+    /// CLIP_FRACTION = 0.04;` with upstream's own comment "fraction of the
+    /// spectrum to clip off each side of each sub-span", applied at :535 as
+    /// `clip = floor(CLIP_FRACTION * fft_size)`.
+    ///
+    /// Bench 2026-08-08: "still black gaps between wideband" and the DDC.
+    /// The outermost DDC bins sit in the decimation filter's transition band
+    /// and read near-nothing. At normal zoom you never see them because the
+    /// window is inside the DDC, but the extended pan draws the island at
+    /// its true width and puts the skirt on screen as a dark band at each
+    /// edge. Upstream discards it; so do we, and the wideband wings cover
+    /// that span instead.
+    ///
+    /// Applied ONLY in extended mode. The ordinary path keeps every bin it
+    /// always had -- clipping there would be a wider behaviour change than
+    /// the reported defect.
+    static constexpr double kDdcClipFraction = 0.04;
+
     // ── Spot overlay (Phase 3J-2 Task E1) ─────────────────────────────────
     // Public structs + setters re-declared under a fresh `public:` access
     // specifier so MOC doesn't try to interpret the nested struct as a
