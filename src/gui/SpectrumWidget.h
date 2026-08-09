@@ -2478,6 +2478,31 @@ private:
     // binding at all (SpectrumWidget.cpp's m_draggingDbm only ever moves
     // its Ref Level equivalent), so there is no upstream field to port.
     int    m_dragStartDssFloorDepth{0};
+
+    // Task 19: Ctrl-drag (Cmd/Meta too) on the dBm strip -- zooms the span
+    // with the bottom pinned, instead of panning the plain drag above does.
+    // A separate flag + capture set from m_draggingDbm's, even though the
+    // two gestures are mutually exclusive at press time (arrowRow/Ctrl/body
+    // hit-tests are checked in order and each `return`s), because they
+    // capture different quantities: m_dragStartRef is the pre-drag TOP,
+    // these are the pre-drag RANGE and BOTTOM. Named m_dbmRangeDragStartY
+    // rather than reusing m_dragStartY for the same reason -- one drag
+    // reads "Y since press" against a Ref baseline, the other against a
+    // Range baseline, and giving them the same storage would make a stale
+    // read silently plausible after a copy/paste edit.
+    //
+    // Mirrors upstream's m_dbmDragStartY / m_dbmDragStartRange /
+    // m_dbmDragStartBottom (AetherSDR SpectrumWidget.h, used by
+    // SpectrumWidget.cpp:9537-9550, 10493-10501 [@1872028c]). Upstream also
+    // keeps m_dbmDragStartRef for its release-handler transition math
+    // (oldMinDbm/oldMaxDbm for beginDbmRangeTransition); NereusSDR's release
+    // handler has no transition system to feed (see the .cpp mouseRelease
+    // change), so that field has no NereusSDR counterpart.
+    bool   m_draggingDbmRange{false};
+    int    m_dbmRangeDragStartY{0};
+    float  m_dbmRangeDragStartRange{0.0f};
+    float  m_dbmRangeDragStartBottom{0.0f};
+
     QPoint m_mousePos;              // for cursor frequency display
     bool   m_mouseInWidget{false};
 

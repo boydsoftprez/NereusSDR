@@ -6329,6 +6329,25 @@ nereus_add_test(tst_dss_setup_sync)
 # all, so there is no upstream source to cite.
 nereus_add_test(tst_dss_floor_drag)
 
+# ── 3D stacked-trace spectrum plan, Task 19: Ctrl-drag dBm-range zoom ────
+# Pins the ported m_draggingDbmRange gesture: Ctrl (Cmd/Meta too) drag on
+# the right-edge dBm strip zooms the amplitude span with the bottom pinned,
+# instead of panning it the way the plain drag does. Runs identically in 2D
+# and 3D (no mode branch, matching upstream, which has none on this
+# gesture) because dssSpanDb() reads m_dynamicRange directly, so the 3D
+# surface's span genuinely changes even though m_refLevel has no 3D reader
+# of its own. Pins: dynamicRange() changes under Ctrl-drag and only under
+# Ctrl-drag (plain drag in both modes is re-verified unaffected, closing
+# the regression risk against Task 16's established behaviour); the 2D and
+# 3D bottom-anchor invariant refLevel()-dynamicRange(); upstream's exact
+# clamp bounds (10..180, ported verbatim as clampDbmRangeForBottom, not the
+# sibling wheel-zoom gesture's local 10..200); and Meta-alone engaging the
+# gesture (NereusSDR's cross-platform simplification of upstream's
+# #ifdef Q_OS_MAC split).
+# Source: AetherSDR src/gui/SpectrumWidget.cpp:337-340, 389-410, 3365,
+# 9537-9550, 10493-10501, 10893-10926 [@1872028c].
+nereus_add_test(tst_dbm_range_drag)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

@@ -7285,6 +7285,52 @@ void SpectrumWidget::buildNotchContextMenu(int id, QMenu& menu)
                    [this, id]() { emit notchRemoveRequested(id); });
 }
 
+// ---- Task 19: Ctrl-drag dBm-range zoom (dBm strip, right edge) ----
+//
+// Bounds ported verbatim -- these are upstream's own numbers, not invented
+// for NereusSDR. The sibling wheel-zoom gesture a few hundred lines below
+// (mx >= stripX wheelEvent branch) inlines a DIFFERENT, NereusSDR-local
+// bound (qBound(10.0f, ..., 200.0f)) for the same "dynamic range" field;
+// that is pre-existing code this task does not touch. This task's own
+// gesture uses upstream's clampDbmRangeForBottom, and upstream's bound is
+// 180, not 200 -- see tst_dbm_range_drag.cpp's clampsAtMaximum test, which
+// specifically pins 180 to catch a copy-paste of the wheel gesture's 200.
+//
+// From AetherSDR SpectrumWidget.cpp:337-340 [@1872028c]:
+//   static constexpr float kMinDisplayDbm = -180.0f;
+//   static constexpr float kMaxDisplayDbm = 80.0f;
+//   static constexpr float kMinDisplayRangeDb = 10.0f;
+//   static constexpr float kMaxDisplayRangeDb = 180.0f;
+static constexpr float kMinDisplayDbm = -180.0f;
+static constexpr float kMaxDisplayDbm = 80.0f;
+static constexpr float kMinDisplayRangeDb = 10.0f;
+static constexpr float kMaxDisplayRangeDb = 180.0f;
+
+// From AetherSDR SpectrumWidget.cpp:389-397 [@1872028c]
+static float clampDbmBottom(float bottomDbm)
+{
+    if (!std::isfinite(bottomDbm)) {
+        return kMinDisplayDbm;
+    }
+    return std::clamp(bottomDbm,
+                      kMinDisplayDbm,
+                      kMaxDisplayDbm - kMinDisplayRangeDb);
+}
+
+// From AetherSDR SpectrumWidget.cpp:399-410 [@1872028c]
+static float clampDbmRangeForBottom(float bottomDbm, float rangeDb)
+{
+    bottomDbm = clampDbmBottom(bottomDbm);
+    if (!std::isfinite(rangeDb)) {
+        rangeDb = kMinDisplayRangeDb;
+    }
+    const float maxRangeForBottom =
+        std::min(kMaxDisplayRangeDb, kMaxDisplayDbm - bottomDbm);
+    return std::clamp(rangeDb,
+                      kMinDisplayRangeDb,
+                      std::max(kMinDisplayRangeDb, maxRangeForBottom));
+}
+
 void SpectrumWidget::mousePressEvent(QMouseEvent* event)
 {
     // Phase 3Q-8: while disconnected, swallow all left-clicks and signal
@@ -7574,6 +7620,24 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         const QRect strip    = NereusSDR::DbmStrip::stripRect(fullSpecRect, kDbmStripW);
         const QRect arrowRow = NereusSDR::DbmStrip::arrowRowRect(strip, kDbmArrowH);
 
+        // Task 19: Ctrl-drag (Cmd/Meta too -- macOS swaps them, same
+        // rationale as the notch-add modifier check above and the
+        // Ctrl/Cmd+scroll bandwidth zoom in wheelEvent below) zooms the
+        // dBm span instead of panning it. Checked ahead of the arrow-row
+        // hit test, matching upstream precedence: a Ctrl-click landing on
+        // the arrow row still starts a range-drag rather than nudging ref
+        // level (upstream's controlClick branch runs before its
+        // `if (y < DBM_ARROW_H)` arrow check).
+        // From AetherSDR SpectrumWidget.cpp:9520-9550 [@1872028c]
+        if (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)) {
+            m_draggingDbmRange = true;
+            m_dbmRangeDragStartY = my;
+            m_dbmRangeDragStartRange = m_dynamicRange;
+            m_dbmRangeDragStartBottom = m_refLevel - m_dynamicRange;
+            setCursor(Qt::SizeVerCursor);
+            return;
+        }
+
         if (arrowRow.contains(mx, my)) {
             const int hit = NereusSDR::DbmStrip::arrowHit(mx, arrowRow);
             const float bottom = m_refLevel - m_dynamicRange;
@@ -7831,6 +7895,43 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         setCursor(Qt::SizeHorCursor);
         markOverlayDirty();
         event->accept();
+        return;
+    }
+
+    // Task 19: Ctrl-drag zooms the dBm span with the bottom pinned, instead
+    // of panning it. Runs IDENTICALLY in 2D and 3D -- no mode branch, unlike
+    // m_draggingDbm below. This mirrors upstream, which has no is3D check
+    // anywhere in its own m_draggingDbmRange press/move/release sites
+    // (contrast its m_draggingDssFloor branch two arms below in the press
+    // handler, which upstream DOES gate on is3D). 3D DECISION (task report
+    // has the full writeup): m_dynamicRange feeds dssSpanDb(), which the 3D
+    // surface's span genuinely reads, so this is not a no-op in 3D even
+    // though m_refLevel has no 3D reader of its own -- recomputing it anyway
+    // keeps the (m_refLevel, m_dynamicRange) top/depth pair coherent for
+    // when the operator switches back to 2D, matching upstream's own choice
+    // not to special-case it away.
+    //
+    // From AetherSDR SpectrumWidget.cpp:10493-10501 [@1872028c]:
+    //   if (m_draggingDbmRange) {
+    //       const int dragHeight = std::max(1, specH);
+    //       const int dy = m_dbmDragStartY - y;
+    //       const float deltaDb = (static_cast<float>(dy) / dragHeight) * m_dbmDragStartRange;
+    //       m_dynamicRange = clampDbmRangeForBottom(m_dbmDragStartBottom,
+    //                                               m_dbmDragStartRange + deltaDb);
+    //       m_refLevel = m_dbmDragStartBottom + m_dynamicRange;
+    //       markOverlayDirty();
+    //       ev->accept();
+    //       return;
+    //   }
+    if (m_draggingDbmRange) {
+        const int dragHeight = std::max(1, specH);
+        const int dy = m_dbmRangeDragStartY - my;
+        const float deltaDb = (static_cast<float>(dy) / static_cast<float>(dragHeight))
+            * m_dbmRangeDragStartRange;
+        m_dynamicRange = clampDbmRangeForBottom(m_dbmRangeDragStartBottom,
+                                                 m_dbmRangeDragStartRange + deltaDb);
+        m_refLevel = m_dbmRangeDragStartBottom + m_dynamicRange;
+        markOverlayDirty();
         return;
     }
 
@@ -8239,10 +8340,21 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         // Persist display settings after drag adjustments.
         // Also emit range-change for observers (MainWindow, tests).
         // From AetherSDR SpectrumWidget.cpp:2115 [@0cd4559]
-        if (m_draggingDbm) {
+        //
+        // Task 19: m_draggingDbmRange joins this gate rather than getting
+        // its own block. Upstream's release handler (SpectrumWidget.cpp:
+        // 10893-10926 [@1872028c]) does much more here -- a
+        // DbmRangeTransition/beginDbmRangeTransition smoothing system,
+        // refreshNoiseFloorTarget(), a dbmRangeDragFinished signal -- none
+        // of which exists in NereusSDR (see the .h field comment: no
+        // NereusSDR counterpart to m_dbmDragStartRef's oldMinDbm/oldMaxDbm
+        // role). The settled behaviour both gestures need is the same:
+        // announce the final range and persist it, which this pre-existing
+        // simple gate already does correctly for m_draggingDbm.
+        if (m_draggingDbm || m_draggingDbmRange) {
             emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
         }
-        if (m_draggingDbm || m_draggingDivider) {
+        if (m_draggingDbm || m_draggingDbmRange || m_draggingDivider) {
             scheduleSettingsSave();
         }
 
@@ -8252,6 +8364,7 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         }
 
         m_draggingDbm = false;
+        m_draggingDbmRange = false;
         m_draggingFilter = FilterEdge::None;
         m_draggingVfo = false;
         m_draggingDivider = false;
