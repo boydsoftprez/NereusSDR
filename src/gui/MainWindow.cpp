@@ -1545,18 +1545,20 @@ void MainWindow::applyStreamWindowToPan(const QString& panId, int streamIndex)
     // current span so an operator's zoom is not thrown away -- only a pan that
     // has never been placed is actually moved, because pan-0 already sits on
     // its stream and this is a no-op there.
-    // Span is clamped to the stream's own width. Preserving a wider one would
-    // reintroduce the same failure at the edges: a pan left at the 192 kHz
-    // default over a 48 kHz DDC has three quarters of its window outside the
-    // data, which is exactly the out-of-range saturation this is fixing.
-    const double streamWidthHz = static_cast<double>(it->sampleRateHz);
-    double spanHz = sw->bandwidth();
-    if (spanHz <= 0.0 || (streamWidthHz > 0.0 && spanHz > streamWidthHz)) {
-        spanHz = streamWidthHz;
-    }
-    if (spanHz > 0.0) {
-        sw->setFrequencyRange(it->centreHz, spanHz);
-    }
+    // Span is clamped to what this pan may show. Preserving an arbitrarily
+    // wider one would reintroduce the same failure at the edges: a pan left at
+    // the 192 kHz default over a 48 kHz DDC has three quarters of its window
+    // outside the data, which is exactly the out-of-range saturation this is
+    // fixing.
+    //
+    // Through setDisplayWindowClamped, so the ceiling is the extended one when
+    // extended view is allowed and the DDC rate otherwise. The clamp used to
+    // be written out here against the stream width, which is the DDC rate and
+    // nothing else, so binding a slice to a stream collapsed a restored
+    // extended zoom right back onto the DDC. It was the third copy of that
+    // same clamp on this branch, each found in a different review round; the
+    // shared helper is what stops a fourth. Codex, PR #318.
+    sw->setDisplayWindowClamped(it->centreHz, sw->bandwidth());
 }
 
 // Phase 3F: WIDE badge fan-out. See RadioModel::panBypassState for the
@@ -3423,20 +3425,18 @@ void MainWindow::buildUI()
             // sample rate changes. Only reset the visible span if the
             // current bandwidth would now exceed the new DDC sample rate
             // (in which case we clamp to full-span).
-            const double freq = activeSpectrumWidget()->centerFrequency();
-            const double currentBw = activeSpectrumWidget()->bandwidth();
             // Against the EXTENDED ceiling, not the DDC rate.
             //
             // A span past the DDC rate is a legitimate state now: it is the
             // one and only trigger for extended mode. Clamping to rateHz here
             // meant any reconnect or rate change silently collapsed an
             // extended view back onto the DDC, and the operator's zoom was
-            // gone with no wings and no explanation. maxZoomOutBandwidthHz
-            // returns rateHz when extended view is switched off, so the
+            // gone with no wings and no explanation. setDisplayWindowClamped
+            // reads the DDC rate when extended view is switched off, so the
             // ordinary case is unchanged. Codex, PR #318.
-            const double ceiling = activeSpectrumWidget()->maxZoomOutBandwidthHz();
-            const double clampedBw = (currentBw > ceiling) ? ceiling : currentBw;
-            activeSpectrumWidget()->setFrequencyRange(freq, clampedBw);
+            activeSpectrumWidget()->setDisplayWindowClamped(
+                activeSpectrumWidget()->centerFrequency(),
+                activeSpectrumWidget()->bandwidth());
         }
     });
     // Spectrum/waterfall FPS — load persisted value (default 30), apply to
@@ -8036,7 +8036,12 @@ void MainWindow::wireSliceToSpectrum()
     // a real DDC rate rather than the widget's construction default.
     activeSpectrumWidget()->setSampleRate(768000.0);
 
-    // The upper bound is the extended ceiling, not a hardcoded 768 kHz.
+    // Same ceiling as setDisplayWindowClamped, spelled out here because the
+    // FALLBACK differs: an out-of-range stored value goes to the full-span
+    // 768 kHz default rather than to the ceiling, and there is a 10 kHz floor
+    // that only applies to a restored value. The ceiling is the shared part.
+    //
+    // The upper bound is that extended ceiling, not a hardcoded 768 kHz.
     //
     // saveSettings can now record a span above the DDC rate, because that is
     // exactly what extended view is, and this test rejected every one of them

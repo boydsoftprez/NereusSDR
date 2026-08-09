@@ -403,6 +403,43 @@ private slots:
                  average);
     }
 
+    // One clamp helper, so a restored extended span survives every path that
+    // re-applies a window.
+    //
+    // Three places in MainWindow re-apply a span: the startup restore, the
+    // sample-rate handler, and applyStreamWindowToPan when a pan gains a
+    // stream subscription. Each wrote its own clamp against the DDC rate, so
+    // an extended zoom survived until whichever ran last, and Codex found
+    // them one per round across three rounds on PR #318. This pins the shared
+    // helper they now all use.
+    void clamped_window_keeps_an_extended_span()
+    {
+        SpectrumWidget sw;
+        sw.setExtendedViewAllowed(true);
+        sw.setSampleRate(192000.0);
+        sw.setDdcCenterFrequency(14200000.0);
+
+        // A span well past the DDC rate but inside the wideband Nyquist.
+        sw.setDisplayWindowClamped(14200000.0, 1920000.0);
+        QCOMPARE(sw.bandwidth(), 1920000.0);
+        QVERIFY2(sw.extendedMode(),
+                 "the clamp collapsed an extended span onto the DDC");
+
+        // Above the wideband Nyquist it does clamp, to the ceiling.
+        sw.setDisplayWindowClamped(14200000.0, 1.0e9);
+        QCOMPARE(sw.bandwidth(), sw.maxZoomOutBandwidthHz());
+
+        // Non-positive means "give me the ceiling", the old contract.
+        sw.setDisplayWindowClamped(14200000.0, 0.0);
+        QCOMPARE(sw.bandwidth(), sw.maxZoomOutBandwidthHz());
+
+        // And with extended view off the ceiling is the DDC rate again, so
+        // the ordinary case is exactly what it always was.
+        sw.setExtendedViewAllowed(false);
+        sw.setDisplayWindowClamped(14200000.0, 1920000.0);
+        QCOMPARE(sw.bandwidth(), 192000.0);
+    }
+
     // Withdrawing extended-view permission has to pull the CURRENT span back,
     // not just lower the ceiling for the next gesture.
     //

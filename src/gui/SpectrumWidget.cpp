@@ -4779,6 +4779,19 @@ double SpectrumWidget::maxZoomOutBandwidthHz() const
     return std::max(m_sampleRateHz, m_widebandAdcRateHz / 2.0);
 }
 
+void SpectrumWidget::setDisplayWindowClamped(double centreHz,
+                                             double requestedSpanHz)
+{
+    const double ceiling = maxZoomOutBandwidthHz();
+    double span = requestedSpanHz;
+    if (span <= 0.0 || (ceiling > 0.0 && span > ceiling)) {
+        span = ceiling;
+    }
+    if (span > 0.0) {
+        setFrequencyRange(centreHz, span);
+    }
+}
+
 // Phase 3F Sub-Epic F Task 7 geometry, finished 2026-08-08.
 //
 // The DDC covers m_ddcCenterHz +/- m_sampleRateHz/2. Mapped into the window

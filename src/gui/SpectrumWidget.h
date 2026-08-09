@@ -1093,6 +1093,20 @@ public slots:
     /// switched off the ceiling stays at the DDC rate, exactly as before.
     double maxZoomOutBandwidthHz() const;
 
+    /// Set the display window with the span held to what this pan may show.
+    ///
+    /// The ceiling is maxZoomOutBandwidthHz(): the DDC rate normally, the
+    /// wideband ADC's Nyquist once extended view is allowed. A span of zero
+    /// or less, or one above the ceiling, becomes the ceiling.
+    ///
+    /// This exists because three separate places in MainWindow re-apply a
+    /// span (restore at startup, the sample-rate handler, and the stream
+    /// re-subscription path) and each clamped against the DDC rate on its
+    /// own. An extended zoom therefore survived until whichever of them ran
+    /// last, and Codex found them one at a time over three rounds on PR #318.
+    /// One definition, so there is no fourth.
+    void setDisplayWindowClamped(double centreHz, double requestedSpanHz);
+
     /// dB correction applied to a raw wideband bin before it is drawn beside
     /// the DDC trace. Two terms; see the definitions for the derivations.
     ///
