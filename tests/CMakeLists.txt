@@ -6348,6 +6348,26 @@ nereus_add_test(tst_dss_floor_drag)
 # 9537-9550, 10493-10501, 10893-10926 [@1872028c].
 nereus_add_test(tst_dbm_range_drag)
 
+# ── 3D stacked-trace spectrum plan, Task 17: DisplaySettingsModel ────────
+# Pins the NereusSDR-original model that replaces point-to-point
+# `m_updatingFromModel`-style sync between the right-click SpectrumOverlayMenu
+# popup and Setup -> Display: a QObject owning all fourteen display values,
+# one setter + one changed signal each, save()/load() round trip. Round trip
+# uses two DISTINCT instances so a load() that silently does nothing cannot
+# pass; booleans are asserted as the raw "True"/"False" strings, not through
+# the bool getter; every changed signal is proven to fire exactly once on a
+# real change and exactly zero times on a no-op (including a value that
+# CLAMPS to the current one); clamping is proven at both ends of every
+# ranged control; and 3D Floor is proven band-scoped
+# ("Display3DFloorDepth_<bandKeyName>", no pan index, self-persisting) while
+# the other thirteen are proven pan-scoped (SpectrumWidget's own
+# settingsKey(base, panIndex) convention, including the pan-0-fallback-
+# inheritance rule from tst_pan_display_settings_inherit.cpp). NereusSDR-
+# original: neither Thetis nor AetherSDR has a consolidating display-
+# settings model to port (see the class-header comment for why), so there
+# is no upstream source to cite.
+nereus_add_test(tst_display_settings_model)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

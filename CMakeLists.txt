@@ -672,6 +672,7 @@ set(MODEL_SOURCES
     src/models/BandFilterProxy.cpp
     src/models/FreeDVStationModel.cpp
     src/models/RxDecodeModel.cpp
+    src/models/DisplaySettingsModel.cpp
 )
 
 set(GUI_SOURCES
