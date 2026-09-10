@@ -3941,6 +3941,19 @@ void TxChannel::setTxCpdrGainDb(double dB)
 #endif
 }
 
+void TxChannel::setTxAmCarrierLevel(int percent)
+{
+    m_amCarrierPct = std::clamp(percent, 0, 100);  // carry
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis setup.cs:9965 [v2.10.3.15]:
+    //   console.radio.GetDSPTX(0).TXAMCarrierLevel =
+    //       Math.Sqrt(0.01 * (double)udTXAMCarrierLevel.Value) * 0.5;
+    const double cLevel = std::sqrt(0.01 * static_cast<double>(m_amCarrierPct)) * 0.5;
+    SetTXAAMCarrierLevel(m_channelId, cLevel);
+#endif
+}
+
 void TxChannel::setTxCessbOn(bool on)
 {
     m_cessbOn = on;  // carry

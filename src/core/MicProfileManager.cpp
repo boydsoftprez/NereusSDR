@@ -202,6 +202,7 @@ const QStringList& liveKeyList()
         // CPDR (1) — database.cs:4580 [v2.10.3.13].  cpdrOn is global
         // console state, not bundled here.
         QStringLiteral("CompanderLevel"),
+        QStringLiteral("AM_Carrier_Level"),
         // CESSB (1) — database.cs:4689 [v2.10.3.13].
         QStringLiteral("CESSB_On"),
         // ── Plan 4 D1 — TX filter bandwidth (2 keys) ───────────────────────
@@ -1181,6 +1182,7 @@ QHash<QString, QVariant> MicProfileManager::defaultProfileValues()
     out.insert(QStringLiteral("CFCParaEQData"), QString());                          // database.cs:4768
     // CPDR (1)
     out.insert(QStringLiteral("CompanderLevel"), QStringLiteral("2"));               // database.cs:4580
+    out.insert(QStringLiteral("AM_Carrier_Level"), QStringLiteral("100"));           // database.cs AddTXProfileTable AM_Carrier_Level
     // CESSB (1)
     out.insert(QStringLiteral("CESSB_On"), QStringLiteral("False"));                 // database.cs:4689
 
@@ -1303,6 +1305,7 @@ QHash<QString, QVariant> MicProfileManager::captureLiveValues(const TransmitMode
     out.insert(QStringLiteral("CFCParaEQData"), tx->cfcParaEqData());
     // CPDR (1) — cpdrOn is global console state, NOT bundled.
     out.insert(QStringLiteral("CompanderLevel"), QString::number(tx->cpdrLevelDb()));
+    out.insert(QStringLiteral("AM_Carrier_Level"), QString::number(tx->amCarrierLevel()));
     // CESSB (1)
     out.insert(QStringLiteral("CESSB_On"),
                tx->cessbOn() ? QStringLiteral("True") : QStringLiteral("False"));
@@ -1452,6 +1455,7 @@ void MicProfileManager::applyValuesToModel(const QHash<QString, QVariant>& value
     tx->setCfcParaEqData(take(QStringLiteral("CFCParaEQData"), QString()));
     // CPDR (1) — cpdrOn is global console state, NOT applied here.
     tx->setCpdrLevelDb(take(QStringLiteral("CompanderLevel"), QStringLiteral("2")).toInt());
+    tx->setAmCarrierLevel(take(QStringLiteral("AM_Carrier_Level"), QStringLiteral("100")).toInt());
     // CESSB (1)
     tx->setCessbOn(take(QStringLiteral("CESSB_On"), QStringLiteral("False"))
                         == QLatin1String("True"));

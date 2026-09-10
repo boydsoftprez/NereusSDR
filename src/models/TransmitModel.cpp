@@ -1601,6 +1601,9 @@ void TransmitModel::loadFromSettings(const QString& mac)
     // CompanderLevel from database.cs:4580 [v2.10.3.13]: default 2 dB.
     setCpdrLevelDb(s.value(pfx + QLatin1String("CompanderLevel"),
                             QStringLiteral("2")).toInt());
+    // AM_Carrier_Level from Thetis database.cs AddTXProfileTable: default 100 %.
+    setAmCarrierLevel(s.value(pfx + QLatin1String("AM_Carrier_Level"),
+                              QStringLiteral("100")).toInt());
 
     // ── CESSB (3M-3a-ii Batch 2) ──────────────────────────────────────────
     // Default from Thetis database.cs:4689 [v2.10.3.13]: dr["CESSB_On"] = false.
@@ -1822,6 +1825,7 @@ void TransmitModel::persistToSettings(const QString& mac) const
     s.setValue(pfx + QLatin1String("cpdr/on"),
                m_cpdrOn ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(pfx + QLatin1String("CompanderLevel"), QString::number(m_cpdrLevelDb));
+    s.setValue(pfx + QLatin1String("AM_Carrier_Level"), QString::number(m_amCarrierLevel));
 
     // CESSB.
     s.setValue(pfx + QLatin1String("CESSB_On"),
@@ -2874,6 +2878,19 @@ void TransmitModel::setCpdrLevelDb(int dB)
     m_cpdrLevelDb = clamped;
     persistOne(QStringLiteral("CompanderLevel"), QString::number(clamped));
     emit cpdrLevelDbChanged(clamped);
+}
+
+// ── AM carrier level ──────────────────────────────────────────────────────
+void TransmitModel::setAmCarrierLevel(int percent)
+{
+    // Clamp to Thetis udTXAMCarrierLevel range (0..100 %).
+    const int clamped = std::clamp(percent, kAmCarrierLevelMin, kAmCarrierLevelMax);
+    if (clamped == m_amCarrierLevel) { return; }
+    // From Thetis setup.cs:9628 [v2.10.3.15]:
+    //   udTXAMCarrierLevel.Value = (int)dr["AM_Carrier_Level"];
+    m_amCarrierLevel = clamped;
+    persistOne(QStringLiteral("AM_Carrier_Level"), QString::number(clamped));
+    emit amCarrierLevelChanged(clamped);
 }
 
 // ── CESSB ─────────────────────────────────────────────────────────────────

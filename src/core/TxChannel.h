@@ -1815,6 +1815,11 @@ public:
     /// From Thetis wdsp/compress.c:111-117 [v2.10.3.13].
     void setTxCpdrGainDb(double dB);
 
+    /// AM / SAM / DSB carrier level, percent (0..100).  Thin wrapper over
+    /// WDSP SetTXAAMCarrierLevel using the Thetis mapping from setup.cs:9965
+    /// [v2.10.3.15]:  c_level = sqrt(0.01 * percent) * 0.5.
+    void setTxAmCarrierLevel(int percent);
+
     /// CESSB (osctrl) run gate.  Wraps SetTXAosctrlRun(channel, on ? 1 : 0).
     ///
     /// SIDE EFFECT 1: SetTXAosctrlRun calls TXASetupBPFilters(channel)
@@ -3033,6 +3038,7 @@ private:
     // CPDR carry (mirrors WDSP-wired setTxCpdrOn/GainDb)
     bool    m_cpdrOn       {false};
     double  m_cpdrLevelDb  {0.0};
+    int     m_amCarrierPct {100};   // carry; AM/SAM/DSB carrier level
 
     // PureSignal carry — 3M-4 work
     bool    m_pureSignalEnabled {false};

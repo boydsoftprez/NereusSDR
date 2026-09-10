@@ -7310,6 +7310,9 @@ void RadioModel::connectToRadio(const RadioInfo& info)
 
             // 3. txEqBandChanged → rebuild full Profile (any single band
             //    edit pushes the whole 10-band shape).
+                // ── AM / SAM / DSB carrier level (1) ──
+                m_txChannel->setTxAmCarrierLevel(m_transmitModel.amCarrierLevel());
+
             connect(&m_transmitModel, &TransmitModel::txEqBandChanged,
                     m_txChannel, [pushEqProfile](int /*idx*/, int /*dB*/) {
                 pushEqProfile();
@@ -7498,6 +7501,12 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             connect(&m_transmitModel, &TransmitModel::dexpDetectorTauMsChanged,
                     m_txChannel, [this](double tauMs) {
                 m_txChannel->setDexpDetectorTau(tauMs);
+            // 26a. amCarrierLevelChanged → setTxAmCarrierLevel (AM/SAM/DSB TX).
+            connect(&m_transmitModel, &TransmitModel::amCarrierLevelChanged,
+                    m_txChannel, [this](int pct) {
+                m_txChannel->setTxAmCarrierLevel(pct);
+            });
+
             });
 
             // 30. dexpAttackTimeMsChanged → setDexpAttackTime.

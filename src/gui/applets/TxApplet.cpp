@@ -1805,18 +1805,18 @@ QString TxApplet::tooltipForMode(DSPMode mode)
     case DSPMode::USB:
     case DSPMode::DIGL:
     case DSPMode::DIGU:
+    case DSPMode::AM:
+    case DSPMode::SAM:
+    case DSPMode::DSB:
         return QStringLiteral("Manual transmit (MOX)");
 
     case DSPMode::CWL:
     case DSPMode::CWU:
         return QStringLiteral("CW TX coming in Phase 3M-2");
 
-    case DSPMode::AM:
-    case DSPMode::SAM:
-    case DSPMode::DSB:
     case DSPMode::FM:
     case DSPMode::DRM:
-        return QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)");
+        return QStringLiteral("FM TX coming in Phase 3M-3b (pre-emphasis)");
 
     case DSPMode::SPEC:
     default:

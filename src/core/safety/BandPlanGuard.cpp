@@ -481,6 +481,14 @@ bool BandPlanGuard::isModeAllowedForTx(DSPMode mode) const noexcept
         case DSPMode::DIGU:
         case DSPMode::RADE_U:
         case DSPMode::RADE_L:
+        // AM / SAM / DSB TX: WDSP TXA ammod stage, run-gated by SetTXAMode
+        // (TXA.c:753-789 [v2.10.3.13]).  TxChannel::applyTxFilterForMode
+        // already maps these to a symmetric IQ bandpass and
+        // TransmitModel::amCarrierLevel drives SetTXAAMCarrierLevel, so the
+        // only gate that was still closed was this allow-list.
+        case DSPMode::AM:
+        case DSPMode::SAM:
+        case DSPMode::DSB:
             return true;
         default:
             return false;
@@ -501,12 +509,9 @@ BandPlanGuard::checkMoxAllowed(Region region, std::int64_t freqHz,
             case DSPMode::CWU:
                 reason = QStringLiteral("CW TX coming in Phase 3M-2");
                 break;
-            case DSPMode::AM:
-            case DSPMode::SAM:
-            case DSPMode::DSB:
             case DSPMode::FM:
             case DSPMode::DRM:
-                reason = QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)");
+                reason = QStringLiteral("FM TX coming in Phase 3M-3b (pre-emphasis)");
                 break;
             default:
                 reason = QStringLiteral("Mode not supported for TX");

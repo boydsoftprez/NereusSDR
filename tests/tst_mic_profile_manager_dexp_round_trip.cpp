@@ -97,7 +97,7 @@ private slots:
         // Total bundle was 95 (CFC round-trip baseline — was 96, dropped
         // AntiVox_Source_VAX in 3M-3a-iv Option A refactor);
         // adding 11 DEXP keys brings it to 106.
-        QCOMPARE(defs.size(), 106);
+        QCOMPARE(defs.size(), 107);
     }
 
     // =========================================================================

@@ -141,9 +141,29 @@ void TxProfileSetupPage::buildUi()
         highSpin->setValue(m_tx->filterHigh());
         filterForm->addRow(QStringLiteral("High cutoff:"), highSpin);
 
+        // AM / SAM / DSB carrier level (Thetis TXProfile AM_Carrier_Level).
+        auto* carrierSpin = new QSpinBox(filterGroup);
+        carrierSpin->setRange(TransmitModel::kAmCarrierLevelMin,
+                              TransmitModel::kAmCarrierLevelMax);
+        carrierSpin->setSuffix(QStringLiteral(" %"));
+        carrierSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
+        carrierSpin->setToolTip(QStringLiteral(
+            "AM / SAM / DSB carrier level (%).  100 % = full carrier, as in Thetis.  "
+            "In AM the TX filter is symmetric: +/- High cutoff around the carrier."));
+        carrierSpin->setValue(m_tx->amCarrierLevel());
+        filterForm->addRow(QStringLiteral("AM carrier level:"), carrierSpin);
+
         if (auto* vlay = qobject_cast<QVBoxLayout*>(filterGroup->layout())) {
             vlay->addLayout(filterForm);
         }
+
+        connect(carrierSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+                m_tx, &TransmitModel::setAmCarrierLevel);
+        connect(m_tx, &TransmitModel::amCarrierLevelChanged,
+                this, [carrierSpin](int pct) {
+            QSignalBlocker b(carrierSpin);
+            carrierSpin->setValue(pct);
+        });
 
         // UI → Model
         connect(lowSpin, QOverload<int>::of(&QSpinBox::valueChanged),
@@ -235,6 +255,7 @@ void TxProfileSetupPage::wireDirtyTracking()
     // wire dropped alongside the antiVoxSourceVax property.
     connect(m_tx, &TransmitModel::monitorVolumeChanged,     this, markDirty);
     connect(m_tx, &TransmitModel::micSourceChanged,         this, markDirty);
+    connect(m_tx, &TransmitModel::amCarrierLevelChanged,    this, markDirty);  // AM/SAM/DSB carrier
 
     // Two-tone (7 properties + 1 enum).
     connect(m_tx, &TransmitModel::twoToneFreq1Changed,           this, markDirty);

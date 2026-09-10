@@ -8,7 +8,7 @@
 // Covers:
 //   1. MoxCheckFn callback: CW mode → moxRejected("CW TX coming in Phase 3M-2");
 //      MOX state stays Rx.
-//   2. AM mode → moxRejected("AM/FM TX coming in Phase 3M-3 (audio modes)");
+//   2. AM mode → accepted (AM/SAM/DSB TX via WDSP ammod);
 //      MOX state stays Rx.
 //   3. LSB mode (allowed) → MOX engages normally; moxRejected NOT emitted.
 //   4. No MoxCheckFn installed → setMox(true) succeeds (backwards-compat).
@@ -144,9 +144,9 @@ private slots:
         QVERIFY(!ctrl.isMox());
     }
 
-    // ── 2. AM mode → moxRejected("AM/FM TX coming in Phase 3M-3 (audio modes)") ─
+    // ── 2. AM mode → accepted (AM/SAM/DSB TX via WDSP ammod) ─────────────────
 
-    void am_setMox_emitsMoxRejected()
+    void am_setMox_isAccepted()
     {
         MoxController ctrl;
         ctrl.setTimerIntervals(0, 0, 0, 0, 0, 0);
@@ -157,10 +157,8 @@ private slots:
         ctrl.setMox(true);
         QCoreApplication::processEvents();
 
-        QCOMPARE(rejectedSpy.count(), 1);
-        QCOMPARE(rejectedSpy.at(0).at(0).toString(),
-                 QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)"));
-        QVERIFY(!ctrl.isMox());
+        QCOMPARE(rejectedSpy.count(), 0);
+        QVERIFY(ctrl.isMox());
     }
 
     void fm_setMox_emitsMoxRejected()
@@ -176,7 +174,7 @@ private slots:
 
         QCOMPARE(rejectedSpy.count(), 1);
         QCOMPARE(rejectedSpy.at(0).at(0).toString(),
-                 QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)"));
+                 QStringLiteral("FM TX coming in Phase 3M-3b (pre-emphasis)"));
         QVERIFY(!ctrl.isMox());
     }
 
@@ -403,34 +401,34 @@ private slots:
         QCOMPARE(tip, QStringLiteral("CW TX coming in Phase 3M-2"));
     }
 
-    void tooltipForMode_am_returnsAudioPhase()
+    void tooltipForMode_am_returnsManualMox()
     {
         const QString tip = TxApplet::tooltipForMode(DSPMode::AM);
-        QCOMPARE(tip, QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)"));
+        QCOMPARE(tip, QStringLiteral("Manual transmit (MOX)"));
     }
 
     void tooltipForMode_fm_returnsAudioPhase()
     {
         const QString tip = TxApplet::tooltipForMode(DSPMode::FM);
-        QCOMPARE(tip, QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)"));
+        QCOMPARE(tip, QStringLiteral("FM TX coming in Phase 3M-3b (pre-emphasis)"));
     }
 
-    void tooltipForMode_sam_returnsAudioPhase()
+    void tooltipForMode_sam_returnsManualMox()
     {
         const QString tip = TxApplet::tooltipForMode(DSPMode::SAM);
-        QCOMPARE(tip, QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)"));
+        QCOMPARE(tip, QStringLiteral("Manual transmit (MOX)"));
     }
 
-    void tooltipForMode_dsb_returnsAudioPhase()
+    void tooltipForMode_dsb_returnsManualMox()
     {
         const QString tip = TxApplet::tooltipForMode(DSPMode::DSB);
-        QCOMPARE(tip, QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)"));
+        QCOMPARE(tip, QStringLiteral("Manual transmit (MOX)"));
     }
 
     void tooltipForMode_drm_returnsAudioPhase()
     {
         const QString tip = TxApplet::tooltipForMode(DSPMode::DRM);
-        QCOMPARE(tip, QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)"));
+        QCOMPARE(tip, QStringLiteral("FM TX coming in Phase 3M-3b (pre-emphasis)"));
     }
 
     void tooltipForMode_spec_returnsNotSupported()

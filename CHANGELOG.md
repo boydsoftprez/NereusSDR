@@ -4,6 +4,8 @@
 
 ### Added
 
+- **AM / SAM / DSB transmit.** `BandPlanGuard::isModeAllowedForTx` now admits AM, SAM and DSB; the rest of the path (TxChannel `setTxMode` → WDSP `SetTXAMode` ammod stage, `applyTxFilterForMode` symmetric ±High IQ bandpass, TX filter overlay, VOX voice-mode set) already handled these modes. New `TransmitModel::amCarrierLevel` (percent, default 100) persisted as the Thetis TXProfile `AM_Carrier_Level` key on both the live TX state and mic profiles, pushed to WDSP via `TxChannel::setTxAmCarrierLevel` with the Thetis mapping `sqrt(0.01 * pct) * 0.5` (setup.cs:9965), wired into `pushTxProcessingChain` and a live `amCarrierLevelChanged` connect, and exposed as an "AM carrier level" spinbox on Setup → Audio → TX Profile. MOX tooltip for AM/SAM/DSB now reads "Manual transmit (MOX)". FM and DRM remain gated ("FM TX coming in Phase 3M-3b (pre-emphasis)"). Live-tested target: Hermes Lite 2 on 80 m AM.
+
 - **Phase 3F multi-pan + multi-slice foundation** (8 sub-epics, ~110 commits stacked on a single PR per single-PR strategy).
 - **Sub-Epic A**: SliceModel per-band persistence schema (sliceLetter, chainIndex, ddcIndex, sampleRateHz per-band, diversityEnabled, widebandExtensionRequested, psPaused), BoardCapabilities maxSlices + widebandAdcs per SKU, RadioModel::maxSlices accessor, AppSettings schema v5 to v6 migration, DdcAssignment shared struct.
 - **Sub-Epic B**: 5-slice codec chain (CodecContext SliceConfig array, IP1Codec + IP2Codec applyDdcAssignment, per-codec Thetis-faithful DDC topology including HL2 mi0bot PS rate carveout, AlexController per-ADC BPF state machine with BpfMode enum (Auto/ForceBand/ForceBypass) + BpfEffective enum (Filtered/Bypass/WidebandLocked) + recomputeBpf event matrix).

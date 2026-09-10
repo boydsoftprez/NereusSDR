@@ -2059,7 +2059,7 @@ nereus_add_test(tst_band_plan_guard_mode_allow_list)
 # MoxController cases (8):
 #   1. CWL → moxRejected("CW TX coming in Phase 3M-2"); state stays Rx.
 #   2. CWU → moxRejected with CW reason.
-#   3. AM  → moxRejected("AM/FM TX coming in Phase 3M-3 (audio modes)"); state stays Rx.
+#   3. AM  → accepted (AM/SAM/DSB TX enabled); FM still rejected.
 #   4. FM  → moxRejected with audio-modes reason.
 #   5. LSB (allowed) → MOX engages; moxRejected NOT emitted.
 #   6. USB (allowed) → same.
@@ -2071,7 +2071,7 @@ nereus_add_test(tst_band_plan_guard_mode_allow_list)
 # TxApplet::tooltipForMode static helper (12):
 #   USB/LSB/DIGL/DIGU → normal "Manual transmit (MOX)" tooltip.
 #   CWL/CWU → "CW TX coming in Phase 3M-2".
-#   AM/FM/SAM/DSB/DRM → "AM/FM TX coming in Phase 3M-3 (audio modes)".
+#   AM/SAM/DSB → allowed; FM/DRM → "FM TX coming in Phase 3M-3b (pre-emphasis)".
 #   SPEC → "Mode not supported for TX".
 #
 # Total: ~20 test cases. Uses QTEST_GUILESS_MAIN; no RadioModel required.
