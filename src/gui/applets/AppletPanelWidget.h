@@ -37,6 +37,7 @@ class QMenu;
 namespace NereusSDR {
 
 class AppletWidget;
+class AppletFloatingWindow;
 class SMeterWidget;
 
 // Scrollable vertical stack of applets with AetherSDR AppletPanel styling.
@@ -75,6 +76,9 @@ public:
 
     // Add an applet — wraps it with a title bar and adds to the scroll stack
     void addApplet(AppletWidget* applet);
+    // Insert at a stack position (0 = directly below the S-Meter header).
+    // Out-of-range indices append, same as addApplet.
+    void insertApplet(int index, AppletWidget* applet);
 
     // Remove an applet (and its title bar wrapper) from the scroll stack.
     // The applet widget itself is hidden and reparented to nullptr (not deleted).
@@ -84,6 +88,15 @@ public:
     // from the layout. Preserves stack position when re-shown. No-op for
     // null or unknown applets. NereusSDR-original (no Thetis equivalent).
     void setAppletVisible(AppletWidget* applet, bool visible);
+
+    // Pop an applet out of the stack into its own window, or bring it
+    // back.  Only applets whose canFloat() is true get the title-bar
+    // button; the methods themselves work for any applet in the panel.
+    // Floating state and window geometry persist per applet id under
+    // AppSettings keys "Applet<Id>Floating" / "Applet<Id>FloatGeometry".
+    void floatApplet(AppletWidget* applet);
+    void dockApplet(AppletWidget* applet);
+    bool isAppletFloating(AppletWidget* applet) const;
 
     // Install a menu on the panel's top-right ☰ button. Until this is
     // called, the button is hidden. Pass nullptr to remove the menu and
@@ -114,6 +127,10 @@ private:
     QVBoxLayout* m_stackLayout = nullptr;    // inside scroll area
     QList<AppletWidget*> m_applets;
     QMap<AppletWidget*, QWidget*> m_wrappers;  // applet → wrapper widget
+    QMap<AppletWidget*, AppletFloatingWindow*> m_floating;  // applet → window
+    QMap<AppletWidget*, bool> m_wantVisible;   // last setAppletVisible() request
+    QWidget* makeFloatButton(AppletWidget* applet);
+    void restoreFloatState(AppletWidget* applet);
     QWidget*      m_headerWidget  = nullptr;   // header widget for dynamic resize
     QWidget*      m_headerWrapper = nullptr;   // title-bar wrapper of the header
     float         m_headerAspect  = 0.0f;      // width/height ratio for header

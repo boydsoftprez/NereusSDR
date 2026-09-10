@@ -1027,6 +1027,7 @@ private:
     // Applets — Tasks 7-10 (NYI shells, hidden until Task 15 Container wiring)
     class DigitalApplet*    m_digitalApplet{nullptr};
     class PureSignalApplet* m_pureSignalApplet{nullptr};
+    class ModMonitorApplet* m_modMonApplet{nullptr};   // AM Mod Monitor
     class DiversityApplet*  m_diversityApplet{nullptr};
     class CwxApplet*        m_cwxApplet{nullptr};
     class DvkApplet*        m_dvkApplet{nullptr};

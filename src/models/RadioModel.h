@@ -121,6 +121,7 @@
 //  redesign (2026-04-29) deleted MicReBlocker; replaced with
 //  TxWorkerThread which drives TxChannel directly.)
 #include <algorithm>  // std::clamp (used by computeWireDriveForTest)
+#include <atomic>     // AM Mod Monitor flags
 #include <array>      // std::array (HL2 temp averaging ring)
 #include <memory>  // std::unique_ptr
 #include <optional>
@@ -139,6 +140,7 @@ class WidebandFftEngine;
 // 3M-1a G.1: forward declarations for TX-side components.
 class MoxController;
 class TxChannel;
+class AmModulationAnalyzer;
 // Phase 3F Sub-Epic J Task 11: forward decl for rxChannelForSlice()'s
 // return type (see below, near txChannel()).
 class RxChannel;
@@ -1071,6 +1073,16 @@ public:
     // in TxChannel drives fexchange2 → sendTxIq (SPSC ring) while running.
     // Wired by 3M-1a Task G.1 (bench fix: TUNE carrier now reaches the radio).
     TxChannel* txChannel() const { return m_txChannel; }
+
+    // ── AM Mod Monitor (NereusSDR-original) ───────────────────────────────
+    /// source 0 = TX I/Q leaving WDSP, 1 = PureSignal feedback receiver.
+    AmModulationAnalyzer* amModulationAnalyzer(int source) const;
+    /// Receiver stream index the feedback analyzer listens to (HL2: 1).
+    void setAmModFeedbackStream(int streamIndex);
+    int  amModFeedbackStream() const { return m_amModFbStream.load(); }
+    /// The applet sets this when its PA-feedback source is selected so the
+    /// connection-thread I/Q fork only pays for the analysis when wanted.
+    void setAmModFeedbackWanted(bool wanted);
 
     // Phase 3F Sub-Epic J Task 11: the one place GUI code may resolve a
     // slice's WDSP channel. Mirrors txChannel()'s shape. Added so MainWindow
@@ -3508,6 +3520,13 @@ private:
     // safe to call from the main thread per the WDSP API contract.
     // From Thetis dsp.cs:926-944 [v2.10.3.13] — WDSP.id(1, 0) = channel 1.
     TxChannel* m_txChannel{nullptr};
+
+    // AM Mod Monitor analyzers: [0] TX I/Q tap, [1] PS feedback receiver.
+    std::unique_ptr<AmModulationAnalyzer> m_amModTx;
+    std::unique_ptr<AmModulationAnalyzer> m_amModFb;
+    std::atomic<int>  m_amModFbStream{1};
+    std::atomic<bool> m_amModFbWanted{false};
+    std::atomic<bool> m_amModMoxOn{false};
 
     // TX mic source — strategy interface for silence (3M-1a) or real mic (3M-1b).
     // Owned by RadioModel via unique_ptr. NullMicSource for 3M-1a; replaced with

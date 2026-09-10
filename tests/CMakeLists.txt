@@ -1055,6 +1055,15 @@ target_compile_definitions(tst_radio_model_drive_path PRIVATE NEREUS_BUILD_TESTS
 # btnTXProfileSave_Click / btnTXProfileDelete_Click handlers).
 nereus_add_test(tst_mic_profile_manager)
 
+# ── AM Mod Monitor: AmModulationAnalyzer + ModMonitorApplet ──
+# Synthetic AM I/Q (carrier + symmetric / asymmetric audio) through the
+# peak-reading analyzer: +/- peak %, carrier tracking, no-carrier, peak
+# hold vs window peaks, reset; applet flasher latch + carrier lamp.
+nereus_add_test(tst_am_modulation_analyzer)
+
+# ── AppletPanelWidget float / dock round-trip (AM Mod Monitor pop-out) ──
+nereus_add_test(tst_applet_float_dock)
+
 # ── Phase 3R Task K1: MicProfileManager "RADE" factory preset ──
 # Verifies the NereusSDR-native "RADE" factory profile is seeded on
 # first launch and that its EQ-off / Leveler-on / ALC-off /

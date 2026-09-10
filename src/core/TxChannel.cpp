@@ -331,6 +331,7 @@ warren@wpratt.com
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
+#include "core/AmModulationAnalyzer.h"
 #include "AppSettings.h"
 #include "LogCategories.h"
 #include "RadioConnection.h"
@@ -2987,6 +2988,11 @@ void TxChannel::driveOneTxBlockFromInterleaved(const double* interleavedIn)
     // sendTxIq(iq, n): n = number of complex samples; buffer has 2*n floats.
     m_connection->sendTxIq(m_outInterleavedFloat.data(), outN);
 
+    // AM Mod Monitor tap (NereusSDR-original): same block the radio gets.
+    if (auto* tap = m_amModTap.load(std::memory_order_acquire)) {
+        tap->pushIq(m_outInterleavedFloat.data(), outN);
+    }
+
     // Siphon signal — MON path (3M-1b D.5).
     //
     // Emit post-SSB-modulator I-channel audio to any subscribed MON consumer
@@ -3939,6 +3945,11 @@ void TxChannel::setTxCpdrGainDb(double dB)
 #else
     Q_UNUSED(dB);
 #endif
+}
+
+void TxChannel::setAmModulationTap(AmModulationAnalyzer* tap)
+{
+    m_amModTap.store(tap, std::memory_order_release);
 }
 
 void TxChannel::setTxAmCarrierLevel(int percent)
