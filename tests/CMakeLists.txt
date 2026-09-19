@@ -5523,6 +5523,14 @@ nereus_add_test(tst_smeter_widget_peak_hold)
 # Phase 3P-II Phase 2, Task 39.
 nereus_add_test(tst_smeter_widget_context_menu)
 
+# Verifies the SMeterWidget meter-face selection: six vintage faces drawn by
+# gui/VintageMeterFace plus the original Classic look.  Default face, the
+# SMeter_FaceStyle AppSettings round-trip, the "Meter Face" context submenu
+# (index 3), and that every face renders and the pointer tracks the level.
+# NEREUS_SMETER_DUMP_DIR=<dir> writes a PNG of every face for eyeballing.
+# NereusSDR-native test; no upstream equivalent.
+nereus_add_test(tst_smeter_widget_face)
+
 # ── Phase 3P-II Phase 3 (Connection robustness) ──────────────────────────
 # Tasks 55+56: amplifierCreate frame format + flexradioPair accept/reject.
 # Wire formats from FlexRadio PowerGenius Ethernet API wiki spec (design §6.4).
