@@ -267,6 +267,35 @@ Scroll phase advances from 0 to 1 by wall clock between ticker ticks, with
 burst distance fixed at one row. The stack recedes continuously at any
 `DisplaySpectrumFps` setting.
 
+### 4.5 Row cadence: the 3D Speed divider (NereusSDR-original)
+
+Both panes receive one row per waterfall tick (section 4.1). The waterfall
+keeps one row per pixel of its height, so its history spans hundreds of
+ticks; the 3D ring keeps 96 visible rows (section 3.3). At the default
+30 ms period a 528 px waterfall spans about 15.8 s while the 3D surface
+spans about 2.9 s, so the surface advances roughly 5.5 times faster than
+the waterfall scrolls and each new row moves the front of the surface
+several pixels instead of one. The mismatch is inherent in upstream too;
+its waterfall tile cadence is slower and it has no control for it.
+
+NereusSDR adds a row divider. The 3D surface consumes one row per N
+waterfall ticks; the N rows are folded per column by peak-hold into the
+row that is pushed, so a burst that lasts one tick still raises a ridge.
+The scroll phase (section 4.4) advances over N ticks instead of one, so
+the glide stays continuous. The stop-on-TX gate sits above the fold, so
+the fold pauses with the waterfall.
+
+N is automatic by default: the waterfall's pixel height divided by 96,
+rounded, at least 1 and at most 64, re-read on every use so window and
+split changes are followed without a hook. A 3D Speed control overrides
+it: 0 is Match (automatic), 1 pushes every row (the previous behaviour),
+2 to 10 fold that many rows into each 3D row. Persisted per panadapter as
+`Display3DSpeed`, default 0.
+
+Averaging was rejected as the fold because a one-tick burst would shrink
+by a factor of N and could vanish from the surface while still visible in
+the waterfall.
+
 ---
 
 ## 5. The 3D Angle control (NereusSDR-original)
@@ -411,6 +440,7 @@ construction.
 | 3D Gain | 0-100 | 70 | same |
 | 3D Span | 0-100 | 100 | same |
 | 3D Angle | 0-100 | 50 | same (NereusSDR-original) |
+| 3D Speed | 0 (Match), 1-10 | 0 | same (NereusSDR-original) |
 | 3D Slice Shadow | on / off | off | right-click context menu, shown only in 3D mode |
 
 Plus a **Reset 3D to defaults** button, matching upstream's
@@ -442,6 +472,7 @@ Five are per panadapter, keyed through `settingsKey(base, panIndex)`:
 - `Display3DGain`
 - `Display3DSpan`
 - `Display3DAngle`
+- `Display3DSpeed`
 - `Display3DSliceShadow`
 
 3D Floor is per band, keyed exactly like the existing per-band grid keys built
@@ -488,6 +519,7 @@ the same instinct expressed against a different axis.
 | KiwiSDR source branches | Dropped | No such source |
 | Multi-row burst scroll distance | Fixed at one row | Producer delivers one row per tick |
 | Fixed viewing angle | 3D Angle slider, defaults to upstream's exact geometry | New capability |
+| One ring row per delivered row | Row divider with peak-hold fold, matched to the waterfall's row count by default | Our waterfall runs one row per pixel at 30 ms; upstream's tile cadence is slower and it has no control |
 | 3D Floor per display source | 3D Floor per band | Matches our per-band grid storage |
 | Grouped JSON settings object | Flat `AppSettings` keys | Project convention |
 | Controls in overlay menu only | Overlay menu plus Setup -> Display | Our operators expect Setup parity |
@@ -536,6 +568,10 @@ All headless. No graphics context required.
 8. **TX lockstep.** With stop-on-TX enabled and TX active, `pushWaterfallRow`
    advances neither the waterfall ring nor the DSS ring; with it disabled,
    both advance together. Guards the tee placement in section 4.1.
+9. **Row divider.** With divider N, K pushed rows reach the ring floor(K / N)
+   times; the folded row carries the per-column maximum of its N sources;
+   the automatic divider equals the waterfall height over 96, clamped to
+   1..64; the scroll increment per millisecond is 1 / (period times N).
 
 Test labels and build wiring follow `docs/development/fast-test-loop.md`.
 
