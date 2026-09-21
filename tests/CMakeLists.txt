@@ -6383,6 +6383,25 @@ nereus_add_test(tst_dbm_range_drag)
 # below for why there is no upstream source to cite.
 nereus_add_test(tst_display_settings_binding)
 
+# ── 3D stacked-trace spectrum plan, Task 23: persistence moves onto the
+#    model ────────────────────────────────────────────────────────────────
+# GOLDEN TEST, committed alone first, green against the pre-refactor code:
+# pins the on-disk format of all fourteen per-pan display keys byte for
+# byte (exact stored strings, not just getter round trips) before
+# SpectrumWidget::loadSettings()/saveSettings() stop reading and writing
+# them directly and start routing through DisplaySettingsModel::load()/
+# save() instead. Also pins pan-0-fallback inheritance for an untouched
+# pan 2, that pan 2's own save writes only the "_2" suffixed keys and
+# leaves pan 0's untouched, and that loadSettings() -- seeded with
+# genuinely non-default values, not an empty AppSettings -- neither
+# schedules a save nor drives the widget's own apply counter
+# (displaySettingsApplyCountForTest() stays 0) while still leaving the
+# model holding the loaded values. NereusSDR-original: this is a
+# NereusSDR persistence-scheme refactor with no upstream AetherSDR or
+# Thetis counterpart (see DisplaySettingsModel.h's file header), so
+# there is no upstream source to cite.
+nereus_add_test(tst_display_settings_golden)
+
 # ── 3D stacked-trace spectrum plan, Task 17: DisplaySettingsModel ────────
 # Pins the NereusSDR-original model that replaces point-to-point
 # `m_updatingFromModel`-style sync between the right-click SpectrumOverlayMenu
