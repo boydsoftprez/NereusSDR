@@ -137,6 +137,7 @@
 #include <QLabel>
 #include <QPropertyAnimation>
 #include <QScreen>
+#include <QSignalBlocker>
 #include <QToolTip>
 #include <QUrl>
 
@@ -729,6 +730,32 @@ void SpectrumWidget::loadSettings()
     // a per-pan key without going through rawValue, or that setting will
     // silently stop inheriting.
 
+    // 3D Stacked-Trace Spectrum Plan Task 23: DisplaySettingsModel is now
+    // the persister for its own fourteen fields (Colour Scheme, Colour
+    // Gain, Black Level, Ref Level, Dyn Range, Fill Alpha, Fill trace,
+    // Spectrum mode, 3D Gain, 3D Span, 3D Angle, 3D Speed, 3D Slice
+    // Shadow, split fraction) -- this function no longer reads any of
+    // their AppSettings keys itself. Load the model once, up front, with
+    // its own signals blocked: DisplaySettingsModel::load() calls its own
+    // setters, which -- through bindDisplaySettings()'s model-to-widget
+    // connections -- would otherwise fire straight back into this
+    // widget's OWN appliers (setRefLevel(), setWfColorGain(), ...) for
+    // every seeded value that differs from the model's just-constructed
+    // ship default. Each of those appliers calls update() and
+    // scheduleSettingsSave() and increments m_displaySettingsApplyCount,
+    // none of which loadSettings() is allowed to do (see
+    // displaySettingsApplyCountForTest()'s "no apply during load"
+    // contract). Blocking the model's signals lets its own members settle
+    // silently; every read of the fourteen below this point copies the
+    // model's freshly loaded getter straight into this widget's member,
+    // never through this widget's own setters. 3D Floor is excluded from
+    // the model's load() (see DisplaySettingsModel.h's file header) and
+    // stays out of this function exactly as before Task 23.
+    {
+        const QSignalBlocker blocker(m_displaySettings);
+        m_displaySettings->load();
+    }
+
     // Ship defaults — calibrated 2026-04-30 against a live ANAN-G2 with
     // a typical residential noise floor (-115 to -120 dBm in the
     // amateur HF bands). Earlier defaults ran 12 dB hotter (Grid -36 /
@@ -736,11 +763,13 @@ void SpectrumWidget::loadSettings()
     // experience — band noise jammed the bottom of the panadapter and
     // lit up the waterfall floor. Shifting the entire reference plane
     // down 12 dB gives a clean "noise sits low" first impression.
-    // Dynamic range (68 dB grid, 60 dB waterfall) is unchanged.
-    m_refLevel       = readFloat(QStringLiteral("DisplayGridMax"), -48.0f);
-    m_dynamicRange   = readFloat(QStringLiteral("DisplayGridMax"), -48.0f)
-                     - readFloat(QStringLiteral("DisplayGridMin"), -116.0f);
-    m_spectrumFrac   = readFloat(QStringLiteral("DisplaySpectrumFrac"), 0.40f);
+    // Dynamic range (68 dB grid, 60 dB waterfall) is unchanged. Now
+    // sourced from the model (Task 23), which carries the identical
+    // defaults (DisplaySettingsModel.h's m_refLevel/m_dynamicRange
+    // in-class initializers).
+    m_refLevel       = m_displaySettings->refLevel();
+    m_dynamicRange   = m_displaySettings->dynamicRange();
+    m_spectrumFrac   = m_displaySettings->spectrumFrac();
 
     // Phase 3G-12: persist the spectrum zoom level (visible bandwidth)
     // across app restarts. Center frequency is persisted indirectly via
@@ -748,8 +777,8 @@ void SpectrumWidget::loadSettings()
     // Default 192000 Hz = 192 kHz matches the P1 base sample rate.
     m_bandwidthHz    = static_cast<double>(
                           readFloat(QStringLiteral("DisplayBandwidth"), 192000.0f));
-    m_wfColorGain    = readInt(QStringLiteral("DisplayWfColorGain"), 45);
-    m_wfBlackLevel   = readInt(QStringLiteral("DisplayWfBlackLevel"), 104);
+    m_wfColorGain    = m_displaySettings->wfColorGain();   // Task 23: was readInt(DisplayWfColorGain)
+    m_wfBlackLevel   = m_displaySettings->wfBlackLevel();  // Task 23: was readInt(DisplayWfBlackLevel)
     m_wfHighThreshold = readFloat(QStringLiteral("DisplayWfHighLevel"), -62.0f);
     m_wfLowThreshold = readFloat(QStringLiteral("DisplayWfLowLevel"), -122.0f);
     // Seed render-active mirror from persistent user values — matches
@@ -759,14 +788,15 @@ void SpectrumWidget::loadSettings()
     // above stay untouched (issue #230 fix).
     m_wfActiveHighThreshold = m_wfHighThreshold;
     m_wfActiveLowThreshold  = m_wfLowThreshold;
-    m_fillAlpha      = readFloat(QStringLiteral("DisplayFftFillAlpha"), 0.70f);
-    m_panFill        = readBool(QStringLiteral("DisplayPanFill"), true);
+    m_fillAlpha      = m_displaySettings->fillAlpha();     // Task 23: was readFloat(DisplayFftFillAlpha)
+    m_panFill        = m_displaySettings->panFill();       // Task 23: was readBool(DisplayPanFill)
 
     m_ctunEnabled    = readBool(QStringLiteral("DisplayCtunEnabled"), true);
 
-    int scheme = readInt(QStringLiteral("DisplayWfColorScheme"), 0);
-    m_wfColorScheme = static_cast<WfColorScheme>(qBound(0, scheme,
-                          static_cast<int>(WfColorScheme::Count) - 1));
+    // Task 23: was readInt(DisplayWfColorScheme) + qBound(0, ..., Count-1);
+    // the model's own setWfColorScheme() clamps to the identical [0,7]
+    // range (WfColorScheme::Count == 8).
+    m_wfColorScheme = static_cast<WfColorScheme>(m_displaySettings->wfColorScheme());
 
     // Phase 3G-8 commit 3: spectrum renderer state.
     // DisplayAverageMode + DisplayAverageAlpha are retired keys (v0.3.0
@@ -1065,11 +1095,9 @@ void SpectrumWidget::loadSettings()
     m_maintainNFAdjustDelta = s.value(QStringLiteral("DisplayMaintainNFAdjustDelta"),
                                       QStringLiteral("False")).toString() == QStringLiteral("True");
 
-    // 3D Stacked-Trace Spectrum Plan Task 14 (Task 24 adds the seventh,
-    // Display3DSpeed): six of the seven 3D controls are per panadapter,
-    // read through the readInt/readBool lambdas above (settingsKey() +
-    // pan-0 fallback inheritance, same as every other per-pan key in this
-    // function). 3D Floor is deliberately NOT here --
+    // 3D Stacked-Trace Spectrum Plan Task 14 (Task 24 added the seventh,
+    // Display3DSpeed; Task 23 moved all seven's persistence onto the
+    // model, already loaded above). 3D Floor is deliberately NOT here --
     // it is per band on PanadapterModel (see the class-header comment on
     // setDssFloorDepth()/dssFloorDepth() above); the live m_dssFloorDepth
     // mirror keeps whatever value the band-change push last set until the
@@ -1087,28 +1115,23 @@ void SpectrumWidget::loadSettings()
         // persisted config -- migrating a 3D pan's widget onto a 2D pan's
         // settings would then leave a stale ring behind and never notify
         // whatever had been listening for the mode change. Route through
-        // setSpectrumRenderMode() once that reuse path exists.
-        const int modeRaw = readInt(QStringLiteral("DisplaySpectrumRenderMode"), 0);
-        m_spectrumRenderMode = static_cast<SpectrumRenderMode>(
-            qBound(0, modeRaw, static_cast<int>(SpectrumRenderMode::Count) - 1));
+        // setSpectrumRenderMode() once that reuse path exists. Task 23:
+        // the value now comes from the model (loaded, signal-blocked,
+        // above), not a fresh readInt() -- the model's own
+        // setSpectrumRenderMode() clamps to the identical Mode2D/Mode3D
+        // range.
+        m_spectrumRenderMode =
+            static_cast<SpectrumRenderMode>(m_displaySettings->spectrumRenderMode());
     }
-    m_dssGain          = qBound(0, readInt(QStringLiteral("Display3DGain"), 70), 100);
-    m_dssRowSpan       = qBound(0, readInt(QStringLiteral("Display3DSpan"), 100), 100);
-    m_dssAngle         = qBound(0, readInt(QStringLiteral("Display3DAngle"), 50), 100);
-    // Task 24: 0..10, not the siblings' 0..100 -- 0 is Match, 1..10 a
-    // manual row divider (design doc section 4.5).
-    m_dssRowDivider    = qBound(0, readInt(QStringLiteral("Display3DSpeed"), 0), 10);
-    m_threeDSliceDepth = readBool(QStringLiteral("Display3DSliceShadow"), false);
+    // Task 23: were qBound(0, readInt(...), 100) / qBound(0, readInt(...), 10)
+    // -- the model's own setters clamp each field to the identical range.
+    m_dssGain          = m_displaySettings->dssGain();
+    m_dssRowSpan       = m_displaySettings->dssRowSpan();
+    m_dssAngle         = m_displaySettings->dssAngle();
+    m_dssRowDivider    = m_displaySettings->dssRowDivider();
+    m_threeDSliceDepth = m_displaySettings->threeDSliceDepth();
 
     recomputeExtendedMode();
-
-    // Task 18: push the freshly-loaded values into the model once, after
-    // every field above is settled. Straight into the model's own
-    // setters (never through this widget's own setXxx appliers), so this
-    // does not touch m_displaySettingsApplyCount -- see
-    // displaySettingsApplyCountForTest()'s "no apply during load"
-    // contract.
-    syncDisplaySettingsFromWidget();
 }
 
 void SpectrumWidget::saveSettings()
@@ -1122,18 +1145,26 @@ void SpectrumWidget::saveSettings()
         s.setValue(settingsKey(key, m_panIndex), QString::number(val));
     };
 
-    writeFloat(QStringLiteral("DisplayGridMax"), m_refLevel);
-    writeFloat(QStringLiteral("DisplayGridMin"), m_refLevel - m_dynamicRange);
-    writeFloat(QStringLiteral("DisplaySpectrumFrac"), m_spectrumFrac);
+    // 3D Stacked-Trace Spectrum Plan Task 23: DisplaySettingsModel is now
+    // the sole persister for its own fourteen fields (Colour Scheme,
+    // Colour Gain, Black Level, Ref Level, Dyn Range, Fill Alpha, Fill
+    // trace, Spectrum mode, 3D Gain, 3D Span, 3D Angle, 3D Speed, 3D
+    // Slice Shadow, split fraction) -- this function no longer writes any
+    // of their AppSettings keys directly. syncDisplaySettingsFromWidget()
+    // pushes this widget's current values into the model one more time
+    // first (every write site already pushes on change, so this is
+    // normally a no-op; not relied upon to be, since a caller could in
+    // principle reach saveSettings() directly), then the model's own
+    // save() writes its fourteen keys under this widget's panIndex(). 3D
+    // Floor is excluded from both, exactly as before Task 23: it
+    // persists per band on PanadapterModel (see the class-header comment
+    // on setDssFloorDepth()/dssFloorDepth()).
+    syncDisplaySettingsFromWidget();
+    m_displaySettings->save();
+
     writeFloat(QStringLiteral("DisplayBandwidth"), static_cast<float>(m_bandwidthHz));  // Phase 3G-12
-    writeInt(QStringLiteral("DisplayWfColorGain"), m_wfColorGain);
-    writeInt(QStringLiteral("DisplayWfBlackLevel"), m_wfBlackLevel);
     writeFloat(QStringLiteral("DisplayWfHighLevel"), m_wfHighThreshold);
     writeFloat(QStringLiteral("DisplayWfLowLevel"), m_wfLowThreshold);
-    writeFloat(QStringLiteral("DisplayFftFillAlpha"), m_fillAlpha);
-    s.setValue(settingsKey(QStringLiteral("DisplayPanFill"), m_panIndex),
-              m_panFill ? QStringLiteral("True") : QStringLiteral("False"));
-    writeInt(QStringLiteral("DisplayWfColorScheme"), static_cast<int>(m_wfColorScheme));
     s.setValue(settingsKey(QStringLiteral("DisplayCtunEnabled"), m_panIndex),
               m_ctunEnabled ? QStringLiteral("True") : QStringLiteral("False"));
 
@@ -1268,20 +1299,15 @@ void SpectrumWidget::saveSettings()
     s.setValue(QStringLiteral("DisplayMaintainNFAdjustDelta"),
                m_maintainNFAdjustDelta ? QStringLiteral("True") : QStringLiteral("False"));
 
-    // 3D Stacked-Trace Spectrum Plan Task 14 (Task 24 adds the seventh,
-    // Display3DSpeed): six of the seven 3D controls are per panadapter --
-    // written through the same writeInt/settingsKey pattern as every
-    // other key above. 3D Floor is deliberately excluded: it persists per
+    // 3D Stacked-Trace Spectrum Plan Task 14 (Task 24 added the seventh,
+    // Display3DSpeed): six of the seven 3D controls -- Spectrum render
+    // mode, 3D Gain, 3D Span, 3D Angle, 3D Speed and 3D Slice Shadow --
+    // are six of the model's fourteen, already written above by
+    // m_displaySettings->save(). 3D Floor is the seventh and the
+    // exception: it is deliberately excluded from both, persisting per
     // band on PanadapterModel instead (see the class-header comment on
     // setDssFloorDepth()/dssFloorDepth()), so no Display3DFloorDepth key
     // is written from here.
-    writeInt(QStringLiteral("DisplaySpectrumRenderMode"), static_cast<int>(m_spectrumRenderMode));
-    writeInt(QStringLiteral("Display3DGain"), m_dssGain);
-    writeInt(QStringLiteral("Display3DSpan"), m_dssRowSpan);
-    writeInt(QStringLiteral("Display3DAngle"), m_dssAngle);
-    writeInt(QStringLiteral("Display3DSpeed"), m_dssRowDivider);
-    s.setValue(settingsKey(QStringLiteral("Display3DSliceShadow"), m_panIndex),
-              m_threeDSliceDepth ? QStringLiteral("True") : QStringLiteral("False"));
 }
 
 void SpectrumWidget::scheduleSettingsSave()
