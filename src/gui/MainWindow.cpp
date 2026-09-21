@@ -323,6 +323,7 @@ warren@wpratt.com
 #include "core/TwoToneController.h"
 #include "applets/PhoneCwApplet.h"
 #include "applets/RadeApplet.h"
+#include "applets/DisplayApplet.h"
 #include "applets/EqApplet.h"
 #include "applets/VaxApplet.h"
 #include "applets/DigitalApplet.h"
@@ -4831,6 +4832,13 @@ void MainWindow::populateDefaultMeter()
     connect(m_radioModel, &RadioModel::sliceRemoved, this,
             [refreshSliceTabs](int) { refreshSliceTabs(); });
 
+    // DisplayApplet, 3D Stacked-Trace Spectrum Plan Task 22. Sits
+    // immediately after RxApplet in the panel add order. Follows the
+    // active panadapter via RadioModel::spectrumWidget() /
+    // spectrumWidgetChanged; no further wiring needed here.
+    m_displayApplet = new DisplayApplet(m_radioModel, nullptr);
+    panel->addApplet(m_displayApplet);
+
     // TxApplet — NYI shell (Phase 3I-1)
     // 3M-3a-ii Batch 6: cache pointer in m_txApplet so SetupDialog
     // instances can wire CfcSetupPage's [Configure CFC bands…] button
@@ -5206,6 +5214,7 @@ void MainWindow::populateDefaultMeter()
     m_appletVis = new AppletVisibilityController(this);
 
     m_appletsById[QStringLiteral("Rx")]         = m_rxApplet;
+    m_appletsById[QStringLiteral("Display")]    = m_displayApplet;
     m_appletsById[QStringLiteral("Tx")]         = m_txApplet;
     m_appletsById[QStringLiteral("PhoneCw")]    = m_phoneCwApplet;
     m_appletsById[QStringLiteral("Rade")]       = m_radeApplet;
@@ -5234,6 +5243,8 @@ void MainWindow::populateDefaultMeter()
     // PS immediately without having to discover the menu toggle.
     m_appletVis->registerApplet(QStringLiteral("Rx"),
                                 QStringLiteral("RX"),           true);
+    m_appletVis->registerApplet(QStringLiteral("Display"),
+                                QStringLiteral("Display"),      true);
     m_appletVis->registerApplet(QStringLiteral("Tx"),
                                 QStringLiteral("TX"),           true);
     m_appletVis->registerApplet(QStringLiteral("PhoneCw"),

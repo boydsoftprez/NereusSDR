@@ -1036,6 +1036,9 @@ private:
     // PhoneCwApplet in the panel stack and is shown/hidden in the same
     // dspModeChanged lambda.
     class RadeApplet* m_radeApplet{nullptr};
+    // 3D Stacked-Trace Spectrum Plan Task 22: left-panel display-controls
+    // applet, follows the active panadapter via RadioModel::spectrumWidget().
+    class DisplayApplet* m_displayApplet{nullptr};
     class EqApplet* m_eqApplet{nullptr};
     class VaxApplet* m_vaxApplet{nullptr};
 

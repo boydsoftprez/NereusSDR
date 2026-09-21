@@ -6443,6 +6443,22 @@ nereus_add_test(tst_display_popup_binding)
 # upstream source to cite.
 nereus_add_test(tst_display_setup_binding)
 
+# ── 3D stacked-trace spectrum plan, Task 22: DisplayApplet ───────────────
+# Pins the left-panel display-controls applet: RadioModel::
+# spectrumWidgetChanged fires exactly once for a same-widget re-set;
+# every one of the fifteen DisplaySettingsModel fields is wired both
+# ways (model -> control reflected under QSignalBlocker with zero echo,
+# proven one field per scope per the batching trap Task 20's review
+# caught; control -> model reaches the bound model's setter); the applet
+# follows RadioModel::spectrumWidget() and rebinds cleanly (a control
+# moved after a rebind changes the NEW widget's model, never the old
+# one); Reset 3D writes the seven ship defaults; three sections in order
+# (Waterfall, Spectrum, 3D VIEW) with two dividers between them.
+# NereusSDR-original: neither Thetis nor AetherSDR has a left-panel
+# applet bound to a consolidating display-settings model, so there is no
+# upstream source to cite.
+nereus_add_test(tst_display_applet)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
