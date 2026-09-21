@@ -19,7 +19,6 @@
 #include <QSignalSpy>
 
 #include "core/AppSettings.h"
-#include "models/Band.h"
 #include "models/DisplaySettingsModel.h"
 
 using namespace NereusSDR;
@@ -95,30 +94,30 @@ private slots:
         QCOMPARE(AppSettings::instance().value(QStringLiteral("Display3DGain")).toInt(), 55);
     }
 
-    // Catches: storage that ignores the Band argument (a single scalar
-    // instead of a real per-band map/key) -- two different bands set to
-    // two different values must read back independently. No save()/
-    // load() involved: this field persists on every setDssFloorDepth()
-    // call (see the class-header comment on why).
-    void dssFloorDepth_roundTripsIndependentlyPerBand()
+    // Catches: a static/shared field instead of a genuine per-instance
+    // member -- two different model instances set to two different
+    // values must read back independently. Task 18 flattened this field
+    // from Band-keyed AppSettings storage onto a plain in-memory member,
+    // the same per-instance shape the other thirteen fields already have
+    // (see the class-header comment).
+    void dssFloorDepth_isPerInstanceNotShared()
     {
-        DisplaySettingsModel w;
-        w.setDssFloorDepth(Band::Band80m, 4);
-        w.setDssFloorDepth(Band::Band10m, 18);
-
-        DisplaySettingsModel r;
-        QCOMPARE(r.dssFloorDepth(Band::Band80m), 4);
-        QCOMPARE(r.dssFloorDepth(Band::Band10m), 18);
+        DisplaySettingsModel a;
+        DisplaySettingsModel b;
+        a.setDssFloorDepth(4);
+        b.setDssFloorDepth(18);
+        QCOMPARE(a.dssFloorDepth(), 4);
+        QCOMPARE(b.dssFloorDepth(), 18);
     }
 
-    // Catches: an unset band returning something other than the
+    // Catches: a fresh instance returning something other than the
     // documented ship default (6 -- matches SpectrumWidget's
     // m_dssFloorDepth in-class initializer and PanadapterModel's
     // BandGridSettings::dss3DFloorDepth default).
-    void dssFloorDepth_unsetBand_returnsTheShipDefault()
+    void dssFloorDepth_defaultsToShipDefaultOfSix()
     {
         DisplaySettingsModel m;
-        QCOMPARE(m.dssFloorDepth(Band::Band6m), 6);
+        QCOMPARE(m.dssFloorDepth(), 6);
     }
 
     // ============================================================
@@ -203,7 +202,7 @@ private slots:
         m.setDssRowSpan(10);
         m.setDssAngle(10);
         m.setThreeDSliceDepth(true);
-        m.setDssFloorDepth(Band::Band40m, 12);
+        m.setDssFloorDepth(12);
 
         QCOMPARE(schemeSpy.count(), 1);
         QCOMPARE(gainSpy.count(), 1);
@@ -223,8 +222,7 @@ private slots:
         // Payload sanity, not just the count -- catches a signal that
         // fires the right number of times but with a stale/wrong value.
         QCOMPARE(gainSpy.at(0).at(0).toInt(), 80);
-        QCOMPARE(floorSpy.at(0).at(0).value<Band>(), Band::Band40m);
-        QCOMPARE(floorSpy.at(0).at(1).toInt(), 12);
+        QCOMPARE(floorSpy.at(0).at(0).toInt(), 12);
     }
 
     // ============================================================
@@ -242,7 +240,7 @@ private slots:
         m.setRefLevel(-30.0f);
         m.setPanFill(false);
         m.setDssAngle(77);
-        m.setDssFloorDepth(Band::Band20m, 9);
+        m.setDssFloorDepth(9);
 
         QSignalSpy gainSpy(&m, &DisplaySettingsModel::wfColorGainChanged);
         QSignalSpy refSpy(&m, &DisplaySettingsModel::refLevelChanged);
@@ -254,7 +252,7 @@ private slots:
         m.setRefLevel(-30.0f);         // same float
         m.setPanFill(false);           // same bool
         m.setDssAngle(77);             // same int
-        m.setDssFloorDepth(Band::Band20m, 9); // same per-band int
+        m.setDssFloorDepth(9);         // same int
 
         QCOMPARE(gainSpy.count(), 0);
         QCOMPARE(refSpy.count(), 0);
@@ -268,7 +266,7 @@ private slots:
         QVERIFY(qFuzzyCompare(m.refLevel() + 1.0f, -30.0f + 1.0f));
         QCOMPARE(m.panFill(), false);
         QCOMPARE(m.dssAngle(), 77);
-        QCOMPARE(m.dssFloorDepth(Band::Band20m), 9);
+        QCOMPARE(m.dssFloorDepth(), 9);
     }
 
     // A value that CLAMPS to the current stored value must also emit
@@ -311,14 +309,14 @@ private slots:
         QCOMPARE(m.wfBlackLevel(), 125);
 
         m.setRefLevel(-9999.0f);
-        QVERIFY(qFuzzyCompare(m.refLevel() + 1000.0f, -160.0f + 1000.0f));
+        QVERIFY(qFuzzyCompare(m.refLevel() + 1000.0f, -180.0f + 1000.0f));
         m.setRefLevel(9999.0f);
-        QVERIFY(qFuzzyCompare(m.refLevel() + 1000.0f, 20.0f + 1000.0f));
+        QVERIFY(qFuzzyCompare(m.refLevel() + 1000.0f, 80.0f + 1000.0f));
 
         m.setDynamicRange(-9999.0f);
-        QVERIFY(qFuzzyCompare(m.dynamicRange(), 20.0f));
+        QVERIFY(qFuzzyCompare(m.dynamicRange(), 10.0f));
         m.setDynamicRange(9999.0f);
-        QVERIFY(qFuzzyCompare(m.dynamicRange(), 160.0f));
+        QVERIFY(qFuzzyCompare(m.dynamicRange(), 200.0f));
 
         m.setFillAlpha(-9.0f);
         QVERIFY(qFuzzyCompare(m.fillAlpha() + 1.0f, 0.0f + 1.0f));
@@ -335,10 +333,10 @@ private slots:
         m.setSpectrumRenderMode(999);
         QCOMPARE(m.spectrumRenderMode(), 1);
 
-        m.setDssFloorDepth(Band::Band15m, -5);
-        QCOMPARE(m.dssFloorDepth(Band::Band15m), 0);
-        m.setDssFloorDepth(Band::Band15m, 999);
-        QCOMPARE(m.dssFloorDepth(Band::Band15m), 24);
+        m.setDssFloorDepth(-5);
+        QCOMPARE(m.dssFloorDepth(), 0);
+        m.setDssFloorDepth(999);
+        QCOMPARE(m.dssFloorDepth(), 24);
 
         m.setDssGain(-5);
         QCOMPARE(m.dssGain(), 0);
@@ -357,44 +355,34 @@ private slots:
     }
 
     // ============================================================
-    // 3D Floor keys per band; the other thirteen key per pan.
+    // 3D Floor is untouched by load()/save(); the other thirteen
+    // fields key per pan and round-trip through both.
     // ============================================================
 
-    // Catches: 3D Floor accidentally flattened into the per-pan
-    // settingsKey(base, panIndex) scheme (the design this task
-    // explicitly rejects) -- the stored key must carry the band's own
-    // suffix and nothing that looks like a pan index.
-    void dssFloorDepthKey_isBandScopedNotPanScoped()
+    // Catches: load()/save() reaching into dssFloorDepth despite the
+    // file header's explicit "load() and save() do not touch 3D Floor" --
+    // either save() writing SOME AppSettings key for it under any name
+    // (there must be none: as of Task 18 this field's persistence lives
+    // entirely on PanadapterModel, not here), or load() overwriting an
+    // in-memory value a caller already set.
+    void dssFloorDepth_untouchedByLoadAndSave()
     {
-        DisplaySettingsModel m;
-        m.setPanIndex(0);
-        m.setDssFloorDepth(Band::Band20m, 9);
-        QCOMPARE(AppSettings::instance()
-                     .value(QStringLiteral("Display3DFloorDepth_") + bandKeyName(Band::Band20m))
-                     .toInt(),
-                 9);
-        // Proves presence is reachable at all before trusting the
-        // negative assertions below (an always-empty store would make
-        // both "absent" checks vacuously true).
-        QVERIFY(AppSettings::instance().contains(
-            QStringLiteral("Display3DFloorDepth_") + bandKeyName(Band::Band20m)));
-        QVERIFY(!AppSettings::instance().contains(QStringLiteral("Display3DFloorDepth")));
-        QVERIFY(!AppSettings::instance().contains(QStringLiteral("Display3DFloorDepth_0")));
-    }
-
-    // Catches: dssFloorDepth folded into save()'s per-pan bundle --
-    // save() must not write ANY Display3DFloorDepth* key, band-scoped
-    // or otherwise, since that field persists itself on every set call
-    // (see the class-header comment).
-    void batchSave_neverWritesADssFloorDepthKey()
-    {
-        DisplaySettingsModel m;
-        m.setPanIndex(0);
-        m.setDssGain(80); // proves save() writes keys at all
-        m.save();
+        DisplaySettingsModel w;
+        w.setPanIndex(0);
+        w.setDssFloorDepth(19);
+        w.setDssGain(80); // proves save() writes keys at all
+        w.save();
         QVERIFY(AppSettings::instance().contains(QStringLiteral("Display3DGain")));
-        QVERIFY(!AppSettings::instance().contains(
-            QStringLiteral("Display3DFloorDepth_") + bandKeyName(Band::Band20m)));
+        const QStringList keys = AppSettings::instance().allKeys();
+        for (const QString& key : keys) {
+            QVERIFY(!key.startsWith(QStringLiteral("Display3DFloorDepth")));
+        }
+
+        DisplaySettingsModel r;
+        r.setPanIndex(0);
+        r.setDssFloorDepth(3);
+        r.load();
+        QCOMPARE(r.dssFloorDepth(), 3); // load() must not have touched it
     }
 
     // Catches: the per-pan key suffix convention drifting from

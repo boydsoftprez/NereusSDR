@@ -6348,6 +6348,23 @@ nereus_add_test(tst_dss_floor_drag)
 # 9537-9550, 10493-10501, 10893-10926 [@1872028c].
 nereus_add_test(tst_dbm_range_drag)
 
+# ── 3D stacked-trace spectrum plan, Task 18: SpectrumWidget <->
+#    DisplaySettingsModel binding ─────────────────────────────────────────
+# Pins the two-way wiring in SpectrumWidget::bindDisplaySettings(): all
+# fourteen model-to-widget appliers, the six 3D widget-to-model signal
+# connections, and the eight non-3D fields' explicit push at every widget
+# write site (named setters, setDbmRange(), loadSettings(), the dBm-strip
+# and divider mouse drags). Also pins echo termination (a QSignalSpy on
+# the model's refLevelChanged sees exactly one emission per real change
+# from either direction, and zero on a no-op re-apply), that loadSettings()
+# never drives the widget's own apply counter, that the model's widened
+# Dyn Range clamp (10..200) never narrows a value the widget itself
+# accepts, and that the pre-existing 3D Floor widget<->PanadapterModel
+# bridge still fires exactly once when driven through the model.
+# NereusSDR-original: see tst_display_settings_model.cpp's own comment
+# below for why there is no upstream source to cite.
+nereus_add_test(tst_display_settings_binding)
+
 # ── 3D stacked-trace spectrum plan, Task 17: DisplaySettingsModel ────────
 # Pins the NereusSDR-original model that replaces point-to-point
 # `m_updatingFromModel`-style sync between the right-click SpectrumOverlayMenu
@@ -6358,14 +6375,15 @@ nereus_add_test(tst_dbm_range_drag)
 # the bool getter; every changed signal is proven to fire exactly once on a
 # real change and exactly zero times on a no-op (including a value that
 # CLAMPS to the current one); clamping is proven at both ends of every
-# ranged control; and 3D Floor is proven band-scoped
-# ("Display3DFloorDepth_<bandKeyName>", no pan index, self-persisting) while
-# the other thirteen are proven pan-scoped (SpectrumWidget's own
-# settingsKey(base, panIndex) convention, including the pan-0-fallback-
-# inheritance rule from tst_pan_display_settings_inherit.cpp). NereusSDR-
-# original: neither Thetis nor AetherSDR has a consolidating display-
-# settings model to port (see the class-header comment for why), so there
-# is no upstream source to cite.
+# ranged control; and 3D Floor is proven untouched by load()/save() (no
+# AppSettings key written under any name -- its persistence moved to
+# PanadapterModel per band in Task 18) while the other thirteen are
+# proven pan-scoped (SpectrumWidget's own settingsKey(base, panIndex)
+# convention, including the pan-0-fallback-inheritance rule from
+# tst_pan_display_settings_inherit.cpp). NereusSDR-original: neither
+# Thetis nor AetherSDR has a consolidating display-settings model to port
+# (see the class-header comment for why), so there is no upstream source
+# to cite.
 nereus_add_test(tst_display_settings_model)
 
 # --------------------------------------------------------------------------

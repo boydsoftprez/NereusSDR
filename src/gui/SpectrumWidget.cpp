@@ -125,6 +125,7 @@
 #include "dbm_strip_math.h"
 #include "popup_placement.h"
 #include "models/BandPlanManager.h"
+#include "models/DisplaySettingsModel.h"
 #include "models/NotchModel.h"
 #include "spectrum/SpectrumDetector.h"
 
@@ -613,6 +614,17 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // Phase 3M-4 Task 12 — two-tone IMD overlay analytical core.
     // Owned via QObject parenting; raw pointer mirrors m_bandPlanManager.
     m_imdOverlay = new ImdOverlay(this);
+
+    // 3D Stacked-Trace Spectrum Plan Task 18: create and bind this
+    // widget's DisplaySettingsModel last, after every other member is
+    // initialised. m_panIndex is already known here (its in-class
+    // initializer runs before this constructor body, and no earlier
+    // statement above changes it), so the model starts scoped to
+    // whatever pan this widget currently claims; a caller that later
+    // calls setPanIndex() re-scopes both together.
+    m_displaySettings = new DisplaySettingsModel(this);
+    m_displaySettings->setPanIndex(m_panIndex);
+    bindDisplaySettings();
 }
 
 SpectrumWidget::~SpectrumWidget()
@@ -638,6 +650,20 @@ static QString settingsKey(const QString& base, int panIndex)
         return base;
     }
     return QStringLiteral("%1_%2").arg(base).arg(panIndex);
+}
+
+// 3D Stacked-Trace Spectrum Plan Task 18: forwards to m_displaySettings
+// so the owned model's per-pan keys always track this widget's own. The
+// guard is defensive only -- by the time any external caller can reach
+// this method the constructor has already run to completion and
+// m_displaySettings is never null again after that -- but costs nothing
+// to keep honest.
+void SpectrumWidget::setPanIndex(int idx)
+{
+    m_panIndex = idx;
+    if (m_displaySettings) {
+        m_displaySettings->setPanIndex(idx);
+    }
 }
 
 void SpectrumWidget::loadSettings()
@@ -1068,6 +1094,14 @@ void SpectrumWidget::loadSettings()
     m_threeDSliceDepth = readBool(QStringLiteral("Display3DSliceShadow"), false);
 
     recomputeExtendedMode();
+
+    // Task 18: push the freshly-loaded values into the model once, after
+    // every field above is settled. Straight into the model's own
+    // setters (never through this widget's own setXxx appliers), so this
+    // does not touch m_displaySettingsApplyCount -- see
+    // displaySettingsApplyCountForTest()'s "no apply during load"
+    // contract.
+    syncDisplaySettingsFromWidget();
 }
 
 void SpectrumWidget::saveSettings()
@@ -1254,6 +1288,88 @@ void SpectrumWidget::scheduleSettingsSave()
     });
 }
 
+// 3D Stacked-Trace Spectrum Plan Task 18: wires this widget's owned
+// DisplaySettingsModel bidirectionally. Called once from the
+// constructor, after m_displaySettings is created.
+//
+// Model -> widget: all fourteen model xxxChanged signals drive the
+// matching widget applier, so a change made anywhere the model is
+// reachable (a future popup/Setup/applet binding) lands on the live
+// renderer exactly the way a direct widget call already does.
+//
+// Widget -> model: the six 3D fields already have their own widget-level
+// xxxChanged signal (Task 15), so those six connect straight back to the
+// model here. The other eight have no per-field widget signal; those
+// push through syncDisplaySettingsFromWidget(), called explicitly from
+// every one of their write sites instead (see that method and its
+// call sites).
+void SpectrumWidget::bindDisplaySettings()
+{
+    // ---- Model -> widget (all fourteen) ----
+    connect(m_displaySettings, &DisplaySettingsModel::wfColorSchemeChanged,
+            this, [this](int v) { setWfColorScheme(static_cast<WfColorScheme>(v)); });
+    connect(m_displaySettings, &DisplaySettingsModel::wfColorGainChanged,
+            this, &SpectrumWidget::setWfColorGain);
+    connect(m_displaySettings, &DisplaySettingsModel::wfBlackLevelChanged,
+            this, &SpectrumWidget::setWfBlackLevel);
+    connect(m_displaySettings, &DisplaySettingsModel::refLevelChanged,
+            this, &SpectrumWidget::setRefLevel);
+    connect(m_displaySettings, &DisplaySettingsModel::dynamicRangeChanged,
+            this, &SpectrumWidget::setDynamicRange);
+    connect(m_displaySettings, &DisplaySettingsModel::fillAlphaChanged,
+            this, &SpectrumWidget::setFillAlpha);
+    connect(m_displaySettings, &DisplaySettingsModel::panFillChanged,
+            this, &SpectrumWidget::setPanFillEnabled);
+    connect(m_displaySettings, &DisplaySettingsModel::spectrumFracChanged,
+            this, &SpectrumWidget::setSpectrumFrac);
+    connect(m_displaySettings, &DisplaySettingsModel::spectrumRenderModeChanged,
+            this, &SpectrumWidget::setSpectrumRenderMode);
+    connect(m_displaySettings, &DisplaySettingsModel::dssFloorDepthChanged,
+            this, &SpectrumWidget::setDssFloorDepth);
+    connect(m_displaySettings, &DisplaySettingsModel::dssGainChanged,
+            this, &SpectrumWidget::setDssGain);
+    connect(m_displaySettings, &DisplaySettingsModel::dssRowSpanChanged,
+            this, &SpectrumWidget::setDssRowSpan);
+    connect(m_displaySettings, &DisplaySettingsModel::dssAngleChanged,
+            this, &SpectrumWidget::setDssAngle);
+    connect(m_displaySettings, &DisplaySettingsModel::threeDSliceDepthChanged,
+            this, &SpectrumWidget::setThreeDSliceDepth);
+
+    // ---- Widget -> model (3D six only; the other eight push explicitly
+    //      via syncDisplaySettingsFromWidget()) ----
+    connect(this, &SpectrumWidget::spectrumRenderModeChanged,
+            m_displaySettings, &DisplaySettingsModel::setSpectrumRenderMode);
+    connect(this, &SpectrumWidget::dssFloorDepthChanged,
+            m_displaySettings, &DisplaySettingsModel::setDssFloorDepth);
+    connect(this, &SpectrumWidget::dssGainChanged,
+            m_displaySettings, &DisplaySettingsModel::setDssGain);
+    connect(this, &SpectrumWidget::dssRowSpanChanged,
+            m_displaySettings, &DisplaySettingsModel::setDssRowSpan);
+    connect(this, &SpectrumWidget::dssAngleChanged,
+            m_displaySettings, &DisplaySettingsModel::setDssAngle);
+    connect(this, &SpectrumWidget::threeDSliceDepthChanged,
+            m_displaySettings, &DisplaySettingsModel::setThreeDSliceDepth);
+}
+
+// Pushes the widget's current value for the eight fields with no
+// per-field widget signal into the model -- see bindDisplaySettings()'s
+// comment. Each of the eight model setters below carries its own
+// equality guard, so calling all eight unconditionally on every write
+// site is safe: only the field that actually changed emits, and any
+// echo back into this widget's own applier is absorbed by ITS guard in
+// turn (see the class's echo-termination note in DisplaySettingsModel.h).
+void SpectrumWidget::syncDisplaySettingsFromWidget()
+{
+    m_displaySettings->setWfColorScheme(static_cast<int>(m_wfColorScheme));
+    m_displaySettings->setWfColorGain(m_wfColorGain);
+    m_displaySettings->setWfBlackLevel(m_wfBlackLevel);
+    m_displaySettings->setRefLevel(m_refLevel);
+    m_displaySettings->setDynamicRange(m_dynamicRange);
+    m_displaySettings->setFillAlpha(m_fillAlpha);
+    m_displaySettings->setPanFill(m_panFill);
+    m_displaySettings->setSpectrumFrac(m_spectrumFrac);
+}
+
 void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
 {
     const bool bwChanged = !qFuzzyCompare(m_bandwidthHz, bandwidthHz);
@@ -1379,13 +1495,78 @@ void SpectrumWidget::setDbmRange(float minDbm, float maxDbm)
         setWfLowThreshold(minDbm);
         setWfHighThreshold(maxDbm);
     }
+    // Task 18: push, so DisplaySettingsModel follows this widget's
+    // ref level / dynamic range regardless of which caller (Copy button,
+    // NF-aware grid follow, user drag) reached them via this shared
+    // setter rather than the individually-named ones below.
+    syncDisplaySettingsFromWidget();
+}
+
+// 3D Stacked-Trace Spectrum Plan Task 18: named setters for the two
+// fields setDbmRange() above has always written directly. Guards use a
+// fixed absolute epsilon rather than qFuzzyCompare's shape: near zero,
+// qFuzzyCompare's relative tolerance breaks down, and Fill Alpha
+// (guarded the same way as these two) legitimately reaches 0.0 -- the
+// same hazard applies to any newly-added float guard.
+//
+// Bounds are each field's WIDEST existing clamp in this file, not the
+// popup slider's narrower [-160,20]/[20,160]: Dyn Range matches
+// wheelEvent's dBm-strip-scroll block (qBound(10.0f, ..., 200.0f)); Ref
+// Level matches the Task 19 Ctrl-drag gesture a few hundred lines below
+// (mouseMoveEvent's m_draggingDbmRange branch, via
+// clampDbmRangeForBottom's upstream kMinDisplayDbm/kMaxDisplayDbm =
+// -180.0f/80.0f), which is wider than the Shift-scroll block's
+// qBound(-160.0f, ..., 20.0f) a few lines below that. Found by running
+// tst_dbm_range_drag.cpp against an earlier draft that used -160..20
+// here: ctrlDragRange_clampsAtMaximum (which drags refLevel to 60.0f)
+// went red, because the model-to-widget round trip this task adds
+// narrowed 60.0f back down to 20.0f. Same never-narrower-than-any-
+// widget-write-path rule as Dyn Range.
+void SpectrumWidget::setRefLevel(float dBm)
+{
+    const float clamped = qBound(-180.0f, dBm, 80.0f);
+    if (std::abs(m_refLevel - clamped) < 1e-6f) { return; }
+    m_refLevel = clamped;
+    update();
+    scheduleSettingsSave();
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
+}
+
+void SpectrumWidget::setDynamicRange(float dB)
+{
+    const float clamped = qBound(10.0f, dB, 200.0f);
+    if (std::abs(m_dynamicRange - clamped) < 1e-6f) { return; }
+    m_dynamicRange = clamped;
+    update();
+    scheduleSettingsSave();
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
+}
+
+// Clamp matches the divider drag in mouseMoveEvent
+// (m_spectrumFrac = std::clamp(frac, 0.10f, 0.90f)).
+void SpectrumWidget::setSpectrumFrac(float frac)
+{
+    const float clamped = qBound(0.10f, frac, 0.90f);
+    if (std::abs(m_spectrumFrac - clamped) < 1e-6f) { return; }
+    m_spectrumFrac = clamped;
+    update();
+    scheduleSettingsSave();
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
 }
 
 void SpectrumWidget::setWfColorScheme(WfColorScheme scheme)
 {
+    // Task 18: added -- setWfColorGain/setWfBlackLevel already had this
+    // guard, this one did not (verified, not assumed).
+    if (m_wfColorScheme == scheme) { return; }
     m_wfColorScheme = scheme;
     scheduleSettingsSave();
     update();
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
 }
 
 void SpectrumWidget::setWfColorGain(int gain)
@@ -1394,6 +1575,8 @@ void SpectrumWidget::setWfColorGain(int gain)
     m_wfColorGain = gain;
     scheduleSettingsSave();
     update();
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
 }
 
 void SpectrumWidget::setWfBlackLevel(int level)
@@ -1402,6 +1585,8 @@ void SpectrumWidget::setWfBlackLevel(int level)
     m_wfBlackLevel = level;
     scheduleSettingsSave();
     update();
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
 }
 
 // ---- Phase 3G-8 commit 3 setters ----
@@ -1781,23 +1966,29 @@ void SpectrumWidget::setPeakBlobTextColor(const QColor& c)
 
 void SpectrumWidget::setPanFillEnabled(bool on)
 {
+    // Task 18: guard already present (verified, not assumed) -- left as-is.
     if (m_panFill == on) {
         return;
     }
     m_panFill = on;
     scheduleSettingsSave();
     update();  // vertex gen is next frame; render pass checks m_panFill
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
 }
 
 void SpectrumWidget::setFillAlpha(float a)
 {
     a = qBound(0.0f, a, 1.0f);
+    // Task 18: guard already present (verified, not assumed) -- left as-is.
     if (qFuzzyCompare(m_fillAlpha, a)) {
         return;
     }
     m_fillAlpha = a;
     scheduleSettingsSave();
     update();
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
 }
 
 void SpectrumWidget::setLineWidth(float w)
@@ -2397,6 +2588,11 @@ void SpectrumWidget::setSpectrumRenderMode(int mode)
     // Task 15: announce the settled (normalized) value, not the raw
     // possibly-out-of-range `mode` argument, so a listener never observes
     // a value setSpectrumRenderMode() itself would have rejected.
+    // Task 18: this signal is bound to DisplaySettingsModel::
+    // setSpectrumRenderMode() in bindDisplaySettings(), so it IS the push
+    // for this field -- no separate syncDisplaySettingsFromWidget() call
+    // needed here, unlike the eight non-3D setters above.
+    ++m_displaySettingsApplyCount;
     emit spectrumRenderModeChanged(static_cast<int>(m_spectrumRenderMode));
 }
 
@@ -2415,6 +2611,9 @@ void SpectrumWidget::setDssFloorDepth(int dB)
     // emit dssFloorDepthResolved(...)`), which fed the same overlay menu back
     // for a Flex/Kiwi source-dispatch reason this single-source build does
     // not have -- the early-return guard above already does the settling.
+    // Task 18: bound to DisplaySettingsModel::setDssFloorDepth() in
+    // bindDisplaySettings(); this emit is the push.
+    ++m_displaySettingsApplyCount;
     emit dssFloorDepthChanged(m_dssFloorDepth);
 }
 
@@ -2426,6 +2625,7 @@ void SpectrumWidget::setDssGain(int pct)
     m_dss.invalidate();
     scheduleSettingsSave();
     update();
+    ++m_displaySettingsApplyCount;
     emit dssGainChanged(m_dssGain);
 }
 
@@ -2449,6 +2649,7 @@ void SpectrumWidget::setDssRowSpan(int pct)
     // need them.
     scheduleSettingsSave();
     update();
+    ++m_displaySettingsApplyCount;
     emit dssRowSpanChanged(m_dssRowSpan);
 }
 
@@ -2464,6 +2665,7 @@ void SpectrumWidget::setDssAngle(int pct)
     // Task 15: lets Display3DSetupPage follow a change made through the
     // overlay menu (or any other caller) the same way it follows its own
     // slider -- see the round-trip guard in DisplaySetupPages.cpp.
+    ++m_displaySettingsApplyCount;
     emit dssAngleChanged(m_dssAngle);
 }
 
@@ -2473,6 +2675,7 @@ void SpectrumWidget::setThreeDSliceDepth(bool on)
     m_threeDSliceDepth = on;
     scheduleSettingsSave();
     update();
+    ++m_displaySettingsApplyCount;
     emit threeDSliceDepthChanged(m_threeDSliceDepth);
 }
 
@@ -7474,20 +7677,26 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         // Show overlay menu on right-click (default — not on a spot).
         if (!m_overlayMenu) {
             m_overlayMenu = new SpectrumOverlayMenu(this);
+            // Task 18: each lambda now calls the matching named setter
+            // instead of assigning the member directly. Behaviour
+            // identical for a genuinely-changed value (assign, update(),
+            // scheduleSettingsSave()); the setter's own equality guard
+            // additionally makes a same-value re-apply a no-op, which the
+            // member-assignment version never had.
             connect(m_overlayMenu, &SpectrumOverlayMenu::wfColorGainChanged,
-                    this, [this](int v) { m_wfColorGain = v; update(); scheduleSettingsSave(); });
+                    this, [this](int v) { setWfColorGain(v); });
             connect(m_overlayMenu, &SpectrumOverlayMenu::wfBlackLevelChanged,
-                    this, [this](int v) { m_wfBlackLevel = v; update(); scheduleSettingsSave(); });
+                    this, [this](int v) { setWfBlackLevel(v); });
             connect(m_overlayMenu, &SpectrumOverlayMenu::wfColorSchemeChanged,
-                    this, [this](int v) { m_wfColorScheme = static_cast<WfColorScheme>(v); update(); scheduleSettingsSave(); });
+                    this, [this](int v) { setWfColorScheme(static_cast<WfColorScheme>(v)); });
             connect(m_overlayMenu, &SpectrumOverlayMenu::fillAlphaChanged,
-                    this, [this](float v) { m_fillAlpha = v; update(); scheduleSettingsSave(); });
+                    this, [this](float v) { setFillAlpha(v); });
             connect(m_overlayMenu, &SpectrumOverlayMenu::panFillChanged,
-                    this, [this](bool v) { m_panFill = v; update(); scheduleSettingsSave(); });
+                    this, [this](bool v) { setPanFillEnabled(v); });
             connect(m_overlayMenu, &SpectrumOverlayMenu::refLevelChanged,
-                    this, [this](float v) { m_refLevel = v; update(); scheduleSettingsSave(); });
+                    this, [this](float v) { setRefLevel(v); });
             connect(m_overlayMenu, &SpectrumOverlayMenu::dynRangeChanged,
-                    this, [this](float v) { m_dynamicRange = v; update(); scheduleSettingsSave(); });
+                    this, [this](float v) { setDynamicRange(v); });
             connect(m_overlayMenu, &SpectrumOverlayMenu::ctunChanged,
                     this, [this](bool v) { setCtunEnabled(v); });
             // Plan decision D-e: the empty-pan "add a notch here" row.
@@ -7656,6 +7865,7 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
             scheduleSettingsSave();
             update();
+            syncDisplaySettingsFromWidget(); // Task 18
             return;
         }
 
@@ -7932,6 +8142,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
                                                  m_dbmRangeDragStartRange + deltaDb);
         m_refLevel = m_dbmRangeDragStartBottom + m_dynamicRange;
         markOverlayDirty();
+        syncDisplaySettingsFromWidget(); // Task 18
         return;
     }
 
@@ -7985,6 +8196,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         m_refLevel = m_dragStartRef + static_cast<float>(dy) * dbPerPixel;
         m_refLevel = qBound(-160.0f, m_refLevel, 20.0f);
         update();
+        syncDisplaySettingsFromWidget(); // Task 18
         return;
     }
 
@@ -8053,6 +8265,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
 #else
         update();
 #endif
+        syncDisplaySettingsFromWidget(); // Task 18
         return;
     }
 
@@ -8461,6 +8674,7 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
             emit dbmRangeChangeRequested(bottom, m_refLevel);
             update();
             scheduleSettingsSave();
+            syncDisplaySettingsFromWidget(); // Task 18
         }
         event->accept();
         return;
@@ -8494,6 +8708,9 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
         float step = (delta > 0) ? 5.0f : -5.0f;
         m_refLevel = qBound(-160.0f, m_refLevel + step, 20.0f);
         scheduleSettingsSave();
+        syncDisplaySettingsFromWidget(); // Task 18 -- this arm only; the
+                                          // other two touch none of the
+                                          // eight tracked fields
     } else {
         // Plain scroll: tune VFO by step size
         int steps = (delta > 0) ? 1 : -1;
