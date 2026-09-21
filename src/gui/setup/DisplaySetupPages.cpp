@@ -2399,6 +2399,16 @@ Display3DSetupPage::Display3DSetupPage(SpectrumWidget* spectrumWidget, QWidget* 
         QSignalBlocker block(m_angleSlider);
         m_angleSlider->setValue(pct);
     });
+    connect(settings, &DisplaySettingsModel::dssRowDividerChanged,
+            this, [this](int n) {
+        if (!m_speedSlider) { return; }
+        QSignalBlocker block(m_speedSlider);
+        m_speedSlider->setValue(n);
+        if (m_speedValueLabel) {
+            m_speedValueLabel->setText(n == 0 ? QStringLiteral("Match")
+                                               : QStringLiteral("1:%1").arg(n));
+        }
+    });
     connect(settings, &DisplaySettingsModel::threeDSliceDepthChanged,
             this, [this](bool on) {
         if (!m_sliceShadowCheck) { return; }
@@ -2433,6 +2443,15 @@ void Display3DSetupPage::loadFromWidget()
         QSignalBlocker block(m_angleSlider);
         m_angleSlider->setValue(settings->dssAngle());
     }
+    if (m_speedSlider) {
+        QSignalBlocker block(m_speedSlider);
+        m_speedSlider->setValue(settings->dssRowDivider());
+    }
+    if (m_speedValueLabel) {
+        const int n = settings->dssRowDivider();
+        m_speedValueLabel->setText(n == 0 ? QStringLiteral("Match")
+                                           : QStringLiteral("1:%1").arg(n));
+    }
     if (m_sliceShadowCheck) {
         QSignalBlocker block(m_sliceShadowCheck);
         m_sliceShadowCheck->setChecked(settings->threeDSliceDepth());
@@ -2464,17 +2483,17 @@ void Display3DSetupPage::buildUI()
     // QMessageBox in the loop.
     auto* resetBtn = new QPushButton(QStringLiteral("Reset 3D to defaults"), this);
     resetBtn->setToolTip(QStringLiteral(
-        "Restore Spectrum render mode, 3D Floor, 3D Gain, 3D Span, 3D Angle "
-        "and 3D Slice Shadow to their ship defaults (2D Waterfall / 6 dB / "
-        "70% / 100% / 50% / off)."));
+        "Restore Spectrum render mode, 3D Floor, 3D Gain, 3D Span, 3D Angle, "
+        "3D Speed and 3D Slice Shadow to their ship defaults (2D Waterfall / "
+        "6 dB / 70% / 100% / 50% / Match / off)."));
     connect(resetBtn, &QPushButton::clicked, this, [this]() {
         const auto rc = QMessageBox::question(
             this,
             QStringLiteral("Reset 3D to defaults"),
             QStringLiteral(
                 "This will restore Spectrum render mode, 3D Floor, 3D Gain, "
-                "3D Span, 3D Angle and 3D Slice Shadow to their ship "
-                "defaults.\n\nContinue?"),
+                "3D Span, 3D Angle, 3D Speed and 3D Slice Shadow to their "
+                "ship defaults.\n\nContinue?"),
             QMessageBox::Yes | QMessageBox::No,
             QMessageBox::No);
         if (rc != QMessageBox::Yes) { return; }
@@ -2570,6 +2589,43 @@ void Display3DSetupPage::buildUI()
         form->addRow(QStringLiteral("3D Angle:"), row.container);
     }
 
+    // ── 3D speed, row cadence divider (Task 24, NereusSDR-original) ─────
+    // Not a makeSliderRow() (QSpinBox) pair like its siblings above: the
+    // value text is "Match"/"1:N", not a plain number, so it uses the same
+    // slider+QLabel shape SpectrumOverlayMenu's row does, with the same
+    // tooltip verbatim on both widgets.
+    {
+        auto* container = new QWidget(group);
+        auto* hbox = new QHBoxLayout(container);
+        hbox->setContentsMargins(0, 0, 0, 0);
+        m_speedSlider = new QSlider(Qt::Horizontal, container);
+        m_speedSlider->setObjectName(QStringLiteral("setup3DSpeedSlider"));
+        m_speedSlider->setRange(0, 10);
+        m_speedSlider->setValue(0);
+        const QString speedTip = QStringLiteral(
+            "How many waterfall rows each 3D row covers. Match keeps the 3D "
+            "history the same length in time as the waterfall. 1:1 pushes "
+            "every row, the fastest look. Higher values fold more rows into "
+            "each 3D row, keeping peaks, so the surface recedes more slowly.");
+        m_speedSlider->setToolTip(speedTip);
+        m_speedValueLabel = new QLabel(QStringLiteral("Match"), container);
+        m_speedValueLabel->setObjectName(QStringLiteral("setup3DSpeedValueLabel"));
+        m_speedValueLabel->setToolTip(speedTip);
+        hbox->addWidget(m_speedSlider);
+        hbox->addWidget(m_speedValueLabel);
+        if (settings) {
+            connect(m_speedSlider, &QSlider::valueChanged,
+                    settings, &DisplaySettingsModel::setDssRowDivider);
+        }
+        connect(m_speedSlider, &QSlider::valueChanged, this, [this](int v) {
+            if (m_speedValueLabel) {
+                m_speedValueLabel->setText(v == 0 ? QStringLiteral("Match")
+                                                   : QStringLiteral("1:%1").arg(v));
+            }
+        });
+        form->addRow(QStringLiteral("3D Speed:"), container);
+    }
+
     // ── 3D slice shadow, perspective decal for slice passbands ──────────
     m_sliceShadowCheck = new QCheckBox(QStringLiteral("3D Slice Shadow"), group);
     m_sliceShadowCheck->setObjectName(QStringLiteral("setup3DSliceShadowCheck"));
@@ -2595,6 +2651,7 @@ void Display3DSetupPage::resetToDefaultsForTest()
     settings->setDssGain(70);
     settings->setDssRowSpan(100);
     settings->setDssAngle(50);
+    settings->setDssRowDivider(0);
     settings->setThreeDSliceDepth(false);
 }
 

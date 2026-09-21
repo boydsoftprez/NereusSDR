@@ -422,6 +422,50 @@ private slots:
         pan1.load();
         QCOMPARE(pan1.wfBlackLevel(), 77);
     }
+
+    // ============================================================
+    // 3D Stacked-Trace Spectrum Plan Task 24: the fifteenth field,
+    // dssRowDivider (0..10, ship default 0 == Match). Same shape as the
+    // other fourteen (clamp, equality guard, one emission per real
+    // change, per-pan round trip through Display3DSpeed, pan-0-fallback
+    // inheritance) -- one self-contained case covering all of it, rather
+    // than duplicating the fourteen-field patterns above field by field.
+    // ============================================================
+    void setDssRowDivider_clampsGuardsEmitsAndRoundTrips()
+    {
+        DisplaySettingsModel m;
+        QCOMPARE(m.dssRowDivider(), 0); // ship default: Match
+
+        m.setDssRowDivider(-5);
+        QCOMPARE(m.dssRowDivider(), 0);
+        m.setDssRowDivider(999);
+        QCOMPARE(m.dssRowDivider(), 10);
+
+        m.setDssRowDivider(5);
+        QSignalSpy spy(&m, &DisplaySettingsModel::dssRowDividerChanged);
+        m.setDssRowDivider(5); // same value: equality-guarded, no emit
+        QCOMPARE(spy.count(), 0);
+        m.setDssRowDivider(7);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 7);
+
+        DisplaySettingsModel w;
+        w.setPanIndex(0);
+        w.setDssRowDivider(6);
+        w.save();
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("Display3DSpeed")).toInt(), 6);
+
+        DisplaySettingsModel r;
+        r.setPanIndex(0);
+        r.load();
+        QCOMPARE(r.dssRowDivider(), 6);
+
+        // pan-0-fallback inheritance: an untouched pan reads pan 0's value.
+        DisplaySettingsModel pan2;
+        pan2.setPanIndex(2);
+        pan2.load();
+        QCOMPARE(pan2.dssRowDivider(), 6);
+    }
 };
 
 QTEST_MAIN(TestDisplaySettingsModel)

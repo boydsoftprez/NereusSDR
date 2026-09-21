@@ -372,6 +372,37 @@ void SpectrumOverlayMenu::buildUI()
         emit dssAngleChanged(v);
     });
 
+    // ── 3D speed, row cadence divider (Task 24, NereusSDR-original) ─────
+    // How many waterfall rows each pushed 3D row covers. 0 is Match
+    // (automatic -- SpectrumWidget::effectiveDssRowDivider()), 1 is the
+    // pre-Task-24 one-row-per-tick behaviour, 2..10 fold that many rows
+    // per column by peak-hold. Design doc section 4.5.
+    auto* dssSpeedRow = new QHBoxLayout;
+    dssSpeedRow->addWidget(new QLabel(QStringLiteral("3D Speed:"), this));
+    m_dssSpeedSlider = new QSlider(Qt::Horizontal, this);
+    m_dssSpeedSlider->setObjectName(QStringLiteral("dssSpeedSlider"));
+    m_dssSpeedSlider->setRange(0, 10);
+    m_dssSpeedSlider->setValue(0);
+    m_dssSpeedSlider->setAccessibleName(tr("3D Speed"));
+    m_dssSpeedSlider->setToolTip(tr(
+        "How many waterfall rows each 3D row covers. Match keeps the 3D "
+        "history the same length in time as the waterfall. 1:1 pushes "
+        "every row, the fastest look. Higher values fold more rows into "
+        "each 3D row, keeping peaks, so the surface recedes more slowly."));
+    m_dssSpeedLabel = new QLabel(QStringLiteral("Match"), this);
+    m_dssSpeedLabel->setObjectName(QStringLiteral("dssSpeedLabel"));
+    dssSpeedRow->addWidget(m_dssSpeedSlider);
+    dssSpeedRow->addWidget(m_dssSpeedLabel);
+    layout->addLayout(dssSpeedRow);
+
+    connect(m_dssSpeedSlider, &QSlider::valueChanged, this, [this](int v) {
+        if (m_dssSpeedLabel) {
+            m_dssSpeedLabel->setText(v == 0 ? QStringLiteral("Match")
+                                             : QStringLiteral("1:%1").arg(v));
+        }
+        emit dssRowDividerChanged(v);
+    });
+
     // ── 3D slice shadow, perspective decal for slice passbands ──────────
     // Task 12 filled the UBO slots the fragment shader's applySliceShadow
     // reads; this is the control that enables them.
@@ -450,12 +481,13 @@ void SpectrumOverlayMenu::setValues(int wfColorGain, int wfBlackLevel, bool auto
     m_ctunCheck->blockSignals(false);
 }
 
-// Seeds the 3D VIEW section's six widgets without emitting: the same
+// Seeds the 3D VIEW section's seven widgets without emitting: the same
 // blockSignals(true)/blockSignals(false) idiom setValues() above uses, so
 // opening the menu cannot echo the seeded values back out through the
 // change signals and rewrite the operator's live SpectrumWidget state.
+// rowDivider (Task 24) is the trailing seventh argument.
 void SpectrumOverlayMenu::setDssValues(int mode, int floor, int gain, int span,
-                                        int angle, bool sliceShadow)
+                                        int angle, bool sliceShadow, int rowDivider)
 {
     if (m_renderModeCombo) {
         m_renderModeCombo->blockSignals(true);
@@ -490,6 +522,17 @@ void SpectrumOverlayMenu::setDssValues(int mode, int floor, int gain, int span,
         m_dssAngleSlider->setValue(angle);
         if (m_dssAngleLabel) { m_dssAngleLabel->setText(QString::number(angle)); }
         m_dssAngleSlider->blockSignals(false);
+    }
+
+    if (m_dssSpeedSlider) {
+        m_dssSpeedSlider->blockSignals(true);
+        m_dssSpeedSlider->setValue(rowDivider);
+        if (m_dssSpeedLabel) {
+            m_dssSpeedLabel->setText(rowDivider == 0
+                ? QStringLiteral("Match")
+                : QStringLiteral("1:%1").arg(rowDivider));
+        }
+        m_dssSpeedSlider->blockSignals(false);
     }
 
     if (m_dssSliceShadowChk) {

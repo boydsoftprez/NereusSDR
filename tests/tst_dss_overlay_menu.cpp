@@ -16,8 +16,13 @@
 // own QMenu is a coordinator ruling -- see Task 12's row in
 // docs/attribution/aethersdr-reconciliation.md).
 //
-// Six controls in total, so every test in this file that enumerates them
+// Six controls in total, so every test in this file predating Task 24
 // enumerates six: mode combo, floor/gain/span/angle sliders, shadow check.
+// Task 24 (3D Stacked-Trace Spectrum Plan) adds a seventh, NereusSDR-
+// original 3D Speed row divider slider after 3D Angle; its own tests
+// (setDssValues_doesNotEcho's extended 7-arg call, speedRow_labelAndEmission)
+// are scoped separately below rather than folded into the six-control
+// enumerations, which stay pinned to their original six.
 //
 // The end-to-end wiring test at the bottom (sixControls_...) reuses the
 // exact right-click idiom tst_notch_hit_test.cpp's
@@ -34,6 +39,7 @@
 #include <QSlider>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QLabel>
 #include <QMouseEvent>
 
 #include "core/ConnectionState.h"
@@ -146,6 +152,12 @@ private slots:
     // echo", so the checkbox needs the same seed-without-echo proof as the
     // five sliders/combo -- otherwise every popup would silently reset
     // Slice Shadow to unchecked regardless of the operator's real setting.
+    //
+    // Task 24 extends the 6-arg signature to 7 (trailing rowDivider): the
+    // speed spy proves the seed does not echo either, and the "1:3" label
+    // check is this test's coverage of the acceptance clause "setDssValues
+    // (...) with rowDivider 3 shows 1:3" (speedRow_labelAndEmission below
+    // covers the rest of that same acceptance sentence independently).
     void setDssValues_doesNotEcho() {
         SpectrumOverlayMenu m;
         m.resize(320, 640);
@@ -158,8 +170,9 @@ private slots:
         QSignalSpy spanSpy(&m, &SpectrumOverlayMenu::dssRowSpanChanged);
         QSignalSpy angleSpy(&m, &SpectrumOverlayMenu::dssAngleChanged);
         QSignalSpy shadowSpy(&m, &SpectrumOverlayMenu::dssSliceShadowChanged);
+        QSignalSpy speedSpy(&m, &SpectrumOverlayMenu::dssRowDividerChanged);
 
-        m.setDssValues(1, 10, 40, 60, 25, true);
+        m.setDssValues(1, 10, 40, 60, 25, true, 3);
 
         QCOMPARE(modeSpy.count(), 0);
         QCOMPARE(floorSpy.count(), 0);
@@ -167,6 +180,7 @@ private slots:
         QCOMPARE(spanSpy.count(), 0);
         QCOMPARE(angleSpy.count(), 0);
         QCOMPARE(shadowSpy.count(), 0);
+        QCOMPARE(speedSpy.count(), 0);
 
         QCOMPARE(m.findChild<QComboBox*>(QStringLiteral("spectrumRenderModeCombo"))->currentIndex(), 1);
         QCOMPARE(m.findChild<QSlider*>(QStringLiteral("dssFloorDepthSlider"))->value(), 10);
@@ -174,6 +188,40 @@ private slots:
         QCOMPARE(m.findChild<QSlider*>(QStringLiteral("dssRowSpanSlider"))->value(), 60);
         QCOMPARE(m.findChild<QSlider*>(QStringLiteral("dssAngleSlider"))->value(), 25);
         QCOMPARE(m.findChild<QCheckBox*>(QStringLiteral("dssSliceShadowCheck"))->isChecked(), true);
+        QCOMPARE(m.findChild<QSlider*>(QStringLiteral("dssSpeedSlider"))->value(), 3);
+        QCOMPARE(m.findChild<QLabel*>(QStringLiteral("dssSpeedLabel"))->text(), QStringLiteral("1:3"));
+    }
+
+    // 3D Stacked-Trace Spectrum Plan Task 24: the 3D Speed row. Acceptance:
+    // range 0..10, value text "Match" at 0 and "1:7" at 7, the tooltip
+    // verbatim, and moving it emits dssRowDividerChanged(7) once.
+    void speedRow_labelAndEmission() {
+        SpectrumOverlayMenu m;
+        m.resize(320, 640);
+        m.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&m));
+
+        auto* slider = m.findChild<QSlider*>(QStringLiteral("dssSpeedSlider"));
+        auto* label  = m.findChild<QLabel*>(QStringLiteral("dssSpeedLabel"));
+        QVERIFY(slider);
+        QVERIFY(label);
+        QCOMPARE(slider->minimum(), 0);
+        QCOMPARE(slider->maximum(), 10);
+        QCOMPARE(slider->value(), 0);            // DEFAULTS: Match
+        QCOMPARE(label->text(), QStringLiteral("Match"));
+
+        const QString tip = QStringLiteral(
+            "How many waterfall rows each 3D row covers. Match keeps the 3D "
+            "history the same length in time as the waterfall. 1:1 pushes "
+            "every row, the fastest look. Higher values fold more rows into "
+            "each 3D row, keeping peaks, so the surface recedes more slowly.");
+        QCOMPARE(slider->toolTip(), tip);
+
+        QSignalSpy speedSpy(&m, &SpectrumOverlayMenu::dssRowDividerChanged);
+        slider->setValue(7);
+        QCOMPARE(label->text(), QStringLiteral("1:7"));
+        QCOMPARE(speedSpy.count(), 1);
+        QCOMPARE(speedSpy.at(0).at(0).toInt(), 7);
     }
 
     void spanUnsupported_disablesTheSliderNotTheRest() {

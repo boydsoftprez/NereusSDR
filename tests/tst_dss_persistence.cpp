@@ -131,6 +131,43 @@ private slots:
         QVERIFY(!AppSettings::instance().contains(QStringLiteral("Display3DFloorDepth_0")));
     }
 
+    // 3D Stacked-Trace Spectrum Plan Task 24: the sixth per-panadapter
+    // SpectrumWidget key, Display3DSpeed (m_dssRowDivider). Same
+    // settingsKey()/pan-0-fallback shape as the five above ("handle
+    // Display3DSpeed exactly like Display3DAngle" per the task brief).
+    // Round-tripped on two DISTINCT pan indices (not just pan 0) so the
+    // "_1" suffix convention is actually exercised, not merely the bare
+    // key.
+    //
+    // Catches: loadSettings()/saveSettings() not touching m_dssRowDivider
+    // at all, or writing/reading it under the wrong key name, or losing
+    // the per-pan settingsKey() suffix.
+    void dssRowDividerKey_roundTripsPerPan()
+    {
+        SpectrumWidget w0;
+        w0.setPanIndex(0);
+        w0.setDssRowDivider(6);
+        w0.saveSettings();
+
+        SpectrumWidget w1;
+        w1.setPanIndex(1);
+        w1.setDssRowDivider(9);
+        w1.saveSettings();
+
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("Display3DSpeed")).toInt(), 6);
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("Display3DSpeed_1")).toInt(), 9);
+
+        SpectrumWidget r0;
+        r0.setPanIndex(0);
+        r0.loadSettings();
+        QCOMPARE(r0.dssRowDivider(), 6);
+
+        SpectrumWidget r1;
+        r1.setPanIndex(1);
+        r1.loadSettings();
+        QCOMPARE(r1.dssRowDivider(), 9);
+    }
+
     // ============================================================
     // PanadapterModel: one per-band key
     // ============================================================

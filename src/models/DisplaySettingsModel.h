@@ -11,7 +11,7 @@
 //
 // WHY THIS CLASS EXISTS (3D Stacked-Trace Spectrum Plan, Task 17):
 //
-// Two UI surfaces edit the same fourteen panadapter display settings:
+// Two UI surfaces edit the same fifteen panadapter display settings:
 // the right-click SpectrumOverlayMenu popup and Setup -> Display (spread
 // across SpectrumDefaultsPage / WaterfallDefaultsPage / GridScalesPage /
 // Display3DSetupPage). Historically each surface wrote straight to
@@ -25,7 +25,7 @@
 //
 // This model exists so every surface has exactly ONE binding: to the
 // model, never to another surface or straight to SpectrumWidget. Each of
-// the fourteen values gets its own setter and its own `xxxChanged`
+// the fifteen values gets its own setter and its own `xxxChanged`
 // signal, and every setter has the same shape:
 //
 //     if (m_field == clampedValue) { return; }   // absorbs a re-applied
@@ -56,10 +56,11 @@
 //
 // THE ONE FIELD THAT IS NOT LIKE THE OTHERS -- 3D Floor (dssFloorDepth):
 //
-// As of Task 18, all fourteen fields on this class have the same SHAPE:
+// As of Task 18 (fourteen fields; Task 24 added a fifteenth, dssRowDivider,
+// of the same shape), every field on this class has the same SHAPE:
 // a plain in-memory value on this instance, a clamped equality-guarded
 // setter, a changed signal. What still makes 3D Floor different is
-// persistence, not shape. The other thirteen are keyed by panIndex() and
+// persistence, not shape. The other fourteen are keyed by panIndex() and
 // round-trip through this model's own load()/save(). 3D Floor does not:
 // it is anchored to the measured noise floor, which is a property of the
 // BAND being listened to, not of which panadapter widget happens to be
@@ -84,7 +85,7 @@
 // how Task 18 actually needed to bind: SpectrumWidget already has its
 // own per-pan dssFloorDepth(int)/setDssFloorDepth(int)/
 // dssFloorDepthChanged(int) mirror, and this model binds to THAT, the
-// same per-pan shape as the other thirteen fields, not a Band-keyed one.
+// same per-pan shape as the other fourteen fields, not a Band-keyed one.
 //
 // SCOPE NOTE (Task 18): SpectrumWidget is, as of this task, the only
 // surface bound to this model -- one model per widget, created in the
@@ -105,7 +106,7 @@
 
 namespace NereusSDR {
 
-// A QObject owning the fourteen panadapter display values described in
+// A QObject owning the fifteen panadapter display values described in
 // the file header above. One setter + one changed signal per value.
 // Every setter clamps to the same range the existing UI sliders already
 // enforce and is a no-op (no member write, no signal) when the incoming
@@ -113,12 +114,12 @@ namespace NereusSDR {
 // for why that single property is what makes the echo problem
 // structurally impossible.
 //
-// Thirteen of the fourteen fields are scoped by panIndex() AND persisted
+// Fourteen of the fifteen fields are scoped by panIndex() AND persisted
 // by load()/save(), mirroring SpectrumWidget's own per-pan settings
 // convention (pan 0 -> bare key, pan N -> "<key>_N"). Call setPanIndex()
 // before load()/save() to target a specific panadapter's settings; the
 // default is pan 0. dssFloorDepth is the exception: it is still an
-// ordinary in-memory field on this instance like the other thirteen, but
+// ordinary in-memory field on this instance like the other fourteen, but
 // load()/save() never touch it -- see "THE ONE FIELD THAT IS NOT LIKE
 // THE OTHERS" above for why.
 class DisplaySettingsModel : public QObject {
@@ -127,8 +128,8 @@ class DisplaySettingsModel : public QObject {
 public:
     explicit DisplaySettingsModel(QObject* parent = nullptr);
 
-    // ---- Panadapter scope (not one of the fourteen; controls which
-    //      pan's keys load()/save() and the thirteen per-pan setters
+    // ---- Panadapter scope (not one of the fifteen; controls which
+    //      pan's keys load()/save() and the fourteen per-pan setters
     //      below target). Mirrors SpectrumWidget::setPanIndex()/panIndex().
     void setPanIndex(int idx) { m_panIndex = idx; }
     int  panIndex() const { return m_panIndex; }
@@ -184,7 +185,7 @@ public:
     // bound SpectrumWidget's own drag handler enforces (SpectrumWidget.cpp,
     // search m_spectrumFrac = std::clamp(...)). Not currently bound to
     // either existing UI surface (neither exposes a control for it), but
-    // owned here so the model's claim to all fourteen values is honest.
+    // owned here so the model's claim to all fifteen values is honest.
     float spectrumFrac() const { return m_spectrumFrac; }
     void  setSpectrumFrac(float frac);
 
@@ -210,12 +211,20 @@ public:
     int  dssAngle() const { return m_dssAngle; }
     void setDssAngle(int pct);
 
+    // 3D Speed (Task 24, NereusSDR-original): how many waterfall rows each
+    // 3D row covers. 0 is Match (automatic, tracks the waterfall's own
+    // pixel height -- see SpectrumWidget::effectiveDssRowDivider()), 1..10
+    // is a manual row divider. Persisted per pan as Display3DSpeed,
+    // default 0. See design doc section 4.5.
+    int  dssRowDivider() const { return m_dssRowDivider; }
+    void setDssRowDivider(int n);
+
     bool threeDSliceDepth() const { return m_threeDSliceDepth; }
     void setThreeDSliceDepth(bool on);
 
     // ---- Persistence ----
     // Explicit, like SpectrumWidget::loadSettings()/saveSettings(): the
-    // thirteen per-pan setters above do NOT auto-persist on every call.
+    // fourteen per-pan setters above do NOT auto-persist on every call.
     // load() populates every field (including seeding, but not writing,
     // ship defaults when a key is absent) from AppSettings for the
     // current panIndex(), following the same pan-0-fallback-inheritance
@@ -242,6 +251,7 @@ signals:
     void dssGainChanged(int pct);
     void dssRowSpanChanged(int pct);
     void dssAngleChanged(int pct);
+    void dssRowDividerChanged(int n);
     void threeDSliceDepthChanged(bool on);
 
 private:
@@ -260,6 +270,7 @@ private:
     int   m_dssGain{70};
     int   m_dssRowSpan{100};
     int   m_dssAngle{50};
+    int   m_dssRowDivider{0};      // 0 == Match (automatic)
     bool  m_threeDSliceDepth{false};
 };
 

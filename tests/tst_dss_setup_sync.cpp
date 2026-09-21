@@ -87,6 +87,32 @@ private slots:
         QCOMPARE(w.dssRowSpan(),   100);
         QCOMPARE(w.dssAngle(),      50);
     }
+
+    // 3D Stacked-Trace Spectrum Plan Task 24: the 3D Speed row. Acceptance:
+    // "the page's speed slider follows the model and drives it, one
+    // emission; Reset puts 0 on the model." Each direction is set and
+    // asserted in its own step before the next runs (Ambiguity 3), then
+    // Reset is checked last against the same page/slider.
+    void speedSlider_followsAndDrivesTheModelAndReset() {
+        SpectrumWidget w;
+        Display3DSetupPage page(&w);
+        auto* slider = page.findChild<QSlider*>(QStringLiteral("setup3DSpeedSlider"));
+        QVERIFY(slider);
+
+        QSignalSpy modelSpy(w.displaySettings(), &DisplaySettingsModel::dssRowDividerChanged);
+        slider->setValue(6);
+        QCOMPARE(w.displaySettings()->dssRowDivider(), 6);
+        QCOMPARE(modelSpy.count(), 1);
+
+        modelSpy.clear();
+        w.displaySettings()->setDssRowDivider(9);
+        QCOMPARE(slider->value(), 9);
+        QCOMPARE(modelSpy.count(), 1);
+
+        page.resetToDefaultsForTest();
+        QCOMPARE(w.displaySettings()->dssRowDivider(), 0);
+        QCOMPARE(slider->value(), 0);
+    }
 };
 
 QTEST_MAIN(TestDssSetupSync)

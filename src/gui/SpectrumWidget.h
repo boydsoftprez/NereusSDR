@@ -363,7 +363,7 @@ public:
     void setDbmRange(float minDbm, float maxDbm);
     // 3D Stacked-Trace Spectrum Plan Task 18: named setters for the two
     // fields setDbmRange() has always written directly, so
-    // DisplaySettingsModel has something to bind each of the fourteen
+    // DisplaySettingsModel has something to bind each of the fifteen
     // values to individually (setDbmRange sets both at once; the popup's
     // Ref Level and Dyn Range sliders each set one).
     void setRefLevel(float dBm);
@@ -626,6 +626,25 @@ public:
     int  dssRowSpan() const { return m_dssRowSpan; }
     void setDssAngle(int pct);
     int  dssAngle() const { return m_dssAngle; }
+
+    // 3D Speed (3D Stacked-Trace Spectrum Plan Task 24, NereusSDR-
+    // original): how many waterfall rows each pushed 3D row covers. 0..10,
+    // persisted per panadapter as Display3DSpeed, default 0. 0 clamps to
+    // "Match" -- see effectiveDssRowDivider() below for what that resolves
+    // to. Design doc section 4.5.
+    void setDssRowDivider(int n);
+    int  dssRowDivider() const { return m_dssRowDivider; }
+    // The divider actually in effect: dssRowDivider() when it is a manual
+    // 1..10 value, otherwise the automatic Match value -- the waterfall's
+    // own pixel height divided by kDssVisibleRows, rounded, clamped to
+    // [1, kDssMaxAutoRowDivider]. Read live on every use (no cached value,
+    // no resize hook), so a window or split-fraction change is followed
+    // with no extra plumbing.
+    int  effectiveDssRowDivider() const;
+    // Ceiling on the automatic (Match) divider, so an extreme window size
+    // cannot make the 3D surface crawl to a near-standstill.
+    static constexpr int kDssMaxAutoRowDivider = 64;
+
     void setThreeDSliceDepth(bool on);
     bool threeDSliceDepth() const { return m_threeDSliceDepth; }
     DssShape dssShape() const { return dssShapeForAngle(m_dssAngle); }
@@ -704,6 +723,22 @@ public:
     }
     void setTxActiveForTest(bool on) { m_txActiveForTest = on; }
     int  dssRowsPushedForTest() const { return m_dssRowsPushed; }
+    // 3D Speed (Task 24) test seams.
+    int  effectiveDssRowDividerForTest() const { return effectiveDssRowDivider(); }
+    int  dssFoldCountForTest() const { return m_dssFoldCount; }
+    float dssScrollIncrementForTest(int deltaMs) const { return dssScrollIncrement(deltaMs); }
+    // The waterfall image height in pixels, what effectiveDssRowDivider()'s
+    // automatic branch actually divides by kDssVisibleRows. Did not exist
+    // before Task 24; there was no prior reason for a test to read it.
+    int  waterfallHeightForTest() const { return m_waterfall.height(); }
+    // Forwards DssRenderer's own existing rowDataRing()/headRing() row
+    // accessors (both already public and used by tst_dss_renderer_ring.cpp
+    // against a standalone DssRenderer) so a test can read one column of
+    // the newest ring row without a live GPU paint. column must be in
+    // [0, kDssCols).
+    float dssNewestRowColumnForTest(int column) const {
+        return m_dss.rowDataRing(m_dss.headRing())[column];
+    }
     // NoiseFloorTracker runs from live FFT frames; this seam drives
     // dssFloorDbm() directly so the floor-anchoring math is testable
     // without standing up the noise-floor pipeline.
@@ -1473,7 +1508,7 @@ public:
         updateDssScaleOverlayFreshness();
 #endif
     }
-    // Task 18: counts real (non-guarded) applies across all fourteen
+    // Task 18: counts real (non-guarded) applies across all fifteen
     // DisplaySettingsModel-bound appliers. Used to prove loadSettings()
     // never drives an apply (it pushes straight into the model, bypassing
     // these appliers entirely) and that a no-op re-apply does not move it.
@@ -1579,15 +1614,16 @@ signals:
     void txFilterOverlayPainted(int xLeft, int xRight);
 
     // ── 3DSS Setup-dialog mirror (3D Stacked-Trace Spectrum Plan Task 15) ──
-    // Two surfaces now edit the six DSS controls above: the Task 13
-    // right-click overlay menu and Setup -> Display -> 3D View
-    // (Display3DSetupPage). Each setter emits its matching signal here
-    // after its own state-settles/early-return guard (`if (m_field == v)
-    // { return; }`), so the Setup page can follow a change made through
-    // the overlay menu (or any other caller) the same way it already
-    // follows its own widgets, without a second polling path. Five of
-    // the six are NereusSDR-original signal infrastructure -- source-
-    // first governs DSP/radio logic, not this control-surface wiring.
+    // Two surfaces now edit the seven DSS controls above (Task 24 adds
+    // dssRowDividerChanged, the seventh): the Task 13 right-click overlay
+    // menu and Setup -> Display -> 3D View (Display3DSetupPage). Each
+    // setter emits its matching signal here after its own
+    // state-settles/early-return guard (`if (m_field == v) { return; }`),
+    // so the Setup page can follow a change made through the overlay menu
+    // (or any other caller) the same way it already follows its own
+    // widgets, without a second polling path. Six of the seven are
+    // NereusSDR-original signal infrastructure -- source-first governs
+    // DSP/radio logic, not this control-surface wiring.
     // dssFloorDepthChanged borrows its guarded-emit shape from AetherSDR
     // SpectrumWidget.h:799 [@1872028c] dssFloorDepthResolved (a real but
     // narrower-purpose upstream signal that fed the SAME overlay menu
@@ -1600,6 +1636,7 @@ signals:
     void dssGainChanged(int pct);
     void dssRowSpanChanged(int pct);
     void dssAngleChanged(int pct);
+    void dssRowDividerChanged(int n);
     void threeDSliceDepthChanged(bool on);
 
 protected:
@@ -1869,11 +1906,33 @@ private:
     void   pushWaterfallRow(const QVector<float>& wfPixelsDbm);
     QRgb   dbmToRgb(float dbm) const;
 
-    // 3DSS: resamples + stores wfPixelsDbm into the stacked-trace ring.
-    // Called from pushWaterfallRow() downstream of the stop-on-TX gate —
-    // see the call site there for why placement matters. Task 8 extends
-    // this to also feed the wide (off-screen) channel via pushRowWithWide.
+    // 3D Speed (Task 24): folds up to effectiveDssRowDivider() waterfall
+    // rows into one 3D row by per-column peak-hold before handing the
+    // result to pushDssRow(), so a divider above 1 does not lose a
+    // one-tick burst. Called from pushWaterfallRow() downstream of the
+    // stop-on-TX gate: same placement rule pushDssRow() documented
+    // directly before this task; see the call site there for why
+    // placement matters.
+    void accumulateDssRow(const QVector<float>& wfPixelsDbm);
+
+    // 3DSS: resamples + stores one already-folded row into the
+    // stacked-trace ring. Called only from accumulateDssRow(), once its
+    // fold count reaches effectiveDssRowDivider(): wfPixelsDbm is the
+    // folded exact row (m_dssFoldRow), and the wide (off-screen) channel
+    // is built from the folded m_dssFoldFullBins rather than
+    // m_lastFullBinsDbm directly (Task 24), so a burst that lasts a
+    // single waterfall tick still reaches both channels even when
+    // several ticks are folded into one 3D row. Task 8 extended this to
+    // also feed the wide channel via pushRowWithWide.
     void pushDssRow(const QVector<float>& wfPixelsDbm);
+
+    // The glide-clock increment per millisecond of wall-clock delta
+    // between display ticks, scaled by effectiveDssRowDivider() so the
+    // scroll phase still completes exactly once per pushed 3D row
+    // regardless of how many waterfall ticks that row folds (Task 24).
+    // Used by the m_displayTimer lambda and exposed by
+    // dssScrollIncrementForTest().
+    float dssScrollIncrement(int deltaMs) const;
 
     // ---- FFT pipeline state ----
     // Single Thetis-faithful pipeline: linear-power FFT bins -> visible
@@ -2109,6 +2168,15 @@ private:
     //-KG4VCF [v0.5.3] NereusSDR-original: upstream renders at one fixed
     // viewing angle. 50 reproduces its geometry exactly.
     int  m_dssAngle{50};
+    // 3D Speed (Task 24, NereusSDR-original): 0 == Match (automatic; see
+    // effectiveDssRowDivider()), 1..10 == manual row divider.
+    // m_dssFoldRow/m_dssFoldFullBins/m_dssFoldCount hold the peak-hold
+    // fold in progress across the waterfall ticks between two pushed 3D
+    // rows -- see accumulateDssRow() and design doc section 4.5.
+    int  m_dssRowDivider{0};
+    QVector<float> m_dssFoldRow;
+    QVector<float> m_dssFoldFullBins;
+    int  m_dssFoldCount{0};
     bool m_threeDSliceDepth{false};
     DssRenderer m_dss;
     int  m_dssRowsPushed{0};
@@ -2502,11 +2570,11 @@ private:
     // the eight fields with no per-field widget signal (named setters,
     // setDbmRange(), loadSettings(), the dBm-strip and divider mouse
     // drags, wheelEvent) -- see SpectrumWidget.cpp for the full list.
-    // Task 20 extended it to also push the six 3D fields, so
-    // loadSettings() (which assigns those directly, with no signal)
-    // still seeds the model; at every other call site the six 3D pushes
-    // are redundant no-ops, since the dedicated widget-level signal
-    // already reached the model first.
+    // Task 20 extended it to also push the six 3D fields (Task 24 makes
+    // it seven), so loadSettings() (which assigns those directly, with no
+    // signal) still seeds the model; at every other call site the seven
+    // 3D pushes are redundant no-ops, since the dedicated widget-level
+    // signal already reached the model first.
     void bindDisplaySettings();
     void syncDisplaySettingsFromWidget();
 

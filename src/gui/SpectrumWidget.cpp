@@ -458,12 +458,15 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
         if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
             const qint64 nowTickMs = QDateTime::currentMSecsSinceEpoch();
             if (m_dssLastTickMs > 0) {
-                const float deltaMs =
-                    static_cast<float>(nowTickMs - m_dssLastTickMs);
-                const float periodMs =
-                    static_cast<float>(qMax(1, m_wfUpdatePeriodMs));
+                // Task 24: the increment is factored out into
+                // dssScrollIncrement() so it can scale by
+                // effectiveDssRowDivider() -- with divider N the glide now
+                // takes N waterfall ticks (not one) to reach a pushed row,
+                // matching accumulateDssRow()'s fold.
+                const int deltaMs =
+                    static_cast<int>(nowTickMs - m_dssLastTickMs);
                 m_dssScrollProgressRows = qBound(0.0f,
-                    m_dssScrollProgressRows + deltaMs / periodMs, 1.0f);
+                    m_dssScrollProgressRows + dssScrollIncrement(deltaMs), 1.0f);
             }
             m_dssLastTickMs = nowTickMs;
         } else {
@@ -1062,10 +1065,11 @@ void SpectrumWidget::loadSettings()
     m_maintainNFAdjustDelta = s.value(QStringLiteral("DisplayMaintainNFAdjustDelta"),
                                       QStringLiteral("False")).toString() == QStringLiteral("True");
 
-    // 3D Stacked-Trace Spectrum Plan Task 14: five of the six 3D controls
-    // are per panadapter, read through the readInt/readBool lambdas above
-    // (settingsKey() + pan-0 fallback inheritance, same as every other
-    // per-pan key in this function). 3D Floor is deliberately NOT here --
+    // 3D Stacked-Trace Spectrum Plan Task 14 (Task 24 adds the seventh,
+    // Display3DSpeed): six of the seven 3D controls are per panadapter,
+    // read through the readInt/readBool lambdas above (settingsKey() +
+    // pan-0 fallback inheritance, same as every other per-pan key in this
+    // function). 3D Floor is deliberately NOT here --
     // it is per band on PanadapterModel (see the class-header comment on
     // setDssFloorDepth()/dssFloorDepth() above); the live m_dssFloorDepth
     // mirror keeps whatever value the band-change push last set until the
@@ -1091,6 +1095,9 @@ void SpectrumWidget::loadSettings()
     m_dssGain          = qBound(0, readInt(QStringLiteral("Display3DGain"), 70), 100);
     m_dssRowSpan       = qBound(0, readInt(QStringLiteral("Display3DSpan"), 100), 100);
     m_dssAngle         = qBound(0, readInt(QStringLiteral("Display3DAngle"), 50), 100);
+    // Task 24: 0..10, not the siblings' 0..100 -- 0 is Match, 1..10 a
+    // manual row divider (design doc section 4.5).
+    m_dssRowDivider    = qBound(0, readInt(QStringLiteral("Display3DSpeed"), 0), 10);
     m_threeDSliceDepth = readBool(QStringLiteral("Display3DSliceShadow"), false);
 
     recomputeExtendedMode();
@@ -1261,16 +1268,18 @@ void SpectrumWidget::saveSettings()
     s.setValue(QStringLiteral("DisplayMaintainNFAdjustDelta"),
                m_maintainNFAdjustDelta ? QStringLiteral("True") : QStringLiteral("False"));
 
-    // 3D Stacked-Trace Spectrum Plan Task 14: five of the six 3D controls
-    // are per panadapter -- written through the same writeInt/settingsKey
-    // pattern as every other key above. 3D Floor is deliberately excluded:
-    // it persists per band on PanadapterModel instead (see the
-    // class-header comment on setDssFloorDepth()/dssFloorDepth()), so no
-    // Display3DFloorDepth key is written from here.
+    // 3D Stacked-Trace Spectrum Plan Task 14 (Task 24 adds the seventh,
+    // Display3DSpeed): six of the seven 3D controls are per panadapter --
+    // written through the same writeInt/settingsKey pattern as every
+    // other key above. 3D Floor is deliberately excluded: it persists per
+    // band on PanadapterModel instead (see the class-header comment on
+    // setDssFloorDepth()/dssFloorDepth()), so no Display3DFloorDepth key
+    // is written from here.
     writeInt(QStringLiteral("DisplaySpectrumRenderMode"), static_cast<int>(m_spectrumRenderMode));
     writeInt(QStringLiteral("Display3DGain"), m_dssGain);
     writeInt(QStringLiteral("Display3DSpan"), m_dssRowSpan);
     writeInt(QStringLiteral("Display3DAngle"), m_dssAngle);
+    writeInt(QStringLiteral("Display3DSpeed"), m_dssRowDivider);
     s.setValue(settingsKey(QStringLiteral("Display3DSliceShadow"), m_panIndex),
               m_threeDSliceDepth ? QStringLiteral("True") : QStringLiteral("False"));
 }
@@ -1292,20 +1301,21 @@ void SpectrumWidget::scheduleSettingsSave()
 // DisplaySettingsModel bidirectionally. Called once from the
 // constructor, after m_displaySettings is created.
 //
-// Model -> widget: all fourteen model xxxChanged signals drive the
+// Model -> widget: all fifteen model xxxChanged signals drive the
 // matching widget applier, so a change made anywhere the model is
 // reachable (a future popup/Setup/applet binding) lands on the live
 // renderer exactly the way a direct widget call already does.
 //
-// Widget -> model: the six 3D fields already have their own widget-level
-// xxxChanged signal (Task 15), so those six connect straight back to the
-// model here. The other eight have no per-field widget signal; those
+// Widget -> model: the seven 3D fields (six from Task 15, plus 3D Speed
+// from Task 24) already have their own widget-level xxxChanged signal, so
+// those seven connect straight back to the model here. The other eight
+// have no per-field widget signal; those
 // push through syncDisplaySettingsFromWidget(), called explicitly from
 // every one of their write sites instead (see that method and its
 // call sites).
 void SpectrumWidget::bindDisplaySettings()
 {
-    // ---- Model -> widget (all fourteen) ----
+    // ---- Model -> widget (all fifteen) ----
     connect(m_displaySettings, &DisplaySettingsModel::wfColorSchemeChanged,
             this, [this](int v) { setWfColorScheme(static_cast<WfColorScheme>(v)); });
     connect(m_displaySettings, &DisplaySettingsModel::wfColorGainChanged,
@@ -1332,10 +1342,12 @@ void SpectrumWidget::bindDisplaySettings()
             this, &SpectrumWidget::setDssRowSpan);
     connect(m_displaySettings, &DisplaySettingsModel::dssAngleChanged,
             this, &SpectrumWidget::setDssAngle);
+    connect(m_displaySettings, &DisplaySettingsModel::dssRowDividerChanged,
+            this, &SpectrumWidget::setDssRowDivider);
     connect(m_displaySettings, &DisplaySettingsModel::threeDSliceDepthChanged,
             this, &SpectrumWidget::setThreeDSliceDepth);
 
-    // ---- Widget -> model (3D six only; the other eight push explicitly
+    // ---- Widget -> model (3D seven only; the other eight push explicitly
     //      via syncDisplaySettingsFromWidget()) ----
     connect(this, &SpectrumWidget::spectrumRenderModeChanged,
             m_displaySettings, &DisplaySettingsModel::setSpectrumRenderMode);
@@ -1347,25 +1359,27 @@ void SpectrumWidget::bindDisplaySettings()
             m_displaySettings, &DisplaySettingsModel::setDssRowSpan);
     connect(this, &SpectrumWidget::dssAngleChanged,
             m_displaySettings, &DisplaySettingsModel::setDssAngle);
+    connect(this, &SpectrumWidget::dssRowDividerChanged,
+            m_displaySettings, &DisplaySettingsModel::setDssRowDivider);
     connect(this, &SpectrumWidget::threeDSliceDepthChanged,
             m_displaySettings, &DisplaySettingsModel::setThreeDSliceDepth);
 }
 
-// Pushes the widget's current value for all fourteen DisplaySettingsModel
+// Pushes the widget's current value for all fifteen DisplaySettingsModel
 // fields into the model -- see bindDisplaySettings()'s comment. Each
 // model setter below carries its own equality guard, so calling all
-// fourteen unconditionally on every write site is safe: only the field
+// fifteen unconditionally on every write site is safe: only the field
 // that actually changed emits, and any echo back into this widget's own
 // applier is absorbed by ITS guard in turn (see the class's
 // echo-termination note in DisplaySettingsModel.h).
 //
-// Task 20 gap fix: the six 3D fields (spectrumRenderMode, dssFloorDepth,
-// dssGain, dssRowSpan, dssAngle, threeDSliceDepth) already reach the
-// model through their own widget-level xxxChanged signal
+// Task 20 gap fix: the seven 3D fields (spectrumRenderMode, dssFloorDepth,
+// dssGain, dssRowSpan, dssAngle, dssRowDivider, threeDSliceDepth) already
+// reach the model through their own widget-level xxxChanged signal
 // (bindDisplaySettings()'s "Widget -> model" section), so pushing them
 // here too is a no-op at every call site except one: loadSettings()
-// assigns five of the six (all but dssFloorDepth) directly, with no
-// signal, so without this push the model's five fields would still hold
+// assigns six of the seven (all but dssFloorDepth) directly, with no
+// signal, so without this push the model's six fields would still hold
 // ship defaults after a persisted-settings load even though the widget
 // itself renders the loaded values. dssFloorDepth is pushed too even
 // though loadSettings() never touches it, since this method's contract
@@ -1386,6 +1400,7 @@ void SpectrumWidget::syncDisplaySettingsFromWidget()
     m_displaySettings->setDssGain(m_dssGain);
     m_displaySettings->setDssRowSpan(m_dssRowSpan);
     m_displaySettings->setDssAngle(m_dssAngle);
+    m_displaySettings->setDssRowDivider(m_dssRowDivider);
     m_displaySettings->setThreeDSliceDepth(m_threeDSliceDepth);
 }
 
@@ -2599,6 +2614,12 @@ void SpectrumWidget::setSpectrumRenderMode(int mode)
         // showing a stack of rows captured at a frequency we have since left.
         m_dss.clear();
         m_dssRowsPushed = 0;
+        // Task 24: also drop any in-progress peak-hold fold, so re-entering
+        // 3D does not push a row built from bins captured at a frequency
+        // (or row width) we have since left.
+        m_dssFoldCount = 0;
+        m_dssFoldRow.clear();
+        m_dssFoldFullBins.clear();
     }
     m_dss.invalidate();
     markOverlayDirty();
@@ -2686,6 +2707,47 @@ void SpectrumWidget::setDssAngle(int pct)
     // slider -- see the round-trip guard in DisplaySetupPages.cpp.
     ++m_displaySettingsApplyCount;
     emit dssAngleChanged(m_dssAngle);
+}
+
+// 3D Speed (Task 24, NereusSDR-original -- design doc section 4.5).
+void SpectrumWidget::setDssRowDivider(int n)
+{
+    const int v = std::clamp(n, 0, 10);
+    if (m_dssRowDivider == v) { return; }
+    m_dssRowDivider = v;
+    // Deliberately no m_dss.invalidate() / markOverlayDirty() here, same
+    // reasoning as setDssRowSpan() above: the divider changes CADENCE --
+    // which rows get pushed, and how fast the glide advances -- not the
+    // rendered appearance of a row already sitting in the ring, so there
+    // is no cached geometry or baked overlay pixel that depends on it.
+    scheduleSettingsSave();
+    update();
+    ++m_displaySettingsApplyCount;
+    emit dssRowDividerChanged(m_dssRowDivider);
+}
+
+// See the header comment for the contract. kDssVisibleRows (DssGeometry.h)
+// is the ring's fixed visible-row count (96); dividing the waterfall's own
+// pixel height by it, rounded and clamped, is what "match the 3D history
+// to the waterfall's" means in code -- design doc section 4.5. A null or
+// zero-height waterfall (never resized, or resized to nothing) clamps to
+// 1 via the lower bound; no special case needed.
+int SpectrumWidget::effectiveDssRowDivider() const
+{
+    if (m_dssRowDivider > 0) {
+        return m_dssRowDivider;
+    }
+    return std::clamp(qRound(double(m_waterfall.height()) / kDssVisibleRows),
+                       1, kDssMaxAutoRowDivider);
+}
+
+// See the header comment for the contract: period times divider, so the
+// glide reaches 1.0 exactly when accumulateDssRow() is due to push the
+// next row.
+float SpectrumWidget::dssScrollIncrement(int deltaMs) const
+{
+    const int periodMs = qMax(1, m_wfUpdatePeriodMs) * effectiveDssRowDivider();
+    return static_cast<float>(deltaMs) / static_cast<float>(periodMs);
 }
 
 void SpectrumWidget::setThreeDSliceDepth(bool on)
@@ -5376,9 +5438,11 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
     // stop-on-TX gate above, so the perspective stack and the flat waterfall
     // beneath it advance and freeze in lockstep. Teeing at the WaterfallTicker
     // callback instead would sit upstream of that gate and let the 3D surface
-    // keep scrolling through an over.
+    // keep scrolling through an over. Task 24: the tee is now
+    // accumulateDssRow(), which folds rows per effectiveDssRowDivider()
+    // before handing a peak-held row to pushDssRow() -- see that method.
     if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
-        pushDssRow(wfPixelsDbm);
+        accumulateDssRow(wfPixelsDbm);
     }
 
     // 2026-05-25 KG4VCF bench fix: cadence is now driven by
@@ -5630,14 +5694,58 @@ QVector<SpectrumWidget::DssShadowBand> SpectrumWidget::buildDssShadowBands() con
 // set in updateSpectrumLinear()) via pushRowWithWide. Falls back to the
 // exact-only pushRow() whenever buildDssWideRow() has nothing to offer
 // (not zoomed in, or no FFT frame cached yet).
+// 3D Speed (Task 24, NereusSDR-original -- design doc section 4.5).
+// Folds wfPixelsDbm (and the wide-channel source m_lastFullBinsDbm) into
+// the in-progress fold by per-column maximum (peak-hold), so a burst that
+// lasts a single waterfall tick still reaches the ring even when several
+// ticks are folded into one 3D row -- an average was rejected for exactly
+// this reason (it would shrink such a burst by a factor of N and could
+// vanish from the 3D surface while still visible in the waterfall).
+//
+// A size change on either the exact row or the full-bins snapshot (DDC
+// bandwidth/zoom change mid-fold) discards whatever was accumulated and
+// starts a fresh fold at count 1, rather than mixing rows of two
+// different widths together.
+void SpectrumWidget::accumulateDssRow(const QVector<float>& wfPixelsDbm)
+{
+    if (m_dssFoldCount == 0
+        || wfPixelsDbm.size() != m_dssFoldRow.size()
+        || m_lastFullBinsDbm.size() != m_dssFoldFullBins.size()) {
+        m_dssFoldRow = wfPixelsDbm;
+        m_dssFoldFullBins = m_lastFullBinsDbm;
+        m_dssFoldCount = 1;
+    } else {
+        const int n = m_dssFoldRow.size();
+        for (int i = 0; i < n; ++i) {
+            m_dssFoldRow[i] = std::max(m_dssFoldRow[i], wfPixelsDbm[i]);
+        }
+        const int fullN = m_dssFoldFullBins.size();
+        for (int i = 0; i < fullN; ++i) {
+            m_dssFoldFullBins[i] = std::max(m_dssFoldFullBins[i], m_lastFullBinsDbm[i]);
+        }
+        ++m_dssFoldCount;
+    }
+
+    // A divider lowered mid-fold (down to at or below the current count)
+    // pushes right here, on this very tick, rather than waiting out
+    // whatever the count target was when the fold started.
+    if (m_dssFoldCount >= effectiveDssRowDivider()) {
+        pushDssRow(m_dssFoldRow);
+        m_dssFoldCount = 0;
+    }
+}
+
 void SpectrumWidget::pushDssRow(const QVector<float>& wfPixelsDbm)
 {
     const double centerMhz    = m_centerHz    / 1.0e6;
     const double bandwidthMhz = m_bandwidthHz / 1.0e6;
     double wideCenterMhz = 0.0;
     double wideBandwidthMhz = 0.0;
+    // Task 24: sourced from the folded m_dssFoldFullBins, not
+    // m_lastFullBinsDbm directly -- see accumulateDssRow() and this
+    // method's own header comment.
     const QVector<float> wide =
-        buildDssWideRow(m_lastFullBinsDbm, wideCenterMhz, wideBandwidthMhz);
+        buildDssWideRow(m_dssFoldFullBins, wideCenterMhz, wideBandwidthMhz);
     if (wide.isEmpty()) {
         m_dss.pushRow(wfPixelsDbm, centerMhz, bandwidthMhz);
     } else {
@@ -7697,15 +7805,15 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         if (!m_overlayMenu) {
             m_overlayMenu = new SpectrumOverlayMenu(this);
             // 3D Stacked-Trace Spectrum Plan Task 20: every popup signal
-            // that maps onto one of DisplaySettingsModel's fourteen
+            // that maps onto one of DisplaySettingsModel's fifteen
             // values connects straight to the matching model setter --
             // never to this widget's own named setter, and never through
             // a lambda that touches a widget member. Task 18's own
             // model-to-widget binding (bindDisplaySettings()) is what
             // actually lands the change on the live renderer from here;
             // this popup no longer talks to SpectrumWidget at all for
-            // these thirteen. ctunChanged and notchAddRequested are not
-            // among the fourteen (CTUN-enabled and "add a notch" are not
+            // these fourteen. ctunChanged and notchAddRequested are not
+            // among the fifteen (CTUN-enabled and "add a notch" are not
             // DisplaySettingsModel fields) and keep talking to the widget
             // exactly as before.
             connect(m_overlayMenu, &SpectrumOverlayMenu::wfColorGainChanged,
@@ -7733,7 +7841,8 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                         emit notchCreateRequested(freqHz, false);
                     });
             // 3D VIEW section (Task 13, re-pointed at the model by Task
-            // 20): six signals wired straight to DisplaySettingsModel's
+            // 20; Task 24 adds the seventh, dssRowDividerChanged): seven
+            // signals wired straight to DisplaySettingsModel's
             // setters -- see the block comment above. Persistence
             // (AppSettings/PanadapterModel round-trip) is Task 14's
             // scope, not this one's; the model's own model-to-widget
@@ -7750,6 +7859,8 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                     m_displaySettings, &DisplaySettingsModel::setDssRowSpan);
             connect(m_overlayMenu, &SpectrumOverlayMenu::dssAngleChanged,
                     m_displaySettings, &DisplaySettingsModel::setDssAngle);
+            connect(m_overlayMenu, &SpectrumOverlayMenu::dssRowDividerChanged,
+                    m_displaySettings, &DisplaySettingsModel::setDssRowDivider);
             connect(m_overlayMenu, &SpectrumOverlayMenu::dssSliceShadowChanged,
                     m_displaySettings, &DisplaySettingsModel::setThreeDSliceDepth);
 
@@ -7765,9 +7876,9 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             // OWN change already reached the model above, so the model's
             // signal fires, this lambda runs, and it reseeds the popup
             // with the same value it just sent, a Qt/QSlider no-op.
-            // isVisible() additionally skips all thirteen while the
+            // isVisible() additionally skips all fourteen while the
             // popup is closed, so a change made with the popup not open
-            // does not do thirteen no-op reseeds on the next right-click
+            // does not do fourteen no-op reseeds on the next right-click
             // (setValues()/setDssValues() below already reseed it then).
             auto refreshOverlayMenuFromModel = [this]() {
                 if (!m_overlayMenu->isVisible()) { return; }
@@ -7784,7 +7895,8 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                                              m_displaySettings->dssGain(),
                                              m_displaySettings->dssRowSpan(),
                                              m_displaySettings->dssAngle(),
-                                             m_displaySettings->threeDSliceDepth());
+                                             m_displaySettings->threeDSliceDepth(),
+                                             m_displaySettings->dssRowDivider());
             };
             connect(m_displaySettings, &DisplaySettingsModel::wfColorSchemeChanged,
                     this, refreshOverlayMenuFromModel);
@@ -7810,6 +7922,8 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                     this, refreshOverlayMenuFromModel);
             connect(m_displaySettings, &DisplaySettingsModel::dssAngleChanged,
                     this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::dssRowDividerChanged,
+                    this, refreshOverlayMenuFromModel);
             connect(m_displaySettings, &DisplaySettingsModel::threeDSliceDepthChanged,
                     this, refreshOverlayMenuFromModel);
         }
@@ -7830,7 +7944,8 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                                      m_displaySettings->dssGain(),
                                      m_displaySettings->dssRowSpan(),
                                      m_displaySettings->dssAngle(),
-                                     m_displaySettings->threeDSliceDepth());
+                                     m_displaySettings->threeDSliceDepth(),
+                                     m_displaySettings->dssRowDivider());
         // dssMeshReady() alone is build-safe (CPU build hardcodes false), but
         // route through dssRowSpanSupported() anyway to match upstream's two
         // independent gates (compile-time GPU build + runtime mesh-ready)

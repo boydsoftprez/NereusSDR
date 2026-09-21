@@ -172,6 +172,14 @@ void DisplaySettingsModel::setDssAngle(int pct)
     emit dssAngleChanged(m_dssAngle);
 }
 
+void DisplaySettingsModel::setDssRowDivider(int n)
+{
+    const int clamped = std::clamp(n, 0, 10);
+    if (m_dssRowDivider == clamped) { return; }
+    m_dssRowDivider = clamped;
+    emit dssRowDividerChanged(m_dssRowDivider);
+}
+
 void DisplaySettingsModel::setThreeDSliceDepth(bool on)
 {
     if (m_threeDSliceDepth == on) { return; }
@@ -236,6 +244,7 @@ void DisplaySettingsModel::load()
     setDssGain(readInt(QStringLiteral("Display3DGain"), 70));
     setDssRowSpan(readInt(QStringLiteral("Display3DSpan"), 100));
     setDssAngle(readInt(QStringLiteral("Display3DAngle"), 50));
+    setDssRowDivider(readInt(QStringLiteral("Display3DSpeed"), 0));
     setThreeDSliceDepth(readBool(QStringLiteral("Display3DSliceShadow"), false));
     // dssFloorDepth is deliberately not read here: it is not scoped by
     // panIndex() at all, and its persistence lives entirely on
@@ -277,6 +286,7 @@ void DisplaySettingsModel::save()
     writeInt(QStringLiteral("Display3DGain"), m_dssGain);
     writeInt(QStringLiteral("Display3DSpan"), m_dssRowSpan);
     writeInt(QStringLiteral("Display3DAngle"), m_dssAngle);
+    writeInt(QStringLiteral("Display3DSpeed"), m_dssRowDivider);
     writeBool(QStringLiteral("Display3DSliceShadow"), m_threeDSliceDepth);
     // dssFloorDepth is deliberately not written here: same reason as the
     // matching comment in load() above.

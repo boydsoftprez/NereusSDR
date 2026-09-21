@@ -410,6 +410,30 @@ private slots:
         QCOMPARE(w.dssFloorDepth(), 12);
         QCOMPARE(spy.count(), 1);
     }
+
+    // 3D Stacked-Trace Spectrum Plan Task 24: the fifteenth
+    // DisplaySettingsModel field. Acceptance: "model setDssRowDivider(7)
+    // reaches dssRowDivider() on the widget and back, one emission each
+    // way." One field, isolated scope per direction (Ambiguity 3).
+    //
+    // Catches: the dssRowDividerChanged model-to-widget or
+    // widget-to-model connect missing from bindDisplaySettings().
+    void dssRowDividerBridge_reachesWidgetAndBack()
+    {
+        SpectrumWidget w;
+        setUpWidget(w);
+        DisplaySettingsModel* m = w.displaySettings();
+
+        QSignalSpy widgetSpy(&w, &SpectrumWidget::dssRowDividerChanged);
+        m->setDssRowDivider(7);
+        QCOMPARE(w.dssRowDivider(), 7);
+        QCOMPARE(widgetSpy.count(), 1);
+
+        QSignalSpy modelSpy(m, &DisplaySettingsModel::dssRowDividerChanged);
+        w.setDssRowDivider(3);
+        QCOMPARE(m->dssRowDivider(), 3);
+        QCOMPARE(modelSpy.count(), 1);
+    }
 };
 
 QTEST_MAIN(TestDisplaySettingsBinding)

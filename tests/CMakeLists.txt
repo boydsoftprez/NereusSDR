@@ -6205,6 +6205,24 @@ nereus_add_test(tst_dss_shader_contract)
 target_compile_definitions(tst_dss_shader_contract PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
+# ── 3D stacked-trace spectrum plan, Task 24: 3D Speed row divider ───────
+# Pins the row-cadence divider that matches the 3D ring's history to the
+# waterfall's: a manual divider pushes one folded row per N waterfall
+# ticks, divider 1 reproduces the pre-Task-24 one-row-per-tick behaviour,
+# the fold is peak-hold per column (not "last row wins" or an average) so
+# a one-tick burst still raises a ridge, a size change mid-fold discards
+# the partial fold and restarts, lowering the divider mid-fold pushes on
+# the very next tick instead of waiting out the old count, the automatic
+# divider tracks the waterfall's own pixel height live, the glide-clock
+# increment scales by the divider so the scroll phase still completes
+# once per pushed row, the stop-on-TX gate pauses the fold exactly like
+# it pauses the waterfall, and leaving 3D resets the in-progress fold.
+# NereusSDR-original: upstream AetherSDR at 1872028c has no row divider
+# and no 3D-specific cadence control at all (crew workspace
+# scout-scroll-speed.md, section 5), so there is no upstream source to
+# cite.
+nereus_add_test(tst_dss_row_divider)
+
 # ── 3D stacked-trace spectrum plan, Task 6: render mode + row tee ────────
 # Pins the SpectrumRenderMode enum default and the five 3D control values'
 # defaults/clamps, that 3D Angle 50 reproduces upstream's fixed shape, and
