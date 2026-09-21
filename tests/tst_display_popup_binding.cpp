@@ -125,10 +125,10 @@ private slots:
     // connected to a SpectrumWidget member function or to a lambda that
     // touches a widget member."
     //
-    // Drives all thirteen real popup controls -- the six 3D ones by
+    // Drives all fourteen real popup controls -- the seven 3D ones by
     // their object name, same as tst_dss_overlay_menu.cpp; the other
     // seven by findChildren<QSlider*/QComboBox*/QCheckBox*>()
-    // construction order, since only the six 3D controls carry an
+    // construction order, since only the seven 3D controls carry an
     // object name (SpectrumOverlayMenu.cpp's buildUI(): Color Gain,
     // Black Level, Fill Alpha, Ref Level, Dyn Range sliders in that
     // order; Color Scheme combo; Fill-spectrum-trace and CTUN checks) --
@@ -156,7 +156,7 @@ private slots:
         const auto sliders = menu->findChildren<QSlider*>();
         const auto combos  = menu->findChildren<QComboBox*>();
         const auto checks  = menu->findChildren<QCheckBox*>();
-        QCOMPARE(sliders.size(), 9);
+        QCOMPARE(sliders.size(), 10);
         QCOMPARE(combos.size(), 2);
         QCOMPARE(checks.size(), 3);
 
@@ -180,12 +180,14 @@ private slots:
         auto* gain   = menu->findChild<QSlider*>(QStringLiteral("dssGainSlider"));
         auto* span   = menu->findChild<QSlider*>(QStringLiteral("dssRowSpanSlider"));
         auto* angle  = menu->findChild<QSlider*>(QStringLiteral("dssAngleSlider"));
+        auto* speed  = menu->findChild<QSlider*>(QStringLiteral("dssSpeedSlider"));
         auto* shadow = menu->findChild<QCheckBox*>(QStringLiteral("dssSliceShadowCheck"));
         QVERIFY(mode);
         QVERIFY(floor);
         QVERIFY(gain);
         QVERIFY(span);
         QVERIFY(angle);
+        QVERIFY(speed);
         QVERIFY(shadow);
 
         mode->setCurrentIndex(1);
@@ -198,6 +200,8 @@ private slots:
         QCOMPARE(m->dssRowSpan(), 33);
         angle->setValue(77);
         QCOMPARE(m->dssAngle(), 77);
+        speed->setValue(6);                            // 3D Speed
+        QCOMPARE(m->dssRowDivider(), 6);
         shadow->setChecked(true);
         QCOMPARE(m->threeDSliceDepth(), true);
 
@@ -247,6 +251,7 @@ private slots:
         m->setDssGain(22);
         m->setDssRowSpan(33);
         m->setDssAngle(77);
+        m->setDssRowDivider(6);
         m->setThreeDSliceDepth(true);
 
         SpectrumOverlayMenu* menu = openPopup(w);
@@ -268,6 +273,7 @@ private slots:
         QCOMPARE(menu->findChild<QSlider*>(QStringLiteral("dssGainSlider"))->value(), 22);
         QCOMPARE(menu->findChild<QSlider*>(QStringLiteral("dssRowSpanSlider"))->value(), 33);
         QCOMPARE(menu->findChild<QSlider*>(QStringLiteral("dssAngleSlider"))->value(), 77);
+        QCOMPARE(menu->findChild<QSlider*>(QStringLiteral("dssSpeedSlider"))->value(), 6);
         QCOMPARE(menu->findChild<QCheckBox*>(QStringLiteral("dssSliceShadowCheck"))->isChecked(), true);
     }
 
