@@ -4246,16 +4246,6 @@ The 14: Colour Scheme, Colour Gain, Black Level, Ref Level, Dyn Range, Fill
 Alpha, Fill spectrum trace, Spectrum mode, 3D Floor, 3D Gain, 3D Span,
 3D Angle, 3D Slice Shadow, and the waterfall/spectrum split fraction.
 
-## Task 18: DisplayApplet
-
-Left-panel applet carrying all 14, in the same three sections the popup uses
-(Waterfall, Spectrum, 3D View). Binds to the model. Re-point the right-click
-popup and Setup at the model in the same task so there is exactly one source of
-truth from the moment the third surface exists.
-
-Follow `AppletWidget`'s established shape; register with
-`AppletVisibilityController` so it can be shown and hidden like its siblings.
-
 ## Gap found during Task 16: Ctrl-drag dBm span-zoom was never ported
 
 AetherSDR gates a second dBm-strip gesture behind Ctrl (and Meta on macOS)
@@ -4280,3 +4270,579 @@ adjacent floor-drag arm two lines away in the same press handler IS gated on
 coherent choice, since `m_refLevel` and `m_dynamicRange` describe the top and
 depth of one window, unlike Task 16's floor-depth and ref-level which are
 unrelated quantities.
+
+---
+
+# Addendum 2: the display-controls migration, staged (Tasks 18-23)
+
+Added 2026-09-20. Task 17 landed the model (4e2412d7) with nothing bound to
+it. The operator's decisions, verbatim from the archived design conversation:
+
+- 2026-08-09: "lets add all of those rightclick display controls into the
+  display widget that make sense. need to be in the display widget on the
+  left". Asked which controls the applet carries: "Everything, applet becomes
+  primary". Asked where it lands: "All on this branch."
+- 2026-09-20 handoff: stage the migration so a regression bisects to a single
+  surface, and the bar is zero behaviour change, because all fourteen
+  controls work today.
+
+The original Task 18 text ("re-point the popup and Setup in the same task")
+is superseded by the staged shape below. Execution: run with `crew` under
+`yonder-cost-aware-execution`, adapted for NereusSDR: there are no `R-*`
+requirement IDs here, so each task's Requirements line cites the design
+document section or the transcript decision it satisfies. No review between
+tasks; one whole-branch review at the end.
+
+## What the scouts established (2026-09-20, at 4e2412d7)
+
+Line numbers below are hints; find everything by name (Global Constraints).
+The full reports are in the crew workspace as `scout-popup.md`,
+`scout-setup-persistence.md`, `scout-applet-infra.md` and
+`scout-transcripts.md`.
+
+- The popup (`SpectrumOverlayMenu`) carries thirteen of the fourteen (no
+  split-fraction control exists anywhere). It only ever WRITES into
+  `SpectrumWidget`: the lazy-construction block in
+  `SpectrumWidget::mousePressEvent` (find `m_overlayMenu = new
+  SpectrumOverlayMenu(this)`) connects the popup's signals either to inline
+  lambdas that assign widget members directly (Colour Scheme, Colour Gain,
+  Black Level, Ref Level, Dyn Range, Fill Alpha, Fill trace) or to the six
+  guarded 3D setters. It is re-seeded from scratch on every right-click via
+  `setValues()` / `setDssValues()` and never refreshed while open. One popup
+  per panadapter, parented to its widget.
+- Setup carries nine of the fourteen: Colour Scheme (`WaterfallDefaultsPage`),
+  Fill Alpha and Fill trace (`SpectrumDefaultsPage`), and the six 3D controls
+  plus a Reset button (`Display3DSetupPage`). Colour Gain, Black Level, Ref
+  Level, Dyn Range and the split have no Setup control. The two RadioModel
+  pages reach the active pan through `model()->spectrumWidget()`, which
+  `MainWindow` repoints on `PanadapterStack::activePanChanged`.
+  `Display3DSetupPage` takes a `SpectrumWidget*` in its constructor and stays
+  bound to it, with `m_updatingFromModel` plus `QSignalBlocker` in both
+  directions.
+- `SpectrumWidget` has change signals for only the six 3D values. The other
+  eight (`m_wfColorScheme`, `m_wfColorGain`, `m_wfBlackLevel`, `m_refLevel`,
+  `m_dynamicRange`, `m_fillAlpha`, `m_panFill`, `m_spectrumFrac`) are
+  written at these sites: `loadSettings()`, `setDbmRange()` (called by the
+  noise-floor grid follow and by Setup's Copy button), the five named setters
+  `setWfColorScheme` / `setWfColorGain` / `setWfBlackLevel` /
+  `setPanFillEnabled` / `setFillAlpha`, the popup lambdas in
+  `mousePressEvent`, the double-click and plus-or-minus-10 dB block in
+  `mousePressEvent`, the Ctrl-drag and plain dBm-strip drags and the divider
+  drag in `mouseMoveEvent`, and two blocks in `wheelEvent`. Ref Level and
+  Dyn Range have no named setter. There is no `spectrumFrac()` getter.
+- Ranges the widget accepts are wider than the popup sliders in one place:
+  `wheelEvent` bounds Dyn Range to `qBound(10.0f, ..., 200.0f)` while the
+  popup slider and the model clamp to 20..160. Every other range matches.
+- Persistence: the thirteen per-pan values are loaded by
+  `SpectrumWidget::loadSettings()` and saved by `saveSettings()` through one
+  500 ms debounced `scheduleSettingsSave()`. 3D Floor is persisted per band
+  on `PanadapterModel` and mirrored into the widget by the bridge in
+  `MainWindow::wireDss3DFloorRecallForTest`, which is wired to pan 0 only.
+- `DisplaySettingsModel` (Task 17) clamps Dyn Range to 20..160, keys 3D Floor
+  by `Band` with immediate AppSettings writes to the same key
+  `PanadapterModel` owns (a second writer to one key), and has `load()` /
+  `save()` that nothing calls.
+- `RadioModel::setSpectrumWidget()` is an inline pointer assignment with no
+  signal, so nothing can react when the active pan changes.
+- A new applet is: subclass `AppletWidget` (`src/gui/applets/AppletWidget.h`,
+  constructor `AppletWidget(RadioModel* model, QWidget* parent = nullptr)`,
+  pure virtuals `appletId()`, `appletTitle()`, `syncFromModel()`), built with
+  the inherited `sliderRow()` / `styledButton()` / `divider()` helpers, added
+  in `MainWindow::populateDefaultMeter()` with `panel->addApplet()`, entered
+  in `m_appletsById`, registered with
+  `m_appletVis->registerApplet(id, title, defaultVisible)` (persists under
+  `Applet<Id>Visible`), and the two applet menus pick it up from
+  `registeredIds()` with no further wiring. Do not call `appletTitleBar()`
+  yourself: the panel wraps every applet in a title bar already.
+
+## Decisions taken for the migration
+
+1. **Ownership.** Each `SpectrumWidget` owns one `DisplaySettingsModel` as a
+   child QObject, created in its constructor, exposed as `displaySettings()`.
+   One model per panadapter by construction; every existing standalone
+   `SpectrumWidget` test keeps working; surfaces that follow the active pan
+   reach the active model through `RadioModel::spectrumWidget()`.
+2. **3D Floor is the fourteenth per-pan field of the model, not a Band-keyed
+   one.** The model holds the pan's CURRENT floor depth like any other value;
+   the per-band store and its recall stay exactly where they are, on
+   `PanadapterModel` through the existing `MainWindow` bridge, driven by the
+   widget's `dssFloorDepthChanged`. Task 17's `dssFloorDepth(Band)` API is
+   removed with its second writer to the per-band key.
+3. **The widget stays the render-state owner and, until Task 23, the sole
+   persister.** The binding is two-way: the model drives the widget through
+   equality-guarded appliers; every internal write site in the widget pushes
+   into the model. Persistence moves onto the model last, behind a golden
+   test, so a format regression bisects to that one commit.
+4. **Model clamps are never narrower than any widget write path.** Dyn Range
+   widens to 10..200 to match `wheelEvent`. A round trip through the model
+   must leave every value the widget accepts unchanged.
+5. **Surfaces bind to the model and nothing else.** After Task 20 the popup
+   has no connection to a widget setter; after Task 21 no Setup page calls a
+   widget setter for these fourteen values; the applet never sees the widget.
+   Live refresh (a change on one surface appearing on another while both are
+   open) is the intended effect of the model and is not a behaviour
+   regression.
+6. **Which pan.** The applet follows the active pan, rebinding on a new
+   `RadioModel::spectrumWidgetChanged` signal. `Display3DSetupPage` keeps its
+   construction-time binding exactly as today; that it does not follow the
+   active pan is a pre-existing defect recorded in the ledger for the
+   operator, not changed here.
+
+## Task 18: bind SpectrumWidget to its DisplaySettingsModel
+
+**Requirements:** design §6.1 (no feedback loops between surfaces), Task 17's
+stated purpose (one binding per surface), decisions 1-4 above. Zero
+operator-visible behaviour change.
+
+**Files:**
+- Modify: `src/models/DisplaySettingsModel.h` and `.cpp` (3D Floor becomes a
+  per-pan field; Dyn Range clamp; header comment rewritten to match)
+- Modify: `src/gui/SpectrumWidget.h` and `.cpp` (own the model, bind it,
+  push from every write site, three new setters, one new getter, one test
+  seam)
+- Modify: `tests/tst_display_settings_model.cpp` (3D Floor and Dyn Range
+  cases follow the model's new shape)
+- Create: `tests/tst_display_settings_binding.cpp`
+- Modify: `tests/CMakeLists.txt` (`nereus_add_test(tst_display_settings_binding)`,
+  alphabetical)
+
+**Interfaces:**
+- Consumes: `DisplaySettingsModel` as landed in 4e2412d7; `SpectrumWidget`'s
+  existing getters `refLevel()`, `dynamicRange()`, `wfColorScheme()`,
+  `wfColorGain()`, `wfBlackLevel()`, `panFillEnabled()`, `fillAlpha()`,
+  `spectrumRenderMode()`, `dssFloorDepth()`, `dssGain()`, `dssRowSpan()`,
+  `dssAngle()`, `threeDSliceDepth()`, `panIndex()`; existing setters
+  `setDbmRange(float minDbm, float maxDbm)`, `setWfColorScheme(WfColorScheme)`,
+  `setWfColorGain(int)`, `setWfBlackLevel(int)`, `setPanFillEnabled(bool)`,
+  `setFillAlpha(float)`, `setSpectrumRenderMode(int)`, `setDssFloorDepth(int)`,
+  `setDssGain(int)`, `setDssRowSpan(int)`, `setDssAngle(int)`,
+  `setThreeDSliceDepth(bool)`; signals `spectrumRenderModeChanged(int)`,
+  `dssFloorDepthChanged(int)`, `dssGainChanged(int)`, `dssRowSpanChanged(int)`,
+  `dssAngleChanged(int)`, `threeDSliceDepthChanged(bool)`.
+- Produces, on `DisplaySettingsModel`: `int dssFloorDepth() const;`
+  `void setDssFloorDepth(int depthDb);` `signals: void dssFloorDepthChanged(int depthDb);`
+  (clamp 0..24, default 6, equality-guarded, NOT touched by `load()` or
+  `save()`); `setDynamicRange()` clamps to 10.0f..200.0f. Removed:
+  `dssFloorDepth(Band)`, `setDssFloorDepth(Band, int)`,
+  `dssFloorDepthChanged(NereusSDR::Band, int)`, the `Band.h` include and the
+  `dssFloorDepthKeyFor()` helper.
+- Produces, on `SpectrumWidget`: `DisplaySettingsModel* displaySettings() const;`
+  `void setRefLevel(float dBm);` `void setDynamicRange(float dB);`
+  `void setSpectrumFrac(float frac);` `float spectrumFrac() const;`
+  `int displaySettingsApplyCountForTest() const;` and `setPanIndex(int)` now
+  also forwards to the model. Private: `void bindDisplaySettings();`
+  `void syncDisplaySettingsFromWidget();` `DisplaySettingsModel* m_displaySettings{nullptr};`
+  `int m_displaySettingsApplyCount{0};`
+
+**Acceptance:**
+- Model to widget, all fourteen: setting a non-default in-range value on the
+  model makes the matching widget getter return it (Colour Scheme compared as
+  `static_cast<int>`, floats within 1e-6).
+- Widget to model, every write path: each of the eight named setters (five
+  existing plus the three new) and the six 3D setters; `setDbmRange(-120.0f, -40.0f)`
+  gives model Ref Level -40 and Dyn Range 80; `loadSettings()` with seeded
+  AppSettings keys (pan 0, the exact key strings in the scout table) leaves
+  the model holding the seeded values; a plain dBm-strip drag and a divider
+  drag, driven the way `tests/tst_dss_floor_drag.cpp` and
+  `tests/tst_dbm_range_drag.cpp` drive the mouse, move the model's Ref Level
+  and split fraction with the widget's.
+- Echo termination: with `QSignalSpy` on the model's `refLevelChanged`, one
+  model-driven change emits exactly once, one widget-driven change (through
+  `setRefLevel`) emits exactly once, and re-applying an equal value emits
+  zero times and leaves `displaySettingsApplyCountForTest()` unchanged.
+- No apply during load: after constructing a widget and running
+  `loadSettings()`, `displaySettingsApplyCountForTest()` is 0.
+- Round trip never narrows: `setDbmRange(-180.0f, 20.0f)` (Dyn Range 200)
+  and `setDbmRange(-50.0f, -40.0f)` (Dyn Range 10) leave `dynamicRange()`
+  and the model's `dynamicRange()` at 200 and 10 respectively. This case must
+  go red with the model's old 20..160 clamp; state in the report that it did.
+- The 3D Floor bridge still fires: `displaySettings()->setDssFloorDepth(12)`
+  makes `dssFloorDepth()` 12 and emits the widget's `dssFloorDepthChanged`
+  exactly once (that signal is what `MainWindow`'s per-band save listens to).
+- Mutation proofs, run and reported, not committed: remove the push in
+  `setDbmRange()` (the `setDbmRange` case goes red); remove one model-to-widget
+  connect (the all-fourteen case goes red for that value); restore the old
+  Dyn Range clamp (the round-trip case goes red).
+- `tests/tst_display_settings_model.cpp`, `tst_dss_overlay_menu`,
+  `tst_dss_setup_sync`, `tst_dss_persistence`, `tst_dss_floor_drag`,
+  `tst_dbm_range_drag` all green after the change.
+
+**Verification:** ordinary feature tier. Unit, gui label. TDD inner loop:
+`cmake --build build --target tst_display_settings_binding && ctest --test-dir build -R '^tst_display_settings_binding$' -j1`.
+Siblings once before committing:
+`cmake --build build --target tst_display_settings_model tst_dss_overlay_menu tst_dss_setup_sync tst_dss_persistence tst_dss_floor_drag tst_dbm_range_drag && ctest --test-dir build -R '^tst_(display_settings_model|dss_overlay_menu|dss_setup_sync|dss_persistence|dss_floor_drag|dbm_range_drag)$' -j1`.
+Not the full suite. Tests that drag must `resize()`, `show()`, then
+`QVERIFY(QTest::qWaitForWindowExposed(&w))` (Global Constraints).
+
+**Execution note (advisory):** sonnet. No prerequisite beyond Task 17. Not
+parallelisable: it edits `SpectrumWidget.cpp`, which every later task also
+edits.
+
+- [ ] **Step 1: reshape the model.** In `DisplaySettingsModel.h`/`.cpp`
+  replace the Band-keyed 3D Floor trio with the per-pan trio in Interfaces,
+  add `int m_dssFloorDepth{6};`, delete the `Band.h` include and
+  `dssFloorDepthKeyFor()`. `load()` and `save()` do not read or write 3D
+  Floor; add one comment line at each saying so and why (the per-band store
+  lives on `PanadapterModel`). Change `setDynamicRange()`'s clamp to
+  `std::clamp(dB, 10.0f, 200.0f)` with a comment naming
+  `SpectrumWidget::wheelEvent`'s `qBound(10.0f, ..., 200.0f)` as the source
+  of the bounds. Rewrite the file-header sections "THE ONE FIELD THAT IS NOT
+  LIKE THE OTHERS" and "SCOPE NOTE (Task 17)" so they describe the shape you
+  just built: 3D Floor is a per-pan current value here, per-band persistence
+  and recall stay on `PanadapterModel` via the `MainWindow` bridge, and the
+  surfaces bind to this model from Task 20 on. No em-dashes in text you
+  write. Update `tests/tst_display_settings_model.cpp`: the Band-keyed floor
+  cases become per-pan cases (clamp 0..24, equality guard, one emission,
+  untouched by `load()`/`save()`), and the Dyn Range clamp cases use 10 and
+  200. Build and run that test; it must be green before Step 2.
+- [ ] **Step 2: write `tests/tst_display_settings_binding.cpp` first**, one
+  `private slots:` case per Acceptance bullet above, following the fixture
+  shape of `tests/tst_dss_floor_drag.cpp` (AppSettings seeding, widget
+  construction, show and expose). Register it in `tests/CMakeLists.txt`
+  alphabetically. Build it; it must fail to compile or fail at runtime until
+  Steps 3-5 exist. Record the failing output in the report.
+- [ ] **Step 3: own and bind the model.** In the `SpectrumWidget`
+  constructor, after `m_panIndex` is known, create
+  `m_displaySettings = new DisplaySettingsModel(this);`, call
+  `m_displaySettings->setPanIndex(m_panIndex);`, then `bindDisplaySettings();`.
+  Make `setPanIndex(int idx)` forward to `m_displaySettings->setPanIndex(idx)`.
+  `bindDisplaySettings()` wires fourteen model-to-widget connections: each
+  model `xxxChanged` signal to the matching widget applier
+  (`setWfColorScheme` with a `static_cast<WfColorScheme>`, `setWfColorGain`,
+  `setWfBlackLevel`, `setRefLevel`, `setDynamicRange`, `setFillAlpha`,
+  `setPanFillEnabled`, `setSpectrumFrac`, `setSpectrumRenderMode`,
+  `setDssFloorDepth`, `setDssGain`, `setDssRowSpan`, `setDssAngle`,
+  `setThreeDSliceDepth`), and six widget-to-model connections from the six 3D
+  widget signals to the model's six 3D setters.
+- [ ] **Step 4: appliers are equality-guarded and counted.** Add the three
+  new setters. `setRefLevel(float dBm)`: early-return when
+  `qFuzzyCompare(m_refLevel, dBm)`; assign; `update()`;
+  `scheduleSettingsSave()`; push. Same shape for `setDynamicRange` and
+  `setSpectrumFrac` (the latter clamps to 0.10f..0.90f like the divider
+  drag). Add the same early-return to `setWfColorScheme`, `setFillAlpha` and
+  `setPanFillEnabled` where it is missing (`setWfColorGain` and
+  `setWfBlackLevel` already have one; verify, do not assume). Increment
+  `m_displaySettingsApplyCount` once per real apply, after the guard, in all
+  fourteen appliers. Add `float spectrumFrac() const { return m_spectrumFrac; }`
+  and `int displaySettingsApplyCountForTest() const`.
+- [ ] **Step 5: push from every write site.** Implement
+  `syncDisplaySettingsFromWidget()` as eight model setter calls with the
+  widget's current members (Colour Scheme as `static_cast<int>`). Call it:
+  once at the end of `loadSettings()`; at the end of `setDbmRange()`; after
+  the assignment in each of the eight named setters; after the write in the
+  double-click and plus-or-minus-10 dB block of `mousePressEvent`; after the
+  Ctrl-drag write, the plain drag write and the divider write in
+  `mouseMoveEvent`; after each of the two write blocks in `wheelEvent`.
+  Change the seven popup lambdas in `mousePressEvent` from member
+  assignments to calls of the named setters (`setWfColorGain(v)` and so on,
+  Ref Level and Dyn Range through the new setters), which is behaviour
+  identical (assign, `update()`, `scheduleSettingsSave()`). Self-check with
+  `grep -nE "\bm_(refLevel|dynamicRange|wfColorGain|wfBlackLevel|wfColorScheme|fillAlpha|panFill|spectrumFrac)\s*(=|\+=|-=)[^=]" src/gui/SpectrumWidget.cpp`:
+  every remaining hit is in `loadSettings()`, in one of the eight setters, or
+  followed in the same block by the push. List the hits in the report.
+- [ ] **Step 6: prove and commit.** Run the new test green, run the mutation
+  proofs and revert them, run the sibling tests, commit GPG-signed with a
+  message in the branch's `feat(display): ...` style, no trailer, no
+  em-dashes. Branch assertion before committing:
+  `git -C /Users/j.j.boyd/NereusSDR/.claude/worktrees/eloquent-haibt-9134a2 branch --show-current` must print `claude/3d-waterfall-aethersdr-port-d793f1`.
+
+## Task 19: Ctrl-drag dBm span zoom (landed)
+
+Landed 2026-08-09 as commit 392aa6ee, before this heading existed; the full
+account is the section "Gap found during Task 16" above. Nothing to do. This
+heading exists so the crew ledger and `ledger-status` see the same task
+numbering as the commit history.
+
+## Task 20: re-point the right-click popup at the model
+
+**Requirements:** decision 5 above; design §6.1. Zero operator-visible
+behaviour change; the popup's labels, ranges, tooltips, sections and
+`SpectrumOverlayMenu`'s public API are untouched.
+
+**Files:**
+- Modify: `src/gui/SpectrumWidget.cpp` (the lazy popup-construction block in
+  `mousePressEvent`)
+- Create: `tests/tst_display_popup_binding.cpp`
+- Modify: `tests/CMakeLists.txt`
+
+**Interfaces:**
+- Consumes: Task 18's `displaySettings()` and the model's fourteen setters
+  and signals; `SpectrumOverlayMenu`'s existing signals
+  (`wfColorSchemeChanged(int)`, `wfColorGainChanged(int)`,
+  `wfBlackLevelChanged(int)`, `refLevelChanged(float)`,
+  `dynRangeChanged(float)`, `fillAlphaChanged(float)`, `panFillChanged(bool)`,
+  `spectrumRenderModeChanged(int)`, `dssFloorDepthChanged(int)`,
+  `dssGainChanged(int)`, `dssRowSpanChanged(int)`, `dssAngleChanged(int)`,
+  `dssSliceShadowChanged(bool)`) and bulk seeders `setValues(...)` /
+  `setDssValues(...)` / `setDssRowSpanSupported(bool)` with the signatures in
+  `SpectrumOverlayMenu.h` (read them; do not guess argument order).
+- Produces: nothing new. The popup block's connects target
+  `m_displaySettings` exclusively.
+
+**Acceptance:**
+- Every one of the thirteen popup signals is connected to the matching
+  `DisplaySettingsModel` setter (`dynRangeChanged` to `setDynamicRange`,
+  `dssSliceShadowChanged` to `setThreeDSliceDepth`, `panFillChanged` to
+  `setPanFill`); no popup signal is connected to a `SpectrumWidget` member
+  function or to a lambda that touches a widget member.
+- The seeding calls read the model's getters, and a test proves the seeded
+  popup values equal the model's after a model-driven change made before the
+  right-click.
+- Live refresh: while the popup is visible, a model-driven change updates the
+  matching popup control, and that refresh emits none of the popup's signals
+  (`QSignalSpy` count 0), so the model sees exactly one change.
+- Popup-driven change reaches both the model and the widget: moving a popup
+  slider (find the popup as `tests/tst_dss_overlay_menu.cpp` finds it after a
+  synthetic right-click, and its controls by their member object names or by
+  `findChildren<QSlider*>()` order as that test does) changes the model
+  getter and, through Task 18's binding, the widget getter.
+- The `setDssRowSpanSupported()` push on open is unchanged (it is derived
+  from the widget's DDC width, not a setting).
+- Mutation proofs, run and reported: re-point one popup connect back at the
+  widget setter and the "connected to the model" case goes red; remove the
+  live-refresh connect and the live-refresh case goes red.
+- `tst_dss_overlay_menu`, `tst_display_settings_binding`, `tst_dss_floor_drag`
+  green.
+
+**Verification:** ordinary feature tier, unit, gui label. Inner loop
+`cmake --build build --target tst_display_popup_binding && ctest --test-dir build -R '^tst_display_popup_binding$' -j1`;
+siblings once: `tst_dss_overlay_menu`, `tst_display_settings_binding`,
+`tst_dss_floor_drag`. Show and expose the widget before any synthetic mouse
+event.
+
+**Execution note (advisory):** sonnet. Requires Task 18. Not
+parallelisable (same file).
+
+- [ ] **Step 1: write the test first**, one case per Acceptance bullet,
+  copying the popup-discovery mechanics from `tests/tst_dss_overlay_menu.cpp`.
+  Register it. It must fail before Step 2 (the live-refresh case cannot pass
+  today because the popup is never refreshed while open); record the red run.
+- [ ] **Step 2: rewire the block.** In `mousePressEvent`, at the lazy
+  construction of `m_overlayMenu`, replace each connect's receiver with
+  `m_displaySettings` and the matching setter; replace the widget getters in
+  the `setValues()` / `setDssValues()` calls with the model's getters; add
+  thirteen connects from the model's signals to a lambda that, when
+  `m_overlayMenu->isVisible()`, re-seeds the popup with `setValues()` /
+  `setDssValues()` from the model. Keep the `setDssRowSpanSupported()` line.
+  Delete the now-unused lambdas.
+- [ ] **Step 3: prove and commit.** Green, mutation proofs, siblings, signed
+  commit with the branch assertion from Task 18 Step 6.
+
+## Task 21: re-point Setup -> Display at the model
+
+**Requirements:** decision 5 and decision 6 above; design §6.1. Zero
+operator-visible behaviour change; page layouts, labels, tooltips and which
+pan each page edits are untouched.
+
+**Files:**
+- Modify: `src/gui/setup/DisplaySetupPages.h` and `.cpp`
+  (`WaterfallDefaultsPage` Colour Scheme; `SpectrumDefaultsPage` Fill Alpha
+  and Fill trace; `Display3DSetupPage` all six plus Reset)
+- Modify: `tests/tst_dss_setup_sync.cpp`
+- Create: `tests/tst_display_setup_binding.cpp`
+- Modify: `tests/CMakeLists.txt`
+
+**Interfaces:**
+- Consumes: Task 18's `SpectrumWidget::displaySettings()`; the model's
+  setters, getters and signals.
+- Produces: `Display3DSetupPage` keeps its constructor
+  `Display3DSetupPage(SpectrumWidget* spectrumWidget, QWidget* parent)` and
+  binds to `spectrumWidget->displaySettings()`. Its `m_updatingFromModel`
+  member is deleted: the model's equality guard is the loop terminator now,
+  and `QSignalBlocker` on reflect stays so a reflected value never re-emits
+  the control's own signal.
+
+**Acceptance:**
+- No Setup page calls a `SpectrumWidget` setter for any of the nine values;
+  each control's signal reaches the model's setter, and each page reads the
+  model's getter when it loads. Grep evidence in the report:
+  `grep -nE "spectrumWidget\(\)->set|m_spectrumWidget->set" src/gui/setup/DisplaySetupPages.cpp`
+  returns no hit for the nine values (hits for other display settings that
+  are not among the fourteen are expected and stay).
+- `Display3DSetupPage`: with a `SpectrumWidget w` and `Display3DSetupPage page(&w)`,
+  `w.displaySettings()->setDssGain(33)` puts 33 on the page's gain slider
+  without emitting the slider's `valueChanged` past the page (spy on the
+  model: exactly one emission total); moving the page's slider to 44 makes
+  the model and `w.dssGain()` read 44; the Reset button puts the six defaults
+  (2D, 6, 70, 100, 50, off) on the model.
+- `WaterfallDefaultsPage` and `SpectrumDefaultsPage`: Colour Scheme, Fill
+  Alpha and Fill trace round-trip the same way through
+  `model()->spectrumWidget()->displaySettings()`. Construct these pages the
+  way the nearest existing test constructs a RadioModel-backed setup page
+  (grep `tests/` for `SpectrumDefaultsPage`; if no test constructs one, build
+  `RadioModel`, `SpectrumWidget`, `radioModel.setSpectrumWidget(&w)`, then
+  the page, and say so in the report).
+- The existing `tests/tst_dss_setup_sync.cpp` cases pass unchanged or are
+  adjusted only where they referenced `m_updatingFromModel`; the adjusted
+  version must still fail if the model's equality guard is removed (mutation
+  proof, reported).
+- The Copy button on `WaterfallDefaultsPage` still reads Ref Level and Dyn
+  Range (it may read them from the model or the widget; both are equal) and
+  is otherwise untouched.
+
+**Verification:** ordinary feature tier, unit, gui label. Inner loop on
+`tst_display_setup_binding` and `tst_dss_setup_sync`; siblings once:
+`tst_display_settings_binding`, `tst_display_popup_binding`.
+
+**Execution note (advisory):** sonnet. Requires Task 18 (and reads Task 20's
+result only to keep the popup tests green). Not parallelisable (shares the
+test CMake list and the widget header).
+
+- [ ] **Step 1: tests first.** Adjust `tst_dss_setup_sync.cpp` and write
+  `tst_display_setup_binding.cpp` per Acceptance; register; record the red
+  run.
+- [ ] **Step 2: `Display3DSetupPage`.** Bind through
+  `m_spectrumWidget->displaySettings()`: six push connects to the model's
+  setters, six live connects from the model's signals reflecting under
+  `QSignalBlocker`, `loadFromWidget()` reading the model, Reset writing the
+  model. Delete `m_updatingFromModel` and every read of it. Update the class
+  comment in the header (it currently explains the flag) so it explains the
+  equality guard instead; no em-dashes in text you write.
+- [ ] **Step 3: the two RadioModel pages.** Route Colour Scheme, Fill Alpha
+  and Fill trace through `model()->spectrumWidget()->displaySettings()` for
+  both the push and the load-on-show read. Keep the `QSignalBlocker`s on
+  load.
+- [ ] **Step 4: prove and commit** as in Task 18 Step 6.
+
+## Task 22: DisplayApplet in the left panel
+
+**Requirements:** the operator's decisions quoted at the top of this addendum
+("Everything, applet becomes primary", "All on this branch"); design §6
+(controls, ranges, defaults, the Reset 3D button); decision 6 (follows the
+active pan).
+
+**Files:**
+- Create: `src/gui/applets/DisplayApplet.h` and `.cpp`
+- Modify: `src/models/RadioModel.h` (`setSpectrumWidget` emits
+  `spectrumWidgetChanged`)
+- Modify: `src/gui/MainWindow.h` and `.cpp` (construct, add, register)
+- Modify: `CMakeLists.txt` (add `src/gui/applets/DisplayApplet.cpp` beside
+  `RadeApplet.cpp`)
+- Create: `tests/tst_display_applet.cpp`
+- Modify: `tests/CMakeLists.txt`
+
+**Interfaces:**
+- Consumes: `AppletWidget` (constructor `AppletWidget(RadioModel* model, QWidget* parent = nullptr)`,
+  pure virtuals `QString appletId() const`, `QString appletTitle() const`,
+  `void syncFromModel()`, helpers `sliderRow()`, `styledButton()`,
+  `divider()`, whose exact signatures are in
+  `src/gui/applets/AppletWidget.h`, read them); `applyComboStyle(QComboBox*)`
+  from `src/gui/ComboStyle.h`; `GuardedSlider` and `GuardedComboBox` from
+  `src/gui/GuardedSlider.h` and `src/gui/GuardedComboBox.h`;
+  `AppletVisibilityController::registerApplet(const QString& id, const QString& title, bool defaultVisible)`
+  (read the header for the exact signature); Task 18's
+  `SpectrumWidget::displaySettings()`; `RadioModel::spectrumWidget()`.
+- Produces: `class DisplayApplet : public AppletWidget` with
+  `explicit DisplayApplet(RadioModel* model, QWidget* parent = nullptr);`
+  `appletId()` returning `"Display"`, `appletTitle()` returning `"Display"`;
+  private `void bindTo(DisplaySettingsModel* m);` `DisplaySettingsModel* m_bound{nullptr};`
+  and a `QObject* m_bindContext` recreated on every bind so old connections
+  die with it. On `RadioModel`: `setSpectrumWidget(SpectrumWidget* w)`
+  becomes `{ if (m_spectrumWidget == w) { return; } m_spectrumWidget = w; emit spectrumWidgetChanged(w); }`
+  with `signals: void spectrumWidgetChanged(class SpectrumWidget* w);`.
+
+**Acceptance:**
+- Three sections in this order with `divider()` between them, titled exactly
+  as the popup's section headers (copy the strings from
+  `SpectrumOverlayMenu.cpp`): Waterfall (Colour Scheme combo, Colour Gain,
+  Black Level), Spectrum (Ref Level, Dyn Range, Fill Alpha, Fill trace
+  toggle, Split), 3D View (Spectrum mode combo, 3D Floor, 3D Gain, 3D Span,
+  3D Angle, Slice Shadow toggle, Reset 3D button). Labels, ranges and
+  tooltips of the thirteen existing controls are copied verbatim from the
+  popup; the Split slider spans 10..90 for a fraction of 0.10..0.90 and its
+  tooltip is one plain-English sentence you write.
+- Every control drives the bound model's setter and reflects the model's
+  signal under `QSignalBlocker`; a model-driven change emits nothing back
+  (spy count on the model: one per change).
+- Rebind: with `RadioModel m; SpectrumWidget w1, w2; m.setSpectrumWidget(&w1); DisplayApplet a(&m);`
+  then `m.setSpectrumWidget(&w2)`, the applet shows `w2.displaySettings()`'s
+  values and its controls change `w2`'s model and not `w1`'s. Setting the
+  same widget twice emits `spectrumWidgetChanged` once.
+- Reset 3D writes the six defaults (2D, 6, 70, 100, 50, off) to the model.
+- Registration: `appletId()` is `"Display"`; `MainWindow` adds the applet
+  immediately after the RX applet in `populateDefaultMeter()`'s add order,
+  enters it in `m_appletsById`, registers it visible by default, and the
+  existing applet-menu tests (grep `tests/` for `registeredIds` or
+  `AppletVisibilityController`) still pass; extend the one that enumerates
+  ids to include `"Display"`.
+- Human smoke, pending until the operator looks: the applet renders in the
+  left panel in the house style beside its siblings; every control moves the
+  live display; the popup and Setup follow it and it follows them. Evidence
+  is a screenshot of the running app taken by the controller, not by this
+  task.
+
+**Verification:** ordinary feature tier plus the human smoke above. Unit,
+gui label: `tst_display_applet`; siblings once:
+`tst_display_settings_binding`, the applet-menu test found above,
+`tst_rade_applet`. `RadioModel.h` is a hub header; expect a long rebuild
+once.
+
+**Execution note (advisory):** sonnet. Requires Tasks 18, 20 and 21. Not
+parallelisable (MainWindow and the CMake lists).
+
+- [ ] **Step 1: `RadioModel::spectrumWidgetChanged`** as in Interfaces, with
+  a two-line test appended to `tests/tst_display_applet.cpp` (same widget
+  twice emits once).
+- [ ] **Step 2: tests first** for the applet per Acceptance, patterned on
+  `tests/tst_rade_applet.cpp`; register; red run recorded.
+- [ ] **Step 3: the applet.** Build the three sections with the inherited
+  helpers, `GuardedSlider` / `GuardedComboBox` styled with
+  `applyComboStyle`, tooltips on every control. `bindTo()` deletes and
+  recreates `m_bindContext`, connects the fourteen model signals to
+  reflectors and the fourteen controls to the model's setters, then refreshes
+  every control under `QSignalBlocker`. The constructor binds to
+  `model->spectrumWidget()->displaySettings()` when a widget exists and
+  connects `RadioModel::spectrumWidgetChanged` to rebind. `syncFromModel()`
+  refreshes from `m_bound`.
+- [ ] **Step 4: wire into MainWindow and CMake**, per the scout checklist
+  (`populateDefaultMeter()`, `m_appletsById`, `registerApplet`), no menu code.
+- [ ] **Step 5: prove and commit** as in Task 18 Step 6. Then the controller
+  builds, relaunches the app and screenshots the applet for the operator.
+
+## Task 23: persistence moves onto the model
+
+**Requirements:** Task 17's "absorb persistence here too"; decision 3 above.
+The settings file is byte-identical before and after for every one of the
+thirteen per-pan keys, on pan 0 and on a pan that inherits from pan 0.
+
+**Files:**
+- Modify: `src/gui/SpectrumWidget.cpp` (`loadSettings()` and `saveSettings()`)
+- Create: `tests/tst_display_settings_golden.cpp`
+- Modify: `tests/CMakeLists.txt`
+
+**Interfaces:**
+- Consumes: `DisplaySettingsModel::load()` / `save()` as landed;
+  Task 18's binding.
+- Produces: nothing new. `loadSettings()` obtains the thirteen values by
+  calling `m_displaySettings->load()` and copying the model's getters into
+  the members (direct member assignment, no `update()`, no save scheduled);
+  `saveSettings()` calls `syncDisplaySettingsFromWidget()` then
+  `m_displaySettings->save()` instead of writing the thirteen keys itself.
+  3D Floor stays out of both, as today.
+
+**Acceptance:**
+- Golden: the test is written and run green against the pre-change code
+  first. It sets all thirteen values to non-defaults through the widget's
+  setters, calls `saveSettings()`, and compares the stored string of every
+  key (the thirteen exact key names from the scout table, pan 0) with
+  literal expected strings; then it sets `panIndex` 2 with no own keys and
+  proves `loadSettings()` inherits pan 0's values; then it saves on pan 2
+  and proves the `_2` suffixed keys hold pan 2's strings while pan 0's are
+  untouched. The same test, unchanged, is green after the change.
+- `loadSettings()` schedules no save and performs no apply
+  (`displaySettingsApplyCountForTest()` stays 0), and the model holds the
+  loaded values.
+- `tst_dss_persistence`, `tst_display_settings_binding` and
+  `tst_display_settings_model` green.
+
+**Verification:** behaviour-preserving refactor tier: baseline first (the
+golden test green on the old code, in its own commit), then the change.
+Unit, gui label. Inner loop on `tst_display_settings_golden`; siblings once
+as listed.
+
+**Execution note (advisory):** sonnet. Requires Task 18. Two commits: the
+golden test, then the refactor. Not parallelisable (same file).
+
+- [ ] **Step 1: golden test, committed alone**, green on the current code.
+- [ ] **Step 2: the refactor**, then the golden test again, siblings, signed
+  commit with the branch assertion from Task 18 Step 6.
