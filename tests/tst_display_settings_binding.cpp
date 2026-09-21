@@ -217,16 +217,23 @@ private slots:
     // the exact key strings in the scout table) leaves the model holding
     // the seeded values."
     //
-    // Scoped to the eight fields syncDisplaySettingsFromWidget() actually
-    // pushes (Step 5 of the brief names exactly eight calls); the other
-    // five 3D fields' persisted values are not covered by that method
-    // (loadSettings() assigns them directly, with no signal to push
-    // through) -- see the report's "where the brief was imprecise"
-    // section.
+    // Task 20 gap fix: originally scoped to the eight fields
+    // syncDisplaySettingsFromWidget() pushed at Task 18 time (Step 5 of
+    // that brief named exactly eight calls). The other five loadable 3D
+    // fields' persisted values were not covered by that method --
+    // loadSettings() assigns m_spectrumRenderMode/m_dssGain/
+    // m_dssRowSpan/m_dssAngle/m_threeDSliceDepth directly, with no
+    // signal to push through -- so after loadSettings() the model's five
+    // 3D fields still held ship defaults while the widget rendered the
+    // persisted values. Extended here to seed and assert all thirteen
+    // loadable fields; 3D Floor stays excluded because loadSettings()
+    // never reads it (its persistence lives on PanadapterModel per band,
+    // not on this model -- see DisplaySettingsModel.h's file header).
     //
     // Catches: loadSettings()'s single push call at the end missing, or
-    // seeded values not actually reaching the model.
-    void loadSettings_seedsTheModelsEightFields()
+    // seeded values not actually reaching the model -- for any of the
+    // thirteen, not just the original eight.
+    void loadSettings_seedsTheModelsFields()
     {
         auto& s = AppSettings::instance();
         s.setValue(QStringLiteral("DisplayWfColorScheme"), QStringLiteral("3"));
@@ -237,6 +244,11 @@ private slots:
         s.setValue(QStringLiteral("DisplayFftFillAlpha"), QStringLiteral("0.33"));
         s.setValue(QStringLiteral("DisplayPanFill"), QStringLiteral("False"));
         s.setValue(QStringLiteral("DisplaySpectrumFrac"), QStringLiteral("0.55"));
+        s.setValue(QStringLiteral("DisplaySpectrumRenderMode"), QStringLiteral("1"));
+        s.setValue(QStringLiteral("Display3DGain"), QStringLiteral("85"));
+        s.setValue(QStringLiteral("Display3DSpan"), QStringLiteral("45"));
+        s.setValue(QStringLiteral("Display3DAngle"), QStringLiteral("77"));
+        s.setValue(QStringLiteral("Display3DSliceShadow"), QStringLiteral("True"));
 
         SpectrumWidget w;
         setUpWidget(w);
@@ -251,6 +263,11 @@ private slots:
         QVERIFY(std::abs(m->fillAlpha() - 0.33f) < 1e-6f);
         QCOMPARE(m->panFill(), false);
         QVERIFY(std::abs(m->spectrumFrac() - 0.55f) < 1e-6f);
+        QCOMPARE(m->spectrumRenderMode(), 1);
+        QCOMPARE(m->dssGain(), 85);
+        QCOMPARE(m->dssRowSpan(), 45);
+        QCOMPARE(m->dssAngle(), 77);
+        QCOMPARE(m->threeDSliceDepth(), true);
     }
 
     // Acceptance: "a plain dBm-strip drag ... driven the way

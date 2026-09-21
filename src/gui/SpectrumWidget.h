@@ -2497,11 +2497,16 @@ private:
     bool m_settingsSaveScheduled{false};
 
     // 3D Stacked-Trace Spectrum Plan Task 18: wires m_displaySettings
-    // bidirectionally (called once from the constructor). Called from
-    // every write site of the eight fields with no per-field widget
-    // signal (named setters, setDbmRange(), loadSettings(), the dBm-strip
-    // and divider mouse drags, wheelEvent) -- see SpectrumWidget.cpp for
-    // the full list.
+    // bidirectionally (called once from the constructor).
+    // syncDisplaySettingsFromWidget() is called from every write site of
+    // the eight fields with no per-field widget signal (named setters,
+    // setDbmRange(), loadSettings(), the dBm-strip and divider mouse
+    // drags, wheelEvent) -- see SpectrumWidget.cpp for the full list.
+    // Task 20 extended it to also push the six 3D fields, so
+    // loadSettings() (which assigns those directly, with no signal)
+    // still seeds the model; at every other call site the six 3D pushes
+    // are redundant no-ops, since the dedicated widget-level signal
+    // already reached the model first.
     void bindDisplaySettings();
     void syncDisplaySettingsFromWidget();
 

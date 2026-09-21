@@ -1351,13 +1351,26 @@ void SpectrumWidget::bindDisplaySettings()
             m_displaySettings, &DisplaySettingsModel::setThreeDSliceDepth);
 }
 
-// Pushes the widget's current value for the eight fields with no
-// per-field widget signal into the model -- see bindDisplaySettings()'s
-// comment. Each of the eight model setters below carries its own
-// equality guard, so calling all eight unconditionally on every write
-// site is safe: only the field that actually changed emits, and any
-// echo back into this widget's own applier is absorbed by ITS guard in
-// turn (see the class's echo-termination note in DisplaySettingsModel.h).
+// Pushes the widget's current value for all fourteen DisplaySettingsModel
+// fields into the model -- see bindDisplaySettings()'s comment. Each
+// model setter below carries its own equality guard, so calling all
+// fourteen unconditionally on every write site is safe: only the field
+// that actually changed emits, and any echo back into this widget's own
+// applier is absorbed by ITS guard in turn (see the class's
+// echo-termination note in DisplaySettingsModel.h).
+//
+// Task 20 gap fix: the six 3D fields (spectrumRenderMode, dssFloorDepth,
+// dssGain, dssRowSpan, dssAngle, threeDSliceDepth) already reach the
+// model through their own widget-level xxxChanged signal
+// (bindDisplaySettings()'s "Widget -> model" section), so pushing them
+// here too is a no-op at every call site except one: loadSettings()
+// assigns five of the six (all but dssFloorDepth) directly, with no
+// signal, so without this push the model's five fields would still hold
+// ship defaults after a persisted-settings load even though the widget
+// itself renders the loaded values. dssFloorDepth is pushed too even
+// though loadSettings() never touches it, since this method's contract
+// is "whatever the widget currently holds," which dssFloorDepth always
+// has a value for (the Task 17 per-band bridge keeps it current).
 void SpectrumWidget::syncDisplaySettingsFromWidget()
 {
     m_displaySettings->setWfColorScheme(static_cast<int>(m_wfColorScheme));
@@ -1368,6 +1381,12 @@ void SpectrumWidget::syncDisplaySettingsFromWidget()
     m_displaySettings->setFillAlpha(m_fillAlpha);
     m_displaySettings->setPanFill(m_panFill);
     m_displaySettings->setSpectrumFrac(m_spectrumFrac);
+    m_displaySettings->setSpectrumRenderMode(static_cast<int>(m_spectrumRenderMode));
+    m_displaySettings->setDssFloorDepth(m_dssFloorDepth);
+    m_displaySettings->setDssGain(m_dssGain);
+    m_displaySettings->setDssRowSpan(m_dssRowSpan);
+    m_displaySettings->setDssAngle(m_dssAngle);
+    m_displaySettings->setThreeDSliceDepth(m_threeDSliceDepth);
 }
 
 void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
