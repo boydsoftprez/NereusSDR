@@ -7696,26 +7696,32 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         // Show overlay menu on right-click (default — not on a spot).
         if (!m_overlayMenu) {
             m_overlayMenu = new SpectrumOverlayMenu(this);
-            // Task 18: each lambda now calls the matching named setter
-            // instead of assigning the member directly. Behaviour
-            // identical for a genuinely-changed value (assign, update(),
-            // scheduleSettingsSave()); the setter's own equality guard
-            // additionally makes a same-value re-apply a no-op, which the
-            // member-assignment version never had.
+            // 3D Stacked-Trace Spectrum Plan Task 20: every popup signal
+            // that maps onto one of DisplaySettingsModel's fourteen
+            // values connects straight to the matching model setter --
+            // never to this widget's own named setter, and never through
+            // a lambda that touches a widget member. Task 18's own
+            // model-to-widget binding (bindDisplaySettings()) is what
+            // actually lands the change on the live renderer from here;
+            // this popup no longer talks to SpectrumWidget at all for
+            // these thirteen. ctunChanged and notchAddRequested are not
+            // among the fourteen (CTUN-enabled and "add a notch" are not
+            // DisplaySettingsModel fields) and keep talking to the widget
+            // exactly as before.
             connect(m_overlayMenu, &SpectrumOverlayMenu::wfColorGainChanged,
-                    this, [this](int v) { setWfColorGain(v); });
+                    m_displaySettings, &DisplaySettingsModel::setWfColorGain);
             connect(m_overlayMenu, &SpectrumOverlayMenu::wfBlackLevelChanged,
-                    this, [this](int v) { setWfBlackLevel(v); });
+                    m_displaySettings, &DisplaySettingsModel::setWfBlackLevel);
             connect(m_overlayMenu, &SpectrumOverlayMenu::wfColorSchemeChanged,
-                    this, [this](int v) { setWfColorScheme(static_cast<WfColorScheme>(v)); });
+                    m_displaySettings, &DisplaySettingsModel::setWfColorScheme);
             connect(m_overlayMenu, &SpectrumOverlayMenu::fillAlphaChanged,
-                    this, [this](float v) { setFillAlpha(v); });
+                    m_displaySettings, &DisplaySettingsModel::setFillAlpha);
             connect(m_overlayMenu, &SpectrumOverlayMenu::panFillChanged,
-                    this, [this](bool v) { setPanFillEnabled(v); });
+                    m_displaySettings, &DisplaySettingsModel::setPanFill);
             connect(m_overlayMenu, &SpectrumOverlayMenu::refLevelChanged,
-                    this, [this](float v) { setRefLevel(v); });
+                    m_displaySettings, &DisplaySettingsModel::setRefLevel);
             connect(m_overlayMenu, &SpectrumOverlayMenu::dynRangeChanged,
-                    this, [this](float v) { setDynamicRange(v); });
+                    m_displaySettings, &DisplaySettingsModel::setDynamicRange);
             connect(m_overlayMenu, &SpectrumOverlayMenu::ctunChanged,
                     this, [this](bool v) { setCtunEnabled(v); });
             // Plan decision D-e: the empty-pan "add a notch here" row.
@@ -7726,36 +7732,105 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                     this, [this](double freqHz) {
                         emit notchCreateRequested(freqHz, false);
                     });
-            // 3D VIEW section (Task 13): six signals wired straight to the
-            // Task 6 setters -- see the "Consumes: SpectrumWidget setters"
-            // interface note in the plan. Persistence (AppSettings/
-            // PanadapterModel round-trip) is Task 14's scope, not this
-            // one's; each setter below already calls scheduleSettingsSave()
-            // itself (SpectrumWidget.cpp, Task 6).
+            // 3D VIEW section (Task 13, re-pointed at the model by Task
+            // 20): six signals wired straight to DisplaySettingsModel's
+            // setters -- see the block comment above. Persistence
+            // (AppSettings/PanadapterModel round-trip) is Task 14's
+            // scope, not this one's; the model's own model-to-widget
+            // binding still reaches the widget's setter (and its
+            // scheduleSettingsSave() call) exactly as before, just one
+            // hop further along.
             connect(m_overlayMenu, &SpectrumOverlayMenu::spectrumRenderModeChanged,
-                    this, &SpectrumWidget::setSpectrumRenderMode);
+                    m_displaySettings, &DisplaySettingsModel::setSpectrumRenderMode);
             connect(m_overlayMenu, &SpectrumOverlayMenu::dssFloorDepthChanged,
-                    this, &SpectrumWidget::setDssFloorDepth);
+                    m_displaySettings, &DisplaySettingsModel::setDssFloorDepth);
             connect(m_overlayMenu, &SpectrumOverlayMenu::dssGainChanged,
-                    this, &SpectrumWidget::setDssGain);
+                    m_displaySettings, &DisplaySettingsModel::setDssGain);
             connect(m_overlayMenu, &SpectrumOverlayMenu::dssRowSpanChanged,
-                    this, &SpectrumWidget::setDssRowSpan);
+                    m_displaySettings, &DisplaySettingsModel::setDssRowSpan);
             connect(m_overlayMenu, &SpectrumOverlayMenu::dssAngleChanged,
-                    this, &SpectrumWidget::setDssAngle);
+                    m_displaySettings, &DisplaySettingsModel::setDssAngle);
             connect(m_overlayMenu, &SpectrumOverlayMenu::dssSliceShadowChanged,
-                    this, &SpectrumWidget::setThreeDSliceDepth);
+                    m_displaySettings, &DisplaySettingsModel::setThreeDSliceDepth);
+
+            // Live refresh (Task 20): while the popup stays open, a
+            // model-driven change from any OTHER bound surface (Setup ->
+            // Display today; a future left-panel applet) re-seeds every
+            // popup control so it never shows a stale value. The re-seed
+            // reads the model's OWN current state (never a signal
+            // argument) and calls setValues()/setDssValues(), which
+            // block the popup's own controls' signals while seeding --
+            // so this can never feed a popup signal back out, which is
+            // what makes it safe to wire unconditionally: the popup's
+            // OWN change already reached the model above, so the model's
+            // signal fires, this lambda runs, and it reseeds the popup
+            // with the same value it just sent, a Qt/QSlider no-op.
+            // isVisible() additionally skips all thirteen while the
+            // popup is closed, so a change made with the popup not open
+            // does not do thirteen no-op reseeds on the next right-click
+            // (setValues()/setDssValues() below already reseed it then).
+            auto refreshOverlayMenuFromModel = [this]() {
+                if (!m_overlayMenu->isVisible()) { return; }
+                m_overlayMenu->setValues(m_displaySettings->wfColorGain(),
+                                          m_displaySettings->wfBlackLevel(), false,
+                                          m_displaySettings->wfColorScheme(),
+                                          m_displaySettings->fillAlpha(),
+                                          m_displaySettings->panFill(), false,
+                                          m_displaySettings->refLevel(),
+                                          m_displaySettings->dynamicRange(),
+                                          m_ctunEnabled);
+                m_overlayMenu->setDssValues(m_displaySettings->spectrumRenderMode(),
+                                             m_displaySettings->dssFloorDepth(),
+                                             m_displaySettings->dssGain(),
+                                             m_displaySettings->dssRowSpan(),
+                                             m_displaySettings->dssAngle(),
+                                             m_displaySettings->threeDSliceDepth());
+            };
+            connect(m_displaySettings, &DisplaySettingsModel::wfColorSchemeChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::wfColorGainChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::wfBlackLevelChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::refLevelChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::dynamicRangeChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::fillAlphaChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::panFillChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::spectrumRenderModeChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::dssFloorDepthChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::dssGainChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::dssRowSpanChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::dssAngleChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::threeDSliceDepthChanged,
+                    this, refreshOverlayMenuFromModel);
         }
-        m_overlayMenu->setValues(m_wfColorGain, m_wfBlackLevel, false,
-                                  static_cast<int>(m_wfColorScheme),
-                                  m_fillAlpha, m_panFill, false,
-                                  m_refLevel, m_dynamicRange, m_ctunEnabled);
+        m_overlayMenu->setValues(m_displaySettings->wfColorGain(),
+                                  m_displaySettings->wfBlackLevel(), false,
+                                  m_displaySettings->wfColorScheme(),
+                                  m_displaySettings->fillAlpha(),
+                                  m_displaySettings->panFill(), false,
+                                  m_displaySettings->refLevel(),
+                                  m_displaySettings->dynamicRange(),
+                                  m_ctunEnabled);
         // Re-seed every popup (not just at construction): the 3D VIEW
         // section reflects whatever the operator last set, and row-span
         // support can change across the widget's lifetime if the GPU mesh
         // pipeline comes up or falls back (Task 10's RGBA16F check).
-        m_overlayMenu->setDssValues(spectrumRenderMode(), dssFloorDepth(),
-                                     dssGain(), dssRowSpan(), dssAngle(),
-                                     threeDSliceDepth());
+        m_overlayMenu->setDssValues(m_displaySettings->spectrumRenderMode(),
+                                     m_displaySettings->dssFloorDepth(),
+                                     m_displaySettings->dssGain(),
+                                     m_displaySettings->dssRowSpan(),
+                                     m_displaySettings->dssAngle(),
+                                     m_displaySettings->threeDSliceDepth());
         // dssMeshReady() alone is build-safe (CPU build hardcodes false), but
         // route through dssRowSpanSupported() anyway to match upstream's two
         // independent gates (compile-time GPU build + runtime mesh-ready)

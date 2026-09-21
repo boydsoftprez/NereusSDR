@@ -6386,6 +6386,24 @@ nereus_add_test(tst_display_settings_binding)
 # to cite.
 nereus_add_test(tst_display_settings_model)
 
+# ── 3D stacked-trace spectrum plan, Task 20: right-click popup binding ───
+# Pins the popup-controls migration onto DisplaySettingsModel: all thirteen
+# SpectrumOverlayMenu change signals that have a model field connect
+# straight to the matching model setter (never to a SpectrumWidget setter
+# or a lambda touching a widget member); setValues()/setDssValues() seed
+# the popup from the model's own getters, proven by a model-driven change
+# made before the right-click; a new live-refresh path re-seeds the popup
+# from the model while it stays open, without emitting any of the popup's
+# own change signals (QSignalSpy count 0), so a popup-driven change cannot
+# bounce back out through its own controls; a popup-driven change is
+# proven to reach both the model and, through Task 18's existing binding,
+# the widget; and setDssRowSpanSupported()'s push on open (unrelated to
+# the model -- it is derived from the widget's DDC width) is unchanged.
+# NereusSDR-original: neither Thetis nor AetherSDR routes its right-click
+# display menu through a consolidating settings model, so there is no
+# upstream source to cite.
+nereus_add_test(tst_display_popup_binding)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
