@@ -4387,6 +4387,10 @@ The full reports are in the crew workspace as `scout-popup.md`,
    construction-time binding exactly as today; that it does not follow the
    active pan is a pre-existing defect recorded in the ledger for the
    operator, not changed here.
+7. **Order.** Tasks run 18, 20, 21, 24, 22, 23. Task 24 (3D Speed, approved
+   2026-09-20) lands before the applet so the applet is built once with all
+   fifteen controls; Task 23 is last because its golden test covers every
+   per-pan key.
 
 ## Task 18: bind SpectrumWidget to its DisplaySettingsModel
 
@@ -4747,9 +4751,9 @@ active pan).
   `SpectrumOverlayMenu.cpp`): Waterfall (Colour Scheme combo, Colour Gain,
   Black Level), Spectrum (Ref Level, Dyn Range, Fill Alpha, Fill trace
   toggle, Split), 3D View (Spectrum mode combo, 3D Floor, 3D Gain, 3D Span,
-  3D Angle, Slice Shadow toggle, Reset 3D button). Labels, ranges and
-  tooltips of the thirteen existing controls are copied verbatim from the
-  popup; the Split slider spans 10..90 for a fraction of 0.10..0.90 and its
+  3D Angle, 3D Speed from Task 24, Slice Shadow toggle, Reset 3D button). Labels, ranges and
+  tooltips of the fourteen existing controls (Task 24's 3D Speed included)
+  are copied verbatim from the popup; the Split slider spans 10..90 for a fraction of 0.10..0.90 and its
   tooltip is one plain-English sentence you write.
 - Every control drives the bound model's setter and reflects the model's
   signal under `QSignalBlocker`; a model-driven change emits nothing back
@@ -4758,7 +4762,7 @@ active pan).
   then `m.setSpectrumWidget(&w2)`, the applet shows `w2.displaySettings()`'s
   values and its controls change `w2`'s model and not `w1`'s. Setting the
   same widget twice emits `spectrumWidgetChanged` once.
-- Reset 3D writes the six defaults (2D, 6, 70, 100, 50, off) to the model.
+- Reset 3D writes the seven defaults (2D, 6, 70, 100, 50, Match, off) to the model.
 - Registration: `appletId()` is `"Display"`; `MainWindow` adds the applet
   immediately after the RX applet in `populateDefaultMeter()`'s add order,
   enters it in `m_appletsById`, registers it visible by default, and the
@@ -4777,8 +4781,9 @@ gui label: `tst_display_applet`; siblings once:
 `tst_rade_applet`. `RadioModel.h` is a hub header; expect a long rebuild
 once.
 
-**Execution note (advisory):** sonnet. Requires Tasks 18, 20 and 21. Not
-parallelisable (MainWindow and the CMake lists).
+**Execution note (advisory):** sonnet. Requires Tasks 18, 20, 21 and 24
+(runs after Task 24 by decision of 2026-09-20 so the applet is built once
+with fifteen controls). Not parallelisable (MainWindow and the CMake lists).
 
 - [ ] **Step 1: `RadioModel::spectrumWidgetChanged`** as in Interfaces, with
   a two-line test appended to `tests/tst_display_applet.cpp` (same widget
@@ -4788,8 +4793,8 @@ parallelisable (MainWindow and the CMake lists).
 - [ ] **Step 3: the applet.** Build the three sections with the inherited
   helpers, `GuardedSlider` / `GuardedComboBox` styled with
   `applyComboStyle`, tooltips on every control. `bindTo()` deletes and
-  recreates `m_bindContext`, connects the fourteen model signals to
-  reflectors and the fourteen controls to the model's setters, then refreshes
+  recreates `m_bindContext`, connects the fifteen model signals to
+  reflectors and the fifteen controls to the model's setters, then refreshes
   every control under `QSignalBlocker`. The constructor binds to
   `model->spectrumWidget()->displaySettings()` when a widget exists and
   connects `RadioModel::spectrumWidgetChanged` to rebind. `syncFromModel()`
@@ -4803,7 +4808,7 @@ parallelisable (MainWindow and the CMake lists).
 
 **Requirements:** Task 17's "absorb persistence here too"; decision 3 above.
 The settings file is byte-identical before and after for every one of the
-thirteen per-pan keys, on pan 0 and on a pan that inherits from pan 0.
+fourteen (the fourteen of Task 17 plus Task 24's `Display3DSpeed`) per-pan keys, on pan 0 and on a pan that inherits from pan 0.
 
 **Files:**
 - Modify: `src/gui/SpectrumWidget.cpp` (`loadSettings()` and `saveSettings()`)
@@ -4813,18 +4818,18 @@ thirteen per-pan keys, on pan 0 and on a pan that inherits from pan 0.
 **Interfaces:**
 - Consumes: `DisplaySettingsModel::load()` / `save()` as landed;
   Task 18's binding.
-- Produces: nothing new. `loadSettings()` obtains the thirteen values by
+- Produces: nothing new. `loadSettings()` obtains the fourteen values by
   calling `m_displaySettings->load()` and copying the model's getters into
   the members (direct member assignment, no `update()`, no save scheduled);
   `saveSettings()` calls `syncDisplaySettingsFromWidget()` then
-  `m_displaySettings->save()` instead of writing the thirteen keys itself.
+  `m_displaySettings->save()` instead of writing the fourteen keys itself.
   3D Floor stays out of both, as today.
 
 **Acceptance:**
 - Golden: the test is written and run green against the pre-change code
-  first. It sets all thirteen values to non-defaults through the widget's
+  first. It sets all fourteen values to non-defaults through the widget's
   setters, calls `saveSettings()`, and compares the stored string of every
-  key (the thirteen exact key names from the scout table, pan 0) with
+  key (the fourteen exact key names from the scout table, pan 0) with
   literal expected strings; then it sets `panIndex` 2 with no own keys and
   proves `loadSettings()` inherits pan 0's values; then it saves on pan 2
   and proves the `_2` suffixed keys hold pan 2's strings while pan 0's are
@@ -4840,9 +4845,220 @@ golden test green on the old code, in its own commit), then the change.
 Unit, gui label. Inner loop on `tst_display_settings_golden`; siblings once
 as listed.
 
-**Execution note (advisory):** sonnet. Requires Task 18. Two commits: the
+**Execution note (advisory):** sonnet. Requires Tasks 18 and 24; last in the order. Two commits: the
 golden test, then the refactor. Not parallelisable (same file).
 
 - [ ] **Step 1: golden test, committed alone**, green on the current code.
 - [ ] **Step 2: the refactor**, then the golden test again, siblings, signed
   commit with the branch assertion from Task 18 Step 6.
+
+## Task 24: 3D Speed, a row divider matched to the waterfall
+
+**Requirements:** the operator's observations, verbatim: 2026-09-19 "The 3d
+moves fast would be nice to have a way to adjust speed?" and "ok but the 2d
+waterfalll and the 3dwterfall move at really diffrent speeds"; 2026-09-20
+"what i am seeing is the 3db view apears to flow faster then the vertical
+waterfall maybe it is because there is 'less space' but it feel like it is
+moving faster", and his approval of option 1: automatic match with a
+manual override, peak-hold fold. Design §4.5 (added by this task), §6, §7,
+§8 item 9. NereusSDR-original: upstream at 1872028c has no row divider, no
+3D-specific cadence control, and ties its 3D scroll to the same clock as
+its 2D waterfall (crew workspace `scout-scroll-speed.md`, section 5). No
+upstream code is lifted, so no new attribution rows are needed; the cite
+rule for `// From AetherSDR` comments does not apply to text you author.
+
+**Why the mismatch exists (from `scout-scroll-speed.md`):** one waterfall
+tick pushes the same row into both panes (`SpectrumWidget::pushWaterfallRow`
+tees into `pushDssRow()` below the stop-on-TX gate). The waterfall keeps
+one row per pixel of `m_waterfall.height()`; the 3D ring keeps
+`kDssVisibleRows` (96). The glide clock advances
+`m_dssScrollProgressRows` by `deltaMs / m_wfUpdatePeriodMs` per display
+tick and `pushDssRow()` resets it to 0. Nothing decimates, skips or folds
+rows anywhere.
+
+**Files:**
+- Modify: `docs/architecture/2026-08-08-3d-stacked-trace-spectrum-design.md`
+  (new §4.5; rows in §6, §6.2, §7; item 9 in §8), committed first, alone
+- Modify: `src/models/DisplaySettingsModel.h` and `.cpp` (fifteenth value)
+- Modify: `src/gui/SpectrumWidget.h` and `.cpp` (divider, fold, glide, key,
+  binding, seams)
+- Modify: `src/gui/SpectrumOverlayMenu.h` and `.cpp` (3D Speed row)
+- Modify: `src/gui/setup/DisplaySetupPages.h` and `.cpp` (3D Speed row on
+  `Display3DSetupPage`)
+- Create: `tests/tst_dss_row_divider.cpp`
+- Modify: `tests/tst_display_settings_model.cpp`, `tests/tst_dss_overlay_menu.cpp`,
+  `tests/tst_dss_setup_sync.cpp`, `tests/tst_dss_persistence.cpp`,
+  `tests/tst_display_settings_binding.cpp` (one case each for the new value)
+- Modify: `tests/CMakeLists.txt`
+
+**Interfaces:**
+- Consumes: Task 18's binding (`bindDisplaySettings()`,
+  `syncDisplaySettingsFromWidget()`, `displaySettings()`), Task 20's
+  popup-to-model wiring, Task 21's Setup-to-model wiring; existing seams
+  `pushWaterfallRowForTest(const QVector<float>&)`, `dssRowsPushedForTest()`,
+  `m_txActiveForTest`; `DssRenderer::pushRow` / `pushRowWithWide` as they
+  are; `kDssVisibleRows` from `src/gui/DssGeometry.h`.
+- Produces, on `DisplaySettingsModel`: `int dssRowDivider() const;`
+  `void setDssRowDivider(int n);` `signals: void dssRowDividerChanged(int n);`
+  member `int m_dssRowDivider{0};` clamp 0..10 (0 means Match, automatic);
+  `load()` reads and `save()` writes key `Display3DSpeed` through
+  `settingsKeyFor()`, default 0.
+- Produces, on `SpectrumWidget`: `int dssRowDivider() const;`
+  `void setDssRowDivider(int n);` `signals: void dssRowDividerChanged(int n);`
+  `int effectiveDssRowDivider() const;` `static constexpr int kDssMaxAutoRowDivider = 64;`
+  private `void accumulateDssRow(const QVector<float>& wfPixelsDbm);`
+  members `int m_dssRowDivider{0}; QVector<float> m_dssFoldRow; QVector<float> m_dssFoldFullBins; int m_dssFoldCount{0};`
+  seams `int effectiveDssRowDividerForTest() const;` `int dssFoldCountForTest() const;`
+  `float dssScrollIncrementForTest(int deltaMs) const;`
+  `loadSettings()` / `saveSettings()` handle `Display3DSpeed` exactly like
+  `Display3DAngle`.
+- Produces, on `SpectrumOverlayMenu`: a slider row labelled `3D Speed`
+  after 3D Angle in the `3D VIEW` section, `QSlider* m_dssSpeedSlider`
+  range 0..10, value text `Match` at 0 and `1:N` otherwise, signal
+  `dssRowDividerChanged(int)`; `setDssValues(...)` gains a trailing
+  `int rowDivider` parameter; the popup's reset path (if it has one) sets 0.
+- Produces, on `Display3DSetupPage`: `QSlider* m_speedSlider` with the same
+  label, range, value text and tooltip, bound to the model like its
+  siblings; Reset sets 0.
+- Tooltip, used verbatim on both surfaces: `How many waterfall rows each 3D row covers. Match keeps the 3D history the same length in time as the waterfall. 1:1 pushes every row, the fastest look. Higher values fold more rows into each 3D row, keeping peaks, so the surface recedes more slowly.`
+
+**Behaviour, exactly:**
+- `effectiveDssRowDivider()`: if `m_dssRowDivider > 0` return it; else
+  return `std::clamp(qRound(double(m_waterfall.height()) / kDssVisibleRows), 1, kDssMaxAutoRowDivider)`
+  (a null or zero-height waterfall gives 1). Read live on every use, so a
+  resize or split change is followed with no hook.
+- In `pushWaterfallRow`, the tee `pushDssRow(wfPixelsDbm)` becomes
+  `accumulateDssRow(wfPixelsDbm)`. `accumulateDssRow`: if `m_dssFoldCount == 0`
+  or `wfPixelsDbm.size() != m_dssFoldRow.size()` or
+  `m_lastFullBinsDbm.size() != m_dssFoldFullBins.size()`, start a fresh
+  fold by copying both rows and setting the count to 1; otherwise take the
+  per-column maximum into `m_dssFoldRow` and `m_dssFoldFullBins` and
+  increment the count. Then if `m_dssFoldCount >= effectiveDssRowDivider()`,
+  push: `pushDssRow` must build its wide row from `m_dssFoldFullBins` (not
+  `m_lastFullBinsDbm`) and its exact row from `m_dssFoldRow`, then the
+  count resets to 0. A size mismatch discards the partial fold; a divider
+  lowered below the current count pushes on the next tick.
+- The glide: in the display-timer lambda, the period becomes
+  `qMax(1, m_wfUpdatePeriodMs) * effectiveDssRowDivider()`; factor the
+  increment into a const member `float dssScrollIncrement(int deltaMs) const`
+  returning `deltaMs / float(period)`, used by the lambda and exposed by the
+  seam. `pushDssRow` still resets `m_dssScrollProgressRows` to 0.
+- Entering or leaving 3D (wherever `setSpectrumRenderMode` clears the ring)
+  also resets `m_dssFoldCount` to 0 and clears both fold rows.
+- `setDssRowDivider(int n)`: clamp 0..10; equality early-return; assign;
+  `update()`; `scheduleSettingsSave()`; emit. Bound both ways to the model
+  in `bindDisplaySettings()` like the other 3D values.
+
+**Acceptance (all in `tests/tst_dss_row_divider.cpp` unless named):**
+- `manualDivider_pushesOneRowPerNTicks`: 3D mode, widget shown and
+  exposed, divider 5, twelve rows through `pushWaterfallRowForTest`:
+  `dssRowsPushedForTest()` is 2 and `dssFoldCountForTest()` is 2 (rows 11
+  and 12 pending).
+- `divider1_matchesTodaysBehaviour`: divider 1, twelve rows: twelve pushes.
+- `foldIsPeakHold`: divider 3, ring empty (fresh 3D entry), rows of -100
+  everywhere except the second row, which carries -40 across three
+  adjacent columns c-1..c+1: after the third row the ring's newest row
+  reads at least -45 at column c (read it through an existing
+  `DssRenderer` row accessor, or add `const QVector<float>& newestRowForTest() const`
+  to `DssRenderer`; three columns, not one, because `smoothDssRow`'s
+  median-of-3 removes a single-column spike, and state in the report which
+  accessor you used and the exact value observed). This case goes red when
+  the per-column maximum is replaced by "last row wins"; report the red run.
+- `autoDivider_tracksWaterfallHeight`: divider 0; resize so the waterfall
+  is tall, then short; each time `effectiveDssRowDividerForTest()` equals
+  `std::clamp(qRound(double(h) / 96), 1, 64)` where `h` is the waterfall
+  image height read through an existing or new `waterfallHeightForTest()`
+  seam, and the two heights chosen must give two different dividers, one
+  of them greater than 1.
+- `glideIncrementScalesWithDivider`: period 30 ms via `setWfUpdatePeriodMs(30)`;
+  divider 5: `dssScrollIncrementForTest(150)` is 1.0 within 1e-6 and
+  `dssScrollIncrementForTest(75)` is 0.5; divider 1:
+  `dssScrollIncrementForTest(30)` is 1.0. Red when the divider factor is
+  dropped; report it.
+- `partialFold_restartsOnSizeChange`: divider 4; two rows of width 100
+  then one of width 120: `dssFoldCountForTest()` is 1 and nothing pushed.
+- `dividerLoweredMidFold_pushesOnNextTick`: divider 10, six rows, then
+  divider 3, one more row: one push, count 0.
+- `stopOnTx_pausesFold`: with stop-on-TX enabled and `m_txActiveForTest`
+  true, rows advance neither the waterfall write row nor the fold count;
+  prove presence first by pushing with TX inactive in the same case.
+- `enteringAndLeaving3D_resetsFold`: divider 4, two rows, switch to 2D and
+  back: count 0.
+- `tst_display_settings_model`: `setDssRowDivider` clamps to 0..10, is
+  equality-guarded, emits once, and `Display3DSpeed` round-trips through
+  `load()` / `save()` for pan 0 and inherits for pan 2.
+- `tst_display_settings_binding`: model `setDssRowDivider(7)` reaches
+  `dssRowDivider()` on the widget and back, one emission each way.
+- `tst_dss_overlay_menu`: the `3D VIEW` section has the `3D Speed` row
+  with range 0..10, value text `Match` at 0 and `1:7` at 7, the tooltip
+  above verbatim, and moving it emits `dssRowDividerChanged(7)` once;
+  `setDssValues(...)` with `rowDivider` 3 shows `1:3`.
+- `tst_dss_setup_sync`: the page's speed slider follows the model and
+  drives it, one emission; Reset puts 0 on the model.
+- `tst_dss_persistence`: `Display3DSpeed` saved and reloaded per pan.
+- Human smoke, pending until the operator looks: at Match on his window
+  the surface and the waterfall visibly cover the same span of time; at
+  1:1 the old fast look returns; a one-tick burst raises a ridge at Match.
+
+**Verification:** ordinary feature tier, unit, gui label. Inner loop on
+`tst_dss_row_divider`; siblings once: `tst_display_settings_model`,
+`tst_display_settings_binding`, `tst_dss_overlay_menu`, `tst_dss_setup_sync`,
+`tst_dss_persistence`, `tst_dss_row_tee`. Tests that push rows must
+`resize()`, `show()`, `QVERIFY(QTest::qWaitForWindowExposed(&w))`.
+
+**Execution note (advisory):** sonnet. Requires Tasks 18, 20 and 21; runs
+before Task 22 so the applet is built once with fifteen controls. Not
+parallelisable (SpectrumWidget, the popup and the Setup pages).
+
+- [ ] **Step 1: design document, committed alone.** Insert after §4.4 in
+  `docs/architecture/2026-08-08-3d-stacked-trace-spectrum-design.md`,
+  verbatim:
+
+```markdown
+### 4.5 Row cadence: the 3D Speed divider (NereusSDR-original)
+
+Both panes receive one row per waterfall tick (section 4.1). The waterfall
+keeps one row per pixel of its height, so its history spans hundreds of
+ticks; the 3D ring keeps 96 visible rows (section 3.3). At the default
+30 ms period a 528 px waterfall spans about 15.8 s while the 3D surface
+spans about 2.9 s, so the surface advances roughly 5.5 times faster than
+the waterfall scrolls and each new row moves the front of the surface
+several pixels instead of one. The mismatch is inherent in upstream too;
+its waterfall tile cadence is slower and it has no control for it.
+
+NereusSDR adds a row divider. The 3D surface consumes one row per N
+waterfall ticks; the N rows are folded per column by peak-hold into the
+row that is pushed, so a burst that lasts one tick still raises a ridge.
+The scroll phase (section 4.4) advances over N ticks instead of one, so
+the glide stays continuous. The stop-on-TX gate sits above the fold, so
+the fold pauses with the waterfall.
+
+N is automatic by default: the waterfall's pixel height divided by 96,
+rounded, at least 1 and at most 64, re-read on every use so window and
+split changes are followed without a hook. A 3D Speed control overrides
+it: 0 is Match (automatic), 1 pushes every row (the previous behaviour),
+2 to 10 fold that many rows into each 3D row. Persisted per panadapter as
+`Display3DSpeed`, default 0.
+
+Averaging was rejected as the fold because a one-tick burst would shrink
+by a factor of N and could vanish from the surface while still visible in
+the waterfall.
+```
+
+  In §6's table add the row
+  `| 3D Speed | 0 (Match), 1-10 | 0 | same (NereusSDR-original) |`
+  after 3D Angle; in §6.2 add `Display3DSpeed` to the per-panadapter key
+  list; in §7's table add
+  `| One ring row per delivered row | Row divider with peak-hold fold, matched to the waterfall's row count by default | Our waterfall runs one row per pixel at 30 ms; upstream's tile cadence is slower and it has no control |`;
+  in §8 add item 9:
+  `9. **Row divider.** With divider N, K pushed rows reach the ring floor(K / N) times; the folded row carries the per-column maximum of its N sources; the automatic divider equals the waterfall height over 96, clamped to 1..64; the scroll increment per millisecond is 1 / (period times N).`
+  Commit signed, docs only.
+- [ ] **Step 2: tests first**, every case above, registered
+  alphabetically; red run recorded.
+- [ ] **Step 3: model, widget, glide and persistence** per Behaviour and
+  Interfaces. Extend `bindDisplaySettings()` and the load and save blocks.
+- [ ] **Step 4: popup and Setup rows**, bound to the model through the
+  wiring Tasks 20 and 21 left, tooltip verbatim, Reset paths include the
+  new value.
+- [ ] **Step 5: prove and commit** as in Task 18 Step 6, including the
+  two mutation proofs named above.
