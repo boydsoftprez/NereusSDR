@@ -350,12 +350,19 @@ private:
 // SpectrumWidget-first wiring. SetupDialog's production registration
 // passes model->spectrumWidget() through this same constructor.
 //
-// Two-way sync: this page's six widgets and the Task 13 overlay menu both
-// write the SAME live SpectrumWidget state, and SetupDialog is non-modal,
-// so the overlay menu can change that state while this page is open.
-// m_updatingFromModel guards both directions -- the same pattern
-// AudioTxInputPage.cpp uses for its Mic Gain <-> TxApplet mirror -- so a
-// push from either surface settles in one hop instead of echoing.
+// Two-way sync: this page's six widgets, the Task 13 overlay menu, and any
+// other bound surface all read and write the SAME SpectrumWidget-owned
+// DisplaySettingsModel (3D Stacked-Trace Spectrum Plan Task 18), reached
+// through m_spectrumWidget->displaySettings(). Task 21 re-pointed this page
+// at the model: each control's signal connects straight to the model's
+// setter, and each of the model's six xxxChanged signals reflects into this
+// page's own widget under a QSignalBlocker so the reflect can never re-emit
+// the control's own signal. What stops a push from echoing back and forth
+// is the model's own equality-guarded setter (see DisplaySettingsModel.h),
+// not a page-local flag -- SetupDialog is still non-modal, so the overlay
+// menu (or any future surface bound to the same model) can change this
+// state while this page is open, and the model settles it in one hop either
+// way.
 // ---------------------------------------------------------------------------
 class Display3DSetupPage : public SetupPage {
     Q_OBJECT
@@ -371,10 +378,11 @@ public:
 
 private:
     void buildUI();
-    // Seeds all six widgets from the live SpectrumWidget getters, guarded
-    // against echoing back out through the "push to widget" connections
-    // buildUI() wires. Called once at construction (after buildUI()'s
-    // widgets exist) and by every SpectrumWidget "changed" signal handler.
+    // Seeds all six widgets from the live DisplaySettingsModel getters
+    // (m_spectrumWidget->displaySettings()), under a QSignalBlocker per
+    // widget so this initial seed cannot echo back out through the
+    // "push to model" connections buildUI() wires. Called once at
+    // construction (after buildUI()'s widgets exist).
     void loadFromWidget();
 
     SpectrumWidget* m_spectrumWidget{nullptr};
@@ -385,11 +393,6 @@ private:
     QSlider*   m_spanSlider{nullptr};
     QSlider*   m_angleSlider{nullptr};
     QCheckBox* m_sliceShadowCheck{nullptr};
-
-    // Guard flag for two-way sync with SpectrumWidget, mirroring the
-    // pattern AudioTxInputPage.cpp uses for its own bidirectional Mic Gain
-    // slider <-> TransmitModel mirror.
-    bool m_updatingFromModel{false};
 };
 
 } // namespace NereusSDR

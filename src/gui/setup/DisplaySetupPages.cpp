@@ -70,6 +70,7 @@
 #include "models/RadioModel.h"
 #include "core/NoiseFloorTracker.h"
 #include "gui/ColorSwatchButton.h"
+#include "models/DisplaySettingsModel.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -227,8 +228,12 @@ void SpectrumDefaultsPage::loadFromRenderer()
         QSignalBlocker bt(m_averagingTimeSpin);
         m_averagingTimeSpin->setValue(sw->spectrumAverageTimeMs());
     }
-    m_fillToggle->setChecked(sw->panFillEnabled());
-    m_fillAlphaSlider->setValue(static_cast<int>(sw->fillAlpha() * 100.0f));
+    // 3D Stacked-Trace Spectrum Plan Task 21: reads DisplaySettingsModel's
+    // getters (sw->panFillEnabled()/sw->fillAlpha() are still equal, since
+    // Task 18's binding keeps the widget and model in lockstep, but the
+    // model is the surface's canonical source from this task on).
+    m_fillToggle->setChecked(sw->displaySettings()->panFill());
+    m_fillAlphaSlider->setValue(static_cast<int>(sw->displaySettings()->fillAlpha() * 100.0f));
     m_lineWidthSlider->setValue(qBound(1, static_cast<int>(sw->lineWidth()), 3));
     m_gradientToggle->setChecked(sw->gradientEnabled());
     m_calOffsetSpin->setValue(static_cast<double>(sw->dbmCalOffset()));
@@ -748,11 +753,14 @@ void SpectrumDefaultsPage::buildUI()
     renderForm->addRow(QStringLiteral("Decimation:"), m_decimationSpin);
 
     m_fillToggle = new QCheckBox(QStringLiteral("Fill under trace"), renderGroup);
+    // 3D Stacked-Trace Spectrum Plan Task 21 test seam: see the matching
+    // comment on WaterfallDefaultsPage's m_colorSchemeCombo above.
+    m_fillToggle->setObjectName(QStringLiteral("specFillToggle"));
     // Thetis: setup.designer.cs:33749 (chkDisplayPanFill)
     m_fillToggle->setToolTip(QStringLiteral("Check to fill the panadapter display line below the data."));
     connect(m_fillToggle, &QCheckBox::toggled, this, [this](bool on) {
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
-            w->setPanFillEnabled(on);
+            w->displaySettings()->setPanFill(on);
         }
     });
     renderForm->addRow(QString(), m_fillToggle);
@@ -760,13 +768,17 @@ void SpectrumDefaultsPage::buildUI()
     {
         auto row = makeSliderRow(0, 100, 70, QStringLiteral("%"), renderGroup);
         m_fillAlphaSlider = row.slider;
+        // 3D Stacked-Trace Spectrum Plan Task 21 test seam: see the
+        // matching comment on WaterfallDefaultsPage's m_colorSchemeCombo
+        // above.
+        m_fillAlphaSlider->setObjectName(QStringLiteral("specFillAlphaSlider"));
         // Thetis: setup.designer.cs:3215 (tbDataFillAlpha) — no upstream tooltip; rewritten
         // Thetis original: (none)
         m_fillAlphaSlider->setToolTip(QStringLiteral("Opacity of the fill area under the spectrum trace (0 = transparent, 100 = opaque)."));
         row.spin->setToolTip(QStringLiteral("Opacity of the fill area under the spectrum trace (0 = transparent, 100 = opaque)."));
         connect(m_fillAlphaSlider, &QSlider::valueChanged, this, [this](int v) {
             if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
-                w->setFillAlpha(v / 100.0f);
+                w->displaySettings()->setFillAlpha(v / 100.0f);
             }
         });
         renderForm->addRow(QStringLiteral("Fill Alpha:"), row.container);
@@ -1335,7 +1347,11 @@ void WaterfallDefaultsPage::loadFromRenderer()
         QSignalBlocker bs(m_wfStopOnTx);
         m_wfStopOnTx->setChecked(sw->waterfallStopOnTx());
     }
-    m_colorSchemeCombo->setCurrentIndex(static_cast<int>(sw->wfColorScheme()));
+    // 3D Stacked-Trace Spectrum Plan Task 21: reads DisplaySettingsModel's
+    // getter, which already returns a plain int (see the class header
+    // comment on DisplaySettingsModel::wfColorScheme()), unlike the
+    // widget's own strongly-typed WfColorScheme getter this used to read.
+    m_colorSchemeCombo->setCurrentIndex(sw->displaySettings()->wfColorScheme());
     // m_wfAveragingCombo legacy combo removed — sync via m_waterfallAveragingCombo below.
     // Task 2.1: sync new waterfall split combos.
     if (m_waterfallDetectorCombo) {
@@ -1610,6 +1626,12 @@ void WaterfallDefaultsPage::buildUI()
     }
 
     m_colorSchemeCombo = new QComboBox(dispGroup);
+    // 3D Stacked-Trace Spectrum Plan Task 21 test seam: no production code
+    // depends on this name, only tests/tst_display_setup_binding.cpp's
+    // findChild lookup (this page is RadioModel-backed, so unlike
+    // Display3DSetupPage's SpectrumWidget-first controls there is no
+    // simpler headless construction path to key off instead).
+    m_colorSchemeCombo->setObjectName(QStringLiteral("wfColorSchemeCombo"));
     m_colorSchemeCombo->addItems({
         QStringLiteral("Default"),   QStringLiteral("Enhanced"),
         QStringLiteral("Spectran"),  QStringLiteral("BlackWhite"),
@@ -1620,11 +1642,15 @@ void WaterfallDefaultsPage::buildUI()
     // Thetis: setup.designer.cs:34110 (comboColorPalette) — rewritten
     // Thetis original: "Sets the color scheme"
     m_colorSchemeCombo->setToolTip(QStringLiteral("Waterfall color palette. Each scheme maps signal level to a different color gradient from low (dark) to high (bright)."));
+    // 3D Stacked-Trace Spectrum Plan Task 21: reaches
+    // DisplaySettingsModel::setWfColorScheme() instead of the widget's own
+    // setWfColorScheme(), which clamps [0,7] itself (WfColorScheme::Count
+    // == 8) so the local qBound() the widget-direct call needed is no
+    // longer necessary here.
     connect(m_colorSchemeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int i) {
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
-            w->setWfColorScheme(static_cast<WfColorScheme>(
-                qBound(0, i, static_cast<int>(WfColorScheme::Count) - 1)));
+            w->displaySettings()->setWfColorScheme(i);
         }
     });
     dispForm->addRow(QStringLiteral("Color Scheme:"), m_colorSchemeCombo);
@@ -2335,71 +2361,49 @@ Display3DSetupPage::Display3DSetupPage(SpectrumWidget* spectrumWidget, QWidget* 
 
     if (!m_spectrumWidget) { return; }
 
-    // SpectrumWidget -> this page. Each lambda guards with
-    // m_updatingFromModel AND QSignalBlocker (belt-and-suspenders, matching
-    // AudioTxInputPage::onModelMicGainDbChanged) so reflecting the change
-    // into this page's own widget cannot re-emit that widget's
+    // DisplaySettingsModel -> this page (3D Stacked-Trace Spectrum Plan
+    // Task 21). Each lambda reflects under QSignalBlocker only -- the
+    // model's own equality-guarded setter (DisplaySettingsModel.h) is what
+    // stops a push from echoing back out, so reflecting the change into
+    // this page's own widget cannot re-emit that widget's
     // valueChanged/toggled/currentIndexChanged and walk back into the
-    // "push to widget" connections buildUI() wires below.
-    connect(m_spectrumWidget, &SpectrumWidget::spectrumRenderModeChanged,
+    // "push to model" connections buildUI() wires below.
+    DisplaySettingsModel* settings = m_spectrumWidget->displaySettings();
+    connect(settings, &DisplaySettingsModel::spectrumRenderModeChanged,
             this, [this](int mode) {
         if (!m_modeCombo) { return; }
-        m_updatingFromModel = true;
-        {
-            QSignalBlocker block(m_modeCombo);
-            m_modeCombo->setCurrentIndex(qBound(0, mode, m_modeCombo->count() - 1));
-        }
-        m_updatingFromModel = false;
+        QSignalBlocker block(m_modeCombo);
+        m_modeCombo->setCurrentIndex(qBound(0, mode, m_modeCombo->count() - 1));
     });
-    connect(m_spectrumWidget, &SpectrumWidget::dssFloorDepthChanged,
+    connect(settings, &DisplaySettingsModel::dssFloorDepthChanged,
             this, [this](int dB) {
         if (!m_floorSlider) { return; }
-        m_updatingFromModel = true;
-        {
-            QSignalBlocker block(m_floorSlider);
-            m_floorSlider->setValue(dB);
-        }
-        m_updatingFromModel = false;
+        QSignalBlocker block(m_floorSlider);
+        m_floorSlider->setValue(dB);
     });
-    connect(m_spectrumWidget, &SpectrumWidget::dssGainChanged,
+    connect(settings, &DisplaySettingsModel::dssGainChanged,
             this, [this](int pct) {
         if (!m_gainSlider) { return; }
-        m_updatingFromModel = true;
-        {
-            QSignalBlocker block(m_gainSlider);
-            m_gainSlider->setValue(pct);
-        }
-        m_updatingFromModel = false;
+        QSignalBlocker block(m_gainSlider);
+        m_gainSlider->setValue(pct);
     });
-    connect(m_spectrumWidget, &SpectrumWidget::dssRowSpanChanged,
+    connect(settings, &DisplaySettingsModel::dssRowSpanChanged,
             this, [this](int pct) {
         if (!m_spanSlider) { return; }
-        m_updatingFromModel = true;
-        {
-            QSignalBlocker block(m_spanSlider);
-            m_spanSlider->setValue(pct);
-        }
-        m_updatingFromModel = false;
+        QSignalBlocker block(m_spanSlider);
+        m_spanSlider->setValue(pct);
     });
-    connect(m_spectrumWidget, &SpectrumWidget::dssAngleChanged,
+    connect(settings, &DisplaySettingsModel::dssAngleChanged,
             this, [this](int pct) {
         if (!m_angleSlider) { return; }
-        m_updatingFromModel = true;
-        {
-            QSignalBlocker block(m_angleSlider);
-            m_angleSlider->setValue(pct);
-        }
-        m_updatingFromModel = false;
+        QSignalBlocker block(m_angleSlider);
+        m_angleSlider->setValue(pct);
     });
-    connect(m_spectrumWidget, &SpectrumWidget::threeDSliceDepthChanged,
+    connect(settings, &DisplaySettingsModel::threeDSliceDepthChanged,
             this, [this](bool on) {
         if (!m_sliceShadowCheck) { return; }
-        m_updatingFromModel = true;
-        {
-            QSignalBlocker block(m_sliceShadowCheck);
-            m_sliceShadowCheck->setChecked(on);
-        }
-        m_updatingFromModel = false;
+        QSignalBlocker block(m_sliceShadowCheck);
+        m_sliceShadowCheck->setChecked(on);
     });
 }
 
@@ -2407,38 +2411,51 @@ void Display3DSetupPage::loadFromWidget()
 {
     if (!m_spectrumWidget) { return; }
 
-    m_updatingFromModel = true;
+    DisplaySettingsModel* settings = m_spectrumWidget->displaySettings();
     if (m_modeCombo) {
         QSignalBlocker block(m_modeCombo);
         m_modeCombo->setCurrentIndex(
-            qBound(0, m_spectrumWidget->spectrumRenderMode(), m_modeCombo->count() - 1));
+            qBound(0, settings->spectrumRenderMode(), m_modeCombo->count() - 1));
     }
     if (m_floorSlider) {
         QSignalBlocker block(m_floorSlider);
-        m_floorSlider->setValue(m_spectrumWidget->dssFloorDepth());
+        m_floorSlider->setValue(settings->dssFloorDepth());
     }
     if (m_gainSlider) {
         QSignalBlocker block(m_gainSlider);
-        m_gainSlider->setValue(m_spectrumWidget->dssGain());
+        m_gainSlider->setValue(settings->dssGain());
     }
     if (m_spanSlider) {
         QSignalBlocker block(m_spanSlider);
-        m_spanSlider->setValue(m_spectrumWidget->dssRowSpan());
+        m_spanSlider->setValue(settings->dssRowSpan());
     }
     if (m_angleSlider) {
         QSignalBlocker block(m_angleSlider);
-        m_angleSlider->setValue(m_spectrumWidget->dssAngle());
+        m_angleSlider->setValue(settings->dssAngle());
     }
     if (m_sliceShadowCheck) {
         QSignalBlocker block(m_sliceShadowCheck);
-        m_sliceShadowCheck->setChecked(m_spectrumWidget->threeDSliceDepth());
+        m_sliceShadowCheck->setChecked(settings->threeDSliceDepth());
     }
-    m_updatingFromModel = false;
 }
 
 void Display3DSetupPage::buildUI()
 {
     NereusSDR::Style::applyDarkPageStyle(this);
+
+    // 3D Stacked-Trace Spectrum Plan Task 21: every control below connects
+    // straight to DisplaySettingsModel's matching setter (direct
+    // member-function-pointer connect, no lambda touching a widget member
+    // -- the pattern Task 20 established for the right-click popup). Only
+    // wired when m_spectrumWidget is non-null: it is a construction-time
+    // pointer that never changes (see the class header comment), so a null
+    // check at connect time is equivalent to the old per-call
+    // "m_updatingFromModel || !m_spectrumWidget" guard for this half of the
+    // pair -- if the pointer is null now it is null forever, and skipping
+    // the connect entirely produces the same "nothing happens" outcome the
+    // old runtime guard did.
+    DisplaySettingsModel* settings =
+        m_spectrumWidget ? m_spectrumWidget->displaySettings() : nullptr;
 
     // Phase 3G-9b precedent (SpectrumDefaultsPage's "Reset to Smooth
     // Defaults" button, above): a confirmation dialog gates the reset, and
@@ -2480,11 +2497,10 @@ void Display3DSetupPage::buildUI()
     m_modeCombo->setToolTip(QStringLiteral(
         "2D: FFT trace + waterfall.\n"
         "3D: perspective stacked-trace spectrum stream."));
-    connect(m_modeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, [this](int idx) {
-        if (m_updatingFromModel || !m_spectrumWidget) { return; }
-        m_spectrumWidget->setSpectrumRenderMode(idx);
-    });
+    if (settings) {
+        connect(m_modeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+                settings, &DisplaySettingsModel::setSpectrumRenderMode);
+    }
     form->addRow(QStringLiteral("Spectrum:"), m_modeCombo);
 
     // ── 3D floor depth -- how far below the noise floor to surface (dB) ──
@@ -2492,10 +2508,10 @@ void Display3DSetupPage::buildUI()
         auto row = makeSliderRow(0, 24, 6, QStringLiteral(" dB"), group);
         m_floorSlider = row.slider;
         m_floorSlider->setObjectName(QStringLiteral("setup3DFloorSlider"));
-        connect(m_floorSlider, &QSlider::valueChanged, this, [this](int v) {
-            if (m_updatingFromModel || !m_spectrumWidget) { return; }
-            m_spectrumWidget->setDssFloorDepth(v);
-        });
+        if (settings) {
+            connect(m_floorSlider, &QSlider::valueChanged,
+                    settings, &DisplaySettingsModel::setDssFloorDepth);
+        }
         form->addRow(QStringLiteral("3D Floor:"), row.container);
     }
 
@@ -2510,10 +2526,10 @@ void Display3DSetupPage::buildUI()
             "floor; lower = colour only on the strongest signals.");
         m_gainSlider->setToolTip(gainTip);
         row.spin->setToolTip(gainTip);
-        connect(m_gainSlider, &QSlider::valueChanged, this, [this](int v) {
-            if (m_updatingFromModel || !m_spectrumWidget) { return; }
-            m_spectrumWidget->setDssGain(v);
-        });
+        if (settings) {
+            connect(m_gainSlider, &QSlider::valueChanged,
+                    settings, &DisplaySettingsModel::setDssGain);
+        }
         form->addRow(QStringLiteral("3D Gain:"), row.container);
     }
 
@@ -2529,10 +2545,10 @@ void Display3DSetupPage::buildUI()
             "close from the front; 0 = the classic narrowing trapezoid.");
         m_spanSlider->setToolTip(spanTip);
         row.spin->setToolTip(spanTip);
-        connect(m_spanSlider, &QSlider::valueChanged, this, [this](int v) {
-            if (m_updatingFromModel || !m_spectrumWidget) { return; }
-            m_spectrumWidget->setDssRowSpan(v);
-        });
+        if (settings) {
+            connect(m_spanSlider, &QSlider::valueChanged,
+                    settings, &DisplaySettingsModel::setDssRowSpan);
+        }
         form->addRow(QStringLiteral("3D Span:"), row.container);
     }
 
@@ -2547,10 +2563,10 @@ void Display3DSetupPage::buildUI()
             "angle.");
         m_angleSlider->setToolTip(angleTip);
         row.spin->setToolTip(angleTip);
-        connect(m_angleSlider, &QSlider::valueChanged, this, [this](int v) {
-            if (m_updatingFromModel || !m_spectrumWidget) { return; }
-            m_spectrumWidget->setDssAngle(v);
-        });
+        if (settings) {
+            connect(m_angleSlider, &QSlider::valueChanged,
+                    settings, &DisplaySettingsModel::setDssAngle);
+        }
         form->addRow(QStringLiteral("3D Angle:"), row.container);
     }
 
@@ -2560,10 +2576,10 @@ void Display3DSetupPage::buildUI()
     m_sliceShadowCheck->setToolTip(QStringLiteral(
         "Darken each slice's passband onto the 3D surface so it leans back\n"
         "with the perspective, instead of drawing flat on top of it."));
-    connect(m_sliceShadowCheck, &QCheckBox::toggled, this, [this](bool on) {
-        if (m_updatingFromModel || !m_spectrumWidget) { return; }
-        m_spectrumWidget->setThreeDSliceDepth(on);
-    });
+    if (settings) {
+        connect(m_sliceShadowCheck, &QCheckBox::toggled,
+                settings, &DisplaySettingsModel::setThreeDSliceDepth);
+    }
     form->addRow(QString(), m_sliceShadowCheck);
 
     contentLayout()->addWidget(group);
@@ -2573,12 +2589,13 @@ void Display3DSetupPage::buildUI()
 void Display3DSetupPage::resetToDefaultsForTest()
 {
     if (!m_spectrumWidget) { return; }
-    m_spectrumWidget->setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode2D));
-    m_spectrumWidget->setDssFloorDepth(6);
-    m_spectrumWidget->setDssGain(70);
-    m_spectrumWidget->setDssRowSpan(100);
-    m_spectrumWidget->setDssAngle(50);
-    m_spectrumWidget->setThreeDSliceDepth(false);
+    DisplaySettingsModel* settings = m_spectrumWidget->displaySettings();
+    settings->setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode2D));
+    settings->setDssFloorDepth(6);
+    settings->setDssGain(70);
+    settings->setDssRowSpan(100);
+    settings->setDssAngle(50);
+    settings->setThreeDSliceDepth(false);
 }
 
 } // namespace NereusSDR

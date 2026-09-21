@@ -29,6 +29,7 @@
 
 #include "gui/SpectrumWidget.h"
 #include "gui/setup/DisplaySetupPages.h"
+#include "models/DisplaySettingsModel.h"
 
 using namespace NereusSDR;
 
@@ -52,13 +53,25 @@ private slots:
     }
 
     // The guard that stops the two surfaces echoing each other forever.
+    // 3D Stacked-Trace Spectrum Plan Task 21: the page now pushes straight
+    // into SpectrumWidget's owned DisplaySettingsModel (Task 18), and it is
+    // the MODEL's equality-guarded setter that terminates the loop, not a
+    // page-local flag. Spying on SpectrumWidget::dssAngleChanged alone
+    // would NOT catch a removed model guard: the widget's own long-standing
+    // equality check (SpectrumWidget::setDssAngle's early return, present
+    // since Task 15) already absorbs the second bounce before the widget
+    // re-emits, so that spy stays at 1 either way. Spying on the model's
+    // own dssAngleChanged is what actually proves the model's guard is
+    // doing the work.
     void roundTrip_settlesWithoutAnEchoLoop() {
         SpectrumWidget w;
         Display3DSetupPage page(&w);
-        QSignalSpy spy(&w, &SpectrumWidget::dssAngleChanged);
+        QSignalSpy widgetSpy(&w, &SpectrumWidget::dssAngleChanged);
+        QSignalSpy modelSpy(w.displaySettings(), &DisplaySettingsModel::dssAngleChanged);
         page.findChild<QSlider*>(QStringLiteral("setup3DAngleSlider"))->setValue(80);
         QCOMPARE(w.dssAngle(), 80);
-        QCOMPARE(spy.count(), 1);   // exactly one, not a cascade
+        QCOMPARE(widgetSpy.count(), 1);   // exactly one, not a cascade
+        QCOMPARE(modelSpy.count(), 1);    // the model's guard is the real loop terminator now
     }
 
     void resetButton_restoresEveryDefault() {

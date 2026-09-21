@@ -6404,6 +6404,27 @@ nereus_add_test(tst_display_settings_model)
 # upstream source to cite.
 nereus_add_test(tst_display_popup_binding)
 
+# ── 3D stacked-trace spectrum plan, Task 21: Setup -> Display binding ────
+# Pins the Setup-dialog migration onto DisplaySettingsModel: Display3DSetupPage's
+# six 3D controls and Reset button, WaterfallDefaultsPage's Colour Scheme, and
+# SpectrumDefaultsPage's Fill Alpha and Fill trace all connect straight to the
+# model's setters and read the model's getters on load, replacing the old
+# direct-to-SpectrumWidget wiring (and, on Display3DSetupPage, the
+# m_updatingFromModel flag it used before this task). A model-driven change on
+# each of the six 3D fields is proven to land on the page's own widget without
+# the reflected control re-emitting its own change signal (each field checked
+# in its own scope, per the batching trap Task 20's review caught); a
+# page-driven change is proven to reach both the model and, through Task 18's
+# existing binding, the live SpectrumWidget getter; and the Reset button is
+# proven to write all six ship defaults onto the model. WaterfallDefaultsPage
+# and SpectrumDefaultsPage are constructed the fallback way (RadioModel,
+# SpectrumWidget, radioModel.setSpectrumWidget(&w), then the page) since no
+# existing test builds either directly.
+# NereusSDR-original: neither Thetis nor AetherSDR routes its Setup-equivalent
+# dialog through a consolidating display-settings model, so there is no
+# upstream source to cite.
+nereus_add_test(tst_display_setup_binding)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
