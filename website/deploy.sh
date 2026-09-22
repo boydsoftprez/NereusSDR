@@ -13,7 +13,10 @@
 # ~/.ssh/config, see website/README.md). Point NEREUS_WEB_TARGET at a local
 # directory to try the script without the server. rsync runs with --delete:
 # anything in the destination that is not in website/public/ is removed,
-# apart from the excluded patterns.
+# .DS_Store, *.swp and .git* files included. Those names are left out when
+# the staging copy described below is made, so they are never sent, and the
+# rsync to the destination has no excludes: an exclude there would also keep
+# --delete from removing such files already in the destination.
 #
 # The rsync options are limited to ones that both GNU rsync 3.x and the
 # openrsync that macOS ships as /usr/bin/rsync support. openrsync accepts
@@ -62,6 +65,7 @@ command -v rsync >/dev/null 2>&1 || die "rsync not found"
 
 # Safety checks. rsync runs with --delete, so deploying an empty or
 # half-built source directory would wipe the live site.
+# The excludes apply to the staging copy only (see the header).
 excludes=(--exclude=.DS_Store --exclude='*.swp' --exclude='.git*')
 [[ -d "$src_dir" ]] || die "source directory not found: ${src_dir}"
 [[ -f "${src_dir}/index.html" ]] || die "missing ${src_dir}/index.html; refusing to deploy"
@@ -80,7 +84,9 @@ trap 'rm -rf -- "$staging"' EXIT
 rsync -r -l -t "${excludes[@]}" "${src_dir}/" "${staging}/"
 chmod -R a+rX "$staging"
 
-rsync_args=(-r -l -t -z -v --delete "${excludes[@]}")
+# No excludes here: with none, --delete also removes any .DS_Store, *.swp or
+# .git* file that is on the target (the staging copy holds none).
+rsync_args=(-r -l -t -z -v --delete)
 if (( dry_run )); then
     rsync_args+=(--dry-run)
 fi

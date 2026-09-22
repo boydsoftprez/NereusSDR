@@ -35,6 +35,9 @@
 #      because UDP 443 on this host is used by another service.
 #   7. Print a summary.
 #
+# Inside the deploy account's own directories (its home, ~/.ssh and the web
+# root) the work is done as that account, never as root; see as_deploy_user.
+#
 # It never touches the firewall, the SSH daemon configuration, or any other
 # service or account on the host.
 
@@ -89,8 +92,26 @@ is_installed() {
     [[ "$status" == "install ok installed" ]]
 }
 
-# Temporary files and directories to remove on exit. A path that has since
-# been moved into place no longer exists, so removing it is a no-op.
+# Rule: root does no file operation (create, write, compare, rename, remove,
+# chown, chmod) on a path inside a directory the deploy account can write:
+# its home, ~/.ssh and the web root. The account could swap such a path for
+# a symlink between root's check and root's write, and so point root at any
+# file on the host. That work runs as the account through as_deploy_user,
+# where a symlink reaches only files the account could change anyway. Root
+# keeps the rest: apt, adduser, the web root entry itself (its parent
+# /var/www is root's), the Caddyfile and the service.
+#
+# as_deploy_user runs a command as the deploy account. runuser keeps the
+# caller's working directory, which the account may not be able to enter
+# (/root, for example), so the command starts in / instead.
+as_deploy_user() {
+    (cd / && runuser -u "$DEPLOY_USER" -- "$@")
+}
+
+# Root's own temporary files and directories, removed on exit. A path that
+# has since been moved into place no longer exists, so removing it is a
+# no-op. None of them may lie inside the deploy account's directories (see
+# the rule above).
 tmp_paths=()
 cleanup() {
     local p
@@ -118,6 +139,7 @@ os_id="$(. /etc/os-release 2>/dev/null && printf '%s' "${ID:-}")" || true
 if [[ "$os_id" != "ubuntu" ]]; then
     die "this script supports Ubuntu only (found: ${os_id:-unknown})"
 fi
+command -v runuser >/dev/null 2>&1 || die "runuser (util-linux) is not installed"
 # shellcheck source=/dev/null
 note "root on $(. /etc/os-release && printf '%s' "${PRETTY_NAME:-Ubuntu}")"
 
@@ -203,43 +225,78 @@ fi
 
 ssh_dir="${DEPLOY_HOME}/.ssh"
 auth_keys="${ssh_dir}/authorized_keys"
-# The deploy account owns these paths, so never follow a symlink there as root.
-if [[ -L "$ssh_dir" || -L "$auth_keys" ]]; then
-    die "${ssh_dir} or ${auth_keys} is a symlink; refusing to follow it as root"
-fi
+# Runs as the deploy account (see the rule above as_deploy_user): create
+# ~/.ssh (700), write the key line, which arrives on stdin, to a temp file
+# there (600), compare it with authorized_keys, and rename it into place, so
+# the mode always applies. Prints "same" or "set".
+install_key_script="$(cat <<'EOF'
+set -euo pipefail
+umask 077
+ssh_dir="$1"
+auth_keys="$2"
 mkdir -p "$ssh_dir"
-chown "${DEPLOY_USER}:${DEPLOY_USER}" "$ssh_dir"
 chmod 700 "$ssh_dir"
 new_keys="$(mktemp "${ssh_dir}/.authorized_keys.XXXXXX")"
-tmp_paths+=("$new_keys")
-printf '%s\n' "$pubkey" > "$new_keys"
-chown "${DEPLOY_USER}:${DEPLOY_USER}" "$new_keys"
+trap 'rm -f -- "$new_keys"' EXIT
+cat > "$new_keys"
 chmod 600 "$new_keys"
 if [[ -f "$auth_keys" ]] && cmp -s "$new_keys" "$auth_keys"; then
-    note "authorized_keys already holds exactly this key"
+    echo same
 else
-    note "authorized_keys set to exactly this key"
+    echo set
 fi
-# Replace by rename, so the owner and mode set above always apply.
 mv -f -- "$new_keys" "$auth_keys"
+EOF
+)"
+if ! key_result="$(printf '%s\n' "$pubkey" \
+        | as_deploy_user bash -c "$install_key_script" "as-${DEPLOY_USER}" "$ssh_dir" "$auth_keys")"; then
+    die "could not write ${auth_keys} as ${DEPLOY_USER} (see above); ${DEPLOY_HOME} and ${ssh_dir} must belong to ${DEPLOY_USER}"
+fi
+case "$key_result" in
+    same) note "authorized_keys already holds exactly this key" ;;
+    set) note "authorized_keys set to exactly this key" ;;
+    *) die "unexpected answer from the authorized_keys step as ${DEPLOY_USER}" ;;
+esac
 
 # ---------------------------------------------------------------------------
 log "4/7 Web root ${WEB_ROOT}"
 
-mkdir -p "$WEB_ROOT"
-chown "${DEPLOY_USER}:${DEPLOY_USER}" "$WEB_ROOT"
-chmod 755 "$WEB_ROOT"
-if [[ -e "${WEB_ROOT}/index.html" || -L "${WEB_ROOT}/index.html" ]]; then
-    note "index.html present; left as it is"
-else
-    placeholder="$(mktemp "${WEB_ROOT}/.index.html.XXXXXX")"
-    tmp_paths+=("$placeholder")
-    printf '%s\n' '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>NereusSDR</title></head><body><p>NereusSDR website coming soon.</p></body></html>' > "$placeholder"
-    chown "${DEPLOY_USER}:${DEPLOY_USER}" "$placeholder"
-    chmod 644 "$placeholder"
-    mv -f -- "$placeholder" "${WEB_ROOT}/index.html"
-    note "wrote a placeholder index.html"
+# The web root entry itself sits in /var/www, which the deploy account cannot
+# change, so root creates it and sets its owner and mode. The symlink check
+# and chown -h keep root from following a link to any other path.
+if [[ -L "$WEB_ROOT" ]]; then
+    die "${WEB_ROOT} is a symlink; refusing to follow it as root"
 fi
+mkdir -p "$WEB_ROOT"
+chown -h "${DEPLOY_USER}:${DEPLOY_USER}" "$WEB_ROOT"
+chmod 755 "$WEB_ROOT"
+# Runs as the deploy account (see the rule above as_deploy_user): when the web
+# root has no index.html, write a placeholder to a temp file there and rename
+# it into place. Prints "present" or "written".
+placeholder_script="$(cat <<'EOF'
+set -euo pipefail
+umask 022
+index="$1/index.html"
+if [[ -e "$index" || -L "$index" ]]; then
+    echo present
+    exit 0
+fi
+placeholder="$(mktemp "$1/.index.html.XXXXXX")"
+trap 'rm -f -- "$placeholder"' EXIT
+printf '%s\n' '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>NereusSDR</title></head><body><p>NereusSDR website coming soon.</p></body></html>' > "$placeholder"
+chmod 644 "$placeholder"
+mv -f -- "$placeholder" "$index"
+echo written
+EOF
+)"
+if ! index_result="$(as_deploy_user bash -c "$placeholder_script" "as-${DEPLOY_USER}" "$WEB_ROOT")"; then
+    die "could not check or write ${WEB_ROOT}/index.html as ${DEPLOY_USER} (see above)"
+fi
+case "$index_result" in
+    present) note "index.html present; left as it is" ;;
+    written) note "wrote a placeholder index.html" ;;
+    *) die "unexpected answer from the index.html step as ${DEPLOY_USER}" ;;
+esac
 
 # ---------------------------------------------------------------------------
 log "5/7 Caddyfile"
