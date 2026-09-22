@@ -166,7 +166,22 @@
   var CACHE_KEY = 'nereussdr-latest-release-v1';
 
   // A download link may only ever point at this repository's release files.
-  var DOWNLOAD_PREFIX = 'https://github.com/' + REPO + '/releases/download/';
+  var DOWNLOAD_PATH = '/' + REPO + '/releases/download/';
+  var DOWNLOAD_PREFIX = 'https://github.com' + DOWNLOAD_PATH;
+
+  // The URL must also be in the form the browser will use, so no ../,
+  // encoded dot or backslash can resolve it to another path.
+  function isReleaseDownload(u) {
+    if (typeof u !== 'string' || u.indexOf(DOWNLOAD_PREFIX) !== 0) {
+      return false;
+    }
+    try {
+      var parsed = new URL(u);
+      return parsed.href === u && parsed.pathname.indexOf(DOWNLOAD_PATH) === 0;
+    } catch (e) {
+      return false;
+    }
+  }
 
   function readCache() {
     try {
@@ -212,10 +227,9 @@
       var found = null;
       for (var j = 0; j < rel.assets.length; j++) {
         var n = rel.assets[j].n;
-        var u = rel.assets[j].u;
         // An asset whose URL leads anywhere else counts as not found.
         if ((n === suffix || n.slice(-(suffix.length + 1)) === '-' + suffix) &&
-            typeof u === 'string' && u.indexOf(DOWNLOAD_PREFIX) === 0) {
+            isReleaseDownload(rel.assets[j].u)) {
           found = rel.assets[j];
           break;
         }
@@ -341,6 +355,18 @@
     });
   }
 
+  // What a copy button puts on the clipboard: the commands only. Label lines
+  // (span.c) stay on the page but are left out, because zsh does not treat
+  // "#" as a comment at the prompt and would try to run them. trim() also
+  // drops the blank line a removed label leaves at the top.
+  function commandsOf(pre) {
+    var clone = pre.cloneNode(true);
+    clone.querySelectorAll('span.c').forEach(function (c) {
+      c.parentNode.removeChild(c);
+    });
+    return clone.innerText.trim();
+  }
+
   function initCopy() {
     document.querySelectorAll('[data-copy]').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -348,7 +374,7 @@
         if (!pre || !navigator.clipboard) {
           return;
         }
-        navigator.clipboard.writeText(pre.innerText.trim()).then(function () {
+        navigator.clipboard.writeText(commandsOf(pre)).then(function () {
           btn.textContent = 'Copied';
           btn.classList.add('is-done');
           setTimeout(function () {
