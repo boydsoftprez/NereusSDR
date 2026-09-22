@@ -129,7 +129,12 @@
     if (/Win/i.test(platform) || /Windows/i.test(ua)) {
       return 'windows';
     }
-    if (/Linux|X11|CrOS/i.test(platform + ' ' + ua)) {
+    // ChromeOS reports Linux as well, but a Chromebook runs the AppImage only
+    // inside its optional Linux environment, so it gets no suggestion.
+    if (/CrOS/.test(ua)) {
+      return null;
+    }
+    if (/Linux|X11/i.test(platform + ' ' + ua)) {
       return 'linux';
     }
     return null;
@@ -159,6 +164,9 @@
   /* ------------------------------------------------------------------ */
 
   var CACHE_KEY = 'nereussdr-latest-release-v1';
+
+  // A download link may only ever point at this repository's release files.
+  var DOWNLOAD_PREFIX = 'https://github.com/' + REPO + '/releases/download/';
 
   function readCache() {
     try {
@@ -204,12 +212,19 @@
       var found = null;
       for (var j = 0; j < rel.assets.length; j++) {
         var n = rel.assets[j].n;
-        if (n === suffix || n.slice(-(suffix.length + 1)) === '-' + suffix) {
+        var u = rel.assets[j].u;
+        // An asset whose URL leads anywhere else counts as not found.
+        if ((n === suffix || n.slice(-(suffix.length + 1)) === '-' + suffix) &&
+            typeof u === 'string' && u.indexOf(DOWNLOAD_PREFIX) === 0) {
           found = rel.assets[j];
           break;
         }
       }
       if (!found) {
+        if (window.console && console.warn) {
+          console.warn('[nereussdr] Keeping the built-in downloads: release ' + rel.tag +
+            ' has no ' + suffix + ' asset under ' + DOWNLOAD_PREFIX);
+        }
         return; // keep the baked-in links rather than mix versions
       }
       matches.push([links[i], found]);
@@ -315,9 +330,13 @@
           }
         });
       });
+      // Selecting a tab is what hides the other panels, so one is always
+      // selected here (this OS, otherwise the first); without the script
+      // every panel stays visible.
       var preferred = tabs.filter(function (t) { return t.getAttribute('aria-controls') === prefer; })[0];
-      if (preferred) {
-        select(preferred);
+      var initial = preferred || tabs[0];
+      if (initial) {
+        select(initial);
       }
     });
   }
@@ -338,6 +357,9 @@
           }, 1600);
         }, function () {
           btn.textContent = 'Select to copy';
+          setTimeout(function () {
+            btn.textContent = 'Copy';
+          }, 1600);
         });
       });
     });
@@ -854,7 +876,7 @@
 
       var step = RANGE / 5 >= 20 ? 20 : RANGE / 5 >= 10 ? 10 : RANGE / 5 >= 5 ? 5 : 2;
       var labelTop = DBM_ARROW_H + 4;
-      c.font = '8px ' + UI_FONT;
+      c.font = '7px ' + UI_FONT; // setPointSize(7), which Qt draws at 7 px on macOS
       c.textAlign = 'left';
       c.textBaseline = 'middle';
       for (var db = Math.ceil((REF - RANGE) / step) * step; db <= REF; db += step) {

@@ -37,8 +37,10 @@
 	}
 }
 
-# The www name only redirects to the bare domain.
+# The www name only redirects to the bare domain. The redirect carries the
+# site headers too, HSTS included.
 www.nereussdr.com {
+	import site_headers
 	redir https://nereussdr.com{uri} permanent
 }
 
@@ -47,17 +49,19 @@ nereussdr.com {
 	encode zstd gzip
 	import site_headers
 
-	# Pages are revalidated on every visit so a deploy shows up at once.
-	# Everything else (CSS, JS, images, fonts) may be cached for a day.
-	@html path / *.html
-	@static not path / *.html
+	# Pages, CSS and JS are revalidated on every visit, so a deploy shows
+	# up at once and a page never runs with the previous deploy's script
+	# or styles. file_server's ETag and Last-Modified keep that cheap.
+	# Everything else (images, fonts, icons) may be cached for a day.
+	@revalidate path / *.html /assets/css/* /assets/js/*
+	@static not path / *.html /assets/css/* /assets/js/*
 
 	# A route runs its directives in the order written: resolve the file
 	# first, then choose the cache policy from the resolved path, so a
 	# page served from /name.html for the request /name counts as HTML.
 	route {
 		try_files {path} {path}/ {path}.html
-		header @html Cache-Control "no-cache"
+		header @revalidate Cache-Control "no-cache"
 		header @static Cache-Control "public, max-age=86400"
 		file_server
 	}

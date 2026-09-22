@@ -604,19 +604,21 @@
               </div>
               <div class="code" role="tabpanel" id="v-mac" aria-labelledby="tab-v-mac">
                 <button class="copy" type="button" data-copy>Copy</button>
-<pre><code>curl -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
+<pre><code><span class="c"># macOS</span>
+curl -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
 gpg --import nereussdr-signing-key.asc
 gpg --verify <span data-version-swap>NereusSDR-0.5.2</span>-macOS-apple-silicon.dmg.asc</code></pre>
               </div>
-              <div class="code" role="tabpanel" id="v-linux" aria-labelledby="tab-v-linux" hidden>
+              <div class="code" role="tabpanel" id="v-linux" aria-labelledby="tab-v-linux">
                 <button class="copy" type="button" data-copy>Copy</button>
-<pre><code>curl -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
+<pre><code><span class="c"># Linux</span>
+curl -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
 gpg --import nereussdr-signing-key.asc
 gpg --verify <span data-version-swap>NereusSDR-0.5.2</span>-x86_64.AppImage.asc</code></pre>
               </div>
-              <div class="code" role="tabpanel" id="v-win" aria-labelledby="tab-v-win" hidden>
+              <div class="code" role="tabpanel" id="v-win" aria-labelledby="tab-v-win">
                 <button class="copy" type="button" data-copy>Copy</button>
-<pre><code><span class="c"># PowerShell, with Gpg4win installed</span>
+<pre><code><span class="c"># Windows: PowerShell, with Gpg4win installed</span>
 curl.exe -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
 gpg --import nereussdr-signing-key.asc
 gpg --verify <span data-version-swap>NereusSDR-0.5.2</span>-Windows-x64-setup.exe.asc</code></pre>

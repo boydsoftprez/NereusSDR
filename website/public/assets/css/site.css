@@ -303,15 +303,16 @@ pre {
   transform: translateY(1px);
 }
 
+/* White text keeps at least 4.5:1 on every part of both gradients. */
 .btn--primary {
-  background: linear-gradient(180deg, #0a84c8, var(--blue));
+  background: linear-gradient(180deg, #0a78b8, var(--blue));
   border-color: var(--blue-border);
   color: #fff;
   box-shadow: 0 0 0 1px rgba(0, 144, 224, 0.25), 0 10px 30px -10px rgba(0, 150, 230, 0.7);
 }
 
 .btn--primary:hover {
-  background: linear-gradient(180deg, #1296dc, #0088d8);
+  background: linear-gradient(180deg, #0a7ac0, #0074c8);
   color: #fff;
   box-shadow: 0 0 0 1px rgba(82, 220, 247, 0.4), 0 12px 36px -8px rgba(0, 170, 240, 0.85);
 }
@@ -1508,7 +1509,9 @@ pre {
   font-stretch: 116%;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--title-text);
+  /* Lighter than the app's title text so it keeps 4.5:1 on the top of the
+     title gradient. */
+  color: #a8c2d8;
 }
 
 .titlebar::before {
@@ -2016,6 +2019,12 @@ pre {
   background: var(--inset);
   color: var(--accent-hi);
   border-bottom-color: var(--inset);
+}
+
+/* Without the script the tab buttons cannot switch panels, so the row is
+   hidden and every panel shows, labelled by its first line. */
+html:not(.js) .tabs {
+  display: none;
 }
 
 .code {
