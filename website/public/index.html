@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NereusSDR · SDR console for OpenHPSDR radios</title>
+  <meta name="description" content="NereusSDR is a free, open-source SDR console for OpenHPSDR radios, from the Apache Labs ANAN line to the Hermes Lite 2, with native builds for macOS, Windows and Linux.">
+  <link rel="canonical" href="https://nereussdr.com/">
+  <meta name="theme-color" content="#0b1020">
+  <meta name="color-scheme" content="dark">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="NereusSDR">
+  <meta property="og:title" content="NereusSDR · SDR console for OpenHPSDR radios">
+  <meta property="og:description" content="Every OpenHPSDR radio, native on macOS, Windows and Linux. A free, open-source SDR console for the ANAN line, the Hermes Lite 2 and more.">
+  <meta property="og:url" content="https://nereussdr.com/">
+  <meta property="og:image" content="https://nereussdr.com/assets/img/og-card.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="NereusSDR: every OpenHPSDR radio, native everywhere.">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400..600&amp;family=Atkinson+Hyperlegible+Next:ital,wght@0,300..700;1,400&amp;family=Saira:wdth,wght@100..125,300..700&amp;display=swap">
+  <link rel="stylesheet" href="/assets/css/site.css">
+  <link rel="preload" as="image" href="/assets/img/nereus-640.webp" type="image/webp">
+  <script src="/assets/js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav" data-nav>
+    <div class="wrap nav__inner">
+      <a class="brand" href="/" aria-label="NereusSDR home">
+        <img src="/assets/img/nereus-64.png" width="34" height="34" alt="">
+        <span class="brand__word">Nereus<b>SDR</b></span>
+      </a>
+      <nav aria-label="Primary">
+        <button class="nav__toggle" type="button" aria-expanded="false" aria-controls="nav-menu" data-nav-toggle>
+          <span aria-hidden="true"></span> Menu
+        </button>
+        <ul class="nav__menu" id="nav-menu">
+          <li><a href="#radios">Radios</a></li>
+          <li><a href="#features">Features</a></li>
+          <li><a href="#status">Status</a></li>
+          <li><a href="#download">Download</a></li>
+          <li><a href="#heritage">Heritage</a></li>
+          <li>
+            <a class="nav__gh" href="https://github.com/boydsoftprez/NereusSDR">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+              GitHub
+            </a>
+          </li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <!-- ============ Hero ============ -->
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="wrap hero__grid">
+        <div class="hero__copy">
+          <p class="eyebrow">OpenHPSDR console · Free and open source</p>
+          <h1 id="hero-title">
+            <span class="line">Every OpenHPSDR radio.</span>
+            <span class="line line--lit">Native everywhere.</span>
+          </h1>
+          <p class="hero__lede">
+            NereusSDR is a free, open-source SDR console for the Apache Labs ANAN line, the Hermes Lite 2
+            and every other OpenHPSDR radio. It runs natively on <strong>macOS</strong>,
+            <strong>Windows</strong> and <strong>Linux</strong>, with the <strong>WDSP</strong> signal
+            engine and a panadapter drawn on your GPU.
+          </p>
+          <div class="hero__cta">
+            <a class="btn btn--primary" href="#download" data-os-cta>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
+              <span data-os-cta-label>Download <span data-release-version>v0.5.2</span></span>
+            </a>
+            <a class="btn" href="https://github.com/boydsoftprez/NereusSDR">View the source</a>
+          </div>
+          <p class="hero__meta">
+            <span><i class="led led--green" aria-hidden="true"></i><span>Latest <span data-release-version>v0.5.2</span>, <time data-release-date datetime="2026-05-24">24 May 2026</time></span></span>
+            <span>GPLv3</span>
+            <span>Alpha</span>
+          </p>
+        </div>
+        <figure class="hero__emblem" aria-hidden="true">
+          <img src="/assets/img/nereus-640.webp" width="640" height="640" alt="" fetchpriority="high">
+        </figure>
+      </div>
+
+      <!-- The simulated radio, framed in the program's own chrome: TitleBar, the
+           SpectrumWidget (overlay panel, spectrum, dBm strip, frequency strip,
+           waterfall, VFO flag) and the bottom banner, rebuilt from the source values. -->
+      <figure class="app" aria-label="Simulated NereusSDR window">
+        <div class="app-title" aria-hidden="true">
+          <div class="conn">
+            <i class="conn__dot"></i>
+            <span class="conn__rate">▲ 0.2 Mbps</span>
+            <span class="conn__rtt">2 ms</span>
+            <span class="conn__rate">▼ 9.6 Mbps</span>
+            <span class="conn__pip">●</span>
+          </div>
+          <span class="app-title__fill"></span>
+          <span class="app-title__name">NereusSDR</span>
+          <span class="app-title__fill"></span>
+          <span class="app-title__utc" data-utc>00:00:00 UTC</span>
+          <span class="master"><span class="master__spk">🔊</span><span class="master__slider"><i></i></span><span class="master__db">100</span></span>
+          <span class="app-title__bulb"><svg viewBox="0 0 24 24"><path d="M12 3.2a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1 2V17h5.2v-1c0-.8.4-1.5 1-2A6 6 0 0 0 12 3.2z" fill="#ffd23c"/><rect x="9.4" y="18" width="5.2" height="1.6" rx=".8" fill="#c8d8e8"/><rect x="10" y="20.3" width="4" height="1.5" rx=".75" fill="#c8d8e8"/></svg></span>
+        </div>
+
+        <div class="pan" data-pan>
+          <div class="pan__spectrum">
+            <canvas data-spectrum aria-hidden="true"></canvas>
+          </div>
+          <div class="pan__divider" aria-hidden="true"></div>
+          <div class="pan__freq" data-ruler aria-hidden="true"></div>
+          <div class="pan__waterfall">
+            <canvas data-waterfall aria-hidden="true"></canvas>
+          </div>
+
+          <div class="pan__pass pan__pass--spec" data-pass-spec aria-hidden="true"></div>
+          <div class="pan__pass pan__pass--wf" data-pass-wf aria-hidden="true"></div>
+          <div class="pan__vfo-line" data-vfo-line aria-hidden="true"></div>
+          <div class="pan__tri" data-vfo-tri aria-hidden="true"></div>
+          <div class="pan__readout" data-cursor aria-hidden="true"></div>
+
+          <div class="ovl" data-inert aria-hidden="true">
+            <span class="ovl__btn ovl__btn--toggle">◀</span>
+            <span class="ovl__btn">+RX</span>
+            <span class="ovl__btn">+TNF</span>
+            <span class="ovl__btn">BAND</span>
+            <span class="ovl__btn">ANT</span>
+            <span class="ovl__btn">Display</span>
+            <span class="ovl__btn">VAX</span>
+            <span class="ovl__btn is-off">ATT</span>
+          </div>
+
+          <!-- VFO flag, a copy of the app's VfoWidget -->
+          <div class="vfo" data-vfo role="slider" tabindex="0"
+               aria-label="Demo receiver frequency. Use the arrow keys to tune."
+               aria-valuemin="7000000" aria-valuemax="7300000" aria-valuenow="7236400"
+               aria-valuetext="7.236400 megahertz, LSB">
+            <div class="vfo__hdr" aria-hidden="true">
+              <span class="vfo__ant vfo__ant--rx">ANT1</span>
+              <span class="vfo__ant vfo__ant--tx">ANT1</span>
+              <span class="vfo__bw" data-vfo-bw>2.9K</span>
+              <span class="vfo__sp"></span>
+              <span class="vfo__txb">TX</span>
+              <span class="vfo__slice">A</span>
+            </div>
+            <output class="vfo__freq" data-vfo-freq>7.236.400</output>
+            <canvas class="vfo__level" data-vfo-level width="240" height="26" aria-hidden="true"></canvas>
+            <div class="vfo__tabs" aria-hidden="true">
+              <span>🔊</span><i>|</i><span>DSP</span><i>|</i><span data-vfo-mode>LSB</span><i>|</i><span>X/RIT</span><i>|</i><span>VAX</span>
+            </div>
+          </div>
+          <div class="vfo-fbtns" data-vfo-fbtns aria-hidden="true">
+            <span>🔓</span><span>⏺</span><span>▶</span>
+          </div>
+        </div>
+
+        <div class="banner" aria-hidden="true">
+          <div class="banner__group">
+            <svg class="banner__stack" viewBox="0 0 10 22" width="10" height="22"><ellipse cx="4.5" cy="3" rx="4.5" ry="3" fill="#404858"/><ellipse cx="4.5" cy="10" rx="4.5" ry="3" fill="#404858"/><ellipse cx="4.5" cy="17" rx="4.5" ry="3" fill="#404858"/></svg>
+            <svg class="banner__pan" viewBox="0 0 36 28" width="36" height="28"><polyline fill="none" stroke="rgba(255,255,255,0.82)" stroke-width="1.6" stroke-linejoin="round" points="0,22 1,21 2,22 3,19 4,22 5,21 6,18 7,12 8,17 9,22 10,21 11,22 12,16 13,22 14,21 15,19 16,22 17,20 18,12 19,4 20,11 21,21 22,22 23,21 24,17 25,22 26,21 27,22 28,18 29,22 30,22"/><path d="M30 4v10M25 9h10" stroke="rgba(255,255,255,0.82)" stroke-width="2.2"/></svg>
+            <span class="banner__chain fold-3"><b>CH 0</b><i>40m</i></span>
+            <span class="banner__glyph">☰</span>
+            <span class="banner__dim banner__tnf fold-1">TNF</span>
+            <span class="banner__dim fold-1">CWX</span>
+            <span class="banner__dim fold-1">DVK</span>
+            <span class="banner__dim fold-1">FDX</span>
+            <span class="banner__sep fold-1">·</span>
+            <span class="dash">
+              <span class="badge badge--info"><svg viewBox="0 0 12 12"><path d="M 1,6 Q 3,1.5 5,6 T 9,6 L 11,6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-dash-mode>LSB</span></span>
+              <span class="badge badge--on"><svg viewBox="0 0 12 12"><path d="M 1,9 C 3,9 3,4 5,4 L 7,4 C 9,4 9,9 11,9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-dash-bw>2.9k</span></span>
+              <span class="badge badge--info fold-2"><svg viewBox="0 0 12 12"><path d="M 7,1 L 3,7 L 5.5,7 L 5,11 L 9,5 L 6.5,5 L 7,1 Z" fill="currentColor"/></svg><span>M</span></span>
+            </span>
+          </div>
+          <span class="banner__fill"></span>
+          <span class="station fold-4"><b>ANAN-G2</b><i>Saturn · v27</i></span>
+          <span class="banner__fill"></span>
+          <div class="banner__group">
+            <span class="banner__ind fold-2"><b>CAT</b><i>Off</i></span>
+            <span class="banner__sep fold-2">·</span>
+            <span class="banner__ind fold-2"><b>TCI</b><i>Off</i></span>
+            <span class="banner__sep fold-2">·</span>
+            <span class="systile fold-3"><span><b>PA</b><i>13.8V</i></span><span><b>CPU</b><i>9%</i></span></span>
+            <span class="banner__sep fold-3">·</span>
+            <span class="safety">
+              <span class="slot"><span class="badge badge--on">PA</span></span>
+              <span class="slot slot--ovl fold-3"><span class="ovld">OVERLOAD</span></span>
+              <span class="slot"><span class="badge badge--off">TX</span></span>
+            </span>
+            <span class="banner__more">…</span>
+          </div>
+        </div>
+      </figure>
+      <p class="app-caption">
+        <i class="led led--green" aria-hidden="true"></i>
+        A simulated 40 m band, drawn live in your browser in the program's own layout. Click or tap
+        the waterfall to tune.
+      </p>
+    </section>
+
+    <!-- ============ How it works ============ -->
+    <section class="section" aria-labelledby="how-title">
+      <div class="wrap">
+        <div class="ruler" aria-hidden="true"></div>
+        <header class="section__head" data-reveal>
+          <p class="eyebrow">How it works</p>
+          <h2 id="how-title">Your radio samples the RF. <strong>Your computer does the rest.</strong></h2>
+          <p>
+            OpenHPSDR radios stream raw I/Q over Ethernet. NereusSDR does all of the signal processing
+            on your computer: demodulation, noise reduction, AGC, the transmit chain, and the FFTs behind
+            the panadapter.
+          </p>
+        </header>
+        <div class="path" data-reveal>
+          <div class="path__node">
+            <h3>Radio</h3>
+            <p>ADCs and an FPGA turn the antenna signal into I/Q samples and send them over the network. On transmit, it turns I/Q back into RF.</p>
+          </div>
+          <div class="path__link" aria-hidden="true">
+            <span class="path__label"><b>OpenHPSDR</b> Protocol 1 or 2</span>
+            <div class="path__wire"></div>
+            <div class="path__wire path__wire--back"></div>
+            <span class="path__label">Ethernet, UDP</span>
+          </div>
+          <div class="path__node path__node--app">
+            <h3>NereusSDR on your computer</h3>
+            <p>WDSP demodulates and cleans up the audio. FFTW computes the spectrum, and your GPU draws it through Metal, Vulkan or Direct3D 12.</p>
+            <ul class="path__steps" aria-label="Receive chain">
+              <li>I/Q</li><li>WDSP</li><li>Audio</li><li>FFTW</li><li>GPU</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Radios ============ -->
+    <section class="section" id="radios" aria-labelledby="radios-title">
+      <div class="wrap">
+        <div class="ruler" aria-hidden="true"></div>
+        <header class="section__head" data-reveal>
+          <p class="eyebrow">Radios</p>
+          <h2 id="radios-title">Works with the radio <strong>on your bench.</strong></h2>
+          <p>
+            Sixteen models across every OpenHPSDR family. NereusSDR finds your radio on the network,
+            reads what the hardware can do, and keeps its settings separately for each radio.
+          </p>
+        </header>
+
+        <div class="radios">
+          <article class="rack" data-reveal>
+            <div class="titlebar">
+              <h3>Saturn</h3>
+              <span class="titlebar__tags"><span class="tag tag--p2">P2</span></span>
+            </div>
+            <div class="rack__body">
+              <ul class="models">
+                <li>ANAN-G2</li>
+                <li>ANAN-G2 1K</li>
+                <li>ANAN-G2E <span class="tag tag--new">NEW</span></li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="rack" data-reveal>
+            <div class="titlebar">
+              <h3>Orion MkII</h3>
+              <span class="titlebar__tags"><span class="tag tag--p2">P2</span></span>
+            </div>
+            <div class="rack__body">
+              <ul class="models">
+                <li>ANAN-7000DLE</li>
+                <li>ANAN-8000DLE</li>
+                <li>Anvelina Pro 3</li>
+                <li>Red Pitaya</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="rack rack--third" data-reveal>
+            <div class="titlebar">
+              <h3>Hermes Lite 2</h3>
+              <span class="titlebar__tags"><span class="tag tag--p1">P1</span></span>
+            </div>
+            <div class="rack__body">
+              <ul class="models"><li>Hermes Lite 2</li></ul>
+            </div>
+          </article>
+
+          <article class="rack rack--third" data-reveal>
+            <div class="titlebar">
+              <h3>Orion</h3>
+              <span class="titlebar__tags"><span class="tag tag--p1">P1</span></span>
+            </div>
+            <div class="rack__body">
+              <ul class="models"><li>ANAN-200D</li></ul>
+            </div>
+          </article>
+
+          <article class="rack rack--third" data-reveal>
+            <div class="titlebar">
+              <h3>Angelia</h3>
+              <span class="titlebar__tags"><span class="tag tag--p1">P1</span></span>
+            </div>
+            <div class="rack__body">
+              <ul class="models"><li>ANAN-100D</li></ul>
+            </div>
+          </article>
+
+          <article class="rack rack--third" data-reveal>
+            <div class="titlebar">
+              <h3>Hermes II</h3>
+              <span class="titlebar__tags"><span class="tag tag--p1">P1</span></span>
+            </div>
+            <div class="rack__body">
+              <ul class="models"><li>ANAN-10E</li><li>ANAN-100B</li></ul>
+            </div>
+          </article>
+
+          <article class="rack rack--third" data-reveal>
+            <div class="titlebar">
+              <h3>Hermes</h3>
+              <span class="titlebar__tags"><span class="tag tag--p1">P1</span></span>
+            </div>
+            <div class="rack__body">
+              <ul class="models"><li>Hermes</li><li>ANAN-10</li><li>ANAN-100</li></ul>
+            </div>
+          </article>
+
+          <article class="rack rack--third" data-reveal>
+            <div class="titlebar">
+              <h3>Atlas / Metis</h3>
+              <span class="titlebar__tags"><span class="tag tag--p1">P1</span></span>
+            </div>
+            <div class="rack__body">
+              <ul class="models"><li>HPSDR Atlas / Metis</li></ul>
+            </div>
+          </article>
+        </div>
+
+        <p class="radios__note" data-reveal>
+          <span class="tag tag--p1">P1</span> and <span class="tag tag--p2">P2</span> mark OpenHPSDR
+          Protocol 1 and Protocol 2. Radios are found by broadcast discovery on your network, or by
+          address when they sit across a VPN such as WireGuard, ZeroTier or Tailscale.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ Features ============ -->
+    <section class="section" id="features" aria-labelledby="features-title">
+      <div class="wrap">
+        <div class="ruler" aria-hidden="true"></div>
+        <header class="section__head" data-reveal>
+          <p class="eyebrow">Features</p>
+          <h2 id="features-title">The whole station, <strong>in one console.</strong></h2>
+          <p>
+            Receive and transmit, meters and displays, digital modes and the programs you already use.
+            Radio behavior is ported from the Thetis source, then built natively for your platform.
+          </p>
+        </header>
+
+        <div class="applets">
+          <article class="applet" data-reveal>
+            <div class="titlebar"><h3>RX DSP</h3></div>
+            <div class="applet__body">
+              <h4>WDSP does the heavy lifting.</h4>
+              <p>WDSP handles SSB, CW, AM, FM and digital modes. Noise reduction runs from WDSP's own NR1 and NR2 through RNNoise, libspecbleach and DeepFilterNet3.</p>
+              <ul class="chips">
+                <li class="is-blue">AGC</li><li>NB</li><li>NB2</li><li>SNB</li><li class="is-green">NR2</li><li>NR3</li><li>NR4</li><li>DFNR</li><li>ANF</li><li>APF</li><li>SQL</li><li class="is-amber">RIT</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="applet" data-reveal>
+            <div class="titlebar"><h3>TX</h3></div>
+            <div class="applet__body">
+              <h4>SSB voice with a full speech chain.</h4>
+              <p>A 10-band EQ, leveler, ALC, CFC compressor, CESSB and phase rotator, set up by 22 factory mic profiles. PureSignal predistortion runs on every supported radio, the Hermes Lite 2 included.</p>
+              <ul class="chips">
+                <li class="is-green">EQ</li><li>LEV</li><li>ALC</li><li>CFC</li><li>CPDR</li><li>CESSB</li><li>VOX</li><li>DEXP</li><li class="is-blue">PS-A</li><li>2-Tone</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="applet" data-reveal>
+            <div class="titlebar"><h3>Panadapter</h3></div>
+            <div class="applet__body">
+              <h4>A panadapter drawn on your GPU.</h4>
+              <p>Spectrum and waterfall render through Metal, Vulkan or Direct3D 12, with CTUN, zoom and click to tune. Clarity tracks the noise floor and keeps the waterfall readable as conditions change.</p>
+              <ul class="chips">
+                <li>Metal</li><li>Vulkan</li><li>D3D12</li><li class="is-blue">CTUN</li><li>Zoom</li><li class="is-green">Clarity</li><li>Peak hold</li><li>14 bands</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="applet" data-reveal>
+            <div class="titlebar"><h3>Meters</h3></div>
+            <div class="applet__body">
+              <h4>Meters you can build yourself.</h4>
+              <p>An analog S-meter, the ANAN multimeter, a cross-needle power and SWR meter, and dozens of meter parts you can arrange in docked or floating containers.</p>
+              <ul class="chips">
+                <li class="is-green">S-meter</li><li>Multimeter</li><li>Cross-needle</li><li>Magic eye</li><li>History</li><li>Containers</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="applet" data-reveal>
+            <div class="titlebar"><h3>Network</h3></div>
+            <div class="applet__body">
+              <h4>Plays well with your other software.</h4>
+              <p>A Thetis-compatible TCI server for programs like WSJT-X, JTDX, FreeDV and Quisk, built-in virtual audio routing, and live spots drawn right on the panadapter.</p>
+              <ul class="chips">
+                <li class="is-blue">TCI</li><li>VAX audio</li><li>DX cluster</li><li>RBN</li><li>POTA</li><li>PSK Reporter</li><li>FreeDV Reporter</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="applet" data-reveal>
+            <div class="titlebar"><h3>RADE</h3></div>
+            <div class="applet__body">
+              <h4>FreeDV RADE digital voice, built in.</h4>
+              <p>RADE, FreeDV's machine-learning voice codec, runs as a native mode for receive and transmit with nothing else to install. The VFO shows SNR and, when it is sent, the other station's callsign.</p>
+              <ul class="chips">
+                <li class="is-green">RADE</li><li>RX</li><li>TX</li><li>SNR</li><li>Callsign</li>
+              </ul>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Status ============ -->
+    <section class="section" id="status" aria-labelledby="status-title">
+      <div class="wrap">
+        <div class="ruler" aria-hidden="true"></div>
+        <header class="section__head" data-reveal>
+          <p class="eyebrow">Status</p>
+          <h2 id="status-title">Alpha, and <strong>moving fast.</strong></h2>
+          <p>
+            NereusSDR already receives, and transmits SSB voice, on real radios. It is still alpha
+            software, so expect rough edges and tell us when you find one.
+          </p>
+        </header>
+
+        <div class="status">
+          <ol class="releases" reversed data-reveal aria-label="Release history">
+            <li class="is-latest">
+              <div><span class="ver">v0.5.2</span><time datetime="2026-05-24">24 May 2026</time></div>
+              <p>4O3A Power Genius XL and Tuner Genius XL support, an analog S-meter, and the ANAN-G2E.</p>
+            </li>
+            <li>
+              <div><span class="ver">v0.5.0</span><time datetime="2026-05-13">13 May 2026</time></div>
+              <p>TCI server, spots on the panadapter, FreeDV Reporter and PSK Reporter, and RADE digital voice.</p>
+            </li>
+            <li>
+              <div><span class="ver">v0.4.0</span><time datetime="2026-05-08">8 May 2026</time></div>
+              <p>PureSignal on Protocol 1 and 2, reworked display and DSP settings, and anti-VOX.</p>
+            </li>
+            <li>
+              <div><span class="ver">v0.3.2</span><time datetime="2026-05-05">5 May 2026</time></div>
+              <p>DEXP and VOX, full PA setup, and over-drive protection for high-gain amplifiers.</p>
+            </li>
+            <li>
+              <div><span class="ver">v0.3.1</span><time datetime="2026-05-03">3 May 2026</time></div>
+              <p>SSB transmit on every supported radio, Hermes Lite 2 included, and signed macOS builds.</p>
+            </li>
+            <li>
+              <div><span class="ver">v0.2.3</span><time datetime="2026-04-24">24 Apr 2026</time></div>
+              <p>The noise reduction lineup, full Alex filter support, and native PipeWire audio on Linux.</p>
+            </li>
+            <li>
+              <div><span class="ver">v0.1.2</span><time datetime="2026-04-13">13 Apr 2026</time></div>
+              <p>First alpha with builds for macOS, Windows and Linux.</p>
+            </li>
+          </ol>
+
+          <div data-reveal>
+            <div class="next">
+              <div class="titlebar"><h3>On the bench</h3></div>
+              <div class="next__body">
+                <ol>
+                  <li><b>Multiple panadapters and receivers</b><span>Several pans and slices at once, layouts, pans on a second monitor, and diversity receive. In development now.</span></li>
+                  <li><b>CW transmit</b><span>Sidetone, keyer, and QSK break-in.</span></li>
+                  <li><b>After that</b><span>Skins, CAT and rigctld control, and recording.</span></li>
+                </ol>
+              </div>
+            </div>
+            <p class="alpha-note">
+              <i class="led led--amber" aria-hidden="true"></i>
+              <span>Settings carry forward between releases. The first time you transmit on a new build, keep an eye on power and SWR.</span>
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Download ============ -->
+    <section class="section" id="download" aria-labelledby="download-title">
+      <div class="wrap">
+        <div class="ruler" aria-hidden="true"></div>
+        <header class="section__head" data-reveal>
+          <p class="eyebrow">Download</p>
+          <h2 id="download-title">Get <strong>NereusSDR.</strong></h2>
+          <p>Free, with no account and no telemetry. Every file is signed, so you can check it before you run it.</p>
+        </header>
+
+        <p class="dl-meta" data-reveal>
+          <span>Latest <b data-release-version>v0.5.2</b>, released <time data-release-date datetime="2026-05-24">24 May 2026</time></span>
+          <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v0.5.2" data-release-notes>Release notes</a>
+          <a href="https://github.com/boydsoftprez/NereusSDR/releases">All releases</a>
+        </p>
+
+        <div class="dl-grid">
+          <article class="dl" id="dl-mac" data-platform="mac" data-reveal>
+            <div class="dl__head">
+              <span class="dl__glyph" aria-hidden="true">⌘</span>
+              <div>
+                <h3>macOS</h3>
+                <p>macOS 14 or later on Apple Silicon. macOS 11 or later on Intel.</p>
+              </div>
+              <span class="tag tag--p2 dl__yours">YOUR SYSTEM</span>
+            </div>
+            <ul class="dl__files">
+              <li><a data-asset="macOS-apple-silicon.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-macOS-apple-silicon.dmg">
+                <b>Apple Silicon · DMG</b><small>NereusSDR-0.5.2-macOS-apple-silicon.dmg</small><span class="dl__size">84.6 MB</span></a></li>
+              <li><a data-asset="macOS-apple-silicon.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-macOS-apple-silicon.pkg">
+                <b>Apple Silicon · Installer</b><small>NereusSDR-0.5.2-macOS-apple-silicon.pkg</small><span class="dl__size">81.5 MB</span></a></li>
+              <li><a data-asset="macOS-intel.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-macOS-intel.dmg">
+                <b>Intel · DMG</b><small>NereusSDR-0.5.2-macOS-intel.dmg</small><span class="dl__size">82.2 MB</span></a></li>
+              <li><a data-asset="macOS-intel.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-macOS-intel.pkg">
+                <b>Intel · Installer</b><small>NereusSDR-0.5.2-macOS-intel.pkg</small><span class="dl__size">79.1 MB</span></a></li>
+            </ul>
+            <p class="dl__note"><i class="led led--green" aria-hidden="true"></i>Signed with an Apple Developer ID and notarized, so it opens normally.</p>
+          </article>
+
+          <article class="dl" id="dl-windows" data-platform="windows" data-reveal>
+            <div class="dl__head">
+              <span class="dl__glyph" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 5.5l7.5-1v7H3zm8.5-1.2L21 3v8.5h-9.5zM3 12.5h7.5v7L3 18.5zm8.5 0H21V21l-9.5-1.3z"/></svg>
+              </span>
+              <div>
+                <h3>Windows</h3>
+                <p>64-bit Windows on x64.</p>
+              </div>
+              <span class="tag tag--p2 dl__yours">YOUR SYSTEM</span>
+            </div>
+            <ul class="dl__files">
+              <li><a data-asset="Windows-x64-setup.exe" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-Windows-x64-setup.exe">
+                <b>Installer</b><small>NereusSDR-0.5.2-Windows-x64-setup.exe</small><span class="dl__size">86.3 MB</span></a></li>
+              <li><a data-asset="Windows-x64-portable.zip" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-Windows-x64-portable.zip">
+                <b>Portable ZIP</b><small>NereusSDR-0.5.2-Windows-x64-portable.zip</small><span class="dl__size">86.3 MB</span></a></li>
+            </ul>
+            <p class="dl__note"><i class="led led--amber" aria-hidden="true"></i>Not code-signed yet, so SmartScreen will warn you. Choose More info, then Run anyway.</p>
+          </article>
+
+          <article class="dl" id="dl-linux" data-platform="linux" data-reveal>
+            <div class="dl__head">
+              <span class="dl__glyph" aria-hidden="true">&gt;_</span>
+              <div>
+                <h3>Linux</h3>
+                <p>AppImages for x86_64 and ARM64.</p>
+              </div>
+              <span class="tag tag--p2 dl__yours">YOUR SYSTEM</span>
+            </div>
+            <ul class="dl__files">
+              <li><a data-asset="x86_64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-x86_64.AppImage">
+                <b>AppImage · x86_64</b><small>NereusSDR-0.5.2-x86_64.AppImage</small><span class="dl__size">92.6 MB</span></a></li>
+              <li><a data-asset="aarch64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-aarch64.AppImage">
+                <b>AppImage · ARM64</b><small>NereusSDR-0.5.2-aarch64.AppImage</small><span class="dl__size">116.0 MB</span></a></li>
+            </ul>
+            <p class="dl__note"><i class="led led--green" aria-hidden="true"></i>Built on Ubuntu 22.04 (x86_64) and 24.04 (ARM64). Mark the file executable, then run it.</p>
+          </article>
+        </div>
+
+        <p class="radios__note" data-reveal>
+          On first launch NereusSDR measures the fastest FFT plans for your processor. That can take up to
+          about fifteen minutes, and it only happens once.
+        </p>
+
+        <div class="dl-extra">
+          <div class="panel" data-reveal>
+            <div class="titlebar"><h3>Verify your download</h3></div>
+            <div class="panel__body">
+              <p>
+                Releases are signed with this OpenPGP key. Download the <code>.asc</code> file that sits
+                next to your download on the release page, then check it:
+              </p>
+              <code class="fpr" data-fingerprint>4A95 F4D2 2AEE 9271 D8A3  C01B 20C2 8447 3F97 D2B3</code>
+              <div class="tabs" role="tablist" aria-label="Operating system">
+                <button type="button" role="tab" id="tab-v-mac" aria-controls="v-mac" aria-selected="true">macOS</button>
+                <button type="button" role="tab" id="tab-v-linux" aria-controls="v-linux" aria-selected="false" tabindex="-1">Linux</button>
+                <button type="button" role="tab" id="tab-v-win" aria-controls="v-win" aria-selected="false" tabindex="-1">Windows</button>
+              </div>
+              <div class="code" role="tabpanel" id="v-mac" aria-labelledby="tab-v-mac">
+                <button class="copy" type="button" data-copy>Copy</button>
+<pre><code><span class="c"># macOS</span>
+curl -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
+gpg --import nereussdr-signing-key.asc
+gpg --verify <span data-version-swap>NereusSDR-0.5.2</span>-macOS-apple-silicon.dmg.asc</code></pre>
+              </div>
+              <div class="code" role="tabpanel" id="v-linux" aria-labelledby="tab-v-linux">
+                <button class="copy" type="button" data-copy>Copy</button>
+<pre><code><span class="c"># Linux</span>
+curl -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
+gpg --import nereussdr-signing-key.asc
+gpg --verify <span data-version-swap>NereusSDR-0.5.2</span>-x86_64.AppImage.asc</code></pre>
+              </div>
+              <div class="code" role="tabpanel" id="v-win" aria-labelledby="tab-v-win">
+                <button class="copy" type="button" data-copy>Copy</button>
+<pre><code><span class="c"># Windows: PowerShell, with Gpg4win installed</span>
+curl.exe -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
+gpg --import nereussdr-signing-key.asc
+gpg --verify <span data-version-swap>NereusSDR-0.5.2</span>-Windows-x64-setup.exe.asc</code></pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel" data-reveal>
+            <div class="titlebar"><h3>Build from source</h3></div>
+            <div class="panel__body">
+              <p>
+                C++20 and Qt 6, built with CMake and Ninja. Install the dependencies for your platform
+                from the <a href="https://github.com/boydsoftprez/NereusSDR#building-from-source">build instructions</a>, then:
+              </p>
+              <div class="code code--solo">
+                <button class="copy" type="button" data-copy>Copy</button>
+<pre><code>git clone https://github.com/boydsoftprez/NereusSDR.git
+cd NereusSDR
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build
+./build/NereusSDR</code></pre>
+              </div>
+              <p class="panel__foot">
+                Or take the signed source tarball from the release:
+                <a data-asset="source.tar.gz" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-source.tar.gz"><span data-version-swap>NereusSDR-0.5.2</span>-source.tar.gz</a>
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Heritage ============ -->
+    <section class="section" id="heritage" aria-labelledby="heritage-title">
+      <div class="wrap">
+        <div class="ruler" aria-hidden="true"></div>
+        <header class="section__head" data-reveal>
+          <p class="eyebrow">Heritage</p>
+          <h2 id="heritage-title">A port, with its <strong>lineage intact.</strong></h2>
+          <p>
+            NereusSDR is a translation of Thetis, not a reimagining. Radio logic, DSP behavior and
+            constants come from the Thetis source, and every ported file keeps the copyright and license
+            header of the file it came from.
+          </p>
+        </header>
+
+        <ol class="lineage" data-reveal>
+          <li>
+            <small>FlexRadio Systems</small>
+            <b>PowerSDR</b>
+            <p>The Windows SDR console that Thetis descends from.</p>
+          </li>
+          <li>
+            <small>OpenHPSDR community</small>
+            <b>Thetis</b>
+            <p>The standard console for ANAN and OpenHPSDR radios, carried forward by Doug Wigley W5WC, Richard Samphire MW0LGE and many other contributors.</p>
+          </li>
+          <li>
+            <small>C++20 · Qt 6</small>
+            <b>NereusSDR</b>
+            <p>Thetis's radio logic and DSP flow, ported to one codebase that runs natively on macOS, Linux and Windows.</p>
+          </li>
+        </ol>
+
+        <div class="pillars" data-reveal>
+          <div class="pillar">
+            <b>WDSP</b>
+            <p>Warren Pratt NR0V's DSP library, the signal engine under both Thetis and NereusSDR.</p>
+          </div>
+          <div class="pillar">
+            <b>AetherSDR</b>
+            <p>A native C++20 and Qt 6 FlexRadio client, and the architectural template for NereusSDR.</p>
+          </div>
+          <div class="pillar">
+            <b>OpenHPSDR</b>
+            <p>The open hardware project whose Protocol 1 and Protocol 2 every supported radio speaks.</p>
+          </div>
+        </div>
+
+        <p class="disclaimer" data-reveal>
+          NereusSDR is free software under the GNU General Public License v3, and a derivative work of
+          Thetis. It is not affiliated with or endorsed by Apache Labs, FlexRadio Systems, the Thetis
+          maintainers, or the OpenHPSDR project. See the
+          <a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/attribution/THETIS-PROVENANCE.md">provenance record</a>
+          for the file-by-file attribution.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ Get involved ============ -->
+    <section class="section" id="involved" aria-labelledby="involved-title">
+      <div class="wrap">
+        <div class="ruler" aria-hidden="true"></div>
+        <header class="section__head" data-reveal>
+          <p class="eyebrow">Get involved</p>
+          <h2 id="involved-title">Bring <strong>your radio.</strong></h2>
+          <p>
+            NereusSDR gets better every time it meets a radio, a band or a setup it hasn't seen before.
+            Reports, testing and code are all welcome.
+          </p>
+        </header>
+        <div class="involve">
+          <a href="https://github.com/boydsoftprez/NereusSDR/issues/new/choose" data-reveal>
+            <b>Report a bug</b>
+            <span>Click the lightbulb in NereusSDR's menu bar to draft a report, or open an issue on GitHub.</span>
+            <i>Open an issue</i>
+          </a>
+          <a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/debugging/v0.5.2-alpha-tester-smoketest.md" data-reveal>
+            <b>Test a release</b>
+            <span>The tester guide walks through what changed in this release and what to check on your radio.</span>
+            <i>Tester guide</i>
+          </a>
+          <a href="https://github.com/boydsoftprez/NereusSDR/blob/main/CONTRIBUTING.md" data-reveal>
+            <b>Contribute code</b>
+            <span>C++20 and Qt 6. Ported code keeps its upstream attribution, and every commit is GPG-signed.</span>
+            <i>Contributing guide</i>
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap">
+      <div class="footer__grid">
+        <div class="footer__about">
+          <a class="brand" href="/" aria-label="NereusSDR home">
+            <img src="/assets/img/nereus-64.png" width="34" height="34" alt="" loading="lazy">
+            <span class="brand__word">Nereus<b>SDR</b></span>
+          </a>
+          <p>A free, open-source SDR console for OpenHPSDR radios, native on macOS, Windows and Linux.</p>
+        </div>
+        <div>
+          <h2>Project</h2>
+          <ul>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR">Source code</a></li>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR/releases">Releases</a></li>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/CHANGELOG.md">Changelog</a></li>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR/issues">Issues</a></li>
+          </ul>
+        </div>
+        <div>
+          <h2>Docs</h2>
+          <ul>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR#readme">README</a></li>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR#building-from-source">Build instructions</a></li>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/CONTRIBUTING.md">Contributing</a></li>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/attribution/THETIS-PROVENANCE.md">Attribution</a></li>
+          </ul>
+        </div>
+        <div>
+          <h2>License</h2>
+          <ul>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/LICENSE">GNU GPL v3</a></li>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR/tree/main/packaging/third-party-licenses">Third-party licenses</a></li>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/SECURITY.md">Security policy</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer__base">
+        <p class="footer__sig">Maintained by J.J. Boyd ~ KG4VCF</p>
+        <p>Not affiliated with Apache Labs, FlexRadio Systems, the Thetis maintainers or the OpenHPSDR project.</p>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,81 @@
+# Caddy v2 configuration for the NereusSDR website.
+#
+# Installed as /etc/caddy/Caddyfile by website/deploy/setup-server.sh, which
+# runs caddy validate on it first. The site files live in /var/www/nereussdr
+# and are published there by website/deploy.sh.
+#
+# No ACME email is set on purpose: Caddy obtains certificates without one,
+# and no personal address belongs in the repository.
+#
+# No access log is configured on purpose, for visitor privacy. Caddy still
+# writes its own errors to the systemd journal (journalctl -u caddy).
+
+{
+	# HTTP/3 is switched off. HTTP/3 runs over QUIC on UDP port 443, and
+	# UDP 443 on this host is already used by another service. Serving
+	# HTTP/1.1 and HTTP/2 only keeps Caddy on TCP 80 and TCP 443 and leaves
+	# every UDP port alone. Do not add h3 back while that service shares
+	# the host.
+	servers {
+		protocols h1 h2
+	}
+}
+
+# Response headers for the site. Deleting the Server header makes Caddy
+# apply the whole block when the response is written, and error responses
+# are written by the handle_errors routes, so this block is imported there
+# as well.
+(site_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://api.github.com; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'"
+		-Server
+	}
+}
+
+# The www name only redirects to the bare domain. The redirect carries the
+# site headers too, HSTS included.
+www.nereussdr.com {
+	import site_headers
+	redir https://nereussdr.com{uri} permanent
+}
+
+nereussdr.com {
+	root * /var/www/nereussdr
+	encode zstd gzip
+	import site_headers
+
+	# Pages, CSS and JS are revalidated on every visit, so a deploy shows
+	# up at once and a page never runs with the previous deploy's script
+	# or styles. file_server's ETag and Last-Modified keep that cheap.
+	# Everything else (images, fonts, icons) may be cached for a day.
+	@revalidate path / *.html /assets/css/* /assets/js/*
+	@static not path / *.html /assets/css/* /assets/js/*
+
+	# A route runs its directives in the order written: resolve the file
+	# first, then choose the cache policy from the resolved path, so a
+	# page served from /name.html for the request /name counts as HTML.
+	route {
+		try_files {path} {path}/ {path}.html
+		header @revalidate Cache-Control "no-cache"
+		header @static Cache-Control "public, max-age=86400"
+		file_server
+	}
+
+	# Errors get the same headers, are never cached, and a 404 serves
+	# /404.html (file_server keeps the 404 status here).
+	handle_errors {
+		import site_headers
+		header Cache-Control "no-cache"
+
+		@404 expression {err.status_code} == 404
+		handle @404 {
+			rewrite * /404.html
+			file_server
+		}
+	}
+}
