@@ -1,3 +1,35 @@
+// =================================================================
+// src/gui/SpectrumOverlayMenu.cpp  (NereusSDR)
+// =================================================================
+//
+// Source attribution (AetherSDR — GPLv3):
+//
+//   Copyright (C) 2024-2026  Jeremy (KK7GWY) / AetherSDR contributors
+//       — per https://github.com/ten9876/AetherSDR (GPLv3; see LICENSE
+//       and About dialog for the live contributor list)
+//
+//   This file is a port or structural derivative of AetherSDR source.
+//   AetherSDR is licensed under the GNU General Public License v3.
+//   NereusSDR is also GPLv3. Attribution follows GPLv3 §5 requirements.
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
+//                 J.J. Boyd (KG4VCF), with AI-assisted transformation
+//                 via Anthropic Claude Code.
+//                 Overlay-menu pattern from AetherSDR
+//                 `src/gui/SpectrumOverlayMenu.{h,cpp}`.
+//   2026-08-08 — Final-review fix I4 (3D stacked-trace spectrum plan):
+//                 added this header, missing since the file's 2026-04-24
+//                 creation even though the sibling .h always carried it.
+//                 Newly consequential once Task 13 (same plan) added the
+//                 3D VIEW control section below -- 214 lines including
+//                 labels, ranges, defaults, and tooltip strings ported
+//                 verbatim from AetherSDR `src/gui/SpectrumOverlayMenu.cpp`
+//                 [@1872028c]. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+// =================================================================
+
 #include "SpectrumOverlayMenu.h"
 
 #include <QVBoxLayout>
@@ -217,6 +249,173 @@ void SpectrumOverlayMenu::buildUI()
     });
     updateNotchAddLabel();
 
+    // --- 3D View section ---
+    // From AetherSDR SpectrumOverlayMenu.cpp:1874-1943 [@1872028c]. Labels,
+    // ranges, defaults and tooltip wording for the five ported rows below
+    // (Spectrum combo, 3D Floor, 3D Gain, 3D Span, and setDssRowSpanSupported's
+    // own two tooltip variants) are copied verbatim. 3D Angle and 3D Slice
+    // Shadow are NereusSDR-original: the angle slider has no upstream
+    // counterpart, and the shadow toggle lives here rather than its own
+    // QMenu because upstream's raw QMenu is ITS right-click surface while
+    // ours is this QWidget popup -- a second competing surface would show
+    // the operator two menus in sequence on one right-click.
+    auto* dssLabel = new QLabel(QStringLiteral("3D VIEW"), this);
+    dssLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: #00b4d8; margin-top: 6px;"));
+    layout->addWidget(dssLabel);
+
+    // ── Spectrum render mode (2D waterfall vs 3DSS) ─────────────────────
+    auto* modeRow = new QHBoxLayout;
+    modeRow->addWidget(new QLabel(QStringLiteral("Spectrum:"), this));
+    m_renderModeCombo = new QComboBox(this);
+    m_renderModeCombo->setObjectName(QStringLiteral("spectrumRenderModeCombo"));  // bridge-addressable
+    m_renderModeCombo->addItem(QStringLiteral("2D Waterfall"));       // SpectrumRenderMode::Mode2D
+    m_renderModeCombo->addItem(QStringLiteral("3D Stacked Trace"));   // SpectrumRenderMode::Mode3D
+    m_renderModeCombo->setToolTip(QStringLiteral(
+        "2D: FFT trace + waterfall.\n"
+        "3D: perspective stacked-trace spectrum stream."));
+    modeRow->addWidget(m_renderModeCombo);
+    layout->addLayout(modeRow);
+
+    connect(m_renderModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int idx) { emit spectrumRenderModeChanged(idx); });
+
+    // ── 3D floor depth — how far below the noise floor to surface (dB) ──
+    auto* dssFloorRow = new QHBoxLayout;
+    dssFloorRow->addWidget(new QLabel(QStringLiteral("3D Floor:"), this));
+    m_dssFloorSlider = new QSlider(Qt::Horizontal, this);
+    m_dssFloorSlider->setObjectName(QStringLiteral("dssFloorDepthSlider"));
+    m_dssFloorSlider->setRange(0, 24);
+    m_dssFloorSlider->setValue(6);
+    m_dssFloorLabel = new QLabel(QString::number(6), this);
+    dssFloorRow->addWidget(m_dssFloorSlider);
+    dssFloorRow->addWidget(m_dssFloorLabel);
+    layout->addLayout(dssFloorRow);
+
+    connect(m_dssFloorSlider, &QSlider::valueChanged, this, [this](int v) {
+        if (m_dssFloorLabel) { m_dssFloorLabel->setText(QString::number(v)); }
+        emit dssFloorDepthChanged(v);
+    });
+
+    // ── 3D gain — how far down the strength range the colormap reaches ──
+    auto* dssGainRow = new QHBoxLayout;
+    dssGainRow->addWidget(new QLabel(QStringLiteral("3D Gain:"), this));
+    m_dssGainSlider = new QSlider(Qt::Horizontal, this);
+    m_dssGainSlider->setObjectName(QStringLiteral("dssGainSlider"));
+    m_dssGainSlider->setRange(0, 100);
+    m_dssGainSlider->setValue(70);
+    m_dssGainSlider->setToolTip(QStringLiteral(
+        "3D surface colour gain: how far down the signal range the colormap "
+        "reaches.\nHigher = colour down toward the noise floor; lower = "
+        "colour only on the strongest signals."));
+    m_dssGainLabel = new QLabel(QString::number(70), this);
+    dssGainRow->addWidget(m_dssGainSlider);
+    dssGainRow->addWidget(m_dssGainLabel);
+    layout->addLayout(dssGainRow);
+
+    connect(m_dssGainSlider, &QSlider::valueChanged, this, [this](int v) {
+        if (m_dssGainLabel) { m_dssGainLabel->setText(QString::number(v)); }
+        emit dssGainChanged(v);
+    });
+
+    // ── 3D span — how far the near rows overhang the plot edges ─────────
+    // Caps how much of the radio's offscreen spectrum the surface may use to
+    // close the empty wedges beside it. 100 spends everything available, so a
+    // source that ships no overhang is unaffected at any setting.
+    auto* dssSpanRow = new QHBoxLayout;
+    m_dssRowSpanTitle = new QLabel(QStringLiteral("3D Span:"), this);
+    dssSpanRow->addWidget(m_dssRowSpanTitle);
+    m_dssRowSpanSlider = new QSlider(Qt::Horizontal, this);
+    m_dssRowSpanSlider->setObjectName(QStringLiteral("dssRowSpanSlider"));
+    m_dssRowSpanSlider->setRange(0, 100);
+    m_dssRowSpanSlider->setValue(100);
+    m_dssRowSpanSlider->setAccessibleName(tr("3D Span"));
+    m_dssRowSpanSlider->setAccessibleDescription(tr(
+        "How far the nearest 3D traces overhang the plot edges, using "
+        "spectrum from outside the panadapter. 0 keeps the classic "
+        "narrowing trapezoid."));
+    m_dssRowSpanLabel = new QLabel(QString::number(100), this);
+    dssSpanRow->addWidget(m_dssRowSpanSlider);
+    dssSpanRow->addWidget(m_dssRowSpanLabel);
+    layout->addLayout(dssSpanRow);
+
+    // Tooltip text lives in setDssRowSpanSupported() so the enabled and
+    // unavailable wordings cannot drift apart.
+    m_dssRowSpanSupported = false;
+    setDssRowSpanSupported(true);
+
+    connect(m_dssRowSpanSlider, &QSlider::valueChanged, this, [this](int v) {
+        if (m_dssRowSpanLabel) {
+            m_dssRowSpanLabel->setText(QString::number(v));
+        }
+        emit dssRowSpanChanged(v);
+    });
+
+    // ── 3D angle, viewing elevation (NereusSDR-original) ─────────────────
+    auto* dssAngleRow = new QHBoxLayout;
+    dssAngleRow->addWidget(new QLabel(QStringLiteral("3D Angle:"), this));
+    m_dssAngleSlider = new QSlider(Qt::Horizontal, this);
+    m_dssAngleSlider->setObjectName(QStringLiteral("dssAngleSlider"));
+    m_dssAngleSlider->setRange(0, 100);
+    m_dssAngleSlider->setValue(50);
+    m_dssAngleSlider->setAccessibleName(tr("3D Angle"));
+    m_dssAngleSlider->setToolTip(tr(
+        "Viewing angle for the 3D surface: low looks along the traces "
+        "edge-on, high looks down on them.\n"
+        "50 is the classic fixed angle."));
+    m_dssAngleLabel = new QLabel(QString::number(50), this);
+    dssAngleRow->addWidget(m_dssAngleSlider);
+    dssAngleRow->addWidget(m_dssAngleLabel);
+    layout->addLayout(dssAngleRow);
+
+    connect(m_dssAngleSlider, &QSlider::valueChanged, this, [this](int v) {
+        if (m_dssAngleLabel) { m_dssAngleLabel->setText(QString::number(v)); }
+        emit dssAngleChanged(v);
+    });
+
+    // ── 3D speed, row cadence divider (Task 24, NereusSDR-original) ─────
+    // How many waterfall rows each pushed 3D row covers. 0 is Match
+    // (automatic -- SpectrumWidget::effectiveDssRowDivider()), 1 is the
+    // pre-Task-24 one-row-per-tick behaviour, 2..10 fold that many rows
+    // per column by peak-hold. Design doc section 4.5.
+    auto* dssSpeedRow = new QHBoxLayout;
+    dssSpeedRow->addWidget(new QLabel(QStringLiteral("3D Speed:"), this));
+    m_dssSpeedSlider = new QSlider(Qt::Horizontal, this);
+    m_dssSpeedSlider->setObjectName(QStringLiteral("dssSpeedSlider"));
+    m_dssSpeedSlider->setRange(0, 10);
+    m_dssSpeedSlider->setValue(0);
+    m_dssSpeedSlider->setAccessibleName(tr("3D Speed"));
+    m_dssSpeedSlider->setToolTip(tr(
+        "How many waterfall rows each 3D row covers. Match keeps the 3D "
+        "history the same length in time as the waterfall. 1:1 pushes "
+        "every row, the fastest look. Higher values fold more rows into "
+        "each 3D row, keeping peaks, so the surface recedes more slowly."));
+    m_dssSpeedLabel = new QLabel(QStringLiteral("Match"), this);
+    m_dssSpeedLabel->setObjectName(QStringLiteral("dssSpeedLabel"));
+    dssSpeedRow->addWidget(m_dssSpeedSlider);
+    dssSpeedRow->addWidget(m_dssSpeedLabel);
+    layout->addLayout(dssSpeedRow);
+
+    connect(m_dssSpeedSlider, &QSlider::valueChanged, this, [this](int v) {
+        if (m_dssSpeedLabel) {
+            m_dssSpeedLabel->setText(v == 0 ? QStringLiteral("Match")
+                                             : QStringLiteral("1:%1").arg(v));
+        }
+        emit dssRowDividerChanged(v);
+    });
+
+    // ── 3D slice shadow, perspective decal for slice passbands ──────────
+    // Task 12 filled the UBO slots the fragment shader's applySliceShadow
+    // reads; this is the control that enables them.
+    m_dssSliceShadowChk = new QCheckBox(tr("3D Slice Shadow"), this);
+    m_dssSliceShadowChk->setObjectName(QStringLiteral("dssSliceShadowCheck"));
+    m_dssSliceShadowChk->setToolTip(tr(
+        "Darken each slice's passband onto the 3D surface so it leans back\n"
+        "with the perspective, instead of drawing flat on top of it."));
+    layout->addWidget(m_dssSliceShadowChk);
+
+    connect(m_dssSliceShadowChk, &QCheckBox::toggled,
+            this, &SpectrumOverlayMenu::dssSliceShadowChanged);
+
     setFixedWidth(280);
 }
 
@@ -280,6 +479,96 @@ void SpectrumOverlayMenu::setValues(int wfColorGain, int wfBlackLevel, bool auto
     m_ctunCheck->blockSignals(true);
     m_ctunCheck->setChecked(ctunEnabled);
     m_ctunCheck->blockSignals(false);
+}
+
+// Seeds the 3D VIEW section's seven widgets without emitting: the same
+// blockSignals(true)/blockSignals(false) idiom setValues() above uses, so
+// opening the menu cannot echo the seeded values back out through the
+// change signals and rewrite the operator's live SpectrumWidget state.
+// rowDivider (Task 24) is the trailing seventh argument.
+void SpectrumOverlayMenu::setDssValues(int mode, int floor, int gain, int span,
+                                        int angle, bool sliceShadow, int rowDivider)
+{
+    if (m_renderModeCombo) {
+        m_renderModeCombo->blockSignals(true);
+        m_renderModeCombo->setCurrentIndex(
+            qBound(0, mode, m_renderModeCombo->count() - 1));
+        m_renderModeCombo->blockSignals(false);
+    }
+
+    if (m_dssFloorSlider) {
+        m_dssFloorSlider->blockSignals(true);
+        m_dssFloorSlider->setValue(floor);
+        if (m_dssFloorLabel) { m_dssFloorLabel->setText(QString::number(floor)); }
+        m_dssFloorSlider->blockSignals(false);
+    }
+
+    if (m_dssGainSlider) {
+        m_dssGainSlider->blockSignals(true);
+        m_dssGainSlider->setValue(gain);
+        if (m_dssGainLabel) { m_dssGainLabel->setText(QString::number(gain)); }
+        m_dssGainSlider->blockSignals(false);
+    }
+
+    if (m_dssRowSpanSlider) {
+        m_dssRowSpanSlider->blockSignals(true);
+        m_dssRowSpanSlider->setValue(span);
+        if (m_dssRowSpanLabel) { m_dssRowSpanLabel->setText(QString::number(span)); }
+        m_dssRowSpanSlider->blockSignals(false);
+    }
+
+    if (m_dssAngleSlider) {
+        m_dssAngleSlider->blockSignals(true);
+        m_dssAngleSlider->setValue(angle);
+        if (m_dssAngleLabel) { m_dssAngleLabel->setText(QString::number(angle)); }
+        m_dssAngleSlider->blockSignals(false);
+    }
+
+    if (m_dssSpeedSlider) {
+        m_dssSpeedSlider->blockSignals(true);
+        m_dssSpeedSlider->setValue(rowDivider);
+        if (m_dssSpeedLabel) {
+            m_dssSpeedLabel->setText(rowDivider == 0
+                ? QStringLiteral("Match")
+                : QStringLiteral("1:%1").arg(rowDivider));
+        }
+        m_dssSpeedSlider->blockSignals(false);
+    }
+
+    if (m_dssSliceShadowChk) {
+        m_dssSliceShadowChk->blockSignals(true);
+        m_dssSliceShadowChk->setChecked(sliceShadow);
+        m_dssSliceShadowChk->blockSignals(false);
+    }
+}
+
+// From AetherSDR SpectrumOverlayMenu.cpp:2250-2275 [@1872028c] -- both
+// tooltip variants (GPU-mesh-supported / CPU-fallback-unavailable) verbatim.
+void SpectrumOverlayMenu::setDssRowSpanSupported(bool supported)
+{
+    if (!m_dssRowSpanSlider || m_dssRowSpanSupported == supported) {
+        return;
+    }
+    m_dssRowSpanSupported = supported;
+    m_dssRowSpanSlider->setEnabled(supported);
+    if (m_dssRowSpanLabel) {
+        m_dssRowSpanLabel->setEnabled(supported);
+    }
+    if (m_dssRowSpanTitle) {
+        m_dssRowSpanTitle->setEnabled(supported);
+    }
+    m_dssRowSpanSlider->setToolTip(supported
+        ? QStringLiteral(
+              "3D surface width: how far the nearest traces overhang the plot "
+              "edges,\nusing spectrum the radio sends from outside the "
+              "panadapter.\nHigher = the empty wedges beside the surface close "
+              "from the front;\n0 = the classic narrowing trapezoid. Limited "
+              "by how much\noffscreen spectrum the source actually provides.")
+        : QStringLiteral(
+              "Unavailable: the 3D view is on the CPU fallback, which always "
+              "draws\nthe narrowing trapezoid. The GPU mesh path this control "
+              "drives\nneeds float (RGBA16F) textures, which this system's "
+              "graphics\ndriver does not report."));
 }
 
 } // namespace NereusSDR

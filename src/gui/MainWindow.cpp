@@ -323,6 +323,7 @@ warren@wpratt.com
 #include "core/TwoToneController.h"
 #include "applets/PhoneCwApplet.h"
 #include "applets/RadeApplet.h"
+#include "applets/DisplayApplet.h"
 #include "applets/EqApplet.h"
 #include "applets/VaxApplet.h"
 #include "applets/DigitalApplet.h"
@@ -406,6 +407,7 @@ warren@wpratt.com
 #include <QShortcut>
 
 #include <cstdlib>
+#include <memory>
 
 // Cross-platform CPU usage readers — see readProcessCpuPercent and
 // readSystemCpuPercent below. POSIX side (macOS / Linux) shares
@@ -989,6 +991,77 @@ void MainWindow::fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
             applet->spectrumWidget()->setWidebandBins(adcIndex, bins);
         }
     }
+}
+
+// 3D Stacked-Trace Spectrum Plan Task 14 fix-forward: 3D Floor recall.
+// Unlike the other five 3D controls (per panadapter, stored on
+// SpectrumWidget itself), 3D Floor is stored per band on PanadapterModel
+// because it is anchored to the measured noise floor -- see
+// PanadapterModel::dss3DFloorDepthForBand's class-header comment. Pushes
+// the value stored for the current band immediately (so app startup, which
+// runs before any bandChanged() has fired, is covered too --
+// SpectrumWidget::loadSettings() never touches m_dssFloorDepth, so without
+// this push the widget would sit at its hardcoded ship default of 6 until
+// the operator's next band change), then keeps it synced on every
+// PanadapterModel::bandChanged() crossing.
+//
+// Task 15 fix-forward (coordinator review): the loop above is recall-only.
+// Task 14 built PanadapterModel::setDss3DFloorDepthForBand (the SAVE half)
+// but nothing ever called it -- confirmed by grep, only its own definition
+// and test call sites reference it. An operator dragging 3D Floor via
+// either live-editing surface (the Task 13 overlay menu or the Task 15
+// Setup page, both of which ultimately call SpectrumWidget::setDssFloorDepth)
+// saw the value appear to work, then silently lose it on the next band
+// change -- worse than not being per-band at all, since it looks like it
+// took effect. Closed below: SpectrumWidget::dssFloorDepthChanged (the new
+// Task 15 signal) now also drives a write back into the CURRENT band's
+// per-band store, using the exact same "current band" pan->band() the
+// recall lambda reads from -- PanadapterModel::setBand() updates m_band
+// strictly before emitting bandChanged(), so pan->band() is never stale
+// inside either lambda.
+//
+// recallInProgress guards the save path against the recall push above
+// re-triggering itself: pushing the stored value into the widget fires
+// dssFloorDepthChanged just like an operator edit would, and without this
+// guard that would be indistinguishable from a real edit. In the ordinary
+// case PanadapterModel::setDss3DFloorDepthForBand's own early-return
+// (`if (slot.dss3DFloorDepth == depth) { return; }`, Task 14) absorbs the
+// echo, since a recall for band B, by construction, pushes exactly the
+// value already stored for band B -- but SpectrumWidget::setDssFloorDepth
+// clamps to [0,24] and PanadapterModel does not, so a stored value outside
+// that range (unreachable through either live-editing UI surface today,
+// but not through storage itself -- see the mutation-proven test
+// recallInProgress_stopsAClampedRecallFromCorruptingStorage_endToEnd in
+// tst_dss_persistence.cpp) recalls as the CLAMPED value, `!=` the stored
+// one, and WOULD get written straight back over the operator's real
+// stored intent without this guard. Same shape as
+// Display3DSetupPage::m_updatingFromModel (Task 15): a push driven by "the
+// stored value, being recalled" must not be mistaken for "the operator
+// changed the value." Heap-allocated (std::shared_ptr, not a stack bool)
+// because both lambdas below outlive this function and must share the
+// same flag.
+void MainWindow::wireDss3DFloorRecallForTest(PanadapterModel* pan,
+                                             SpectrumWidget* spectrum)
+{
+    if (!pan || !spectrum) { return; }
+
+    auto recallInProgress = std::make_shared<bool>(false);
+
+    auto pushRecall = [pan, spectrum, recallInProgress](NereusSDR::Band band) {
+        *recallInProgress = true;
+        spectrum->setDssFloorDepth(pan->dss3DFloorDepthForBand(band));
+        *recallInProgress = false;
+    };
+
+    pushRecall(pan->band());
+    connect(pan, &PanadapterModel::bandChanged, spectrum,
+            [pushRecall](NereusSDR::Band newBand) { pushRecall(newBand); });
+
+    connect(spectrum, &SpectrumWidget::dssFloorDepthChanged, pan,
+            [pan, recallInProgress](int depth) {
+        if (*recallInProgress) { return; }
+        pan->setDss3DFloorDepthForBand(pan->band(), depth);
+    });
 }
 
 // Phase 3F: create + fully wire a secondary slice's VfoWidget on the given
@@ -3861,6 +3934,16 @@ void MainWindow::buildUI()
                     activeSpectrumWidget()->setNoiseFloorFastAttack(true);
                 });
             }
+
+            // 3D Stacked-Trace Spectrum Plan Task 14 fix-forward: 3D Floor
+            // recall, same bandChanged block as the ClarityController
+            // priming and NF fast-attack connections directly above, so 3D
+            // Floor arrives at the same time as the rest of the per-band
+            // state a band change already recalls. Routed through the
+            // static seam below (same shape as wireWidebandExtensionForTest
+            // etc.) so the unit test exercises the exact connect() call
+            // this constructor makes, not a parallel test-only copy of it.
+            wireDss3DFloorRecallForTest(pan0, activeSpectrumWidget());
         }
     }
 
@@ -4749,6 +4832,13 @@ void MainWindow::populateDefaultMeter()
     connect(m_radioModel, &RadioModel::sliceRemoved, this,
             [refreshSliceTabs](int) { refreshSliceTabs(); });
 
+    // DisplayApplet, 3D Stacked-Trace Spectrum Plan Task 22. Sits
+    // immediately after RxApplet in the panel add order. Follows the
+    // active panadapter via RadioModel::spectrumWidget() /
+    // spectrumWidgetChanged; no further wiring needed here.
+    m_displayApplet = new DisplayApplet(m_radioModel, nullptr);
+    panel->addApplet(m_displayApplet);
+
     // TxApplet — NYI shell (Phase 3I-1)
     // 3M-3a-ii Batch 6: cache pointer in m_txApplet so SetupDialog
     // instances can wire CfcSetupPage's [Configure CFC bands…] button
@@ -5124,6 +5214,7 @@ void MainWindow::populateDefaultMeter()
     m_appletVis = new AppletVisibilityController(this);
 
     m_appletsById[QStringLiteral("Rx")]         = m_rxApplet;
+    m_appletsById[QStringLiteral("Display")]    = m_displayApplet;
     m_appletsById[QStringLiteral("Tx")]         = m_txApplet;
     m_appletsById[QStringLiteral("PhoneCw")]    = m_phoneCwApplet;
     m_appletsById[QStringLiteral("Rade")]       = m_radeApplet;
@@ -5152,6 +5243,8 @@ void MainWindow::populateDefaultMeter()
     // PS immediately without having to discover the menu toggle.
     m_appletVis->registerApplet(QStringLiteral("Rx"),
                                 QStringLiteral("RX"),           true);
+    m_appletVis->registerApplet(QStringLiteral("Display"),
+                                QStringLiteral("Display"),      true);
     m_appletVis->registerApplet(QStringLiteral("Tx"),
                                 QStringLiteral("TX"),           true);
     m_appletVis->registerApplet(QStringLiteral("PhoneCw"),

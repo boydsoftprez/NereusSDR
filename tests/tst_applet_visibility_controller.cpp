@@ -85,14 +85,18 @@ void TstAppletVisibilityController::registeredIds_returns_insertion_order()
 {
     AppletVisibilityController c;
     c.registerApplet(QStringLiteral("Rx"),         QStringLiteral("RX"),          true);
+    // 3D Stacked-Trace Spectrum Plan Task 22: MainWindow registers Display
+    // immediately after Rx (see populateDefaultMeter()'s add order), so
+    // this synthetic sequence mirrors that placement.
+    c.registerApplet(QStringLiteral("Display"),    QStringLiteral("Display"),    true);
     c.registerApplet(QStringLiteral("Tx"),         QStringLiteral("TX"),          true);
     c.registerApplet(QStringLiteral("PhoneCw"),    QStringLiteral("Phone / CW"),  true);
     c.registerApplet(QStringLiteral("Vax"),        QStringLiteral("VAX"),         true);
     c.registerApplet(QStringLiteral("PureSignal"), QStringLiteral("PureSignal"),  true);
 
     QStringList expected{
-        QStringLiteral("Rx"), QStringLiteral("Tx"), QStringLiteral("PhoneCw"),
-        QStringLiteral("Vax"), QStringLiteral("PureSignal")
+        QStringLiteral("Rx"), QStringLiteral("Display"), QStringLiteral("Tx"),
+        QStringLiteral("PhoneCw"), QStringLiteral("Vax"), QStringLiteral("PureSignal")
     };
     QCOMPARE(c.registeredIds(), expected);
 }

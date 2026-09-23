@@ -851,7 +851,18 @@ public:
     // constructing each view. Not owned, not lifetime-tracked — MainWindow
     // outlives both.
     class SpectrumWidget* spectrumWidget() const { return m_spectrumWidget; }
-    void setSpectrumWidget(class SpectrumWidget* w) { m_spectrumWidget = w; }
+    void setSpectrumWidget(class SpectrumWidget* w) {
+        if (m_spectrumWidget == w) { return; }
+        m_spectrumWidget = w;
+        emit spectrumWidgetChanged(w);
+    }
+signals:
+    // 3D Stacked-Trace Spectrum Plan Task 22: lets a surface that follows
+    // the active panadapter (DisplayApplet) rebind when MainWindow
+    // repoints this view hook, instead of only ever reading it once at
+    // construction.
+    void spectrumWidgetChanged(class SpectrumWidget* w);
+public:
     class FFTEngine* fftEngine() const { return m_fftEngine; }
     void setFftEngine(class FFTEngine* e) { m_fftEngine = e; }
     class ClarityController* clarityController() const { return m_clarityController; }

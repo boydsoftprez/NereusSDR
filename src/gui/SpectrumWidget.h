@@ -163,9 +163,13 @@ mw0lge@grange-lane.co.uk
 #include <QTimer>
 #include <QPropertyAnimation>
 
+#include <optional>
+
 #include "spectrum/ActivePeakHoldTrace.h"
 #include "spectrum/PeakBlobDetector.h"
 #include "spectrum/SpectrumAvenger.h"
+
+#include "gui/DssRenderer.h"
 
 #include <utility>
 
@@ -183,6 +187,7 @@ QT_END_NAMESPACE
 #ifdef NEREUS_GPU_SPECTRUM
 #include <QRhiWidget>
 #include <rhi/qrhi.h>
+#include "gui/DssMeshGeometry.h"  // DssOutlinePipelineMode (Task 7 Step 6b)
 using SpectrumBaseClass = QRhiWidget;
 #else
 using SpectrumBaseClass = QWidget;
@@ -195,6 +200,7 @@ class SpectrumOverlayMenu;
 class VfoWidget;
 class ImdOverlay;  // Phase 3M-4 Task 12 — two-tone IMD overlay analytical core
 class WaterfallTicker;  // src/gui/spectrum/WaterfallTicker.h
+class DisplaySettingsModel;  // src/models/DisplaySettingsModel.h (3D Stacked-Trace Spectrum Plan Task 18)
 
 // Waterfall color scheme presets.
 // Default matches AetherSDR/SmartSDR style.
@@ -211,6 +217,14 @@ enum class WfColorScheme : int {
     ClarityBlue,    // Phase 3G-9b: narrow-band monochrome (80% navy noise floor,
                     // top 20% cyan→white signals). AetherSDR-style readability.
     Count
+};
+
+// Spectrum render mode for the panadapter surface.
+// From AetherSDR SpectrumWidget.h:78-82 [@1872028c].
+enum class SpectrumRenderMode : int {
+    Mode2D = 0,    // FFT trace + scrolling waterfall (classic)
+    Mode3D,        // 3DSS perspective stacked-trace surface
+    Count          // sentinel
 };
 
 // Frequency label alignment for the bottom scale bar.
@@ -280,6 +294,12 @@ struct WfGradientStop { float pos; int r, g, b; };
 // Returns gradient stops for a given color scheme.
 const WfGradientStop* wfSchemeStops(WfColorScheme scheme, int& count);
 
+// Interpolate a 0..1 position across a scheme's gradient stops. Extracted
+// from dbmToRgb()'s inline loop so the 3DSS palette can share the stops
+// without inheriting the waterfall gain / black-level window applied above
+// it. Behaviour is unchanged for dbmToRgb.
+QRgb interpolateWfGradient(float t, const WfGradientStop* stops, int count);
+
 // CPU-rendered spectrum + waterfall display widget.
 // Phase A: QPainter fallback (get something visible fast).
 // Phase B: Switch to QRhiWidget for GPU rendering.
@@ -341,8 +361,22 @@ public:
 
     // ---- Display range ----
     void setDbmRange(float minDbm, float maxDbm);
+    // 3D Stacked-Trace Spectrum Plan Task 18: named setters for the two
+    // fields setDbmRange() has always written directly, so
+    // DisplaySettingsModel has something to bind each of the fifteen
+    // values to individually (setDbmRange sets both at once; the popup's
+    // Ref Level and Dyn Range sliders each set one).
+    void setRefLevel(float dBm);
+    void setDynamicRange(float dB);
     float refLevel() const { return m_refLevel; }
     float dynamicRange() const { return m_dynamicRange; }
+
+    // Waterfall/spectrum vertical split fraction (Task 18's third new
+    // setter): DisplaySettingsModel's binding target for the divider
+    // drag in mouseMoveEvent. No popup or Setup control reaches this
+    // directly (yet); persisted via DisplaySpectrumFrac regardless.
+    void  setSpectrumFrac(float frac);
+    float spectrumFrac() const { return m_spectrumFrac; }
 
     // ---- Waterfall settings ----
     void setWfColorScheme(WfColorScheme scheme);
@@ -570,6 +604,176 @@ public:
     // Stop-on-TX: pause pushWaterfallRow() while TX is active.
     void setWaterfallStopOnTx(bool on);
     bool waterfallStopOnTx() const { return m_wfStopOnTx; }
+
+    // ── 3DSS stacked-trace mode ───────────────────────────────────────────
+    // Persistence (3D Stacked-Trace Spectrum Plan Task 14): render mode,
+    // gain, row span, angle and slice-shadow persist per panadapter here
+    // (loadSettings()/saveSettings(), settingsKey() convention) -- see
+    // DisplaySpectrumRenderMode / Display3DGain / Display3DSpan /
+    // Display3DAngle / Display3DSliceShadow. 3D Floor is the exception: it
+    // persists per BAND instead, on PanadapterModel::dss3DFloorDepthForBand,
+    // because it is anchored to the measured noise floor, which is a
+    // per-band property. setDssFloorDepth()/dssFloorDepth() below remain
+    // the live runtime mirror the 3D renderer reads every frame; they do
+    // not write an AppSettings key themselves.
+    void setSpectrumRenderMode(int mode);
+    int  spectrumRenderMode() const { return static_cast<int>(m_spectrumRenderMode); }
+    void setDssFloorDepth(int dB);
+    int  dssFloorDepth() const { return m_dssFloorDepth; }
+    void setDssGain(int pct);
+    int  dssGain() const { return m_dssGain; }
+    void setDssRowSpan(int pct);
+    int  dssRowSpan() const { return m_dssRowSpan; }
+    void setDssAngle(int pct);
+    int  dssAngle() const { return m_dssAngle; }
+
+    // 3D Speed (3D Stacked-Trace Spectrum Plan Task 24, NereusSDR-
+    // original): how many waterfall rows each pushed 3D row covers. 0..10,
+    // persisted per panadapter as Display3DSpeed, default 0. 0 clamps to
+    // "Match" -- see effectiveDssRowDivider() below for what that resolves
+    // to. Design doc section 4.5.
+    void setDssRowDivider(int n);
+    int  dssRowDivider() const { return m_dssRowDivider; }
+    // The divider actually in effect: dssRowDivider() when it is a manual
+    // 1..10 value, otherwise the automatic Match value -- the waterfall's
+    // own pixel height divided by kDssVisibleRows, rounded, clamped to
+    // [1, kDssMaxAutoRowDivider]. Read live on every use (no cached value,
+    // no resize hook), so a window or split-fraction change is followed
+    // with no extra plumbing.
+    int  effectiveDssRowDivider() const;
+    // Ceiling on the automatic (Match) divider, so an extreme window size
+    // cannot make the 3D surface crawl to a near-standstill.
+    static constexpr int kDssMaxAutoRowDivider = 64;
+
+    void setThreeDSliceDepth(bool on);
+    bool threeDSliceDepth() const { return m_threeDSliceDepth; }
+    DssShape dssShape() const { return dssShapeForAngle(m_dssAngle); }
+
+    // Maps a normalised 0..1 surface strength to a colour, gamma-shaped by
+    // "3D Gain" alone. Deliberately independent of the waterfall gain /
+    // black-level knobs -- see the .cpp for why. Public so it is directly
+    // testable and so uploadDssPaletteLut() (GPU-only) has a CPU-callable
+    // sibling.
+    QRgb dssStrengthToRgb(float s) const;
+    // Folds the inputs that actually change dssStrengthToRgb()'s output, so
+    // the palette LUT re-bakes only on a real change.
+    quint64 dssPaletteToken() const;
+
+    // The 3DSS surface baseline: the measured noise floor (NoiseFloorTracker
+    // / m_nfLerpAverage) offset down by 3D Floor, so the stack keeps a
+    // constant apparent height as band conditions move.
+    float dssFloorDbm() const;
+    // The dBm display span the surface height maps across.
+    float dssSpanDb() const;
+    // dssSpanDb() rounded to the nearest 0.5 dB. The scale (drawDbmScale3D),
+    // the CPU fallback surface (buildDssImage), and the GPU mesh's rangeDb
+    // uniform (writeDssMeshUbo) must all read the SAME rounded value, or
+    // their pixel mappings disagree by up to 0.25 dB whenever the configured
+    // dBm range is not already an exact 0.5 dB multiple -- Task 11 fast-
+    // follow, closing a gap where writeDssMeshUbo wrote the unrounded value.
+    float dssRoundedSpanDb() const;
+    // The dBm span the COLOUR mapping (not the height mapping) reads
+    // across: dssSpanDb() capped at kDssColorSpanDb. A stable aperture
+    // independent of the Ref-level height span, so a wide dBm range does
+    // not stretch the colormap thinner than kDssColorSpanDb and wash the
+    // surface out relative to the reference implementation -- see the
+    // review-round fix note on writeDssMeshUbo()'s colorRangeDb field.
+    float dssColorRangeDb() const;
+    // Windows the off-screen DDC bins of `fullBins` (the same FFT frame
+    // that produced the on-screen row) into the wide channel that fills the
+    // wedge beside the exact-channel trapezoid. Public so it is directly
+    // testable without a live FFT pipeline.
+    QVector<float> buildDssWideRow(const QVector<float>& fullBins,
+                                   double& wideCenterMhzOut,
+                                   double& wideBandwidthMhzOut) const;
+    // Wedge-closing row span for the current 3D Span setting, scaled
+    // against whatever wide-channel overhang is actually on screen.
+    float dssRowSpanTarget(double targetBandwidthMhz) const;
+
+    // One slice passband darkened onto the 3D surface (dss_mesh.frag's
+    // applySliceShadow). low/high/centre are in the same [0,1] viewport-unit
+    // space hzToX() uses (0 = the on-screen bandwidth's left edge, 1 = its
+    // right edge): centreUnit is the slice's own CARRIER frequency, matching
+    // drawSliceMarker()'s separate VFO-centre-line pixel, not the passband
+    // midpoint. alpha/centreAlpha are the band-fill and centre-cue mix
+    // strengths the shader applies; cue is the slice's accent colour tinting
+    // both. From AetherSDR SpectrumWidget.cpp:14216-14366 [@1872028c]
+    // (writeShadowSlot's per-descriptor fields).
+    struct DssShadowBand {
+        float lowUnit{0.0f};
+        float highUnit{0.0f};
+        float centreUnit{0.0f};
+        float alpha{0.0f};
+        QColor cue;
+        float centreAlpha{0.0f};
+    };
+
+    // Maps every visible slice's passband (sliceMarkerGeometry()) onto
+    // viewport units for the DSS shader's slice-shadow decal, clamped to the
+    // shader's fixed 8-entry shadowBands/shadowStyles arrays. Empty when 3D
+    // Slice Shadow (threeDSliceDepth()) is off, or when a slice's passband
+    // never touches the visible viewport.
+    QVector<DssShadowBand> buildDssShadowBands() const;
+
+    // Test seams. pushWaterfallRow() is private and normally driven by the
+    // WaterfallTicker thread; these let the row-tee placement be proven
+    // without standing up a ticker or a QRhi context.
+    void pushWaterfallRowForTest(const QVector<float>& wfPixelsDbm) {
+        pushWaterfallRow(wfPixelsDbm);
+    }
+    void setTxActiveForTest(bool on) { m_txActiveForTest = on; }
+    int  dssRowsPushedForTest() const { return m_dssRowsPushed; }
+    // 3D Speed (Task 24) test seams.
+    int  effectiveDssRowDividerForTest() const { return effectiveDssRowDivider(); }
+    int  dssFoldCountForTest() const { return m_dssFoldCount; }
+    float dssScrollIncrementForTest(int deltaMs) const { return dssScrollIncrement(deltaMs); }
+    // The waterfall image height in pixels, what effectiveDssRowDivider()'s
+    // automatic branch actually divides by kDssVisibleRows. Did not exist
+    // before Task 24; there was no prior reason for a test to read it.
+    int  waterfallHeightForTest() const { return m_waterfall.height(); }
+    // Forwards DssRenderer's own existing rowDataRing()/headRing() row
+    // accessors (both already public and used by tst_dss_renderer_ring.cpp
+    // against a standalone DssRenderer) so a test can read one column of
+    // the newest ring row without a live GPU paint. column must be in
+    // [0, kDssCols).
+    float dssNewestRowColumnForTest(int column) const {
+        return m_dss.rowDataRing(m_dss.headRing())[column];
+    }
+    // NoiseFloorTracker runs from live FFT frames; this seam drives
+    // dssFloorDbm() directly so the floor-anchoring math is testable
+    // without standing up the noise-floor pipeline.
+    void setMeasuredNoiseFloorForTest(float dbm) { m_nfLerpAverage = dbm; }
+    // updateSpectrumLinear() is the only production writer of
+    // m_lastFullBinsDbm (see its definition); this seam drives
+    // buildDssWideRow()'s production call path (via pushDssRow()) without
+    // standing up the FFT pipeline.
+    void setFullBinsForTest(const QVector<float>& binsDbm) {
+        m_lastFullBinsDbm = binsDbm;
+    }
+    // Public one-line forward (drawDbmScale3D is private) so the 3D dBm
+    // scale can be painted onto an off-widget QImage/QPainter without a
+    // live paintEvent(), following the drawSpotMarkersForTest /
+    // drawNotchMarkersForTest convention above.
+    void drawDbmScale3DForTest(QPainter& p, const QRect& specRect, float floorDbm) {
+        drawDbmScale3D(p, specRect, floorDbm);
+    }
+    // drawDbmScaleLabels' rangeDb<=0 guard is unreachable through
+    // drawDbmScale3DForTest() alone: dssSpanDb() floors at 1.0f (Task 9), so
+    // drawDbmScale3D() can never compute a non-positive span in production.
+    // This seam drives the guard directly so the degenerate-span case can be
+    // proven, not just argued.
+    void drawDbmScaleLabelsForTest(QPainter& p, const QRect& specRect,
+                                   float topDbm, float rangeDb) {
+        drawDbmScaleLabels(p, specRect, topDbm, rangeDb);
+    }
+    // Lets a test independently reconstruct drawDbmScale3D's exact output
+    // (chrome, then labels at floorDbm+dssRoundedSpanDb()) from public
+    // pieces alone, to cross-check that drawDbmScale3D really uses the
+    // rounded span rather than an independently-diverged computation.
+    void drawDbmScaleChromeForTest(QPainter& p, const QRect& specRect) {
+        drawDbmScaleChrome(p, specRect);
+    }
+
     void setWfOpacity(int percent);          // 0..100
     int  wfOpacity() const { return m_wfOpacity; }
     void setWfUpdatePeriodMs(int ms);
@@ -926,8 +1130,17 @@ public slots:
     QColor rxFilterColor() const noexcept { return m_rxFilterColor; }
 
     // ---- Per-pan settings persistence ----
-    void setPanIndex(int idx) { m_panIndex = idx; }
+    // setPanIndex() also forwards to this widget's owned
+    // DisplaySettingsModel (Task 18) so the child's per-pan keys always
+    // track this widget's own. Out-of-line (not inline) because
+    // DisplaySettingsModel is only forward-declared in this header.
+    void setPanIndex(int idx);
     int  panIndex() const { return m_panIndex; }
+    // The DisplaySettingsModel this widget owns and binds to (Task 18):
+    // one per SpectrumWidget, i.e. one per panadapter. Surfaces that
+    // follow the active pan reach it through
+    // RadioModel::spectrumWidget()->displaySettings().
+    DisplaySettingsModel* displaySettings() const { return m_displaySettings; }
     void loadSettings();
     void saveSettings();
     // Public coalesced-save trigger. Used by setup pages that call setDbmRange()
@@ -1285,6 +1498,21 @@ public:
         m_overlayStaticDirty = false;
 #endif
     }
+    // I2 fix seam: runs the same GPU-path 3D dBm-scale overlay-cache
+    // freshness check updateSpectrumLinear() runs every frame (right
+    // after processNoiseFloor()), without needing a synthetic FFT frame.
+    // No-op on a CPU-only build -- nothing is cached there to go stale,
+    // matching overlayStaticDirtyForTest() above.
+    void refreshDssScaleOverlayFreshnessForTest() {
+#ifdef NEREUS_GPU_SPECTRUM
+        updateDssScaleOverlayFreshness();
+#endif
+    }
+    // Task 18: counts real (non-guarded) applies across all fifteen
+    // DisplaySettingsModel-bound appliers. Used to prove loadSettings()
+    // never drives an apply (it pushes straight into the model, bypassing
+    // these appliers entirely) and that a no-op re-apply does not move it.
+    int displaySettingsApplyCountForTest() const { return m_displaySettingsApplyCount; }
 
 signals:
     // 2026-05-22 bench fix: emitted after each updateSpectrumLinear
@@ -1385,6 +1613,32 @@ signals:
     // Same pattern as TxChannel::txFilterApplied (Plan 4 D8).
     void txFilterOverlayPainted(int xLeft, int xRight);
 
+    // ── 3DSS Setup-dialog mirror (3D Stacked-Trace Spectrum Plan Task 15) ──
+    // Two surfaces now edit the seven DSS controls above (Task 24 adds
+    // dssRowDividerChanged, the seventh): the Task 13 right-click overlay
+    // menu and Setup -> Display -> 3D View (Display3DSetupPage). Each
+    // setter emits its matching signal here after its own
+    // state-settles/early-return guard (`if (m_field == v) { return; }`),
+    // so the Setup page can follow a change made through the overlay menu
+    // (or any other caller) the same way it already follows its own
+    // widgets, without a second polling path. Six of the seven are
+    // NereusSDR-original signal infrastructure -- source-first governs
+    // DSP/radio logic, not this control-surface wiring.
+    // dssFloorDepthChanged borrows its guarded-emit shape from AetherSDR
+    // SpectrumWidget.h:799 [@1872028c] dssFloorDepthResolved (a real but
+    // narrower-purpose upstream signal that fed the SAME overlay menu
+    // back for a Flex/Kiwi source-dispatch reason NereusSDR's single-
+    // source model does not have) -- see docs/attribution/aethersdr-
+    // reconciliation.md, "3D Stacked-Trace Spectrum Plan" section, the
+    // Task 15 rows for this file, for the full citation.
+    void spectrumRenderModeChanged(int mode);
+    void dssFloorDepthChanged(int dB);
+    void dssGainChanged(int pct);
+    void dssRowSpanChanged(int pct);
+    void dssAngleChanged(int pct);
+    void dssRowDividerChanged(int n);
+    void threeDSliceDepthChanged(bool on);
+
 protected:
 #ifdef NEREUS_GPU_SPECTRUM
     void initialize(QRhiCommandBuffer* cb) override;
@@ -1427,6 +1681,19 @@ private:
     // ---- Drawing helpers ----
     void drawGrid(QPainter& p, const QRect& specRect);
     void drawSpectrum(QPainter& p, const QRect& specRect);
+    // 3DSS CPU fallback surface (Task 10): builds/caches the DssRenderer
+    // QImage at up to px, capped by kDssFallbackMaxW/H so a HiDPI/maximized
+    // window doesn't rebuild a multi-megapixel image every frame -- the
+    // surface is intrinsically low-res and gets stretched on draw either
+    // way. Shared by drawSpectrum()'s QPainter path (NEREUS_GPU_SPECTRUM=OFF
+    // builds, which never reach renderGpuFrame() at all) and
+    // uploadDssFallbackImage() (the RGBA16F-unsupported GPU path). Unlike
+    // upstream's buildDssImage(), floorDbm is not a caller-supplied
+    // parameter: NereusSDR has one floor source (dssFloorDbm()), not
+    // upstream's per-caller value (m_lastDetectDssFloor in 2D, dssFloorDbm()
+    // in 3D).
+    // From AetherSDR SpectrumWidget.cpp:11880-11894 [@1872028c].
+    const QImage& buildDssImage(const QSize& px, int scaleStripPx);
     // Active Peak Hold separate render pass (Q14.1). Called from drawSpectrum()
     // after the fill path so the peak trace sits on top of fill but below
     // the live trace line.  Iterates the per-display-pixel peak array
@@ -1472,6 +1739,19 @@ private:
     void drawWaterfallChrome(QPainter& p, const QRect& wfRect);
     void drawFreqScale(QPainter& p, const QRect& r);
     void drawDbmScale(QPainter& p, const QRect& specRect);
+    // Task 11 (3D dBm scale). drawDbmScaleChrome/drawDbmScaleLabels are new
+    // additions -- ported from AetherSDR's shared 2D/3D helpers -- and are
+    // NOT wired into drawDbmScale() above, which stays untouched so the 2D
+    // path sees zero behavioural change. Only drawDbmScale3D() calls them.
+    // From AetherSDR SpectrumWidget.cpp:17223-17335 [@1872028c]
+    void drawDbmScaleChrome(QPainter& p, const QRect& specRect);
+    void drawDbmScaleLabels(QPainter& p, const QRect& specRect,
+                            float topDbm, float rangeDb);
+    // In 3D mode, a single right-side axis cannot be pixel-exact for every
+    // perspective row. Keep it as a full-height amplitude reference anchored
+    // to the 3D floor, so plain drag visibly shifts the dBm numbers and
+    // Ctrl/Meta-drag changes the span.
+    void drawDbmScale3D(QPainter& p, const QRect& specRect, float floorDbm);
     void drawBandPlan(QPainter& p, const QRect& specRect);
 
     // ── Waterfall scrollback (sub-epic E) ─────────────────────────────────
@@ -1626,6 +1906,34 @@ private:
     void   pushWaterfallRow(const QVector<float>& wfPixelsDbm);
     QRgb   dbmToRgb(float dbm) const;
 
+    // 3D Speed (Task 24): folds up to effectiveDssRowDivider() waterfall
+    // rows into one 3D row by per-column peak-hold before handing the
+    // result to pushDssRow(), so a divider above 1 does not lose a
+    // one-tick burst. Called from pushWaterfallRow() downstream of the
+    // stop-on-TX gate: same placement rule pushDssRow() documented
+    // directly before this task; see the call site there for why
+    // placement matters.
+    void accumulateDssRow(const QVector<float>& wfPixelsDbm);
+
+    // 3DSS: resamples + stores one already-folded row into the
+    // stacked-trace ring. Called only from accumulateDssRow(), once its
+    // fold count reaches effectiveDssRowDivider(): wfPixelsDbm is the
+    // folded exact row (m_dssFoldRow), and the wide (off-screen) channel
+    // is built from the folded m_dssFoldFullBins rather than
+    // m_lastFullBinsDbm directly (Task 24), so a burst that lasts a
+    // single waterfall tick still reaches both channels even when
+    // several ticks are folded into one 3D row. Task 8 extended this to
+    // also feed the wide channel via pushRowWithWide.
+    void pushDssRow(const QVector<float>& wfPixelsDbm);
+
+    // The glide-clock increment per millisecond of wall-clock delta
+    // between display ticks, scaled by effectiveDssRowDivider() so the
+    // scroll phase still completes exactly once per pushed 3D row
+    // regardless of how many waterfall ticks that row folds (Task 24).
+    // Used by the m_displayTimer lambda and exposed by
+    // dssScrollIncrementForTest().
+    float dssScrollIncrement(int deltaMs) const;
+
     // ---- FFT pipeline state ----
     // Single Thetis-faithful pipeline: linear-power FFT bins -> visible
     // slice -> detector -> avenger -> dBm display pixels.  Spectrum and
@@ -1636,6 +1944,12 @@ private:
     QVector<float> m_renderedPixels;       // spectrum avenger output (dBm)
     QVector<float> m_wfDisplayLinearPixels; // waterfall detector output (linear)
     QVector<float> m_wfRenderedPixels;     // waterfall avenger output (dBm)
+    // 3DSS wide channel feed: m_fullLinearBins converted to dBm at full
+    // bin resolution (unsliced -- NOT visibleBinRange()'d), so
+    // buildDssWideRow() can window bins outside the current view. Cached
+    // once per FFT frame in updateSpectrumLinear(), gated on Mode3D since
+    // nothing reads it in 2D. See buildDssWideRow()/pushDssRow() (.cpp).
+    QVector<float> m_lastFullBinsDbm;
 
     // Equivalent Noise Bandwidth of the current FFT window, in bins.
     // Refreshed every frame via the windowEnb arg on fftReadyLinear so
@@ -1844,6 +2158,49 @@ private:
     bool  m_showRxZeroLineOnWaterfall{false};
     bool  m_showTxZeroLineOnWaterfall{false};
 
+    // ---- 3DSS stacked-trace mode state ----
+    SpectrumRenderMode m_spectrumRenderMode{SpectrumRenderMode::Mode2D};
+    // 3DSS floor depth: how far below the measured noise floor the surface
+    // baseline sits, in dB. Persisted per band (design doc section 6.3).
+    int  m_dssFloorDepth{6};
+    int  m_dssGain{70};        // colour gamma 0-100
+    int  m_dssRowSpan{100};    // wedge close-in 0-100
+    //-KG4VCF [v0.5.3] NereusSDR-original: upstream renders at one fixed
+    // viewing angle. 50 reproduces its geometry exactly.
+    int  m_dssAngle{50};
+    // 3D Speed (Task 24, NereusSDR-original): 0 == Match (automatic; see
+    // effectiveDssRowDivider()), 1..10 == manual row divider.
+    // m_dssFoldRow/m_dssFoldFullBins/m_dssFoldCount hold the peak-hold
+    // fold in progress across the waterfall ticks between two pushed 3D
+    // rows -- see accumulateDssRow() and design doc section 4.5.
+    int  m_dssRowDivider{0};
+    QVector<float> m_dssFoldRow;
+    QVector<float> m_dssFoldFullBins;
+    int  m_dssFoldCount{0};
+    bool m_threeDSliceDepth{false};
+    DssRenderer m_dss;
+    int  m_dssRowsPushed{0};
+    bool m_txActiveForTest{false};
+    // Continuous scroll progress toward the back between discrete DSS row
+    // pushes (0 just after a push, ramping to 1 by the time the next one
+    // lands), so the mesh glides instead of popping once per push. Advanced
+    // from wall clock in the m_displayTimer tick, reset in pushDssRow().
+    // NereusSDR-original: upstream drives the equivalent quantity from a
+    // QElapsedTimer restarted per push burst (SpectrumWidget.cpp:6031-6064
+    // [@1872028c]); NereusSDR's producer always advances by exactly one
+    // row, so an accumulate/reset pair on the existing display timer needs
+    // no new clock object.
+    float  m_dssScrollProgressRows{0.0f};
+    qint64 m_dssLastTickMs{0};   // wall clock of the previous display tick
+
+    // 3DSS CPU fallback surface (Task 10). Consumed by BOTH the GPU
+    // "mesh unavailable" path and the CPU paint path, so these stay outside
+    // the NEREUS_GPU_SPECTRUM block below -- the QPainter path needs them
+    // even when GPU spectrum rendering is disabled (-DNEREUS_GPU_SPECTRUM=OFF).
+    // From AetherSDR SpectrumWidget.h:1510-1511 [@1872028c].
+    static constexpr int kDssFallbackMaxW = 1024;   // 3DSS surface texture/image caps
+    static constexpr int kDssFallbackMaxH = 512;
+
     // AGC rolling envelope (tracked across waterfall rows).
     float m_wfAgcRunMin{0.0f};
     float m_wfAgcRunMax{0.0f};
@@ -1905,6 +2262,23 @@ private:
     qint64 m_fpsLastUpdateMs{0};
     float  m_fpsDisplayValue{0.0f};
 
+    // Toggle for the in-spectrum perf overlay (drawn in a corner showing
+    // paint/gap/fft/overlay-rebuild timings + audio underruns + memory
+    // pressure).  Persisted via AppSettings key "ShowPerfOverlay"; View
+    // menu wires the setter.  Declared unconditionally (unlike the
+    // renderGpuFrame-only perf fields further down, guarded by
+    // NEREUS_GPU_SPECTRUM): showPerfOverlay()/setShowPerfOverlay() and the
+    // constructor's m_perfPollTimer setup are ordinary shared code, so a
+    // CPU-only build needs the same storage even though it has no GPU
+    // overlay to actually draw the HUD into -- same reasoning as
+    // dssMeshReady() above. This was a pre-existing CPU-build break
+    // (predates the 3DSS port) caught while verifying -DNEREUS_GPU_SPECTRUM=OFF
+    // for this fix wave.
+    bool m_showPerfOverlay{false};
+    // 1 Hz timer that polls memory pressure + drives perf overlay refresh.
+    // Owned by SpectrumWidget via Qt parent ownership.
+    QTimer* m_perfPollTimer{nullptr};
+
     // ---- VFO / filter overlay ----
     double m_vfoHz{0.0};
     int    m_filterLowHz{-2850};    // LSB default — from Thetis
@@ -1912,6 +2286,14 @@ private:
     int    m_stepHz{100};           // tuning step size
 
     int    m_panIndex{0};            // for per-pan settings keys
+
+    // 3D Stacked-Trace Spectrum Plan Task 18: this widget's owned
+    // DisplaySettingsModel (one per SpectrumWidget / panadapter),
+    // constructed in the SpectrumWidget constructor and bound in
+    // bindDisplaySettings(). m_displaySettingsApplyCount is a test seam;
+    // see displaySettingsApplyCountForTest().
+    DisplaySettingsModel* m_displaySettings{nullptr};
+    int                   m_displaySettingsApplyCount{0};
 
     // ---- VFO flag widgets ----
     QMap<int, VfoWidget*> m_vfoWidgets;
@@ -2182,6 +2564,20 @@ private:
     void scheduleSettingsSave();
     bool m_settingsSaveScheduled{false};
 
+    // 3D Stacked-Trace Spectrum Plan Task 18: wires m_displaySettings
+    // bidirectionally (called once from the constructor).
+    // syncDisplaySettingsFromWidget() is called from every write site of
+    // the eight fields with no per-field widget signal (named setters,
+    // setDbmRange(), loadSettings(), the dBm-strip and divider mouse
+    // drags, wheelEvent) -- see SpectrumWidget.cpp for the full list.
+    // Task 20 extended it to also push the six 3D fields (Task 24 makes
+    // it seven), so loadSettings() (which assigns those directly, with no
+    // signal) still seeds the model; at every other call site the seven
+    // 3D pushes are redundant no-ops, since the dedicated widget-level
+    // signal already reached the model first.
+    void bindDisplaySettings();
+    void syncDisplaySettingsFromWidget();
+
     // Recompute m_spectrumAverageAlpha + m_waterfallAverageAlpha from the
     // current per-side time constants and live FPS using the Thetis formula:
     //   α = exp(-1 / (fps × τ_seconds))
@@ -2192,6 +2588,40 @@ private:
     bool   m_draggingDbm{false};
     int    m_dragStartY{0};
     float  m_dragStartRef{0.0f};
+    // 3D stacked-trace spectrum plan, Task 16: the dBm-strip drag-pan
+    // gesture targets 3D Floor instead of Ref Level while in 3D mode (see
+    // the mode branch in mouseMoveEvent). dssFloorDepth() is captured here
+    // at press time, the same way m_dragStartRef captures m_refLevel above,
+    // so the 3D branch has its own drag-start baseline to offset from.
+    // NereusSDR-original: upstream AetherSDR's 3D Floor has no drag
+    // binding at all (SpectrumWidget.cpp's m_draggingDbm only ever moves
+    // its Ref Level equivalent), so there is no upstream field to port.
+    int    m_dragStartDssFloorDepth{0};
+
+    // Task 19: Ctrl-drag (Cmd/Meta too) on the dBm strip -- zooms the span
+    // with the bottom pinned, instead of panning the plain drag above does.
+    // A separate flag + capture set from m_draggingDbm's, even though the
+    // two gestures are mutually exclusive at press time (arrowRow/Ctrl/body
+    // hit-tests are checked in order and each `return`s), because they
+    // capture different quantities: m_dragStartRef is the pre-drag TOP,
+    // these are the pre-drag RANGE and BOTTOM. Named m_dbmRangeDragStartY
+    // rather than reusing m_dragStartY for the same reason -- one drag
+    // reads "Y since press" against a Ref baseline, the other against a
+    // Range baseline, and giving them the same storage would make a stale
+    // read silently plausible after a copy/paste edit.
+    //
+    // Mirrors upstream's m_dbmDragStartY / m_dbmDragStartRange /
+    // m_dbmDragStartBottom (AetherSDR SpectrumWidget.h, used by
+    // SpectrumWidget.cpp:9537-9550, 10493-10501 [@1872028c]). Upstream also
+    // keeps m_dbmDragStartRef for its release-handler transition math
+    // (oldMinDbm/oldMaxDbm for beginDbmRangeTransition); NereusSDR's release
+    // handler has no transition system to feed (see the .cpp mouseRelease
+    // change), so that field has no NereusSDR counterpart.
+    bool   m_draggingDbmRange{false};
+    int    m_dbmRangeDragStartY{0};
+    float  m_dbmRangeDragStartRange{0.0f};
+    float  m_dbmRangeDragStartBottom{0.0f};
+
     QPoint m_mousePos;              // for cursor frequency display
     bool   m_mouseInWidget{false};
 
@@ -2302,6 +2732,20 @@ private:
     bool   m_overlayStaticDirty{true};
     bool   m_overlayNeedsUpload{true};
 
+    // I2 fix (final review of the 3D stacked-trace spectrum port): dBm
+    // value of dssFloorDbm() as of the last time the 3D dBm-scale strip's
+    // label set was actually baked into m_overlayStatic. Compared each
+    // frame (updateDssScaleOverlayFreshness(), called from
+    // updateSpectrumLinear right after processNoiseFloor()) against the
+    // live dssFloorDbm() -- itself re-lerped every frame -- so the overlay
+    // is only marked dirty when the ROUNDED LABEL SET would actually
+    // change, not on every sub-pixel lerp step. std::nullopt means "never
+    // baked yet"; harmless, since m_overlayStaticDirty already starts
+    // true above and bakes the first real frame regardless of this check.
+    std::optional<float> m_dssLastBakedFloorDbm;
+    // I2 fix: the freshness check itself -- see m_dssLastBakedFloorDbm.
+    void updateDssScaleOverlayFreshness();
+
     // 2026-05-26 KG4VCF dual-layer overlay split.
     //
     // The static texture above carries chrome (grid, scales, bandplan,
@@ -2339,14 +2783,6 @@ private:
     // perf overlay can show if paint events are arriving on time.
     // A gap > the display period == main thread was blocked.
     qint64 m_lastPaintWallMs{0};
-    // Toggle for the in-spectrum perf overlay (drawn in a corner
-    // showing paint/gap/fft/overlay-rebuild timings + audio underruns
-    // + memory pressure).  Persisted via AppSettings key
-    // "ShowPerfOverlay"; View menu wires the setter.
-    bool m_showPerfOverlay{false};
-    // 1 Hz timer that polls memory pressure + drives perf overlay
-    // refresh.  Owned by SpectrumWidget via Qt parent ownership.
-    QTimer* m_perfPollTimer{nullptr};
 
     // ---- FFT spectrum GPU resources ----
     QRhiGraphicsPipeline*       m_fftLinePipeline{nullptr};
@@ -2364,6 +2800,78 @@ private:
     static constexpr int kFftVertStride = 6;  // x, y, r, g, b, a
     int m_visibleBinCount{0};  // bins rendered this frame (for draw call count)
 
+    // ---- 3DSS mesh GPU resources ----
+    bool initDssMeshPipeline();
+    void rebuildDssMeshIfNeeded(QRhiResourceUpdateBatch* batch);
+    void uploadDssHeightRows(QRhiResourceUpdateBatch* batch);
+    void uploadDssPaletteLut(QRhiResourceUpdateBatch* batch);
+    void writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
+                         const QRect& specRect, float dpr);
+
+    QRhiGraphicsPipeline*       m_dssFillPipeline{nullptr};
+    QRhiGraphicsPipeline*       m_dssLinePipeline{nullptr};
+    QRhiShaderResourceBindings* m_dssSrb{nullptr};
+    QRhiBuffer*                 m_dssMeshVbo{nullptr};
+    QRhiBuffer*                 m_dssMeshLineVbo{nullptr};
+    QRhiBuffer*                 m_dssUbo{nullptr};
+    QRhiTexture*                m_dssHeightTex{nullptr};
+    QRhiTexture*                m_dssPaletteTex{nullptr};
+    QRhiSampler*                m_dssHeightSampler{nullptr};
+    QRhiSampler*                m_dssPaletteSampler{nullptr};
+    bool    m_dssMeshReady{false};
+    // False until rebuildDssMeshIfNeeded() has actually pushed vertices
+    // for m_dssMeshCols. Guards the first-upload case that a plain dirty
+    // flag misses, and is reset on teardown so a rebuilt pipeline uploads
+    // again.
+    bool    m_dssMeshUploaded{false};
+    int     m_dssMeshCols{0};
+    quint64 m_dssLutToken{~0ull};
+    quint64 m_dssUploadedRowGeneration{~0ull};
+    int     m_dssLastUploadedHead{-1};
+    // Linux takes Qt's default QRhiWidget backend (this file's setApi() only
+    // covers Q_OS_MAC/Q_OS_WIN), which is typically OpenGL -- so this cannot
+    // default to DedicatedRibbonPipeline and stay correct there; it is
+    // overwritten from the real backend at the top of initDssMeshPipeline()
+    // before anything reads it.
+    DssOutlinePipelineMode m_dssOutlinePipelineMode{
+        DssOutlinePipelineMode::DedicatedRibbonPipeline};
+
+    // ---- 3DSS CPU-fallback quad (Task 10: RGBA16F unsupported) ----
+    // Composited through the SAME overlay pipeline (m_ovPipeline/m_ovVbo/
+    // m_ovSampler) the static/dynamic chrome layers already use -- "blit it
+    // through the existing overlay pipeline" per the task brief -- with its
+    // own texture + SRB sized to the spectrum viewport (capped at
+    // kDssFallbackMaxW/H) rather than the full window. Deliberately NOT
+    // named m_dssSrb/m_dssGpuTex: those upstream names belong to the GPU
+    // MESH resources above (m_dssFillPipeline/m_dssSrb/...), claimed by
+    // Task 7 before this task's cached-image fallback existed to need its
+    // own pair -- see docs/attribution/aethersdr-reconciliation.md, Task 7
+    // row, "Task 10 must pick different names for the fallback quad's own
+    // SRB/texture". Upstream itself keeps these two concepts separate too
+    // (m_dssMeshFillPipeline/m_dssMeshSrb for the mesh vs. m_dssGpuTex/
+    // m_dssSrb for its own cached-image fallback); NereusSDR's mesh
+    // resources just happen to have already claimed the shorter names.
+    void uploadDssFallbackImage(QRhiResourceUpdateBatch* batch,
+                                const QRect& specRect, float dpr);
+    QRhiTexture*                m_dssFallbackTex{nullptr};
+    QRhiShaderResourceBindings* m_dssFallbackSrb{nullptr};
+    int     m_dssFallbackTexW{0};
+    int     m_dssFallbackTexH{0};
+    quint64 m_dssFallbackUploadedGen{~0ull};
+
+#endif
+
+    // Whether the GPU 3DSS mesh pipeline is up and has data this frame.
+    // Deliberately declared OUTSIDE the NEREUS_GPU_SPECTRUM block above
+    // (unlike the GPU-only resources and helpers it reads) because callers
+    // such as the 3D VIEW overlay menu's "3D Span" control gate
+    // (dssRowSpanSupported(), DssMeshGeometry.h) need to ask this question
+    // in both build configurations. A CPU-only build has no GPU mesh at
+    // all, so the answer there is always false.
+#ifdef NEREUS_GPU_SPECTRUM
+    bool dssMeshReady() const { return m_dssMeshReady; }
+#else
+    bool dssMeshReady() const { return false; }
 #endif
 
     // Invalidate the GPU-path cached overlay texture so grid, labels,

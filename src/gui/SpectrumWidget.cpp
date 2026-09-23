@@ -115,6 +115,7 @@
 #include "SpectrumWidget.h"
 #include "SpectrumOverlayMenu.h"
 #include "ImdOverlay.h"
+#include "gui/DssMeshGeometry.h"
 #include "spectrum/WaterfallTicker.h"
 #include "widgets/VfoWidget.h"
 #include "ColorSwatchButton.h"
@@ -124,6 +125,7 @@
 #include "dbm_strip_math.h"
 #include "popup_placement.h"
 #include "models/BandPlanManager.h"
+#include "models/DisplaySettingsModel.h"
 #include "models/NotchModel.h"
 #include "spectrum/SpectrumDetector.h"
 
@@ -135,6 +137,7 @@
 #include <QLabel>
 #include <QPropertyAnimation>
 #include <QScreen>
+#include <QSignalBlocker>
 #include <QToolTip>
 #include <QUrl>
 
@@ -153,12 +156,21 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QFile>
+// Pre-existing CPU-build gap (predates the 3DSS port): m_waterfallTickerThread
+// calls QThread::start()/quit()/wait() and connects &QThread::started /
+// &QThread::finished, all needing the complete type. The GPU build got this
+// transitively through <rhi/qrhi.h>'s Qt-private includes; CPU-only never
+// pulled it in, so <QThread> was only ever forward-declared and the build
+// failed with -DNEREUS_GPU_SPECTRUM=OFF. Caught while verifying that
+// configuration for this fix wave.
+#include <QThread>
 
 #ifdef NEREUS_GPU_SPECTRUM
 #include <rhi/qshader.h>
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <utility>
@@ -333,6 +345,30 @@ const WfGradientStop* wfSchemeStops(WfColorScheme scheme, int& count)
     }
 }
 
+// Interpolate a 0..1 position across a scheme's gradient stops. Extracted
+// from dbmToRgb()'s inline loop so the 3DSS palette can share the stops
+// without inheriting the waterfall gain / black-level window applied above
+// it. Behaviour is unchanged for dbmToRgb.
+QRgb interpolateWfGradient(float t, const WfGradientStop* stops, int count)
+{
+    const float adjusted = qBound(0.0f, t, 1.0f);
+    // Find the two surrounding stops and interpolate
+    for (int i = 0; i < count - 1; ++i) {
+        if (adjusted <= stops[i + 1].pos) {
+            const float f = (adjusted - stops[i].pos)
+                          / (stops[i + 1].pos - stops[i].pos);
+            const int r = static_cast<int>(
+                stops[i].r + f * (stops[i + 1].r - stops[i].r));
+            const int g = static_cast<int>(
+                stops[i].g + f * (stops[i + 1].g - stops[i].g));
+            const int b = static_cast<int>(
+                stops[i].b + f * (stops[i + 1].b - stops[i].b));
+            return qRgb(r, g, b);
+        }
+    }
+    return qRgb(stops[count - 1].r, stops[count - 1].g, stops[count - 1].b);
+}
+
 // ---- SpectrumWidget ----
 
 SpectrumWidget::SpectrumWidget(QWidget* parent)
@@ -410,6 +446,32 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
         if (m_hasNewSpectrum) {
             m_hasNewSpectrum = false;
             update();
+        }
+
+        // 3DSS: advance the continuous scroll-progress accumulator from
+        // wall clock between DSS row pushes (see m_dssScrollProgressRows'
+        // header comment). Gated on Mode3D to match the "no wasted 2D
+        // work" shape the rest of the 3DSS pipeline already follows
+        // (rebuildDssMeshIfNeeded/uploadDssPaletteLut/uploadDssHeightRows
+        // in renderGpuFrame()); m_dssLastTickMs resets to 0 on leaving 3D
+        // so a stale multi-second gap can never appear as one giant jump
+        // when 3D is re-entered.
+        if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+            const qint64 nowTickMs = QDateTime::currentMSecsSinceEpoch();
+            if (m_dssLastTickMs > 0) {
+                // Task 24: the increment is factored out into
+                // dssScrollIncrement() so it can scale by
+                // effectiveDssRowDivider() -- with divider N the glide now
+                // takes N waterfall ticks (not one) to reach a pushed row,
+                // matching accumulateDssRow()'s fold.
+                const int deltaMs =
+                    static_cast<int>(nowTickMs - m_dssLastTickMs);
+                m_dssScrollProgressRows = qBound(0.0f,
+                    m_dssScrollProgressRows + dssScrollIncrement(deltaMs), 1.0f);
+            }
+            m_dssLastTickMs = nowTickMs;
+        } else {
+            m_dssLastTickMs = 0;
         }
     });
     m_displayTimer.start();
@@ -556,6 +618,17 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // Phase 3M-4 Task 12 — two-tone IMD overlay analytical core.
     // Owned via QObject parenting; raw pointer mirrors m_bandPlanManager.
     m_imdOverlay = new ImdOverlay(this);
+
+    // 3D Stacked-Trace Spectrum Plan Task 18: create and bind this
+    // widget's DisplaySettingsModel last, after every other member is
+    // initialised. m_panIndex is already known here (its in-class
+    // initializer runs before this constructor body, and no earlier
+    // statement above changes it), so the model starts scoped to
+    // whatever pan this widget currently claims; a caller that later
+    // calls setPanIndex() re-scopes both together.
+    m_displaySettings = new DisplaySettingsModel(this);
+    m_displaySettings->setPanIndex(m_panIndex);
+    bindDisplaySettings();
 }
 
 SpectrumWidget::~SpectrumWidget()
@@ -581,6 +654,20 @@ static QString settingsKey(const QString& base, int panIndex)
         return base;
     }
     return QStringLiteral("%1_%2").arg(base).arg(panIndex);
+}
+
+// 3D Stacked-Trace Spectrum Plan Task 18: forwards to m_displaySettings
+// so the owned model's per-pan keys always track this widget's own. The
+// guard is defensive only -- by the time any external caller can reach
+// this method the constructor has already run to completion and
+// m_displaySettings is never null again after that -- but costs nothing
+// to keep honest.
+void SpectrumWidget::setPanIndex(int idx)
+{
+    m_panIndex = idx;
+    if (m_displaySettings) {
+        m_displaySettings->setPanIndex(idx);
+    }
 }
 
 void SpectrumWidget::loadSettings()
@@ -643,6 +730,32 @@ void SpectrumWidget::loadSettings()
     // a per-pan key without going through rawValue, or that setting will
     // silently stop inheriting.
 
+    // 3D Stacked-Trace Spectrum Plan Task 23: DisplaySettingsModel is now
+    // the persister for its own fourteen fields (Colour Scheme, Colour
+    // Gain, Black Level, Ref Level, Dyn Range, Fill Alpha, Fill trace,
+    // Spectrum mode, 3D Gain, 3D Span, 3D Angle, 3D Speed, 3D Slice
+    // Shadow, split fraction) -- this function no longer reads any of
+    // their AppSettings keys itself. Load the model once, up front, with
+    // its own signals blocked: DisplaySettingsModel::load() calls its own
+    // setters, which -- through bindDisplaySettings()'s model-to-widget
+    // connections -- would otherwise fire straight back into this
+    // widget's OWN appliers (setRefLevel(), setWfColorGain(), ...) for
+    // every seeded value that differs from the model's just-constructed
+    // ship default. Each of those appliers calls update() and
+    // scheduleSettingsSave() and increments m_displaySettingsApplyCount,
+    // none of which loadSettings() is allowed to do (see
+    // displaySettingsApplyCountForTest()'s "no apply during load"
+    // contract). Blocking the model's signals lets its own members settle
+    // silently; every read of the fourteen below this point copies the
+    // model's freshly loaded getter straight into this widget's member,
+    // never through this widget's own setters. 3D Floor is excluded from
+    // the model's load() (see DisplaySettingsModel.h's file header) and
+    // stays out of this function exactly as before Task 23.
+    {
+        const QSignalBlocker blocker(m_displaySettings);
+        m_displaySettings->load();
+    }
+
     // Ship defaults — calibrated 2026-04-30 against a live ANAN-G2 with
     // a typical residential noise floor (-115 to -120 dBm in the
     // amateur HF bands). Earlier defaults ran 12 dB hotter (Grid -36 /
@@ -650,11 +763,13 @@ void SpectrumWidget::loadSettings()
     // experience — band noise jammed the bottom of the panadapter and
     // lit up the waterfall floor. Shifting the entire reference plane
     // down 12 dB gives a clean "noise sits low" first impression.
-    // Dynamic range (68 dB grid, 60 dB waterfall) is unchanged.
-    m_refLevel       = readFloat(QStringLiteral("DisplayGridMax"), -48.0f);
-    m_dynamicRange   = readFloat(QStringLiteral("DisplayGridMax"), -48.0f)
-                     - readFloat(QStringLiteral("DisplayGridMin"), -116.0f);
-    m_spectrumFrac   = readFloat(QStringLiteral("DisplaySpectrumFrac"), 0.40f);
+    // Dynamic range (68 dB grid, 60 dB waterfall) is unchanged. Now
+    // sourced from the model (Task 23), which carries the identical
+    // defaults (DisplaySettingsModel.h's m_refLevel/m_dynamicRange
+    // in-class initializers).
+    m_refLevel       = m_displaySettings->refLevel();
+    m_dynamicRange   = m_displaySettings->dynamicRange();
+    m_spectrumFrac   = m_displaySettings->spectrumFrac();
 
     // Phase 3G-12: persist the spectrum zoom level (visible bandwidth)
     // across app restarts. Center frequency is persisted indirectly via
@@ -662,8 +777,8 @@ void SpectrumWidget::loadSettings()
     // Default 192000 Hz = 192 kHz matches the P1 base sample rate.
     m_bandwidthHz    = static_cast<double>(
                           readFloat(QStringLiteral("DisplayBandwidth"), 192000.0f));
-    m_wfColorGain    = readInt(QStringLiteral("DisplayWfColorGain"), 45);
-    m_wfBlackLevel   = readInt(QStringLiteral("DisplayWfBlackLevel"), 104);
+    m_wfColorGain    = m_displaySettings->wfColorGain();   // Task 23: was readInt(DisplayWfColorGain)
+    m_wfBlackLevel   = m_displaySettings->wfBlackLevel();  // Task 23: was readInt(DisplayWfBlackLevel)
     m_wfHighThreshold = readFloat(QStringLiteral("DisplayWfHighLevel"), -62.0f);
     m_wfLowThreshold = readFloat(QStringLiteral("DisplayWfLowLevel"), -122.0f);
     // Seed render-active mirror from persistent user values — matches
@@ -673,14 +788,15 @@ void SpectrumWidget::loadSettings()
     // above stay untouched (issue #230 fix).
     m_wfActiveHighThreshold = m_wfHighThreshold;
     m_wfActiveLowThreshold  = m_wfLowThreshold;
-    m_fillAlpha      = readFloat(QStringLiteral("DisplayFftFillAlpha"), 0.70f);
-    m_panFill        = readBool(QStringLiteral("DisplayPanFill"), true);
+    m_fillAlpha      = m_displaySettings->fillAlpha();     // Task 23: was readFloat(DisplayFftFillAlpha)
+    m_panFill        = m_displaySettings->panFill();       // Task 23: was readBool(DisplayPanFill)
 
     m_ctunEnabled    = readBool(QStringLiteral("DisplayCtunEnabled"), true);
 
-    int scheme = readInt(QStringLiteral("DisplayWfColorScheme"), 0);
-    m_wfColorScheme = static_cast<WfColorScheme>(qBound(0, scheme,
-                          static_cast<int>(WfColorScheme::Count) - 1));
+    // Task 23: was readInt(DisplayWfColorScheme) + qBound(0, ..., Count-1);
+    // the model's own setWfColorScheme() clamps to the identical [0,7]
+    // range (WfColorScheme::Count == 8).
+    m_wfColorScheme = static_cast<WfColorScheme>(m_displaySettings->wfColorScheme());
 
     // Phase 3G-8 commit 3: spectrum renderer state.
     // DisplayAverageMode + DisplayAverageAlpha are retired keys (v0.3.0
@@ -978,6 +1094,43 @@ void SpectrumWidget::loadSettings()
     m_nfOffsetGridFollow = qBound(-60, m_nfOffsetGridFollow, 60);
     m_maintainNFAdjustDelta = s.value(QStringLiteral("DisplayMaintainNFAdjustDelta"),
                                       QStringLiteral("False")).toString() == QStringLiteral("True");
+
+    // 3D Stacked-Trace Spectrum Plan Task 14 (Task 24 added the seventh,
+    // Display3DSpeed; Task 23 moved all seven's persistence onto the
+    // model, already loaded above). 3D Floor is deliberately NOT here --
+    // it is per band on PanadapterModel (see the class-header comment on
+    // setDssFloorDepth()/dssFloorDepth() above); the live m_dssFloorDepth
+    // mirror keeps whatever value the band-change push last set until the
+    // next one arrives.
+    {
+        // Direct assignment, not setSpectrumRenderMode(mode): that setter's
+        // ring-clear-on-leaving-3D (m_dss.clear()/m_dssRowsPushed=0),
+        // markOverlayDirty()/update(), and spectrumRenderModeChanged signal
+        // all assume a LIVE transition an observer might care about.
+        // loadSettings() runs once at construction, before this widget has
+        // painted a frame or wired any observer to that signal, so skipping
+        // them here is inert today. It will stop being inert once Phase 3F
+        // (multi-panadapter) can call loadSettings() again on an
+        // already-live widget to re-home it onto a different pan's
+        // persisted config -- migrating a 3D pan's widget onto a 2D pan's
+        // settings would then leave a stale ring behind and never notify
+        // whatever had been listening for the mode change. Route through
+        // setSpectrumRenderMode() once that reuse path exists. Task 23:
+        // the value now comes from the model (loaded, signal-blocked,
+        // above), not a fresh readInt() -- the model's own
+        // setSpectrumRenderMode() clamps to the identical Mode2D/Mode3D
+        // range.
+        m_spectrumRenderMode =
+            static_cast<SpectrumRenderMode>(m_displaySettings->spectrumRenderMode());
+    }
+    // Task 23: were qBound(0, readInt(...), 100) / qBound(0, readInt(...), 10)
+    // -- the model's own setters clamp each field to the identical range.
+    m_dssGain          = m_displaySettings->dssGain();
+    m_dssRowSpan       = m_displaySettings->dssRowSpan();
+    m_dssAngle         = m_displaySettings->dssAngle();
+    m_dssRowDivider    = m_displaySettings->dssRowDivider();
+    m_threeDSliceDepth = m_displaySettings->threeDSliceDepth();
+
     recomputeExtendedMode();
 }
 
@@ -992,18 +1145,26 @@ void SpectrumWidget::saveSettings()
         s.setValue(settingsKey(key, m_panIndex), QString::number(val));
     };
 
-    writeFloat(QStringLiteral("DisplayGridMax"), m_refLevel);
-    writeFloat(QStringLiteral("DisplayGridMin"), m_refLevel - m_dynamicRange);
-    writeFloat(QStringLiteral("DisplaySpectrumFrac"), m_spectrumFrac);
+    // 3D Stacked-Trace Spectrum Plan Task 23: DisplaySettingsModel is now
+    // the sole persister for its own fourteen fields (Colour Scheme,
+    // Colour Gain, Black Level, Ref Level, Dyn Range, Fill Alpha, Fill
+    // trace, Spectrum mode, 3D Gain, 3D Span, 3D Angle, 3D Speed, 3D
+    // Slice Shadow, split fraction) -- this function no longer writes any
+    // of their AppSettings keys directly. syncDisplaySettingsFromWidget()
+    // pushes this widget's current values into the model one more time
+    // first (every write site already pushes on change, so this is
+    // normally a no-op; not relied upon to be, since a caller could in
+    // principle reach saveSettings() directly), then the model's own
+    // save() writes its fourteen keys under this widget's panIndex(). 3D
+    // Floor is excluded from both, exactly as before Task 23: it
+    // persists per band on PanadapterModel (see the class-header comment
+    // on setDssFloorDepth()/dssFloorDepth()).
+    syncDisplaySettingsFromWidget();
+    m_displaySettings->save();
+
     writeFloat(QStringLiteral("DisplayBandwidth"), static_cast<float>(m_bandwidthHz));  // Phase 3G-12
-    writeInt(QStringLiteral("DisplayWfColorGain"), m_wfColorGain);
-    writeInt(QStringLiteral("DisplayWfBlackLevel"), m_wfBlackLevel);
     writeFloat(QStringLiteral("DisplayWfHighLevel"), m_wfHighThreshold);
     writeFloat(QStringLiteral("DisplayWfLowLevel"), m_wfLowThreshold);
-    writeFloat(QStringLiteral("DisplayFftFillAlpha"), m_fillAlpha);
-    s.setValue(settingsKey(QStringLiteral("DisplayPanFill"), m_panIndex),
-              m_panFill ? QStringLiteral("True") : QStringLiteral("False"));
-    writeInt(QStringLiteral("DisplayWfColorScheme"), static_cast<int>(m_wfColorScheme));
     s.setValue(settingsKey(QStringLiteral("DisplayCtunEnabled"), m_panIndex),
               m_ctunEnabled ? QStringLiteral("True") : QStringLiteral("False"));
 
@@ -1137,6 +1298,16 @@ void SpectrumWidget::saveSettings()
                QString::number(m_nfOffsetGridFollow));
     s.setValue(QStringLiteral("DisplayMaintainNFAdjustDelta"),
                m_maintainNFAdjustDelta ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // 3D Stacked-Trace Spectrum Plan Task 14 (Task 24 added the seventh,
+    // Display3DSpeed): six of the seven 3D controls -- Spectrum render
+    // mode, 3D Gain, 3D Span, 3D Angle, 3D Speed and 3D Slice Shadow --
+    // are six of the model's fourteen, already written above by
+    // m_displaySettings->save(). 3D Floor is the seventh and the
+    // exception: it is deliberately excluded from both, persisting per
+    // band on PanadapterModel instead (see the class-header comment on
+    // setDssFloorDepth()/dssFloorDepth()), so no Display3DFloorDepth key
+    // is written from here.
 }
 
 void SpectrumWidget::scheduleSettingsSave()
@@ -1150,6 +1321,113 @@ void SpectrumWidget::scheduleSettingsSave()
         saveSettings();
         AppSettings::instance().save();
     });
+}
+
+// 3D Stacked-Trace Spectrum Plan Task 18: wires this widget's owned
+// DisplaySettingsModel bidirectionally. Called once from the
+// constructor, after m_displaySettings is created.
+//
+// Model -> widget: all fifteen model xxxChanged signals drive the
+// matching widget applier, so a change made anywhere the model is
+// reachable (a future popup/Setup/applet binding) lands on the live
+// renderer exactly the way a direct widget call already does.
+//
+// Widget -> model: the seven 3D fields (six from Task 15, plus 3D Speed
+// from Task 24) already have their own widget-level xxxChanged signal, so
+// those seven connect straight back to the model here. The other eight
+// have no per-field widget signal; those
+// push through syncDisplaySettingsFromWidget(), called explicitly from
+// every one of their write sites instead (see that method and its
+// call sites).
+void SpectrumWidget::bindDisplaySettings()
+{
+    // ---- Model -> widget (all fifteen) ----
+    connect(m_displaySettings, &DisplaySettingsModel::wfColorSchemeChanged,
+            this, [this](int v) { setWfColorScheme(static_cast<WfColorScheme>(v)); });
+    connect(m_displaySettings, &DisplaySettingsModel::wfColorGainChanged,
+            this, &SpectrumWidget::setWfColorGain);
+    connect(m_displaySettings, &DisplaySettingsModel::wfBlackLevelChanged,
+            this, &SpectrumWidget::setWfBlackLevel);
+    connect(m_displaySettings, &DisplaySettingsModel::refLevelChanged,
+            this, &SpectrumWidget::setRefLevel);
+    connect(m_displaySettings, &DisplaySettingsModel::dynamicRangeChanged,
+            this, &SpectrumWidget::setDynamicRange);
+    connect(m_displaySettings, &DisplaySettingsModel::fillAlphaChanged,
+            this, &SpectrumWidget::setFillAlpha);
+    connect(m_displaySettings, &DisplaySettingsModel::panFillChanged,
+            this, &SpectrumWidget::setPanFillEnabled);
+    connect(m_displaySettings, &DisplaySettingsModel::spectrumFracChanged,
+            this, &SpectrumWidget::setSpectrumFrac);
+    connect(m_displaySettings, &DisplaySettingsModel::spectrumRenderModeChanged,
+            this, &SpectrumWidget::setSpectrumRenderMode);
+    connect(m_displaySettings, &DisplaySettingsModel::dssFloorDepthChanged,
+            this, &SpectrumWidget::setDssFloorDepth);
+    connect(m_displaySettings, &DisplaySettingsModel::dssGainChanged,
+            this, &SpectrumWidget::setDssGain);
+    connect(m_displaySettings, &DisplaySettingsModel::dssRowSpanChanged,
+            this, &SpectrumWidget::setDssRowSpan);
+    connect(m_displaySettings, &DisplaySettingsModel::dssAngleChanged,
+            this, &SpectrumWidget::setDssAngle);
+    connect(m_displaySettings, &DisplaySettingsModel::dssRowDividerChanged,
+            this, &SpectrumWidget::setDssRowDivider);
+    connect(m_displaySettings, &DisplaySettingsModel::threeDSliceDepthChanged,
+            this, &SpectrumWidget::setThreeDSliceDepth);
+
+    // ---- Widget -> model (3D seven only; the other eight push explicitly
+    //      via syncDisplaySettingsFromWidget()) ----
+    connect(this, &SpectrumWidget::spectrumRenderModeChanged,
+            m_displaySettings, &DisplaySettingsModel::setSpectrumRenderMode);
+    connect(this, &SpectrumWidget::dssFloorDepthChanged,
+            m_displaySettings, &DisplaySettingsModel::setDssFloorDepth);
+    connect(this, &SpectrumWidget::dssGainChanged,
+            m_displaySettings, &DisplaySettingsModel::setDssGain);
+    connect(this, &SpectrumWidget::dssRowSpanChanged,
+            m_displaySettings, &DisplaySettingsModel::setDssRowSpan);
+    connect(this, &SpectrumWidget::dssAngleChanged,
+            m_displaySettings, &DisplaySettingsModel::setDssAngle);
+    connect(this, &SpectrumWidget::dssRowDividerChanged,
+            m_displaySettings, &DisplaySettingsModel::setDssRowDivider);
+    connect(this, &SpectrumWidget::threeDSliceDepthChanged,
+            m_displaySettings, &DisplaySettingsModel::setThreeDSliceDepth);
+}
+
+// Pushes the widget's current value for all fifteen DisplaySettingsModel
+// fields into the model -- see bindDisplaySettings()'s comment. Each
+// model setter below carries its own equality guard, so calling all
+// fifteen unconditionally on every write site is safe: only the field
+// that actually changed emits, and any echo back into this widget's own
+// applier is absorbed by ITS guard in turn (see the class's
+// echo-termination note in DisplaySettingsModel.h).
+//
+// Task 20 gap fix: the seven 3D fields (spectrumRenderMode, dssFloorDepth,
+// dssGain, dssRowSpan, dssAngle, dssRowDivider, threeDSliceDepth) already
+// reach the model through their own widget-level xxxChanged signal
+// (bindDisplaySettings()'s "Widget -> model" section), so pushing them
+// here too is a no-op at every call site except one: loadSettings()
+// assigns six of the seven (all but dssFloorDepth) directly, with no
+// signal, so without this push the model's six fields would still hold
+// ship defaults after a persisted-settings load even though the widget
+// itself renders the loaded values. dssFloorDepth is pushed too even
+// though loadSettings() never touches it, since this method's contract
+// is "whatever the widget currently holds," which dssFloorDepth always
+// has a value for (the Task 17 per-band bridge keeps it current).
+void SpectrumWidget::syncDisplaySettingsFromWidget()
+{
+    m_displaySettings->setWfColorScheme(static_cast<int>(m_wfColorScheme));
+    m_displaySettings->setWfColorGain(m_wfColorGain);
+    m_displaySettings->setWfBlackLevel(m_wfBlackLevel);
+    m_displaySettings->setRefLevel(m_refLevel);
+    m_displaySettings->setDynamicRange(m_dynamicRange);
+    m_displaySettings->setFillAlpha(m_fillAlpha);
+    m_displaySettings->setPanFill(m_panFill);
+    m_displaySettings->setSpectrumFrac(m_spectrumFrac);
+    m_displaySettings->setSpectrumRenderMode(static_cast<int>(m_spectrumRenderMode));
+    m_displaySettings->setDssFloorDepth(m_dssFloorDepth);
+    m_displaySettings->setDssGain(m_dssGain);
+    m_displaySettings->setDssRowSpan(m_dssRowSpan);
+    m_displaySettings->setDssAngle(m_dssAngle);
+    m_displaySettings->setDssRowDivider(m_dssRowDivider);
+    m_displaySettings->setThreeDSliceDepth(m_threeDSliceDepth);
 }
 
 void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
@@ -1277,13 +1555,78 @@ void SpectrumWidget::setDbmRange(float minDbm, float maxDbm)
         setWfLowThreshold(minDbm);
         setWfHighThreshold(maxDbm);
     }
+    // Task 18: push, so DisplaySettingsModel follows this widget's
+    // ref level / dynamic range regardless of which caller (Copy button,
+    // NF-aware grid follow, user drag) reached them via this shared
+    // setter rather than the individually-named ones below.
+    syncDisplaySettingsFromWidget();
+}
+
+// 3D Stacked-Trace Spectrum Plan Task 18: named setters for the two
+// fields setDbmRange() above has always written directly. Guards use a
+// fixed absolute epsilon rather than qFuzzyCompare's shape: near zero,
+// qFuzzyCompare's relative tolerance breaks down, and Fill Alpha
+// (guarded the same way as these two) legitimately reaches 0.0 -- the
+// same hazard applies to any newly-added float guard.
+//
+// Bounds are each field's WIDEST existing clamp in this file, not the
+// popup slider's narrower [-160,20]/[20,160]: Dyn Range matches
+// wheelEvent's dBm-strip-scroll block (qBound(10.0f, ..., 200.0f)); Ref
+// Level matches the Task 19 Ctrl-drag gesture a few hundred lines below
+// (mouseMoveEvent's m_draggingDbmRange branch, via
+// clampDbmRangeForBottom's upstream kMinDisplayDbm/kMaxDisplayDbm =
+// -180.0f/80.0f), which is wider than the Shift-scroll block's
+// qBound(-160.0f, ..., 20.0f) a few lines below that. Found by running
+// tst_dbm_range_drag.cpp against an earlier draft that used -160..20
+// here: ctrlDragRange_clampsAtMaximum (which drags refLevel to 60.0f)
+// went red, because the model-to-widget round trip this task adds
+// narrowed 60.0f back down to 20.0f. Same never-narrower-than-any-
+// widget-write-path rule as Dyn Range.
+void SpectrumWidget::setRefLevel(float dBm)
+{
+    const float clamped = qBound(-180.0f, dBm, 80.0f);
+    if (std::abs(m_refLevel - clamped) < 1e-6f) { return; }
+    m_refLevel = clamped;
+    update();
+    scheduleSettingsSave();
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
+}
+
+void SpectrumWidget::setDynamicRange(float dB)
+{
+    const float clamped = qBound(10.0f, dB, 200.0f);
+    if (std::abs(m_dynamicRange - clamped) < 1e-6f) { return; }
+    m_dynamicRange = clamped;
+    update();
+    scheduleSettingsSave();
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
+}
+
+// Clamp matches the divider drag in mouseMoveEvent
+// (m_spectrumFrac = std::clamp(frac, 0.10f, 0.90f)).
+void SpectrumWidget::setSpectrumFrac(float frac)
+{
+    const float clamped = qBound(0.10f, frac, 0.90f);
+    if (std::abs(m_spectrumFrac - clamped) < 1e-6f) { return; }
+    m_spectrumFrac = clamped;
+    update();
+    scheduleSettingsSave();
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
 }
 
 void SpectrumWidget::setWfColorScheme(WfColorScheme scheme)
 {
+    // Task 18: added -- setWfColorGain/setWfBlackLevel already had this
+    // guard, this one did not (verified, not assumed).
+    if (m_wfColorScheme == scheme) { return; }
     m_wfColorScheme = scheme;
     scheduleSettingsSave();
     update();
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
 }
 
 void SpectrumWidget::setWfColorGain(int gain)
@@ -1292,6 +1635,8 @@ void SpectrumWidget::setWfColorGain(int gain)
     m_wfColorGain = gain;
     scheduleSettingsSave();
     update();
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
 }
 
 void SpectrumWidget::setWfBlackLevel(int level)
@@ -1300,6 +1645,8 @@ void SpectrumWidget::setWfBlackLevel(int level)
     m_wfBlackLevel = level;
     scheduleSettingsSave();
     update();
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
 }
 
 // ---- Phase 3G-8 commit 3 setters ----
@@ -1679,23 +2026,29 @@ void SpectrumWidget::setPeakBlobTextColor(const QColor& c)
 
 void SpectrumWidget::setPanFillEnabled(bool on)
 {
+    // Task 18: guard already present (verified, not assumed) -- left as-is.
     if (m_panFill == on) {
         return;
     }
     m_panFill = on;
     scheduleSettingsSave();
     update();  // vertex gen is next frame; render pass checks m_panFill
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
 }
 
 void SpectrumWidget::setFillAlpha(float a)
 {
     a = qBound(0.0f, a, 1.0f);
+    // Task 18: guard already present (verified, not assumed) -- left as-is.
     if (qFuzzyCompare(m_fillAlpha, a)) {
         return;
     }
     m_fillAlpha = a;
     scheduleSettingsSave();
     update();
+    ++m_displaySettingsApplyCount;
+    syncDisplaySettingsFromWidget();
 }
 
 void SpectrumWidget::setLineWidth(float w)
@@ -1946,6 +2299,49 @@ void SpectrumWidget::processNoiseFloor()
         }
     }
 }
+
+#ifdef NEREUS_GPU_SPECTRUM
+// I2 fix (final review of the 3D stacked-trace spectrum port,
+// docs/architecture/2026-08-08-3d-stacked-trace-spectrum-plan.md):
+// NereusSDR-original -- AetherSDR has no overlay cache to keep fresh.
+//
+// The 3D dBm-scale strip is baked into m_overlayStatic only when
+// m_overlayStaticDirty is set (renderGpuFrame's overlay block calls
+// drawDbmScale3D(..., dssFloorDbm()) inside that guard), but dssFloorDbm()
+// == m_nfLerpAverage - m_dssFloorDepth re-lerps every frame in
+// processNoiseFloor() above without dirtying anything. Left unchecked, the
+// baked strip goes stale after any floor shift (e.g. a band change) and
+// stays stale indefinitely -- nothing else re-dirties it for this reason.
+//
+// Dirty ONLY when the ROUNDED LABEL SET drawDbmScaleLabels() would actually
+// draw has changed -- not on every sub-pixel lerp step. m_overlayStaticDirty
+// is one flag for the WHOLE cached overlay (grid, band plan, freq scale,
+// etc.), and the perf-fix comments around the overlay-rebuild block further
+// down in this file identify that rebuild as the dominant per-paint cost;
+// dirtying unconditionally here would rebuild all of it every frame and
+// regress every GPU user, including 2D ones (processNoiseFloor runs
+// regardless of render mode).
+void SpectrumWidget::updateDssScaleOverlayFreshness()
+{
+    if (!m_dbmScaleVisible
+            || m_spectrumRenderMode != SpectrumRenderMode::Mode3D) {
+        return;
+    }
+    const float floorDbm = dssFloorDbm();
+    const float span = dssRoundedSpanDb();
+    if (m_dssLastBakedFloorDbm.has_value()) {
+        const QVector<int> bakedLabels = NereusSDR::DbmStrip::dssRoundedLabelSet(
+            *m_dssLastBakedFloorDbm + span, span);
+        const QVector<int> liveLabels = NereusSDR::DbmStrip::dssRoundedLabelSet(
+            floorDbm + span, span);
+        if (bakedLabels == liveLabels) {
+            return;
+        }
+    }
+    m_dssLastBakedFloorDbm = floorDbm;
+    markOverlayDirty();
+}
+#endif
 
 // ---- NF-aware grid (Task 2.9) ----
 // From Thetis setup.cs:24202-24213 [v2.10.3.13]
@@ -2226,6 +2622,168 @@ void SpectrumWidget::setWaterfallStopOnTx(bool on)
     if (m_wfStopOnTx == on) { return; }
     m_wfStopOnTx = on;
     scheduleSettingsSave();
+}
+
+// ---- 3DSS stacked-trace mode ----
+// 3D Stacked-Trace Spectrum Plan Task 6 (design doc
+// docs/architecture/2026-08-08-3d-stacked-trace-spectrum-design.md).
+void SpectrumWidget::setSpectrumRenderMode(int mode)
+{
+    const SpectrumRenderMode next =
+        (mode == static_cast<int>(SpectrumRenderMode::Mode3D))
+            ? SpectrumRenderMode::Mode3D
+            : SpectrumRenderMode::Mode2D;
+    if (m_spectrumRenderMode == next) { return; }
+    m_spectrumRenderMode = next;
+    if (next == SpectrumRenderMode::Mode2D) {
+        // Leaving 3D: drop the ring so re-entering starts clean rather than
+        // showing a stack of rows captured at a frequency we have since left.
+        m_dss.clear();
+        m_dssRowsPushed = 0;
+        // Task 24: also drop any in-progress peak-hold fold, so re-entering
+        // 3D does not push a row built from bins captured at a frequency
+        // (or row width) we have since left.
+        m_dssFoldCount = 0;
+        m_dssFoldRow.clear();
+        m_dssFoldFullBins.clear();
+    }
+    m_dss.invalidate();
+    markOverlayDirty();
+    scheduleSettingsSave();
+    update();
+    // Task 15: announce the settled (normalized) value, not the raw
+    // possibly-out-of-range `mode` argument, so a listener never observes
+    // a value setSpectrumRenderMode() itself would have rejected.
+    // Task 18: this signal is bound to DisplaySettingsModel::
+    // setSpectrumRenderMode() in bindDisplaySettings(), so it IS the push
+    // for this field -- no separate syncDisplaySettingsFromWidget() call
+    // needed here, unlike the eight non-3D setters above.
+    ++m_displaySettingsApplyCount;
+    emit spectrumRenderModeChanged(static_cast<int>(m_spectrumRenderMode));
+}
+
+void SpectrumWidget::setDssFloorDepth(int dB)
+{
+    const int v = std::clamp(dB, 0, 24);
+    if (m_dssFloorDepth == v) { return; }
+    m_dssFloorDepth = v;
+    m_dss.invalidate();
+    markOverlayDirty();
+    scheduleSettingsSave();
+    update();
+    // Guard shape (only emit once the resolved value actually settles)
+    // borrowed from AetherSDR SpectrumWidget.cpp:4628 [@1872028c]
+    // (setDssFloorDepthForSource's `if (resolvedDepth != previousResolvedDepth)
+    // emit dssFloorDepthResolved(...)`), which fed the same overlay menu back
+    // for a Flex/Kiwi source-dispatch reason this single-source build does
+    // not have -- the early-return guard above already does the settling.
+    // Task 18: bound to DisplaySettingsModel::setDssFloorDepth() in
+    // bindDisplaySettings(); this emit is the push.
+    ++m_displaySettingsApplyCount;
+    emit dssFloorDepthChanged(m_dssFloorDepth);
+}
+
+void SpectrumWidget::setDssGain(int pct)
+{
+    const int v = std::clamp(pct, 0, 100);
+    if (m_dssGain == v) { return; }
+    m_dssGain = v;
+    m_dss.invalidate();
+    scheduleSettingsSave();
+    update();
+    ++m_displaySettingsApplyCount;
+    emit dssGainChanged(m_dssGain);
+}
+
+void SpectrumWidget::setDssRowSpan(int pct)
+{
+    const int v = std::clamp(pct, 0, 100);
+    if (m_dssRowSpan == v) { return; }
+    m_dssRowSpan = v;
+    // Deliberately no m_dss.invalidate() / markOverlayDirty() here, unlike
+    // setDssFloorDepth/setDssGain/setDssAngle/setSpectrumRenderMode above.
+    // rowSpanFactor (dssRowSpanTarget(), fed from m_dssRowSpan) is written
+    // into the mesh UBO fresh every GPU frame from writeDssMeshUbo() --
+    // there is no cached geometry or baked overlay pixel that depends on
+    // its value, so the very next frame already reflects a change with no
+    // invalidation needed. The CPU fallback (buildDssImage()) takes no
+    // row-span input at all and always draws the classic narrowing
+    // trapezoid regardless -- see dssRowSpanSupported() in
+    // DssMeshGeometry.h for the same "GPU-mesh-only" fact stated from the
+    // control-enablement side. Do not "fix" this by adding the calls its
+    // siblings have; span is the one 3D control that genuinely does not
+    // need them.
+    scheduleSettingsSave();
+    update();
+    ++m_displaySettingsApplyCount;
+    emit dssRowSpanChanged(m_dssRowSpan);
+}
+
+void SpectrumWidget::setDssAngle(int pct)
+{
+    const int v = std::clamp(pct, 0, 100);
+    if (m_dssAngle == v) { return; }
+    m_dssAngle = v;
+    m_dss.invalidate();
+    markOverlayDirty();
+    scheduleSettingsSave();
+    update();
+    // Task 15: lets Display3DSetupPage follow a change made through the
+    // overlay menu (or any other caller) the same way it follows its own
+    // slider -- see the round-trip guard in DisplaySetupPages.cpp.
+    ++m_displaySettingsApplyCount;
+    emit dssAngleChanged(m_dssAngle);
+}
+
+// 3D Speed (Task 24, NereusSDR-original -- design doc section 4.5).
+void SpectrumWidget::setDssRowDivider(int n)
+{
+    const int v = std::clamp(n, 0, 10);
+    if (m_dssRowDivider == v) { return; }
+    m_dssRowDivider = v;
+    // Deliberately no m_dss.invalidate() / markOverlayDirty() here, same
+    // reasoning as setDssRowSpan() above: the divider changes CADENCE --
+    // which rows get pushed, and how fast the glide advances -- not the
+    // rendered appearance of a row already sitting in the ring, so there
+    // is no cached geometry or baked overlay pixel that depends on it.
+    scheduleSettingsSave();
+    update();
+    ++m_displaySettingsApplyCount;
+    emit dssRowDividerChanged(m_dssRowDivider);
+}
+
+// See the header comment for the contract. kDssVisibleRows (DssGeometry.h)
+// is the ring's fixed visible-row count (96); dividing the waterfall's own
+// pixel height by it, rounded and clamped, is what "match the 3D history
+// to the waterfall's" means in code -- design doc section 4.5. A null or
+// zero-height waterfall (never resized, or resized to nothing) clamps to
+// 1 via the lower bound; no special case needed.
+int SpectrumWidget::effectiveDssRowDivider() const
+{
+    if (m_dssRowDivider > 0) {
+        return m_dssRowDivider;
+    }
+    return std::clamp(qRound(double(m_waterfall.height()) / kDssVisibleRows),
+                       1, kDssMaxAutoRowDivider);
+}
+
+// See the header comment for the contract: period times divider, so the
+// glide reaches 1.0 exactly when accumulateDssRow() is due to push the
+// next row.
+float SpectrumWidget::dssScrollIncrement(int deltaMs) const
+{
+    const int periodMs = qMax(1, m_wfUpdatePeriodMs) * effectiveDssRowDivider();
+    return static_cast<float>(deltaMs) / static_cast<float>(periodMs);
+}
+
+void SpectrumWidget::setThreeDSliceDepth(bool on)
+{
+    if (m_threeDSliceDepth == on) { return; }
+    m_threeDSliceDepth = on;
+    scheduleSettingsSave();
+    update();
+    ++m_displaySettingsApplyCount;
+    emit threeDSliceDepthChanged(m_threeDSliceDepth);
 }
 
 // Issue #230 fix: Clarity is a NereusSDR-only override modeled on
@@ -2699,6 +3257,28 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // FFTEngine.cpp:348 [v2.10.3.13] (binsDbm = 10·log10 + offset).
     const double dbmScale  = std::pow(10.0, dbmOffset / 10.0);
 
+    // 3DSS wide channel feed: m_fullLinearBins (this whole FFT frame,
+    // unsliced) converted to dBm at full bin resolution, so
+    // buildDssWideRow() can window bins outside visibleBinRange() using
+    // the SAME calibration as the exact channel above (same dbmScale).
+    // Deliberately skips detector reduction and avenger averaging -- both
+    // are display-pixel/view-width concerns, and DssRenderer applies its
+    // own independent temporal smoothing to whatever it receives (see
+    // smoothDssRow() in DssRenderer.cpp), so a second averaging pass here
+    // would just blur what that smoothing already handles. The conversion
+    // itself mirrors SpectrumAvenger::apply()'s avMode==0 "no averaging"
+    // case -- WDSP avenger() analyzer.c:464-554 [v2.10.3.13], case 0 at
+    // analyzer.c:495-501: dbm = 10*log10(scale * linear) -- with the same
+    // 1.0e-60 log floor SpectrumAvenger.cpp:65 uses. Gated on Mode3D:
+    // nothing reads m_lastFullBinsDbm in 2D (pushDssRow() never runs).
+    if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+        m_lastFullBinsDbm.resize(m_fullLinearBins.size());
+        for (int i = 0; i < m_fullLinearBins.size(); ++i) {
+            m_lastFullBinsDbm[i] = static_cast<float>(
+                10.0 * std::log10(dbmScale * m_fullLinearBins[i] + 1.0e-60));
+        }
+    }
+
     auto avengerMode = [](SpectrumAveraging m) -> int {
         // Wire-format integer codes per WDSP analyzer.c:464 [v2.10.3.13].
         switch (m) {
@@ -2891,6 +3471,12 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // m_showNoiseFloor) so the lerp/fft state stays current even when the
     // overlay is toggled off — saves a cold-start visual jump on toggle on.
     processNoiseFloor();
+#ifdef NEREUS_GPU_SPECTRUM
+    // I2 fix: dirty the cached 3D dBm-scale strip only when the floor just
+    // updated above actually moved its rounded label set. See
+    // updateDssScaleOverlayFreshness() for the full rationale.
+    updateDssScaleOverlayFreshness();
+#endif
 
     // 2026-05-25 perf fix: this block USED to force the ENTIRE GPU
     // overlay texture (freq scale, dBm strip, bandplan, time scale,
@@ -3251,7 +3837,14 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
         // drawDbmScale needs the FULL-WIDTH spectrum-vertical rect so the strip
         // lands in the reserved right-edge zone at x=[w-kDbmStripW..w-1].
         // Passing the clipped specRect would put the strip INSIDE the spectrum.
-        drawDbmScale(p, QRect(0, 0, w, specH));
+        // dBm strip: 2D draws a linear dBm axis; 3D maps the ticks onto the front
+        // (live) trace's ridge band. Same strip chrome and click targets either way.
+        // From AetherSDR SpectrumWidget.cpp:15122-15128 [@1872028c]
+        if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+            drawDbmScale3D(p, QRect(0, 0, w, specH), dssFloorDbm());
+        } else {
+            drawDbmScale(p, QRect(0, 0, w, specH));
+        }
     }
     drawBandPlan(p, specRect);
     // Sub-epic E: time-scale + LIVE button on the right edge of the
@@ -3401,6 +3994,29 @@ void SpectrumWidget::drawGrid(QPainter& p, const QRect& specRect)
 // in commit 5.
 void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
 {
+    // Task 10: 3DSS CPU-rendered surface replaces the classic FFT trace
+    // entirely in 3D mode. This is the ONLY 3DSS surface a
+    // -DNEREUS_GPU_SPECTRUM=OFF build ever draws -- that configuration never
+    // reaches renderGpuFrame() (the whole function is compiled out), so this
+    // early return is not merely a mesh-unavailable fallback here, it is the
+    // sole rendering path for CPU-only builds. Skips the grid entirely, like
+    // upstream: the opaque plot region (scaleStripPx 0, so no transparent
+    // strip) would only paint over it anyway, and the earlier drawGrid(p,
+    // specRect) call in paintEvent has already returned by the time this
+    // runs, so nothing is wasted by leaving that call site alone.
+    // From AetherSDR SpectrumWidget.cpp:14915-14933 [@1872028c] (paintEvent's
+    // is3D branch).
+    if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+        const QImage& surf = buildDssImage(
+            specRect.size().boundedTo(QSize(kDssFallbackMaxW, kDssFallbackMaxH)),
+            0);
+        p.fillRect(specRect, QColor(0x0a, 0x0a, 0x14));
+        if (!surf.isNull()) {
+            p.drawImage(specRect, surf);
+        }
+        return;
+    }
+
     // Display-pixel iteration -- mirrors Thetis Display.cs:5249-5378
     // [v2.10.3.13] which loops `for (int i = 0; i < nDecimatedWidth; i++)`
     // over the post-analyzer current_display_data[] array.  Our
@@ -4038,6 +4654,120 @@ void SpectrumWidget::drawDbmScale(QPainter& p, const QRect& specRect)
             QPointF(strip.left() + 6, y - staticAscent / 2.0),
             cit.value());
     }
+}
+
+// ---- dBm scale strip: shared chrome + labels for the 3D scale ----
+// From AetherSDR SpectrumWidget.cpp:17223-17261 [@1872028c]
+//
+// Upstream shares this chrome (background/border/up-down arrows) between
+// its own drawDbmScale() (2D) and drawDbmScale3D(). Ported fresh here as a
+// NEW function rather than factored out of drawDbmScale() above: that
+// function is used by the 2D path on every frame and must not change.
+// The only current caller is drawDbmScale3D() below.
+void SpectrumWidget::drawDbmScaleChrome(QPainter& p, const QRect& specRect)
+{
+    const QRect strip = NereusSDR::DbmStrip::stripRect(specRect, kDbmStripW);
+
+    // Opaque background: since #3482 the FFT trace/waterfall end at the strip's
+    // left edge, so nothing meaningful renders beneath it — a solid fill gives a
+    // crisp right edge instead of letting the bg/grid bleed through and read as
+    // right-side asymmetry against the hard left window border.
+    p.fillRect(strip, QColor(0x0a, 0x0a, 0x18, 220));
+
+    // Left border line
+    p.setPen(QColor(0x30, 0x40, 0x50));
+    p.drawLine(strip.left(), specRect.top(), strip.left(), specRect.bottom());
+
+    // ── Up/Down arrows side by side at top ─────────────────────────────
+    const int halfW = kDbmStripW / 2;
+    const int upCx  = strip.left() + halfW / 2;         // left half center
+    const int dnCx  = strip.left() + halfW + halfW / 2; // right half center
+    const int arrowTop = specRect.top() + 2;
+    const int arrowBot = specRect.top() + kDbmArrowH - 2;
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0x60, 0x80, 0xa0));
+
+    // Up arrow (▲) — left side
+    QPolygon upTri;
+    upTri << QPoint(upCx - 5, arrowBot)
+          << QPoint(upCx + 5, arrowBot)
+          << QPoint(upCx,     arrowTop);
+    p.drawPolygon(upTri);
+
+    // Down arrow (▼) — right side
+    QPolygon dnTri;
+    dnTri << QPoint(dnCx - 5, arrowTop)
+          << QPoint(dnCx + 5, arrowTop)
+          << QPoint(dnCx,     arrowBot);
+    p.drawPolygon(dnTri);
+}
+
+// From AetherSDR SpectrumWidget.cpp:17263-17312 [@1872028c]
+void SpectrumWidget::drawDbmScaleLabels(QPainter& p, const QRect& specRect,
+                                        float topDbm, float rangeDb)
+{
+    if (rangeDb <= 0.0f) {
+        return;
+    }
+    const QRect strip = NereusSDR::DbmStrip::stripRect(specRect, kDbmStripW);
+
+    // ── dBm labels — full-height LINEAR axis: topDbm at the top, topDbm-rangeDb
+    //    at the baseline, evenly spaced across specRect.height(). ──────────
+    QFont f = p.font();
+    f.setPointSize(7);
+    p.setFont(f);
+    const QFontMetrics fm(f);
+
+    const int labelTop = specRect.top() + kDbmArrowH + 4;
+
+    // Use adaptive step: aim for ~4-6 labels
+    const float stepDb = NereusSDR::DbmStrip::adaptiveStepDb(rangeDb);
+
+    const float bottomDbm = topDbm - rangeDb;
+    const float firstLabel = std::ceil(bottomDbm / stepDb) * stepDb;
+
+    auto drawTickLabel = [&](float dbm, int y, int textBaseline) {
+        p.setPen(QColor(0x50, 0x70, 0x80));
+        p.drawLine(strip.left(), y, strip.left() + 4, y);
+
+        const QString label = QString::number(static_cast<int>(std::lround(dbm)));
+        p.setPen(QColor(0x80, 0xa0, 0xb0));
+        p.drawText(strip.left() + 6, textBaseline, label);
+    };
+
+    for (float dbm = firstLabel; dbm <= topDbm; dbm += stepDb) {
+        const float frac = (topDbm - dbm) / rangeDb;
+        const int y = specRect.top() + static_cast<int>(frac * specRect.height());
+        if (y < labelTop || y > specRect.bottom() - 5) { continue; }
+
+        drawTickLabel(dbm, y, y + fm.ascent() / 2);
+    }
+
+    const int bottomY = specRect.bottom();
+    if (bottomY >= labelTop) {
+        drawTickLabel(bottomDbm, bottomY, bottomY - 2);
+    }
+}
+
+// ─── dBm scale strip for 3D stacked-trace mode ───────────────────────────
+// From AetherSDR SpectrumWidget.cpp:17320-17335 [@1872028c]
+//
+// In 3D mode, a single right-side axis cannot be pixel-exact for every
+// perspective row. Keep it as a full-height amplitude reference anchored to the
+// 3D floor, so plain drag visibly shifts the dBm numbers and Ctrl/Meta-drag
+// changes the span.
+void SpectrumWidget::drawDbmScale3D(QPainter& p, const QRect& specRect,
+                                    float floorDbm)
+{
+    drawDbmScaleChrome(p, specRect);
+    // Round the span the same way the mesh/CPU surface do (buildDssImage /
+    // renderGpuFrame use std::round(span*2)/2) so labels and surface agree to
+    // the pixel instead of a sub-dB top/bottom skew (#3937). NereusSDR names
+    // this rounding once, dssRoundedSpanDb() (Task 11 fast-follow), and all
+    // three consumers call it rather than independently inlining it.
+    const float span = dssRoundedSpanDb();
+    drawDbmScaleLabels(p, specRect, floorDbm + span, span);
 }
 
 // ---- Band-plan strip ----
@@ -4726,8 +5456,19 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
     }
 
     // Task 2.8: Stop-on-TX -- skip if TX active and feature enabled.
-    if (m_wfStopOnTx && m_activePeakHold.txActive()) {
+    if (m_wfStopOnTx && (m_activePeakHold.txActive() || m_txActiveForTest)) {
         return;
+    }
+
+    // 3DSS: feed the stacked-trace ring from the same call, downstream of the
+    // stop-on-TX gate above, so the perspective stack and the flat waterfall
+    // beneath it advance and freeze in lockstep. Teeing at the WaterfallTicker
+    // callback instead would sit upstream of that gate and let the 3D surface
+    // keep scrolling through an over. Task 24: the tee is now
+    // accumulateDssRow(), which folds rows per effectiveDssRowDivider()
+    // before handing a peak-held row to pushDssRow() -- see that method.
+    if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+        accumulateDssRow(wfPixelsDbm);
     }
 
     // 2026-05-25 KG4VCF bench fix: cadence is now driven by
@@ -4780,6 +5521,267 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
     }
 }
 
+// ---- 3DSS floor anchoring, wide channel feed ----
+
+// The 3DSS surface baseline. Anchored to the measured noise floor so the
+// stack keeps a constant apparent height as band conditions move, offset
+// downward by the 3D Floor control to expose more or less noise texture.
+float SpectrumWidget::dssFloorDbm() const
+{
+    // m_nfLerpAverage is this widget's smoothed measured noise floor, the
+    // same quantity NoiseFloorTracker::noiseFloor() exposes (both are the
+    // Thetis display.cs:4628 lerp average). m_nfFftBinAverage is the
+    // per-frame value and would make the surface jitter every frame.
+    return m_nfLerpAverage - static_cast<float>(m_dssFloorDepth);
+}
+
+float SpectrumWidget::dssSpanDb() const
+{
+    // The dBm display span. This widget stores the range as a top
+    // (m_refLevel) plus a depth (m_dynamicRange), not as a floor/ceiling
+    // pair, so the span is m_dynamicRange directly.
+    return std::max(1.0f, m_dynamicRange);
+}
+
+// Task 11 fast-follow. Upstream inlines std::round(span*2.0f)/2.0f
+// independently at each of drawDbmScale3D's, buildDssImage's, and
+// writeDssMeshUbo's own call sites (three separate occurrences of the
+// identical formula, not a shared function -- see drawDbmScale3D's own
+// ported doc comment, "buildDssImage / renderGpuFrame use
+// std::round(span*2)/2"). NereusSDR names it once, here, and routes all
+// three consumers through it: a code review caught writeDssMeshUbo's
+// rangeDb field still writing the RAW dssSpanDb() while the scale and the
+// CPU fallback both rounded, so whenever the configured dBm range was not
+// already an exact 0.5 dB multiple the GPU mesh's front-ridge height
+// mapping (dss_mesh.vert's rangeDb) disagreed with the drawn scale by up
+// to 0.25 dB -- several pixels on a tall strip at a narrow range. A single
+// named accessor makes that class of drift structurally impossible to
+// reintroduce at any one call site without an intentional edit.
+float SpectrumWidget::dssRoundedSpanDb() const
+{
+    return std::round(dssSpanDb() * 2.0f) / 2.0f;
+}
+
+// From AetherSDR SpectrumWidget.cpp:14195 [@1872028c] (the writeDssMeshUbo-
+// equivalent inline `std::min(rangeDb, DssRenderer::kColorSpanDb)`) and
+// SpectrumWidget.cpp:11889-11890 [@1872028c] (buildDssImage()'s own local
+// `colorRangeDb`, same expression against the CPU fallback's `rangeDb`).
+// Review-round fix: the first pass of this task wrote kDssColorSpanDb
+// (formerly kColorSpanDb) unconditionally, uncapped by the actual dBm
+// span. At a narrow dBm range (e.g. 20 dB) that stretches the colormap's
+// 45 dB aperture across only 20 dB of real signal, washing the surface out
+// relative to upstream. The span can only ever narrow the aperture, never
+// widen it past kDssColorSpanDb, hence min() rather than the span alone.
+float SpectrumWidget::dssColorRangeDb() const
+{
+    return std::min(dssSpanDb(), kDssColorSpanDb);
+}
+
+// Build the wide channel from the off-screen DDC bins of the SAME FFT frame.
+//
+// The window is sized for the WIDEST angle the slider allows rather than the
+// current one, so retained rows stay valid across a runtime angle change and
+// moving the slider never forces a re-ingest (design doc section 4.2).
+// Returns an empty vector when the view already covers the whole DDC, which
+// is the correct "no span available" answer.
+QVector<float> SpectrumWidget::buildDssWideRow(
+    const QVector<float>& fullBins,
+    double& wideCenterMhzOut,
+    double& wideBandwidthMhzOut) const
+{
+    wideCenterMhzOut = 0.0;
+    wideBandwidthMhzOut = 0.0;
+    if (fullBins.isEmpty() || m_sampleRateHz <= 0.0) {
+        return {};
+    }
+    const double viewBwHz = m_bandwidthHz;
+    if (viewBwHz <= 0.0 || viewBwHz >= m_sampleRateHz) {
+        return {};   // view already covers the DDC; nothing outside it
+    }
+
+    const float widestSpan = dssMaxRowSpanFactor(dssShapeForAngle(0));
+    const double wantHz = std::min(
+        static_cast<double>(widestSpan) * viewBwHz, m_sampleRateHz);
+    const double ddcLowHz  = m_ddcCenterHz - m_sampleRateHz * 0.5;
+    const double binHz     = m_sampleRateHz / fullBins.size();
+    const double wideLowHz = std::clamp(
+        m_centerHz - wantHz * 0.5,
+        ddcLowHz, ddcLowHz + m_sampleRateHz - wantHz);
+
+    // fullBins.size() is qsizetype (long long on 64-bit); std::clamp needs
+    // all three arguments the same type, so the bound is narrowed to int
+    // explicitly rather than left to fail template deduction.
+    const int binCount = static_cast<int>(fullBins.size());
+    const int first = std::clamp(
+        static_cast<int>((wideLowHz - ddcLowHz) / binHz), 0, binCount - 1);
+    const int last = std::clamp(
+        static_cast<int>((wideLowHz + wantHz - ddcLowHz) / binHz),
+        first + 1, binCount);
+
+    wideCenterMhzOut    = (wideLowHz + wantHz * 0.5) / 1.0e6;
+    wideBandwidthMhzOut = wantHz / 1.0e6;
+    return QVector<float>(fullBins.constBegin() + first,
+                          fullBins.constBegin() + last);
+}
+
+// From AetherSDR SpectrumWidget.cpp:12743-12784 [@1872028c], minus the
+// AETHER_DSS_ROW_SPAN environment-variable override and the "age 0 is not
+// authoritative" Flex/Kiwi multi-source caveats: our producer's only row
+// source is pushDssRow(), which always attaches a wide slice whenever
+// buildDssWideRow() finds one available, so there is no separate producer
+// that could append without one while zoomed in.
+float SpectrumWidget::dssRowSpanTarget(double targetBandwidthMhz) const
+{
+    return dssRowSpanFactorFor(
+        m_dss.newestWideBandwidthMhz(targetBandwidthMhz),
+        targetBandwidthMhz,
+        m_dssRowSpan,
+        dssShape());
+}
+
+// ---- 3DSS slice shadow decals ----
+
+// The shader's shadowBands/shadowStyles arrays are fixed-size (dss_mesh.vert
+// / dss_mesh.frag both declare [8]); the builder below truncates to this
+// many rather than ever overrunning writeDssMeshUbo()'s UBO write.
+// From AetherSDR SpectrumWidget.cpp:14219-14225 [@1872028c]
+// (kShadowBandsOffset/kShadowStylesOffset sized off
+// SpectrumWidget::kDssMeshShadowSlices [SpectrumWidget.h:2018],
+// upstream's own name for this same fixed budget).
+static constexpr int kDssShadowSlices = 8;
+
+// Maps every visible slice's passband onto the [0,1] viewport-unit space
+// hzToX() uses, for dss_mesh.frag's applySliceShadow() to darken directly
+// onto the 3D surface.
+//
+// From AetherSDR SpectrumWidget.cpp:14216-14366 [@1872028c] (appendShadow /
+// writeShadowSlot), simplified to what SliceMarkerGeometry actually carries:
+// NereusSDR has no per-slice mode / RTTY mark-space / isActive / markerWidth
+// fields at this call site, so unlike upstream this never emits a RTTY
+// mark+space cue pair, never emits a band-less cue-only descriptor, and
+// never dims an "inactive" slice's alpha independently of an "active" one --
+// drawSliceMarker() (the flat 2D marker this decal echoes onto the surface)
+// doesn't discriminate active/inactive or per-mode cues either, so none of
+// this narrows anything that already existed. Every visible slice therefore
+// contributes exactly one band+cue descriptor, using upstream's own
+// isActive=true magnitudes (:14263, :14269) since every slice reaching this
+// list is, in NereusSDR's simpler model, equally "on screen and current."
+QVector<SpectrumWidget::DssShadowBand> SpectrumWidget::buildDssShadowBands() const
+{
+    QVector<DssShadowBand> out;
+    if (!m_threeDSliceDepth || m_bandwidthHz <= 0.0) {
+        return out;
+    }
+
+    const double lowHz = m_centerHz - m_bandwidthHz / 2.0;
+    const auto unitForHz = [&](double hz) {
+        return static_cast<float>((hz - lowHz) / m_bandwidthHz);
+    };
+
+    // Same cyan accent drawSliceMarker() uses for the VFO centre line and
+    // triangle marker (AetherSDR SliceColors.h:15-20, "Slice 0 (A) = cyan,
+    // active"). Duplicated rather than shared: drawSliceMarker()'s own
+    // kSliceR/G/B is local to that function, and this task's constraints
+    // forbid restructuring code it did not add.
+    const QColor cue(0x00, 0xd4, 0xff);
+
+    for (const SliceMarkerGeometry& g : sliceMarkerGeometry()) {
+        if (out.size() >= kDssShadowSlices) {
+            break;
+        }
+        float low  = unitForHz(g.centreHz + g.filterLowHz);
+        float high = unitForHz(g.centreHz + g.filterHighHz);
+        if (low > high) {
+            std::swap(low, high);
+        }
+        if (high < 0.0f || low > 1.0f) {
+            continue;   // passband never touches the visible viewport
+        }
+        DssShadowBand band;
+        band.lowUnit    = low;
+        band.highUnit   = high;
+        band.centreUnit = unitForHz(g.centreHz);
+        // From AetherSDR SpectrumWidget.cpp:14263 [@1872028c]
+        // (writeShadowSlot's `active ? 0.42f : 0.17f` band alpha).
+        band.alpha       = 0.42f;
+        band.cue         = cue;
+        // From AetherSDR SpectrumWidget.cpp:14269 [@1872028c]
+        // (writeShadowSlot's `active ? 0.36f : 0.11f` cue alpha).
+        band.centreAlpha = 0.36f;
+        out.append(band);
+    }
+    return out;
+}
+
+// ---- 3DSS row tee ----
+// Resamples the same post-pipeline row pushWaterfallRow() just wrote to the
+// flat waterfall into the stacked-trace ring, and fills the wide (off-
+// screen) channel from the cached full-DDC dBm snapshot (m_lastFullBinsDbm,
+// set in updateSpectrumLinear()) via pushRowWithWide. Falls back to the
+// exact-only pushRow() whenever buildDssWideRow() has nothing to offer
+// (not zoomed in, or no FFT frame cached yet).
+// 3D Speed (Task 24, NereusSDR-original -- design doc section 4.5).
+// Folds wfPixelsDbm (and the wide-channel source m_lastFullBinsDbm) into
+// the in-progress fold by per-column maximum (peak-hold), so a burst that
+// lasts a single waterfall tick still reaches the ring even when several
+// ticks are folded into one 3D row -- an average was rejected for exactly
+// this reason (it would shrink such a burst by a factor of N and could
+// vanish from the 3D surface while still visible in the waterfall).
+//
+// A size change on either the exact row or the full-bins snapshot (DDC
+// bandwidth/zoom change mid-fold) discards whatever was accumulated and
+// starts a fresh fold at count 1, rather than mixing rows of two
+// different widths together.
+void SpectrumWidget::accumulateDssRow(const QVector<float>& wfPixelsDbm)
+{
+    if (m_dssFoldCount == 0
+        || wfPixelsDbm.size() != m_dssFoldRow.size()
+        || m_lastFullBinsDbm.size() != m_dssFoldFullBins.size()) {
+        m_dssFoldRow = wfPixelsDbm;
+        m_dssFoldFullBins = m_lastFullBinsDbm;
+        m_dssFoldCount = 1;
+    } else {
+        const int n = m_dssFoldRow.size();
+        for (int i = 0; i < n; ++i) {
+            m_dssFoldRow[i] = std::max(m_dssFoldRow[i], wfPixelsDbm[i]);
+        }
+        const int fullN = m_dssFoldFullBins.size();
+        for (int i = 0; i < fullN; ++i) {
+            m_dssFoldFullBins[i] = std::max(m_dssFoldFullBins[i], m_lastFullBinsDbm[i]);
+        }
+        ++m_dssFoldCount;
+    }
+
+    // A divider lowered mid-fold (down to at or below the current count)
+    // pushes right here, on this very tick, rather than waiting out
+    // whatever the count target was when the fold started.
+    if (m_dssFoldCount >= effectiveDssRowDivider()) {
+        pushDssRow(m_dssFoldRow);
+        m_dssFoldCount = 0;
+    }
+}
+
+void SpectrumWidget::pushDssRow(const QVector<float>& wfPixelsDbm)
+{
+    const double centerMhz    = m_centerHz    / 1.0e6;
+    const double bandwidthMhz = m_bandwidthHz / 1.0e6;
+    double wideCenterMhz = 0.0;
+    double wideBandwidthMhz = 0.0;
+    // Task 24: sourced from the folded m_dssFoldFullBins, not
+    // m_lastFullBinsDbm directly -- see accumulateDssRow() and this
+    // method's own header comment.
+    const QVector<float> wide =
+        buildDssWideRow(m_dssFoldFullBins, wideCenterMhz, wideBandwidthMhz);
+    if (wide.isEmpty()) {
+        m_dss.pushRow(wfPixelsDbm, centerMhz, bandwidthMhz);
+    } else {
+        m_dss.pushRowWithWide(wfPixelsDbm, centerMhz, bandwidthMhz,
+                              wide, wideCenterMhz, wideBandwidthMhz);
+    }
+    ++m_dssRowsPushed;
+    m_dssScrollProgressRows = 0.0f;
+}
+
 // ---- dBm to waterfall color ----
 // Porting from Thetis display.cs:6826-6954 — waterfall color mapping.
 // Thetis uses low_threshold and high_threshold (dBm) directly:
@@ -4812,20 +5814,83 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
     int stopCount = 0;
     const WfGradientStop* stops = wfSchemeStops(m_wfColorScheme, stopCount);
 
-    // Find the two surrounding stops and interpolate
-    for (int i = 0; i < stopCount - 1; ++i) {
-        if (adjusted <= stops[i + 1].pos) {
-            float t = (adjusted - stops[i].pos)
-                    / (stops[i + 1].pos - stops[i].pos);
-            int r = static_cast<int>(stops[i].r + t * (stops[i + 1].r - stops[i].r));
-            int g = static_cast<int>(stops[i].g + t * (stops[i + 1].g - stops[i].g));
-            int b = static_cast<int>(stops[i].b + t * (stops[i + 1].b - stops[i].b));
-            return qRgb(r, g, b);
-        }
-    }
-    return qRgb(stops[stopCount - 1].r,
-                stops[stopCount - 1].g,
-                stops[stopCount - 1].b);
+    return interpolateWfGradient(adjusted, stops, stopCount);
+}
+
+// ---- 3DSS surface colour (deliberately NOT dbmToRgb) ----
+// From AetherSDR SpectrumWidget.cpp:11710-11719 [@1872028c].
+QRgb SpectrumWidget::dssStrengthToRgb(float s) const
+{
+    // gamma in [0.25 .. 4]: gain=100 -> 0.25 (colour lifted to the noise floor),
+    // gain=50 -> 1.0 (linear), gain=0 -> 4 (colour only on the strongest peaks).
+    const float gamma = std::pow(4.0f, (50.0f - m_dssGain) / 50.0f);
+    int n = 0;
+    const WfGradientStop* stops = wfSchemeStops(m_wfColorScheme, n);
+    return interpolateWfGradient(
+        std::pow(std::clamp(s, 0.0f, 1.0f), gamma), stops, n);
+}
+
+// From AetherSDR SpectrumWidget.cpp:12727-12728 [@1872028c] -- this is
+// uploadDssPaletteLut()'s OWN inline token there (the actual GPU LUT
+// re-bake gate), promoted to a named, reusable, publicly-testable method.
+//
+// NereusSDR divergence, precisely stated: upstream ALSO has a separately
+// named 5-field `dssPaletteToken()` member (SpectrumWidget.cpp:11721-11733
+// [@1872028c]: "Fold the inputs that define the 3DSS surface colour so the
+// cached image recolours when any change. The surface now maps strength
+// through the scheme + "3D Gain" (dssStrengthToRgb); the waterfall
+// gain/black/min are kept here too since they still affect the
+// 2D/waterfall colour path.") -- but that member's one call site,
+// buildDssImage() (:11880-11894), belongs to the CPU-fallback cached-image
+// path Task 4 explicitly deferred ("image()/rebuild()/m_cache*, deferred to
+// Task 10" per docs/attribution/aethersdr-reconciliation.md). This task's
+// uploadDssPaletteLut() never calls that 5-field member; it computes the
+// inline 2-field token above instead, which is what this function actually
+// is. dssStrengthToRgb() never reads m_wfColorGain/m_wfBlackLevel/
+// m_wfMinDbm (nor does upstream's), so a 5-field token here would only
+// trigger spurious re-bakes -- of a LUT that would come out byte-identical
+// -- on every waterfall slider tick and every per-frame floor/range jitter.
+// See waterfallKnobs_doNotMove3DColours in tests/tst_dss_palette.cpp. If/
+// when Task 10 ports buildDssImage(), it should reconcile with this name
+// rather than silently shadowing it with the 5-field upstream meaning.
+quint64 SpectrumWidget::dssPaletteToken() const
+{
+    quint64 t = static_cast<quint64>(m_wfColorScheme);
+    t = t * 131 + static_cast<quint64>(m_dssGain);
+    return t;
+}
+
+// ---- 3DSS CPU fallback surface (Task 10) ----
+// From AetherSDR SpectrumWidget.cpp:11880-11894 [@1872028c], with the
+// floorDbm parameter dropped: NereusSDR has one floor source (dssFloorDbm()),
+// not upstream's per-caller value (m_lastDetectDssFloor in 2D vs
+// dssFloorDbm() in 3D -- a distinction that does not apply here, since this
+// helper is only ever called while in 3D mode).
+const QImage& SpectrumWidget::buildDssImage(const QSize& px, int scaleStripPx)
+{
+    const float floorDbm = dssFloorDbm();
+    // dssRoundedSpanDb() (Task 11 fast-follow): named once so this CPU
+    // fallback, the 3D scale, and the GPU mesh's rangeDb uniform all read
+    // the identical rounded span rather than three independent inlines.
+    const float rangeDb  = dssRoundedSpanDb();
+
+    // Same mapping as the GPU mesh: a stable colour aperture independent of
+    // the Ref-level height span, gamma-shaped by "3D Gain". Uses
+    // dssColorRangeDb() (Task 9) rather than re-deriving std::min(rangeDb,
+    // kDssColorSpanDb) inline as upstream does, so the CPU fallback and the
+    // GPU mesh (writeDssMeshUbo()) read the exact same colour aperture.
+    const float colorRangeDb = dssColorRangeDb();
+    auto palette = [this, floorDbm, colorRangeDb](float dbm) {
+        const float r = (colorRangeDb > 0.0f) ? colorRangeDb : 1.0f;
+        return dssStrengthToRgb((dbm - floorDbm) / r);
+    };
+    // zCurve: 0.6f matches writeDssMeshUbo()'s hardcoded value (Task 9) so
+    // the CPU fallback lifts the floor band identically to the GPU mesh.
+    // bgFill: 0x0a0a14 matches both the pass clear colour and the mesh
+    // UBO's bgFill field (writeDssMeshUbo()), for the same reason.
+    return m_dss.image(px, scaleStripPx, floorDbm, rangeDb, 0.6f,
+                       palette, dssPaletteToken(), QColor(0x0a, 0x0a, 0x14),
+                       dssShape());
 }
 
 // ---- VFO marker + filter passband overlay ----
@@ -6576,6 +7641,52 @@ void SpectrumWidget::buildNotchContextMenu(int id, QMenu& menu)
                    [this, id]() { emit notchRemoveRequested(id); });
 }
 
+// ---- Task 19: Ctrl-drag dBm-range zoom (dBm strip, right edge) ----
+//
+// Bounds ported verbatim -- these are upstream's own numbers, not invented
+// for NereusSDR. The sibling wheel-zoom gesture a few hundred lines below
+// (mx >= stripX wheelEvent branch) inlines a DIFFERENT, NereusSDR-local
+// bound (qBound(10.0f, ..., 200.0f)) for the same "dynamic range" field;
+// that is pre-existing code this task does not touch. This task's own
+// gesture uses upstream's clampDbmRangeForBottom, and upstream's bound is
+// 180, not 200 -- see tst_dbm_range_drag.cpp's clampsAtMaximum test, which
+// specifically pins 180 to catch a copy-paste of the wheel gesture's 200.
+//
+// From AetherSDR SpectrumWidget.cpp:337-340 [@1872028c]:
+//   static constexpr float kMinDisplayDbm = -180.0f;
+//   static constexpr float kMaxDisplayDbm = 80.0f;
+//   static constexpr float kMinDisplayRangeDb = 10.0f;
+//   static constexpr float kMaxDisplayRangeDb = 180.0f;
+static constexpr float kMinDisplayDbm = -180.0f;
+static constexpr float kMaxDisplayDbm = 80.0f;
+static constexpr float kMinDisplayRangeDb = 10.0f;
+static constexpr float kMaxDisplayRangeDb = 180.0f;
+
+// From AetherSDR SpectrumWidget.cpp:389-397 [@1872028c]
+static float clampDbmBottom(float bottomDbm)
+{
+    if (!std::isfinite(bottomDbm)) {
+        return kMinDisplayDbm;
+    }
+    return std::clamp(bottomDbm,
+                      kMinDisplayDbm,
+                      kMaxDisplayDbm - kMinDisplayRangeDb);
+}
+
+// From AetherSDR SpectrumWidget.cpp:399-410 [@1872028c]
+static float clampDbmRangeForBottom(float bottomDbm, float rangeDb)
+{
+    bottomDbm = clampDbmBottom(bottomDbm);
+    if (!std::isfinite(rangeDb)) {
+        rangeDb = kMinDisplayRangeDb;
+    }
+    const float maxRangeForBottom =
+        std::min(kMaxDisplayRangeDb, kMaxDisplayDbm - bottomDbm);
+    return std::clamp(rangeDb,
+                      kMinDisplayRangeDb,
+                      std::max(kMinDisplayRangeDb, maxRangeForBottom));
+}
+
 void SpectrumWidget::mousePressEvent(QMouseEvent* event)
 {
     // Phase 3Q-8: while disconnected, swallow all left-clicks and signal
@@ -6719,20 +7830,32 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         // Show overlay menu on right-click (default — not on a spot).
         if (!m_overlayMenu) {
             m_overlayMenu = new SpectrumOverlayMenu(this);
+            // 3D Stacked-Trace Spectrum Plan Task 20: every popup signal
+            // that maps onto one of DisplaySettingsModel's fifteen
+            // values connects straight to the matching model setter --
+            // never to this widget's own named setter, and never through
+            // a lambda that touches a widget member. Task 18's own
+            // model-to-widget binding (bindDisplaySettings()) is what
+            // actually lands the change on the live renderer from here;
+            // this popup no longer talks to SpectrumWidget at all for
+            // these fourteen. ctunChanged and notchAddRequested are not
+            // among the fifteen (CTUN-enabled and "add a notch" are not
+            // DisplaySettingsModel fields) and keep talking to the widget
+            // exactly as before.
             connect(m_overlayMenu, &SpectrumOverlayMenu::wfColorGainChanged,
-                    this, [this](int v) { m_wfColorGain = v; update(); scheduleSettingsSave(); });
+                    m_displaySettings, &DisplaySettingsModel::setWfColorGain);
             connect(m_overlayMenu, &SpectrumOverlayMenu::wfBlackLevelChanged,
-                    this, [this](int v) { m_wfBlackLevel = v; update(); scheduleSettingsSave(); });
+                    m_displaySettings, &DisplaySettingsModel::setWfBlackLevel);
             connect(m_overlayMenu, &SpectrumOverlayMenu::wfColorSchemeChanged,
-                    this, [this](int v) { m_wfColorScheme = static_cast<WfColorScheme>(v); update(); scheduleSettingsSave(); });
+                    m_displaySettings, &DisplaySettingsModel::setWfColorScheme);
             connect(m_overlayMenu, &SpectrumOverlayMenu::fillAlphaChanged,
-                    this, [this](float v) { m_fillAlpha = v; update(); scheduleSettingsSave(); });
+                    m_displaySettings, &DisplaySettingsModel::setFillAlpha);
             connect(m_overlayMenu, &SpectrumOverlayMenu::panFillChanged,
-                    this, [this](bool v) { m_panFill = v; update(); scheduleSettingsSave(); });
+                    m_displaySettings, &DisplaySettingsModel::setPanFill);
             connect(m_overlayMenu, &SpectrumOverlayMenu::refLevelChanged,
-                    this, [this](float v) { m_refLevel = v; update(); scheduleSettingsSave(); });
+                    m_displaySettings, &DisplaySettingsModel::setRefLevel);
             connect(m_overlayMenu, &SpectrumOverlayMenu::dynRangeChanged,
-                    this, [this](float v) { m_dynamicRange = v; update(); scheduleSettingsSave(); });
+                    m_displaySettings, &DisplaySettingsModel::setDynamicRange);
             connect(m_overlayMenu, &SpectrumOverlayMenu::ctunChanged,
                     this, [this](bool v) { setCtunEnabled(v); });
             // Plan decision D-e: the empty-pan "add a notch here" row.
@@ -6743,11 +7866,123 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                     this, [this](double freqHz) {
                         emit notchCreateRequested(freqHz, false);
                     });
+            // 3D VIEW section (Task 13, re-pointed at the model by Task
+            // 20; Task 24 adds the seventh, dssRowDividerChanged): seven
+            // signals wired straight to DisplaySettingsModel's
+            // setters -- see the block comment above. Persistence
+            // (AppSettings/PanadapterModel round-trip) is Task 14's
+            // scope, not this one's; the model's own model-to-widget
+            // binding still reaches the widget's setter (and its
+            // scheduleSettingsSave() call) exactly as before, just one
+            // hop further along.
+            connect(m_overlayMenu, &SpectrumOverlayMenu::spectrumRenderModeChanged,
+                    m_displaySettings, &DisplaySettingsModel::setSpectrumRenderMode);
+            connect(m_overlayMenu, &SpectrumOverlayMenu::dssFloorDepthChanged,
+                    m_displaySettings, &DisplaySettingsModel::setDssFloorDepth);
+            connect(m_overlayMenu, &SpectrumOverlayMenu::dssGainChanged,
+                    m_displaySettings, &DisplaySettingsModel::setDssGain);
+            connect(m_overlayMenu, &SpectrumOverlayMenu::dssRowSpanChanged,
+                    m_displaySettings, &DisplaySettingsModel::setDssRowSpan);
+            connect(m_overlayMenu, &SpectrumOverlayMenu::dssAngleChanged,
+                    m_displaySettings, &DisplaySettingsModel::setDssAngle);
+            connect(m_overlayMenu, &SpectrumOverlayMenu::dssRowDividerChanged,
+                    m_displaySettings, &DisplaySettingsModel::setDssRowDivider);
+            connect(m_overlayMenu, &SpectrumOverlayMenu::dssSliceShadowChanged,
+                    m_displaySettings, &DisplaySettingsModel::setThreeDSliceDepth);
+
+            // Live refresh (Task 20): while the popup stays open, a
+            // model-driven change from any OTHER bound surface (Setup ->
+            // Display today; a future left-panel applet) re-seeds every
+            // popup control so it never shows a stale value. The re-seed
+            // reads the model's OWN current state (never a signal
+            // argument) and calls setValues()/setDssValues(), which
+            // block the popup's own controls' signals while seeding --
+            // so this can never feed a popup signal back out, which is
+            // what makes it safe to wire unconditionally: the popup's
+            // OWN change already reached the model above, so the model's
+            // signal fires, this lambda runs, and it reseeds the popup
+            // with the same value it just sent, a Qt/QSlider no-op.
+            // isVisible() additionally skips all fourteen while the
+            // popup is closed, so a change made with the popup not open
+            // does not do fourteen no-op reseeds on the next right-click
+            // (setValues()/setDssValues() below already reseed it then).
+            auto refreshOverlayMenuFromModel = [this]() {
+                if (!m_overlayMenu->isVisible()) { return; }
+                m_overlayMenu->setValues(m_displaySettings->wfColorGain(),
+                                          m_displaySettings->wfBlackLevel(), false,
+                                          m_displaySettings->wfColorScheme(),
+                                          m_displaySettings->fillAlpha(),
+                                          m_displaySettings->panFill(), false,
+                                          m_displaySettings->refLevel(),
+                                          m_displaySettings->dynamicRange(),
+                                          m_ctunEnabled);
+                m_overlayMenu->setDssValues(m_displaySettings->spectrumRenderMode(),
+                                             m_displaySettings->dssFloorDepth(),
+                                             m_displaySettings->dssGain(),
+                                             m_displaySettings->dssRowSpan(),
+                                             m_displaySettings->dssAngle(),
+                                             m_displaySettings->threeDSliceDepth(),
+                                             m_displaySettings->dssRowDivider());
+            };
+            connect(m_displaySettings, &DisplaySettingsModel::wfColorSchemeChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::wfColorGainChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::wfBlackLevelChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::refLevelChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::dynamicRangeChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::fillAlphaChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::panFillChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::spectrumRenderModeChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::dssFloorDepthChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::dssGainChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::dssRowSpanChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::dssAngleChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::dssRowDividerChanged,
+                    this, refreshOverlayMenuFromModel);
+            connect(m_displaySettings, &DisplaySettingsModel::threeDSliceDepthChanged,
+                    this, refreshOverlayMenuFromModel);
         }
-        m_overlayMenu->setValues(m_wfColorGain, m_wfBlackLevel, false,
-                                  static_cast<int>(m_wfColorScheme),
-                                  m_fillAlpha, m_panFill, false,
-                                  m_refLevel, m_dynamicRange, m_ctunEnabled);
+        m_overlayMenu->setValues(m_displaySettings->wfColorGain(),
+                                  m_displaySettings->wfBlackLevel(), false,
+                                  m_displaySettings->wfColorScheme(),
+                                  m_displaySettings->fillAlpha(),
+                                  m_displaySettings->panFill(), false,
+                                  m_displaySettings->refLevel(),
+                                  m_displaySettings->dynamicRange(),
+                                  m_ctunEnabled);
+        // Re-seed every popup (not just at construction): the 3D VIEW
+        // section reflects whatever the operator last set, and row-span
+        // support can change across the widget's lifetime if the GPU mesh
+        // pipeline comes up or falls back (Task 10's RGBA16F check).
+        m_overlayMenu->setDssValues(m_displaySettings->spectrumRenderMode(),
+                                     m_displaySettings->dssFloorDepth(),
+                                     m_displaySettings->dssGain(),
+                                     m_displaySettings->dssRowSpan(),
+                                     m_displaySettings->dssAngle(),
+                                     m_displaySettings->threeDSliceDepth(),
+                                     m_displaySettings->dssRowDivider());
+        // dssMeshReady() alone is build-safe (CPU build hardcodes false), but
+        // route through dssRowSpanSupported() anyway to match upstream's two
+        // independent gates (compile-time GPU build + runtime mesh-ready)
+        // explicitly rather than folding them together implicitly.
+#ifdef NEREUS_GPU_SPECTRUM
+        m_overlayMenu->setDssRowSpanSupported(
+            dssRowSpanSupported(/*gpuSpectrumBuild=*/true, dssMeshReady()));
+#else
+        m_overlayMenu->setDssRowSpanSupported(
+            dssRowSpanSupported(/*gpuSpectrumBuild=*/false, dssMeshReady()));
+#endif
         // The frequency under the cursor, captured at popup time: the
         // popup outlives the press, and by the time the button is clicked
         // the pointer has moved onto the popup itself.
@@ -6829,6 +8064,24 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         const QRect strip    = NereusSDR::DbmStrip::stripRect(fullSpecRect, kDbmStripW);
         const QRect arrowRow = NereusSDR::DbmStrip::arrowRowRect(strip, kDbmArrowH);
 
+        // Task 19: Ctrl-drag (Cmd/Meta too -- macOS swaps them, same
+        // rationale as the notch-add modifier check above and the
+        // Ctrl/Cmd+scroll bandwidth zoom in wheelEvent below) zooms the
+        // dBm span instead of panning it. Checked ahead of the arrow-row
+        // hit test, matching upstream precedence: a Ctrl-click landing on
+        // the arrow row still starts a range-drag rather than nudging ref
+        // level (upstream's controlClick branch runs before its
+        // `if (y < DBM_ARROW_H)` arrow check).
+        // From AetherSDR SpectrumWidget.cpp:9520-9550 [@1872028c]
+        if (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)) {
+            m_draggingDbmRange = true;
+            m_dbmRangeDragStartY = my;
+            m_dbmRangeDragStartRange = m_dynamicRange;
+            m_dbmRangeDragStartBottom = m_refLevel - m_dynamicRange;
+            setCursor(Qt::SizeVerCursor);
+            return;
+        }
+
         if (arrowRow.contains(mx, my)) {
             const int hit = NereusSDR::DbmStrip::arrowHit(mx, arrowRow);
             const float bottom = m_refLevel - m_dynamicRange;
@@ -6847,6 +8100,7 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
             scheduleSettingsSave();
             update();
+            syncDisplaySettingsFromWidget(); // Task 18
             return;
         }
 
@@ -6854,6 +8108,10 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         m_draggingDbm = true;
         m_dragStartY = my;
         m_dragStartRef = m_refLevel;
+        // Task 16: captured unconditionally, same as m_dragStartRef above,
+        // so mouseMoveEvent's 3D branch has a baseline regardless of which
+        // mode is active when the press lands (mode cannot change mid-drag).
+        m_dragStartDssFloorDepth = m_dssFloorDepth;
         setCursor(Qt::SizeVerCursor);
         return;
     }
@@ -7085,12 +8343,95 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         return;
     }
 
+    // Task 19: Ctrl-drag zooms the dBm span with the bottom pinned, instead
+    // of panning it. Runs IDENTICALLY in 2D and 3D -- no mode branch, unlike
+    // m_draggingDbm below. This mirrors upstream, which has no is3D check
+    // anywhere in its own m_draggingDbmRange press/move/release sites
+    // (contrast its m_draggingDssFloor branch two arms below in the press
+    // handler, which upstream DOES gate on is3D). 3D DECISION (task report
+    // has the full writeup): m_dynamicRange feeds dssSpanDb(), which the 3D
+    // surface's span genuinely reads, so this is not a no-op in 3D even
+    // though m_refLevel has no 3D reader of its own -- recomputing it anyway
+    // keeps the (m_refLevel, m_dynamicRange) top/depth pair coherent for
+    // when the operator switches back to 2D, matching upstream's own choice
+    // not to special-case it away.
+    //
+    // From AetherSDR SpectrumWidget.cpp:10493-10501 [@1872028c]:
+    //   if (m_draggingDbmRange) {
+    //       const int dragHeight = std::max(1, specH);
+    //       const int dy = m_dbmDragStartY - y;
+    //       const float deltaDb = (static_cast<float>(dy) / dragHeight) * m_dbmDragStartRange;
+    //       m_dynamicRange = clampDbmRangeForBottom(m_dbmDragStartBottom,
+    //                                               m_dbmDragStartRange + deltaDb);
+    //       m_refLevel = m_dbmDragStartBottom + m_dynamicRange;
+    //       markOverlayDirty();
+    //       ev->accept();
+    //       return;
+    //   }
+    if (m_draggingDbmRange) {
+        const int dragHeight = std::max(1, specH);
+        const int dy = m_dbmRangeDragStartY - my;
+        const float deltaDb = (static_cast<float>(dy) / static_cast<float>(dragHeight))
+            * m_dbmRangeDragStartRange;
+        m_dynamicRange = clampDbmRangeForBottom(m_dbmRangeDragStartBottom,
+                                                 m_dbmRangeDragStartRange + deltaDb);
+        m_refLevel = m_dbmRangeDragStartBottom + m_dynamicRange;
+        markOverlayDirty();
+        syncDisplaySettingsFromWidget(); // Task 18
+        return;
+    }
+
     if (m_draggingDbm) {
         int dy = my - m_dragStartY;
+
+        // Task 16 (3D stacked-trace spectrum plan, bench fix): the dBm-strip
+        // drag-pan gesture is Ref-anchored in 2D (below), but the 3D surface
+        // never reads m_refLevel -- it anchors to dssFloorDbm(), which is
+        // m_nfLerpAverage - m_dssFloorDepth (see that function). Route the
+        // SAME plain drag at 3D Floor instead while in 3D mode, so the
+        // gesture the operator is actually looking at moves something the
+        // 3D view has an opinion about. NereusSDR-original: upstream
+        // AetherSDR's 3D Floor has no drag binding at all.
+        if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+            // Sign: dragging DOWN must reveal MORE noise (design doc
+            // addendum, Task 16 -- "drag down to reveal more noise, up to
+            // hide it"). dssFloorDbm() = m_nfLerpAverage - m_dssFloorDepth,
+            // so a LARGER m_dssFloorDepth pushes the baseline further BELOW
+            // the measured noise floor, exposing more of the texture that
+            // would otherwise sit below the visible floor. dy is already
+            // positive for a downward drag (my grows downward in Qt
+            // coordinates, same convention the 2D formula below relies on),
+            // so adding dy*depthPerPixel -- no sign flip -- makes a
+            // downward drag increase the depth, matching that requirement.
+            // (An inverted sign would instead make dragging down HIDE
+            // noise, which is the opposite of the stated fix.)
+            //
+            // Scale: 3D Floor's range is a fixed 0..24 (setDssFloorDepth's
+            // own clamp), nothing like 2D's user-adjustable m_dynamicRange
+            // (10..200). Reusing dbPerPixel below would saturate the travel
+            // within a few percent of the strip's height. Map the FULL
+            // strip height to the FULL 0..24 range instead, independent of
+            // m_dynamicRange.
+            const float depthPerPixel = 24.0f / static_cast<float>(specH);
+            const int newDepth = m_dragStartDssFloorDepth
+                + qRound(static_cast<float>(dy) * depthPerPixel);
+            // setDssFloorDepth() owns the [0,24] clamp (kept in one place
+            // so the drag and the 3D View slider can never disagree on the
+            // bound), invalidates the cached mesh/CPU surface so the drag
+            // is visible live, and drives the existing Task 14/15 per-band
+            // persistence + dssFloorDepthChanged listeners -- all of which
+            // a direct m_dssFloorDepth write here would have to reinvent.
+            setDssFloorDepth(newDepth);
+            return;
+        }
+
+        // 2D: unchanged. The amplitude scale is Ref-anchored, so moving
+        // m_refLevel slides the whole visible dBm window.
         float dbPerPixel = m_dynamicRange / static_cast<float>(specH);
         m_refLevel = m_dragStartRef + static_cast<float>(dy) * dbPerPixel;
         m_refLevel = qBound(-160.0f, m_refLevel, 20.0f);
         update();
+        syncDisplaySettingsFromWidget(); // Task 18
         return;
     }
 
@@ -7159,6 +8500,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
 #else
         update();
 #endif
+        syncDisplaySettingsFromWidget(); // Task 18
         return;
     }
 
@@ -7446,10 +8788,21 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         // Persist display settings after drag adjustments.
         // Also emit range-change for observers (MainWindow, tests).
         // From AetherSDR SpectrumWidget.cpp:2115 [@0cd4559]
-        if (m_draggingDbm) {
+        //
+        // Task 19: m_draggingDbmRange joins this gate rather than getting
+        // its own block. Upstream's release handler (SpectrumWidget.cpp:
+        // 10893-10926 [@1872028c]) does much more here -- a
+        // DbmRangeTransition/beginDbmRangeTransition smoothing system,
+        // refreshNoiseFloorTarget(), a dbmRangeDragFinished signal -- none
+        // of which exists in NereusSDR (see the .h field comment: no
+        // NereusSDR counterpart to m_dbmDragStartRef's oldMinDbm/oldMaxDbm
+        // role). The settled behaviour both gestures need is the same:
+        // announce the final range and persist it, which this pre-existing
+        // simple gate already does correctly for m_draggingDbm.
+        if (m_draggingDbm || m_draggingDbmRange) {
             emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
         }
-        if (m_draggingDbm || m_draggingDivider) {
+        if (m_draggingDbm || m_draggingDbmRange || m_draggingDivider) {
             scheduleSettingsSave();
         }
 
@@ -7459,6 +8812,7 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         }
 
         m_draggingDbm = false;
+        m_draggingDbmRange = false;
         m_draggingFilter = FilterEdge::None;
         m_draggingVfo = false;
         m_draggingDivider = false;
@@ -7555,6 +8909,7 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
             emit dbmRangeChangeRequested(bottom, m_refLevel);
             update();
             scheduleSettingsSave();
+            syncDisplaySettingsFromWidget(); // Task 18
         }
         event->accept();
         return;
@@ -7588,6 +8943,9 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
         float step = (delta > 0) ? 5.0f : -5.0f;
         m_refLevel = qBound(-160.0f, m_refLevel + step, 20.0f);
         scheduleSettingsSave();
+        syncDisplaySettingsFromWidget(); // Task 18 -- this arm only; the
+                                          // other two touch none of the
+                                          // eight tracked fields
     } else {
         // Plain scroll: tune VFO by step size
         int steps = (delta > 0) ? 1 : -1;
@@ -7776,6 +9134,29 @@ void SpectrumWidget::initOverlayPipeline()
     lockMemory(m_overlayDynamic.constBits(),
                m_overlayDynamic.sizeInBytes(),
                "SpectrumWidget::m_overlayDynamic (init)");
+
+    // 3DSS CPU-fallback quad (Task 10). Parallel texture + SRB so the same
+    // overlay pipeline can paint the cached CPU 3D surface as a quad in the
+    // spectrum viewport when the GPU mesh path is unavailable (RGBA16F
+    // unsupported). Initially sized to the full window like m_ovGpuTex/
+    // m_ovDynGpuTex above; uploadDssFallbackImage() resizes it down to the
+    // actual (capped) surface size on first use. The image itself is built/
+    // uploaded on demand there, called from renderGpuFrame().
+    // From AetherSDR SpectrumWidget.cpp:12619-12630 [@1872028c] (upstream's
+    // own m_dssGpuTex/m_dssSrb init, same shape, different field names --
+    // see the .h declaration for why the names differ).
+    m_dssFallbackTex = r->newTexture(QRhiTexture::RGBA8, QSize(pw, ph));
+    m_dssFallbackTex->create();
+    m_dssFallbackTexW = pw;
+    m_dssFallbackTexH = ph;
+    m_dssFallbackSrb = r->newShaderResourceBindings();
+    m_dssFallbackSrb->setBindings({
+        QRhiShaderResourceBinding::sampledTexture(1,
+            QRhiShaderResourceBinding::FragmentStage,
+            m_dssFallbackTex, m_ovSampler),
+    });
+    m_dssFallbackSrb->create();
+    m_dssFallbackUploadedGen = ~0ull;
 }
 
 void SpectrumWidget::initSpectrumPipeline()
@@ -7838,6 +9219,466 @@ void SpectrumWidget::initSpectrumPipeline()
     m_fftLinePipeline->create();
 }
 
+// ---- 3DSS mesh GPU resources (3D stacked-trace spectrum plan, Task 7) ----
+// Pipeline/SRB/texture structure follows AetherSDR SpectrumWidget.cpp's
+// initDssMeshPipeline() [@1872028c]; see per-function comments below for the
+// exact cited ranges. The one behavioural divergence: the vertex buffers are
+// sized from the live perspective shape (dssMeshColsFor(dssShape())) rather
+// than a compile-time constant, and are reallocated only when that column
+// count actually changes -- see rebuildDssMeshIfNeeded().
+
+bool SpectrumWidget::initDssMeshPipeline()
+{
+    QRhi* r = rhi();
+    m_dssMeshReady = false;
+    if (!r) { return false; }
+
+    // Linux takes Qt's default QRhiWidget backend (this file's setApi() only
+    // covers Q_OS_MAC/Q_OS_WIN), typically OpenGL, whose driver renders the
+    // ribbon outline flat/stale from a separate, identically configured
+    // pipeline -- see DssMeshGeometry.h.
+    m_dssOutlinePipelineMode = dssOutlinePipelineModeForBackend(
+        r->backend() == QRhi::OpenGLES2);
+
+    // R stores dBm and G stores captured-frequency coverage. The second
+    // channel keeps zoom-created floor spans colour-stable without hiding
+    // their lines. From AetherSDR SpectrumWidget.cpp:12793-12798 [@1872028c].
+    if (!r->isTextureFormatSupported(QRhiTexture::RGBA16F, {})) {
+        qCWarning(lcSpectrum) << "SpectrumWidget: RGBA16F unsupported — "
+                                  "stacked-trace mesh disabled (CPU fallback)";
+        return false;
+    }
+
+    QShader vs = loadShader(QStringLiteral(
+        ":/shaders/resources/shaders/dss_mesh.vert.qsb"));
+    QShader fs = loadShader(QStringLiteral(
+        ":/shaders/resources/shaders/dss_mesh.frag.qsb"));
+    if (!vs.isValid() || !fs.isValid()) {
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh shader load "
+                                  "failed — stacked-trace mesh disabled";
+        return false;
+    }
+
+    m_dssMeshCols = dssMeshColsFor(dssShape());
+    const int fillVerts = kDssVisibleRows * dssFillVerticesPerRow(m_dssMeshCols);
+    const int lineVerts = kDssVisibleRows * dssLineVerticesPerRow(m_dssMeshCols);
+
+    m_dssMeshVbo = r->newBuffer(QRhiBuffer::Immutable,
+                                QRhiBuffer::VertexBuffer,
+                                fillVerts * 3 * sizeof(float));
+    m_dssMeshLineVbo = r->newBuffer(QRhiBuffer::Immutable,
+                                    QRhiBuffer::VertexBuffer,
+                                    lineVerts * 3 * sizeof(float));
+    m_dssUbo = r->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer,
+                            kDssMeshUboFloats * sizeof(float));
+    if (!m_dssMeshVbo->create() || !m_dssMeshLineVbo->create()
+        || !m_dssUbo->create()) {
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh buffer create failed";
+        return false;
+    }
+
+    m_dssHeightTex = r->newTexture(QRhiTexture::RGBA16F,
+                                   QSize(m_dss.cols(), m_dss.rows()));
+    m_dssPaletteTex = r->newTexture(QRhiTexture::RGBA8, QSize(256, 1));
+    if (!m_dssHeightTex->create() || !m_dssPaletteTex->create()) {
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh texture create failed";
+        return false;
+    }
+
+    // Height sampled in the vertex stage; Nearest is enough because the mesh
+    // grid is never sparser than the texture -- the column count is sized so
+    // that even at the widest rowSpanFactor the on-screen columns still cover
+    // every texel, so no bin can fall between two samples. Palette is Linear
+    // for a smooth floor->peak gradient.
+    m_dssHeightSampler = r->newSampler(
+        QRhiSampler::Nearest, QRhiSampler::Nearest, QRhiSampler::None,
+        QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge);
+    m_dssPaletteSampler = r->newSampler(
+        QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::None,
+        QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge);
+    if (!m_dssHeightSampler->create() || !m_dssPaletteSampler->create()) {
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh sampler create failed";
+        return false;
+    }
+
+    // Binding numbers 0 (UBO, both stages), 1 (height, vertex stage), 2
+    // (palette, fragment stage) are load-bearing: dss_mesh.vert:63 and
+    // dss_mesh.frag:47/50 declare these exact bindings.
+    m_dssSrb = r->newShaderResourceBindings();
+    m_dssSrb->setBindings({
+        QRhiShaderResourceBinding::uniformBuffer(0,
+            QRhiShaderResourceBinding::VertexStage
+                | QRhiShaderResourceBinding::FragmentStage, m_dssUbo),
+        QRhiShaderResourceBinding::sampledTexture(1,
+            QRhiShaderResourceBinding::VertexStage,
+            m_dssHeightTex, m_dssHeightSampler),
+        QRhiShaderResourceBinding::sampledTexture(2,
+            QRhiShaderResourceBinding::FragmentStage,
+            m_dssPaletteTex, m_dssPaletteSampler),
+    });
+    if (!m_dssSrb->create()) {
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh SRB create failed";
+        return false;
+    }
+
+    QRhiVertexInputLayout layout;
+    layout.setBindings({{3 * sizeof(float)}});
+    layout.setAttributes({{0, 0, QRhiVertexInputAttribute::Float3, 0}});
+
+    QRhiGraphicsPipeline::TargetBlend blend;
+    blend.enable   = true;
+    blend.srcColor = QRhiGraphicsPipeline::SrcAlpha;
+    blend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+    blend.srcAlpha = QRhiGraphicsPipeline::One;
+    blend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+
+    const auto makePipeline = [&]() -> QRhiGraphicsPipeline* {
+        QRhiGraphicsPipeline* p = r->newGraphicsPipeline();
+        p->setShaderStages({{QRhiShaderStage::Vertex, vs},
+                            {QRhiShaderStage::Fragment, fs}});
+        p->setVertexInputLayout(layout);
+        p->setTopology(QRhiGraphicsPipeline::Triangles);
+        p->setShaderResourceBindings(m_dssSrb);
+        p->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
+        p->setTargetBlends({blend});
+        return p;
+    };
+    m_dssFillPipeline = makePipeline();
+    // QRhi's OpenGLES2 backend shares the fill pipeline for the outline draw
+    // (dssOutlinePipelineFor, DssMeshGeometry.h) instead of a second,
+    // identically configured one -- skip allocating it there, not just
+    // skip drawing with it.
+    if (m_dssOutlinePipelineMode
+        == DssOutlinePipelineMode::DedicatedRibbonPipeline) {
+        m_dssLinePipeline = makePipeline();
+    }
+    if (!m_dssFillPipeline->create()
+        || (m_dssLinePipeline && !m_dssLinePipeline->create())) {
+        qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh pipeline create failed";
+        return false;
+    }
+
+    m_dssMeshReady = true;
+    return true;
+}
+
+// Rebuilds the static mesh VBOs only when the column count derived from the
+// live perspective shape actually changed (angle slider moved enough to
+// cross a column boundary), never unconditionally. Sizing every panadapter
+// for the widest angle unconditionally would cost 57.8 MiB instead of 33.8
+// MiB at the default angle, and reallocating every frame would stall the
+// render thread. NereusSDR-original: upstream sizes its VBOs once at a
+// fixed viewing angle and never rebuilds them (design doc section 5.5).
+void SpectrumWidget::rebuildDssMeshIfNeeded(QRhiResourceUpdateBatch* batch)
+{
+    if (!m_dssMeshReady || !batch) { return; }
+    const int wanted = dssMeshColsFor(dssShape());
+    // Skip only when the geometry currently ON THE GPU is already right.
+    //
+    // The condition is deliberately "have we uploaded, and is the column
+    // count still the one we uploaded for", NOT a dirty flag plus a size
+    // check. initDssMeshPipeline() sets m_dssMeshCols and creates a
+    // correctly sized but EMPTY buffer, so a guard keyed on
+    // "wanted == m_dssMeshCols && vbo->size() > 0" is satisfied on the very
+    // first call and skips the only code path that ever uploads vertices.
+    // The mesh would then draw undefined GPU memory forever.
+    //
+    // Keying on m_dssMeshUploaded also fixes the converse waste: the vertex
+    // data is a pure function of the column count, so an angle change that
+    // does not cross a dssMeshColsFor boundary needs no work at all. Without
+    // this, a slider drag re-uploads tens of MiB of identical data per tick.
+    if (m_dssMeshUploaded && wanted == m_dssMeshCols) {
+        return;
+    }
+
+    QVector<float> fill;
+    QVector<float> line;
+    dssBuildMeshVertices(wanted, fill, line);
+    const quint32 fillBytes = quint32(fill.size()) * sizeof(float);
+    const quint32 lineBytes = quint32(line.size()) * sizeof(float);
+
+    if (wanted != m_dssMeshCols) {
+        m_dssMeshVbo->destroy();
+        m_dssMeshVbo->setSize(fillBytes);
+        m_dssMeshLineVbo->destroy();
+        m_dssMeshLineVbo->setSize(lineBytes);
+        if (!m_dssMeshVbo->create() || !m_dssMeshLineVbo->create()) {
+            qCWarning(lcSpectrum) << "SpectrumWidget: dss_mesh resize failed";
+            m_dssMeshReady = false;
+            return;
+        }
+        m_dssMeshCols = wanted;
+    }
+    batch->uploadStaticBuffer(m_dssMeshVbo, 0, fillBytes, fill.constData());
+    batch->uploadStaticBuffer(m_dssMeshLineVbo, 0, lineBytes, line.constData());
+    m_dssMeshUploaded = true;
+}
+
+// Uploads the ring texture. Only the newest row changes per frame under
+// normal scrolling, so upload one row unless the ring generation jumped by
+// more than one push (mode just entered 3D, or several rows arrived between
+// paints) -- in which case the whole texture is re-uploaded to avoid
+// re-deriving which rows are stale from the generation delta alone.
+void SpectrumWidget::uploadDssHeightRows(QRhiResourceUpdateBatch* batch)
+{
+    if (!m_dssMeshReady || !batch || m_dss.rowCount() == 0) { return; }
+    if (m_dss.rowGeneration() == m_dssUploadedRowGeneration) { return; }
+
+    const int cols = m_dss.cols();
+    const auto packRow = [&](int ring, QVector<qfloat16>& out) {
+        const float*  exact    = m_dss.rowDataRing(ring);
+        const quint8* exactCov = m_dss.rowCoverageRing(ring);
+        const float*  wide     = m_dss.rowWideDataRing(ring);
+        const quint8* wideCov  = m_dss.rowWideCoverageRing(ring);
+        out.resize(cols * 4);
+        for (int c = 0; c < cols; ++c) {
+            out[c * 4 + 0] = qfloat16(exact[c]);
+            out[c * 4 + 1] = qfloat16(exactCov[c] ? 1.0f : 0.0f);
+            out[c * 4 + 2] = qfloat16(wide[c]);
+            out[c * 4 + 3] = qfloat16(wideCov[c] ? 1.0f : 0.0f);
+        }
+    };
+
+    QVector<qfloat16> packed;
+    const int head = m_dss.headRing();
+    const bool fullUpload =
+        m_dssLastUploadedHead < 0
+        || m_dss.rowCount() < kDssRows;
+    if (fullUpload) {
+        for (int ring = 0; ring < m_dss.rows(); ++ring) {
+            packRow(ring, packed);
+            QRhiTextureSubresourceUploadDescription desc(
+                packed.constData(), packed.size() * sizeof(qfloat16));
+            desc.setSourceSize(QSize(cols, 1));
+            desc.setDestinationTopLeft(QPoint(0, ring));
+            batch->uploadTexture(m_dssHeightTex,
+                                 QRhiTextureUploadEntry(0, 0, desc));
+        }
+    } else {
+        packRow(head, packed);
+        QRhiTextureSubresourceUploadDescription desc(
+            packed.constData(), packed.size() * sizeof(qfloat16));
+        desc.setSourceSize(QSize(cols, 1));
+        desc.setDestinationTopLeft(QPoint(0, head));
+        batch->uploadTexture(m_dssHeightTex,
+                             QRhiTextureUploadEntry(0, 0, desc));
+    }
+    m_dssLastUploadedHead = head;
+    m_dssUploadedRowGeneration = m_dss.rowGeneration();
+}
+
+// From AetherSDR SpectrumWidget.cpp:12713-12741 [@1872028c], adapted to this
+// file's simpler single-argument signature (Task 7's stub takes no
+// floorDbm/rangeDb -- dssStrengthToRgb() operates on an already-normalised
+// 0..1 strength, so this upload path never needs the per-frame dBm floor or
+// range at all).
+void SpectrumWidget::uploadDssPaletteLut(QRhiResourceUpdateBatch* batch)
+{
+    if (!m_dssPaletteTex || !batch) { return; }
+    // The 3D surface maps its stable colour aperture across the FULL colormap,
+    // independently of the Ref-level height span. This bypasses dbmToRgb()'s
+    // waterfall black-level window while preventing a high Ref level from
+    // compressing every real signal into blue. "3D Gain" gamma-shapes the LUT.
+    // Colour depends only on the scheme + that control (NOT the per-frame floor/
+    // range, which jitter every frame), so the LUT re-bakes only on a real change.
+    const quint64 token = dssPaletteToken();
+    if (token == m_dssLutToken) { return; }   // unchanged
+
+    QImage lut(256, 1, QImage::Format_RGBA8888);   // owns its data
+    for (int i = 0; i < 256; ++i) {
+        const QRgb c = dssStrengthToRgb(i / 255.0f);
+        lut.setPixelColor(i, 0, QColor(qRed(c), qGreen(c), qBlue(c)));
+    }
+    QRhiTextureSubresourceUploadDescription desc(lut);
+    batch->uploadTexture(m_dssPaletteTex, QRhiTextureUploadEntry(0, 0, desc));
+    m_dssLutToken = token;
+}
+
+// Writes the std140 uniform block dss_mesh.vert declares at :14-58. Field
+// order matches the shader exactly: twenty-two leading float scalars, two
+// explicit std140 padding floats to reach the vec4 boundary the scalar run
+// rounds up to, then bgFill / shadowBands[8] / shadowStyles[8] / shadowMeta
+// / rowFrames[kDssRows]. A single float out of order here shifts every
+// vec4 after it and the surface renders garbage with no compile error --
+// see tst_dss_shader_contract.cpp for the count half of this contract
+// (parses the real shader; cannot catch a wrong order, only a wrong total).
+//
+// Restructured from AetherSDR SpectrumWidget.cpp:14148-14408 [@1872028c],
+// which assembles the equivalent block inline inside renderGpuFrame()
+// rather than as a separate function. Two upstream sections are NOT
+// ported here: the row-span-factor ease-toward-target animation
+// (:14164-14183, m_dssRowSpanFactor += kRowSpanAlpha * (target -
+// m_dssRowSpanFactor) -- this task writes dssRowSpanTarget() straight
+// through; an eased approach is a possible follow-up, not a correctness
+// requirement) and the slice-shadow descriptor computation (:14216-14366,
+// writeShadowSlot/appendShadow against m_sliceOverlays), left zeroed here
+// per the task brief and filled in by Task 12. The rowFrames loop
+// (:14373-14401) is the closest thing to a verbatim carry-over: same
+// four-component-per-row shape, ages 0..kDssRows-1, oldest first.
+// Upstream pre-subtracts each row's own target-relative delta at write
+// time (rowCenterMhz - dssTargetCenterMhz) and always writes 0 for
+// targetCenterOffsetMhz; this port writes both sides absolute (the row's
+// own captured centre, and the CURRENT centre) and lets the shader's
+// "(targetCenterOffsetMhz - frame.x)" subtraction do the same work --
+// algebraically identical (target - row) either way, verified by hand
+// against dss_mesh.vert:120-122 before porting this way, and cheaper: one
+// subtraction per fragment instead of kDssRows subtractions per frame on
+// the CPU whether or not that row is ever sampled.
+void SpectrumWidget::writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
+                                     const QRect& specRect, float dpr)
+{
+    if (!m_dssUbo || !batch) { return; }
+    const double targetBwMhz = m_bandwidthHz / 1.0e6;
+    const double targetCenterMhz = m_centerHz / 1.0e6;
+    const DssShape shape = dssShape();
+
+    std::array<float, kDssMeshUboFloats> ubo{};
+    int i = 0;
+    // rowOffset: ring scroll plus a half texel so Nearest lands on centres.
+    ubo[i++] = (m_dss.headRing() + 0.5f) / static_cast<float>(m_dss.rows());
+    ubo[i++] = dssFloorDbm();
+    // dssRoundedSpanDb() (Task 11 fast-follow): this field originally wrote
+    // the raw dssSpanDb() here while drawDbmScale3D() and buildDssImage()
+    // both rounded to the nearest 0.5 dB, so this GPU mesh's rangeDb
+    // (dss_mesh.vert's front-ridge height mapping) could disagree with the
+    // drawn scale and the CPU fallback by up to 0.25 dB whenever
+    // m_dynamicRange was not already an exact 0.5 dB multiple. All three
+    // now read the identical named, rounded value.
+    ubo[i++] = dssRoundedSpanDb();
+    ubo[i++] = 0.6f;                                  // zCurve: lift the floor band
+    ubo[i++] = shape.backWidthFrac;
+    ubo[i++] = shape.depthSpanFrac;
+    ubo[i++] = shape.frontMaxRidgeFrac;
+    ubo[i++] = kDssHaze;
+    ubo[i++] = static_cast<float>(m_dss.cols());
+    ubo[i++] = static_cast<float>(targetBwMhz);
+    ubo[i++] = static_cast<float>(targetCenterMhz);
+    ubo[i++] = 1.0f;                                  // rowFrequencyFrames on
+    ubo[i++] = m_dssScrollProgressRows;
+    ubo[i++] = static_cast<float>(m_dss.rows());
+    //-KG4VCF [v0.5.3] Always one: our producer appends a single row per
+    // waterfall tick. Permitted tier 1 deviation 2 of 2, design doc 2.3.
+    ubo[i++] = 1.0f;                                  // scrollDistanceRows
+    // colorRangeDb: dssSpanDb() capped at kDssColorSpanDb, never the
+    // constant alone -- see dssColorRangeDb()'s comment (review-round fix;
+    // AetherSDR SpectrumWidget.cpp:14195 [@1872028c]).
+    ubo[i++] = dssColorRangeDb();
+    ubo[i++] = static_cast<float>(m_dss.rowCount());
+    ubo[i++] = static_cast<float>(kDssVisibleRows);
+    ubo[i++] = specRect.width()  * dpr;
+    ubo[i++] = specRect.height() * dpr;
+    ubo[i++] = dssRowSpanTarget(targetBwMhz);
+    ubo[i++] = static_cast<float>(m_dssMeshCols);
+    ubo[i++] = 0.0f;                                  // std140 pad
+    ubo[i++] = 0.0f;                                  // std140 pad
+
+    const QColor bg(0x0a, 0x0a, 0x14);
+    ubo[i++] = bg.redF();
+    ubo[i++] = bg.greenF();
+    ubo[i++] = bg.blueF();
+    ubo[i++] = 1.0f;
+
+    // shadowBands / shadowStyles: buildDssShadowBands() already returns
+    // empty when 3D Slice Shadow is off, so both loops below fall straight
+    // through to the zero-padding branch and the shader's `shadowMeta.y <
+    // 0.5` early-out (redundantly, but harmlessly) never even needs it.
+    const QVector<DssShadowBand> shadowBands = buildDssShadowBands();
+    for (int slot = 0; slot < kDssShadowSlices; ++slot) {
+        if (slot < shadowBands.size()) {
+            const DssShadowBand& band = shadowBands[slot];
+            ubo[i++] = band.lowUnit;
+            ubo[i++] = band.highUnit;
+            ubo[i++] = band.centreUnit;
+            ubo[i++] = band.alpha;
+        } else {
+            i += 4;   // std::array is zero-initialized; no descriptor here
+        }
+    }
+    for (int slot = 0; slot < kDssShadowSlices; ++slot) {
+        if (slot < shadowBands.size()) {
+            const DssShadowBand& band = shadowBands[slot];
+            ubo[i++] = static_cast<float>(band.cue.redF());
+            ubo[i++] = static_cast<float>(band.cue.greenF());
+            ubo[i++] = static_cast<float>(band.cue.blueF());
+            ubo[i++] = band.centreAlpha;
+        } else {
+            i += 4;
+        }
+    }
+    ubo[i++] = static_cast<float>(shadowBands.size());   // descriptor count
+    ubo[i++] = m_threeDSliceDepth ? 1.0f : 0.0f;
+    ubo[i++] = specRect.width() * dpr;
+    ubo[i++] = 0.0f;
+
+    // rowFrames: per-row capture frame so older rows remap correctly while
+    // the operator zooms or tunes with history on screen.
+    for (int age = 0; age < kDssRows; ++age) {
+        ubo[i++] = static_cast<float>(m_dss.rowCenterMhzAtAge(age));
+        ubo[i++] = static_cast<float>(m_dss.rowBandwidthMhzAtAge(age));
+        ubo[i++] = static_cast<float>(m_dss.rowWideCenterMhzAtAge(age));
+        ubo[i++] = static_cast<float>(m_dss.rowWideBandwidthMhzAtAge(age));
+    }
+    Q_ASSERT(i == kDssMeshUboFloats);
+    batch->updateDynamicBuffer(m_dssUbo, 0,
+                               kDssMeshUboFloats * sizeof(float), ubo.data());
+}
+
+// 3DSS CPU-fallback quad (Task 10). Builds the capped-resolution CPU surface
+// via buildDssImage() and uploads it into m_dssFallbackTex, resizing the
+// texture/SRB first if the target size changed. Called from renderGpuFrame()
+// only when the mesh pipeline never came up (m_dssMeshReady false); the draw
+// call that actually composites the result lives in renderGpuFrame()'s
+// spectrum-region branch, reusing m_ovPipeline + m_ovVbo with this SRB.
+//
+// From AetherSDR SpectrumWidget.cpp:14409-14447 [@1872028c]. Two exclusions:
+// dpr is a parameter here rather than recomputed from
+// renderTarget()->pixelSize() locally -- the caller already has it (see
+// writeDssMeshUbo()'s own dpr parameter, same existing convention); and the
+// perfEnabled PerfTelemetry::recordGpuUpload() call is dropped, no
+// NereusSDR PerfMonitor equivalent exists for this specific texture-upload
+// event and adding one is out of this task's scope.
+void SpectrumWidget::uploadDssFallbackImage(QRhiResourceUpdateBatch* batch,
+                                            const QRect& specRect, float dpr)
+{
+    if (!batch) { return; }
+
+    // Cap the software surface (like the CPU-only paint path) so a HiDPI/
+    // maximized window doesn't rebuild a multi-megapixel QImage every frame;
+    // the surface is intrinsically low-res, so stretch it on draw.
+    const int specPwDev = qMax(1, qRound(specRect.width()  * dpr));
+    const int specPhDev = qMax(1, qRound(specRect.height() * dpr));
+    const double sc = qMin(1.0, qMin(double(kDssFallbackMaxW) / specPwDev,
+                                     double(kDssFallbackMaxH) / specPhDev));
+    const int dssW = qMax(2, static_cast<int>(specPwDev * sc));
+    const int dssH = qMax(2, static_cast<int>(specPhDev * sc));
+    const QImage& surf = buildDssImage(QSize(dssW, dssH), 0);
+
+    // m_dssFallbackTex/m_dssFallbackSrb/m_ovSampler come from
+    // initOverlayPipeline(); guard against a partial GPU init (OOM / device
+    // loss) so the fallback never dereferences a null resource.
+    if (surf.isNull() || !m_dssFallbackTex || !m_dssFallbackSrb || !m_ovSampler) {
+        return;
+    }
+    if (m_dssFallbackTexW != dssW || m_dssFallbackTexH != dssH) {
+        m_dssFallbackTexW = dssW;
+        m_dssFallbackTexH = dssH;
+        m_dssFallbackTex->setPixelSize(QSize(dssW, dssH));
+        m_dssFallbackTex->create();
+        m_dssFallbackSrb->setBindings({
+            QRhiShaderResourceBinding::sampledTexture(1,
+                QRhiShaderResourceBinding::FragmentStage,
+                m_dssFallbackTex, m_ovSampler),
+        });
+        m_dssFallbackSrb->create();
+        m_dssFallbackUploadedGen = ~0ull;   // force the upload below
+    }
+    if (m_dssFallbackUploadedGen != m_dss.generation()) {
+        QRhiTextureSubresourceUploadDescription desc(surf);
+        batch->uploadTexture(m_dssFallbackTex, QRhiTextureUploadEntry(0, 0, desc));
+        m_dssFallbackUploadedGen = m_dss.generation();
+    }
+}
+
 void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
 {
     if (m_rhiInitialized) { return; }
@@ -7854,6 +9695,7 @@ void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
     initWaterfallPipeline();
     initOverlayPipeline();
     initSpectrumPipeline();
+    initDssMeshPipeline();
 
     // Upload quad VBO data
     batch->uploadStaticBuffer(m_wfVbo, kQuadData);
@@ -8052,7 +9894,14 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                 // drawDbmScale needs the FULL-WIDTH rect so the strip
                 // lands in the reserved right-edge zone at x=[w-kDbmStripW..w-1].
                 // Passing the clipped specRect would put the strip INSIDE the spectrum.
-                drawDbmScale(p, QRect(0, 0, w, specH));
+                // dBm strip: both render modes use a readable full-height amplitude
+                // reference; the 3D surface itself is perspective-foreshortened.
+                // From AetherSDR SpectrumWidget.cpp:13983-13989 [@1872028c]
+                if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+                    drawDbmScale3D(p, QRect(0, 0, w, specH), dssFloorDbm());
+                } else {
+                    drawDbmScale(p, QRect(0, 0, w, specH));
+                }
             }
             // Plan 4 D9 (Cluster E) + follow-up (option A): TX filter overlay
             // on panadapter (GPU path), MOX-gated.  Painted BEFORE drawBandPlan
@@ -8522,6 +10371,31 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         }
     }
 
+    // ---- 3DSS mesh resource updates (only when 3D is the active mode) ----
+    // Queued alongside the FFT vertex updates above so a single
+    // cb->resourceUpdate(batch) submits everything for this frame. dpr is
+    // computed locally here (rather than reusing the post-beginPass
+    // declaration below) because renderTarget()->pixelSize() does not
+    // require an active pass, and these batch writes must be recorded
+    // before cb->resourceUpdate(batch) consumes the batch.
+    if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) {
+        rebuildDssMeshIfNeeded(batch);
+        uploadDssPaletteLut(batch);
+        uploadDssHeightRows(batch);
+        const QSize dssOutputSize = renderTarget()->pixelSize();
+        const float dssDpr =
+            dssOutputSize.width() / static_cast<float>(qMax(1, w));
+        writeDssMeshUbo(batch, specRect, dssDpr);
+        // Task 10: CPU fallback surface, built/uploaded only when the mesh
+        // pipeline never came up (RGBA16F unsupported at
+        // initDssMeshPipeline() time -- see its warning log). Skipped
+        // whenever the mesh is live: no point paying for a QImage rebuild
+        // the draw-call chain below will never composite.
+        if (!m_dssMeshReady) {
+            uploadDssFallbackImage(batch, specRect, dssDpr);
+        }
+    }
+
     cb->resourceUpdate(batch);
 
     // ---- Begin render pass ----
@@ -8545,8 +10419,66 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         cb->draw(4);
     }
 
-    // Draw FFT spectrum
-    if (m_fftFillPipeline && m_fftLinePipeline && m_visibleBinCount > 0) {
+    // Spectrum region: the 3DSS surface, or the classic FFT trace.
+    // 3DSS replaces only the spectrum trace: the surface fills specRect and
+    // the waterfall, divider, freq scale, and all overlays keep their
+    // normal 2D positions. Everything below is identical to 2D except the
+    // FFT trace is swapped for the 3DSS surface quad inside specRect.
+    // From AetherSDR SpectrumWidget.cpp:13304-13307 [@1872028c].
+    const bool is3D =
+        (m_spectrumRenderMode == SpectrumRenderMode::Mode3D) && m_dssMeshReady;
+
+    if (is3D && m_dss.rowCount() > 0) {
+        const float specVpX = static_cast<float>(specRect.x()) * dpr;
+        const float specVpY = static_cast<float>(h - specRect.bottom() - 1) * dpr;
+        const float specVpW = static_cast<float>(specRect.width()) * dpr;
+        const float specVpH = static_cast<float>(specRect.height()) * dpr;
+        const QRhiViewport specVp(specVpX, specVpY, specVpW, specVpH);
+        const int rows = m_dss.visibleRowCount();
+
+        cb->setGraphicsPipeline(m_dssFillPipeline);
+        cb->setShaderResources(m_dssSrb);
+        cb->setViewport(specVp);
+        const QRhiCommandBuffer::VertexInput fillVbuf(m_dssMeshVbo, 0);
+        cb->setVertexInput(0, 1, &fillVbuf);
+        cb->draw(rows * dssFillVerticesPerRow(m_dssMeshCols));
+
+        // OpenGL binds the fill pipeline here too (dssOutlinePipelineFor) --
+        // m_dssLinePipeline is null on that backend, never created above.
+        cb->setGraphicsPipeline(dssOutlinePipelineFor(
+            m_dssOutlinePipelineMode, m_dssFillPipeline, m_dssLinePipeline));
+        cb->setShaderResources(m_dssSrb);
+        cb->setViewport(specVp);
+        const QRhiCommandBuffer::VertexInput lineVbuf(m_dssMeshLineVbo, 0);
+        cb->setVertexInput(0, 1, &lineVbuf);
+        cb->draw(rows * dssLineVerticesPerRow(m_dssMeshCols));
+    } else if (m_spectrumRenderMode == SpectrumRenderMode::Mode3D
+               && m_ovPipeline && m_dssFallbackSrb && m_dssFallbackTexW > 0) {
+        // Task 10: CPU cached-image fallback (mesh pipeline unavailable --
+        // is3D is false here precisely because m_dssMeshReady is false, so
+        // this branch is Mode3D's ONLY remaining path; it must win over the
+        // classic-FFT-trace branch below or 3D mode would silently render
+        // the 2D trace instead of the CPU surface it's supposed to fall
+        // back to). Reuses the overlay pipeline/VBO -- the same textured
+        // full-screen-quad shader every static/dynamic overlay draw already
+        // uses -- with its own SRB bound to the small capped-resolution DSS
+        // texture, stretched to the spectrum viewport exactly like the mesh
+        // draw above. From AetherSDR SpectrumWidget.cpp:14643-14654
+        // [@1872028c] (upstream's own `is3D && m_ovPipeline && m_dssSrb &&
+        // m_dssTexW > 0` cached-image draw, same shape, this task's own
+        // field names).
+        const float specVpX = static_cast<float>(specRect.x()) * dpr;
+        const float specVpY = static_cast<float>(h - specRect.bottom() - 1) * dpr;
+        const float specVpW = static_cast<float>(specRect.width()) * dpr;
+        const float specVpH = static_cast<float>(specRect.height()) * dpr;
+        cb->setGraphicsPipeline(m_ovPipeline);
+        cb->setShaderResources(m_dssFallbackSrb);
+        cb->setViewport({specVpX, specVpY, specVpW, specVpH});
+        const QRhiCommandBuffer::VertexInput vbuf(m_ovVbo, 0);
+        cb->setVertexInput(0, 1, &vbuf);
+        cb->draw(4);
+    } else if (!is3D && m_fftFillPipeline && m_fftLinePipeline
+               && m_visibleBinCount > 0) {
         float specVpX = static_cast<float>(specRect.x()) * dpr;
         float specVpY = static_cast<float>(h - specRect.bottom() - 1) * dpr;
         float specVpW = static_cast<float>(specRect.width()) * dpr;
@@ -8669,6 +10601,31 @@ void SpectrumWidget::releaseResources()
     delete m_fftLineVbo;       m_fftLineVbo = nullptr;
     delete m_fftFillVbo;       m_fftFillVbo = nullptr;
     delete m_fftPeakVbo;       m_fftPeakVbo = nullptr;
+
+    // 3DSS mesh (3D stacked-trace spectrum plan, Task 7).
+    delete m_dssFillPipeline;    m_dssFillPipeline = nullptr;
+    delete m_dssLinePipeline;    m_dssLinePipeline = nullptr;
+    delete m_dssSrb;             m_dssSrb = nullptr;
+    delete m_dssMeshVbo;         m_dssMeshVbo = nullptr;
+    delete m_dssMeshLineVbo;     m_dssMeshLineVbo = nullptr;
+    delete m_dssUbo;             m_dssUbo = nullptr;
+    delete m_dssHeightTex;       m_dssHeightTex = nullptr;
+    delete m_dssPaletteTex;      m_dssPaletteTex = nullptr;
+    delete m_dssHeightSampler;   m_dssHeightSampler = nullptr;
+    delete m_dssPaletteSampler;  m_dssPaletteSampler = nullptr;
+    m_dssMeshReady = false;
+    m_dssMeshUploaded = false;
+    m_dssMeshCols = 0;
+    m_dssLutToken = ~0ull;
+    m_dssUploadedRowGeneration = ~0ull;
+    m_dssLastUploadedHead = -1;
+
+    // 3DSS CPU-fallback quad (Task 10).
+    delete m_dssFallbackTex;  m_dssFallbackTex = nullptr;
+    delete m_dssFallbackSrb;  m_dssFallbackSrb = nullptr;
+    m_dssFallbackTexW = 0;
+    m_dssFallbackTexH = 0;
+    m_dssFallbackUploadedGen = ~0ull;
 
     m_rhiInitialized = false;
 }

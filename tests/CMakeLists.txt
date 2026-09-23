@@ -6152,6 +6152,332 @@ nereus_add_test(tst_tnf_ui_wiring)
 #         section 8.3 + section 11.
 nereus_add_test(tst_notch_visual_does_not_perturb_noise_floor_or_maxbin)
 
+# ── 3D stacked-trace spectrum plan, Task 2: Angle mapping safety properties
+# Pins the 3D Angle mapping's safety guarantees: slider 50 reproduces
+# upstream's geometry exactly, no angle can push a full-scale back-row ridge
+# off the top of the plot, spread and convergence move together as a real
+# camera would, and the widest row span falls at the edge-on end (which
+# Task 3's mesh sizing relies on).
+nereus_add_test(tst_dss_angle)
+
+# ── 3D stacked-trace spectrum plan, Task 1: DssGeometry ───────────────────
+# Golden test asserting kDssUpstreamShape reproduces AetherSDR DssRenderer.h's
+# constants exactly, and that dssDepthScale / dssProjectPerspective /
+# dssProjectSurface / the row-span helpers match upstream's formulas bit
+# for bit. Source: AetherSDR src/gui/DssRenderer.h:36-187 [@1872028c].
+nereus_add_test(tst_dss_geometry)
+
+# ── 3D stacked-trace spectrum plan, Task 3: DssMeshGeometry ───────────────
+# Pins the GPU mesh vertex generation: the default angle reproduces
+# upstream's ~33.7 MiB mesh size exactly, the widest angle costs materially
+# more and is only paid when the shape demands it, the density invariant
+# dss_mesh.vert's Nearest sampler depends on holds at every angle (and is
+# caught failing if a resize is skipped), the vertex-count formula matches
+# upstream, and emitted vertices land in-range, back-to-front, with
+# decodable edge tags. Source: AetherSDR src/gui/SpectrumWidget.cpp:148-172,
+# :13136-13200 and src/gui/DssRenderer.h:66-82 [@1872028c].
+nereus_add_test(tst_dss_mesh_geometry)
+
+# ── 3D stacked-trace spectrum plan, Task 4: DssRenderer ring store ────────
+# Pins the row ring store: peak-preserving downsample survives a single-bin
+# carrier, median-of-3 rejects a one-frame broadband impulse, the ring wraps
+# and bounds rowCount()/visibleRowCount(), pushed rows stamp their frequency
+# frame, a retune (frame change) drops the temporal blend rather than
+# smearing signals across the pan, the wide (off-screen) channel records
+# coverage independently of the exact FFT channel, newestWideBandwidthMhz()
+# looks past bare front rows rather than collapsing to 0 the instant one
+# push omits a wide slice, clear() resets everything AND (mutation-verified,
+# whole-ring-filled precondition) actually wipes the per-row frame stamps
+# rather than leaving them for ringAtAge()'s unguarded clamp to hand back
+# stale, and rowGeneration() advances on every push. Source: AetherSDR
+# src/gui/DssRenderer.cpp:30-33, :50-60, :183-216, :218-250 [@1872028c].
+nereus_add_test(tst_dss_renderer_ring)
+
+# ── 3D stacked-trace spectrum plan, Task 5: DSS mesh shader contract ──────
+# The shaders are GLSL and cannot be unit-tested directly, but the C++ host
+# and the GLSL UBO layout must agree on two numbers or the surface renders
+# garbage with no compile error: the rowFrames[] array length must equal
+# kDssRows, and the std140 UBO float count must match the host's write
+# order. Reads the actual shader source files from disk rather than
+# restating a copy of the constants, so a drift in either file is caught.
+# Source: AetherSDR resources/shaders/dss_mesh.{vert,frag} [@1872028c].
+nereus_add_test(tst_dss_shader_contract)
+target_compile_definitions(tst_dss_shader_contract PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+# ── 3D stacked-trace spectrum plan, Task 24: 3D Speed row divider ───────
+# Pins the row-cadence divider that matches the 3D ring's history to the
+# waterfall's: a manual divider pushes one folded row per N waterfall
+# ticks, divider 1 reproduces the pre-Task-24 one-row-per-tick behaviour,
+# the fold is peak-hold per column (not "last row wins" or an average) so
+# a one-tick burst still raises a ridge, a size change mid-fold discards
+# the partial fold and restarts, lowering the divider mid-fold pushes on
+# the very next tick instead of waiting out the old count, the automatic
+# divider tracks the waterfall's own pixel height live, the glide-clock
+# increment scales by the divider so the scroll phase still completes
+# once per pushed row, the stop-on-TX gate pauses the fold exactly like
+# it pauses the waterfall, and leaving 3D resets the in-progress fold.
+# NereusSDR-original: upstream AetherSDR at 1872028c has no row divider
+# and no 3D-specific cadence control at all (crew workspace
+# scout-scroll-speed.md, section 5), so there is no upstream source to
+# cite.
+nereus_add_test(tst_dss_row_divider)
+
+# ── 3D stacked-trace spectrum plan, Task 6: render mode + row tee ────────
+# Pins the SpectrumRenderMode enum default and the five 3D control values'
+# defaults/clamps, that 3D Angle 50 reproduces upstream's fixed shape, and
+# above all the row-tee placement: pushDssRow() must run from inside
+# pushWaterfallRow() downstream of the stop-on-TX early return so the 3D
+# stack and the flat waterfall advance and freeze in lockstep. A ticker-
+# callback tee (upstream of the gate) would desync the two panes on every
+# over -- stopOnTx_freezesBothPanesTogether drives TX both ways to catch it.
+# Source: AetherSDR src/gui/SpectrumWidget.h:78-82 [@1872028c].
+nereus_add_test(tst_dss_row_tee)
+
+# ── 3D stacked-trace spectrum plan, Task 8: palette LUT decoupling ───────
+# Pins that the 3DSS palette is baked from the shared scheme gradient stops,
+# gamma-shaped only by "3D Gain" -- never through dbmToRgb(), so the 2D
+# waterfall's gain / black-level sliders cannot silently reshape the 3D
+# surface. Also pins the gain-to-gamma identities (50 linear, 100 -> 0.25,
+# 0 -> 4), that every scheme still renders distinct colours in 3D, and that
+# the LUT re-bake token folds scheme + gain only (never per-frame jitter).
+# Source: AetherSDR src/gui/SpectrumWidget.cpp:11710-11733, :12713-12741
+# [@1872028c].
+nereus_add_test(tst_dss_palette)
+
+# ── 3D stacked-trace spectrum plan, Task 9: floor anchoring + wide feed ───
+# Pins the 3D Floor control (offsets the measured noise floor down, so the
+# stack keeps a constant apparent height as conditions move), the dBm span
+# (tracks m_refLevel/m_dynamicRange), the colour aperture (caps at
+# kDssColorSpanDb but narrows further with a tighter dBm range -- review-
+# round fix, the first pass wrote the constant unconditionally),
+# buildDssWideRow()'s off-screen-DDC-bins windowing (sized for the WIDEST
+# angle so a runtime angle change never invalidates retained rows; empty at
+# full DDC width), and dssRowSpanTarget() scaling the available overhang by
+# the 3D Span percentage. Source: AetherSDR src/gui/SpectrumWidget.cpp:
+# 12743-12784, :14195 [@1872028c].
+nereus_add_test(tst_dss_floor_and_span)
+
+# ── 3D stacked-trace spectrum plan, Task 10: CPU fallback surface ────────
+# Pins DssRenderer::image()'s cache gate -- rebuilds only when px / scale
+# strip / floor / range / zCurve / palette token / DssShape actually change,
+# holds otherwise -- and the painter's-algorithm occlusion test
+# (dssDepthVisibleSegments) the Task 12 depth-shadow overlay consumes. The
+# shape-in-cache-key case is NereusSDR-original: upstream renders at one
+# fixed angle, so its cache has no shape to invalidate on.
+# Source: AetherSDR src/gui/DssRenderer.cpp:753-903 [@1872028c].
+nereus_add_test(tst_dss_cpu_surface)
+
+# ── 3D stacked-trace spectrum plan, Task 11: 3D dBm scale ────────────────
+# Pins drawDbmScale3D(): floor-anchored (dssFloorDbm() + rounded 3D Span),
+# not Ref-anchored like the 2D scale, so its rendered output must move when
+# the measured noise floor moves. Also pins the ported rangeDb<=0 guard
+# (drawDbmScaleLabels) against degenerate/zero-size rects and non-positive
+# spans without crashing or dividing by zero.
+# Source: AetherSDR src/gui/SpectrumWidget.cpp:17223-17335 [@1872028c].
+nereus_add_test(tst_dss_dbm_scale)
+
+# ── 3D stacked-trace spectrum plan, Task 12: slice shadow decals ─────────
+# Pins buildDssShadowBands(): maps each visible slice's passband (and its
+# own carrier frequency, as the shadow's cue position) into the same [0,1]
+# viewport-unit space hzToX() uses, entirely empty when 3D Slice Shadow is
+# off, truncated to the shader's fixed 8-descriptor shadowBands/shadowStyles
+# budget, and dropping a slice whose passband never touches the visible
+# viewport rather than clamping it in place.
+# Source: AetherSDR src/gui/SpectrumWidget.cpp:14216-14366, :9975-9979
+# [@1872028c].
+nereus_add_test(tst_dss_slice_shadow)
+
+# ── 3D stacked-trace spectrum plan, Task 13: the 3D VIEW control section ─
+# Pins SpectrumOverlayMenu's "3D VIEW" section: the Spectrum render-mode
+# combo plus 3D Floor / 3D Gain / 3D Span / 3D Angle / 3D Slice Shadow, with
+# upstream's exact labels, ranges, defaults and tooltip wording for the five
+# ported controls and the NereusSDR-original 3D Angle slider. setDssValues
+# seeds all six widgets without echoing back out through the change
+# signals, and setDssRowSpanSupported greys out only the 3D Span row on the
+# CPU-fallback render path. The final test right-clicks a real SpectrumWidget
+# (same idiom as tst_notch_hit_test.cpp) to prove the six connect() calls in
+# SpectrumWidget.cpp reach the real Task 6 setters, not a parallel test-only
+# wiring.
+# Source: AetherSDR src/gui/SpectrumOverlayMenu.cpp:1874-1943, :2250-2273
+# [@1872028c].
+nereus_add_test(tst_dss_overlay_menu)
+
+# ── 3D stacked-trace spectrum plan, Task 14: persistence ─────────────────
+# Pins the six-control persistence split: Spectrum render-mode / 3D Gain /
+# 3D Span / 3D Angle / 3D Slice Shadow round-trip per panadapter through
+# SpectrumWidget's existing settingsKey() helper (and write "True"/"False"
+# strings, not 1/0); 3D Floor round-trips per BAND instead on
+# PanadapterModel, keyed exactly like the existing DisplayGridMax_<band>
+# grid keys (no pan index), recalled across a real setCenterFrequency()
+# band change, and never written by either SpectrumWidget's per-pan save
+# path or a plain per-band grid-range edit that never touched 3D. This is
+# a NereusSDR-original persistence scheme (upstream AetherSDR groups its
+# 3D settings in a single JSON object rather than per-band/per-pan flat
+# keys), so there is no upstream source to cite.
+nereus_add_test(tst_dss_persistence)
+
+# ── 3D stacked-trace spectrum plan, Task 15: Setup mirror + two-way sync ──
+# Pins Display3DSetupPage (Setup -> Display -> 3D View): the same six
+# controls Task 13 put in the right-click overlay menu, now also reachable
+# from the Setup dialog. An edit on the Setup page reaches SpectrumWidget;
+# an edit on SpectrumWidget (as the overlay menu would drive it) reaches
+# back to the Setup page's own widgets; and driving the round trip through
+# SpectrumWidget::dssAngleChanged (the new Task 15 signal) settles in
+# exactly one emission rather than an echo cascade between the two
+# surfaces. "Reset 3D to defaults" restores all six ship defaults. This is
+# a NereusSDR-original Setup-dialog page with no AetherSDR counterpart --
+# AetherSDR's own RadioSetupDialog has no 3D View section at all (verified
+# against the pinned commit; see the file header) -- so there is no
+# upstream source to cite for the page itself; labels/ranges/defaults
+# match the already-cited Task 13 overlay-menu row.
+nereus_add_test(tst_dss_setup_sync)
+
+# ── 3D stacked-trace spectrum plan, Task 16: dBm-strip drag wired to 3D
+# Floor ────────────────────────────────────────────────────────────────
+# Bench fix. The plain vertical drag on the right-edge dBm strip
+# (SpectrumWidget.cpp, m_draggingDbm) always wrote m_refLevel, which the
+# 3D surface never reads -- it anchors to dssFloorDbm() instead. Pins the
+# mode-gated fix: in 3D the same drag now moves dssFloorDepth() (down
+# reveals more noise, up hides it, full strip height mapped to the full
+# 0..24 range) and leaves refLevel() untouched; in 2D the pre-existing
+# formula and output are completely unchanged and dssFloorDepth() is left
+# alone. Also pins the 0..24 saturation bound under the new mapping.
+# NereusSDR-original: upstream AetherSDR's 3D Floor has no drag binding at
+# all, so there is no upstream source to cite.
+nereus_add_test(tst_dss_floor_drag)
+
+# ── 3D stacked-trace spectrum plan, Task 19: Ctrl-drag dBm-range zoom ────
+# Pins the ported m_draggingDbmRange gesture: Ctrl (Cmd/Meta too) drag on
+# the right-edge dBm strip zooms the amplitude span with the bottom pinned,
+# instead of panning it the way the plain drag does. Runs identically in 2D
+# and 3D (no mode branch, matching upstream, which has none on this
+# gesture) because dssSpanDb() reads m_dynamicRange directly, so the 3D
+# surface's span genuinely changes even though m_refLevel has no 3D reader
+# of its own. Pins: dynamicRange() changes under Ctrl-drag and only under
+# Ctrl-drag (plain drag in both modes is re-verified unaffected, closing
+# the regression risk against Task 16's established behaviour); the 2D and
+# 3D bottom-anchor invariant refLevel()-dynamicRange(); upstream's exact
+# clamp bounds (10..180, ported verbatim as clampDbmRangeForBottom, not the
+# sibling wheel-zoom gesture's local 10..200); and Meta-alone engaging the
+# gesture (NereusSDR's cross-platform simplification of upstream's
+# #ifdef Q_OS_MAC split).
+# Source: AetherSDR src/gui/SpectrumWidget.cpp:337-340, 389-410, 3365,
+# 9537-9550, 10493-10501, 10893-10926 [@1872028c].
+nereus_add_test(tst_dbm_range_drag)
+
+# ── 3D stacked-trace spectrum plan, Task 18: SpectrumWidget <->
+#    DisplaySettingsModel binding ─────────────────────────────────────────
+# Pins the two-way wiring in SpectrumWidget::bindDisplaySettings(): all
+# fourteen model-to-widget appliers, the six 3D widget-to-model signal
+# connections, and the eight non-3D fields' explicit push at every widget
+# write site (named setters, setDbmRange(), loadSettings(), the dBm-strip
+# and divider mouse drags). Also pins echo termination (a QSignalSpy on
+# the model's refLevelChanged sees exactly one emission per real change
+# from either direction, and zero on a no-op re-apply), that loadSettings()
+# never drives the widget's own apply counter, that the model's widened
+# Dyn Range clamp (10..200) never narrows a value the widget itself
+# accepts, and that the pre-existing 3D Floor widget<->PanadapterModel
+# bridge still fires exactly once when driven through the model.
+# NereusSDR-original: see tst_display_settings_model.cpp's own comment
+# below for why there is no upstream source to cite.
+nereus_add_test(tst_display_settings_binding)
+
+# ── 3D stacked-trace spectrum plan, Task 23: persistence moves onto the
+#    model ────────────────────────────────────────────────────────────────
+# GOLDEN TEST, committed alone first, green against the pre-refactor code:
+# pins the on-disk format of all fourteen per-pan display keys byte for
+# byte (exact stored strings, not just getter round trips) before
+# SpectrumWidget::loadSettings()/saveSettings() stop reading and writing
+# them directly and start routing through DisplaySettingsModel::load()/
+# save() instead. Also pins pan-0-fallback inheritance for an untouched
+# pan 2, that pan 2's own save writes only the "_2" suffixed keys and
+# leaves pan 0's untouched, and that loadSettings() -- seeded with
+# genuinely non-default values, not an empty AppSettings -- neither
+# schedules a save nor drives the widget's own apply counter
+# (displaySettingsApplyCountForTest() stays 0) while still leaving the
+# model holding the loaded values. NereusSDR-original: this is a
+# NereusSDR persistence-scheme refactor with no upstream AetherSDR or
+# Thetis counterpart (see DisplaySettingsModel.h's file header), so
+# there is no upstream source to cite.
+nereus_add_test(tst_display_settings_golden)
+
+# ── 3D stacked-trace spectrum plan, Task 17: DisplaySettingsModel ────────
+# Pins the NereusSDR-original model that replaces point-to-point
+# `m_updatingFromModel`-style sync between the right-click SpectrumOverlayMenu
+# popup and Setup -> Display: a QObject owning all fourteen display values,
+# one setter + one changed signal each, save()/load() round trip. Round trip
+# uses two DISTINCT instances so a load() that silently does nothing cannot
+# pass; booleans are asserted as the raw "True"/"False" strings, not through
+# the bool getter; every changed signal is proven to fire exactly once on a
+# real change and exactly zero times on a no-op (including a value that
+# CLAMPS to the current one); clamping is proven at both ends of every
+# ranged control; and 3D Floor is proven untouched by load()/save() (no
+# AppSettings key written under any name -- its persistence moved to
+# PanadapterModel per band in Task 18) while the other thirteen are
+# proven pan-scoped (SpectrumWidget's own settingsKey(base, panIndex)
+# convention, including the pan-0-fallback-inheritance rule from
+# tst_pan_display_settings_inherit.cpp). NereusSDR-original: neither
+# Thetis nor AetherSDR has a consolidating display-settings model to port
+# (see the class-header comment for why), so there is no upstream source
+# to cite.
+nereus_add_test(tst_display_settings_model)
+
+# ── 3D stacked-trace spectrum plan, Task 20: right-click popup binding ───
+# Pins the popup-controls migration onto DisplaySettingsModel: all thirteen
+# SpectrumOverlayMenu change signals that have a model field connect
+# straight to the matching model setter (never to a SpectrumWidget setter
+# or a lambda touching a widget member); setValues()/setDssValues() seed
+# the popup from the model's own getters, proven by a model-driven change
+# made before the right-click; a new live-refresh path re-seeds the popup
+# from the model while it stays open, without emitting any of the popup's
+# own change signals (QSignalSpy count 0), so a popup-driven change cannot
+# bounce back out through its own controls; a popup-driven change is
+# proven to reach both the model and, through Task 18's existing binding,
+# the widget; and setDssRowSpanSupported()'s push on open (unrelated to
+# the model -- it is derived from the widget's DDC width) is unchanged.
+# NereusSDR-original: neither Thetis nor AetherSDR routes its right-click
+# display menu through a consolidating settings model, so there is no
+# upstream source to cite.
+nereus_add_test(tst_display_popup_binding)
+
+# ── 3D stacked-trace spectrum plan, Task 21: Setup -> Display binding ────
+# Pins the Setup-dialog migration onto DisplaySettingsModel: Display3DSetupPage's
+# six 3D controls and Reset button, WaterfallDefaultsPage's Colour Scheme, and
+# SpectrumDefaultsPage's Fill Alpha and Fill trace all connect straight to the
+# model's setters and read the model's getters on load, replacing the old
+# direct-to-SpectrumWidget wiring (and, on Display3DSetupPage, the
+# m_updatingFromModel flag it used before this task). A model-driven change on
+# each of the six 3D fields is proven to land on the page's own widget without
+# the reflected control re-emitting its own change signal (each field checked
+# in its own scope, per the batching trap Task 20's review caught); a
+# page-driven change is proven to reach both the model and, through Task 18's
+# existing binding, the live SpectrumWidget getter; and the Reset button is
+# proven to write all six ship defaults onto the model. WaterfallDefaultsPage
+# and SpectrumDefaultsPage are constructed the fallback way (RadioModel,
+# SpectrumWidget, radioModel.setSpectrumWidget(&w), then the page) since no
+# existing test builds either directly.
+# NereusSDR-original: neither Thetis nor AetherSDR routes its Setup-equivalent
+# dialog through a consolidating display-settings model, so there is no
+# upstream source to cite.
+nereus_add_test(tst_display_setup_binding)
+
+# ── 3D stacked-trace spectrum plan, Task 22: DisplayApplet ───────────────
+# Pins the left-panel display-controls applet: RadioModel::
+# spectrumWidgetChanged fires exactly once for a same-widget re-set;
+# every one of the fifteen DisplaySettingsModel fields is wired both
+# ways (model -> control reflected under QSignalBlocker with zero echo,
+# proven one field per scope per the batching trap Task 20's review
+# caught; control -> model reaches the bound model's setter); the applet
+# follows RadioModel::spectrumWidget() and rebinds cleanly (a control
+# moved after a rebind changes the NEW widget's model, never the old
+# one); Reset 3D writes the seven ship defaults; three sections in order
+# (Waterfall, Spectrum, 3D VIEW) with two dividers between them.
+# NereusSDR-original: neither Thetis nor AetherSDR has a left-panel
+# applet bound to a consolidating display-settings model, so there is no
+# upstream source to cite.
+nereus_add_test(tst_display_applet)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
