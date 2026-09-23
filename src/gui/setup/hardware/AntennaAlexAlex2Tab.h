@@ -132,7 +132,7 @@ public:
     void restoreSettings(const QString& macAddress);
 
     // Test seam — returns whether the "Active" status is showing (hasAlex2=true).
-    // Always compiled (NEREUS_BUILD_TESTS is set on NereusSDRObjs globally).
+    // Always compiled (NEREUS_BUILD_TESTS is set on NereusSDRLib globally).
     bool isAlex2Active() const;
 
     // Phase 3P-H Task 5a — LED test seams.

@@ -1,5 +1,20 @@
 # Test Execution Speed: Design
 
+> **Correction, 2026-07-31.** The link-time measurements in §2 do not
+> reproduce. Re-running §2.1's own method (delete 20 test binaries, relink)
+> measures **1 s**, not 73.5 s, and touching one `src/core` file and
+> rebuilding all 514 tests measures **34 s**, not the ~32 min this document
+> extrapolates. Every non-link measurement in §2 (disk, binary sizes, run
+> times, CPU-time splits) did reproduce. The "37 minutes, of which 32 is
+> linking" framing in §1 is therefore wrong, and with it the per-change
+> savings attributed to linking in §6.
+>
+> Phase 1 was still worth doing, but for the reason §2 attributes to the
+> *first-run scan* rather than to linking: macOS rescans every freshly
+> linked Mach-O, and it was scanning 12 GB of test binaries. See §2.0 of
+> [2026-07-25-test-execution-speed-phase1-design.md](2026-07-25-test-execution-speed-phase1-design.md)
+> for the corrected before/after table.
+
 **Status:** Approved (design), pending implementation plan
 **Date:** 2026-07-25
 **Baseline:** `main` at `a513bf72`. Measurements taken against a `build/` from

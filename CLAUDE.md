@@ -509,7 +509,7 @@ preferences. OpenHPSDR radios don't store per-slice state.
 | --- | --- |
 | [docs/MASTER-PLAN.md](docs/MASTER-PLAN.md) | Full phased roadmap, menu bar layout, GUI container mapping (Thetis → NereusSDR), skin system design, progress tracking |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor guidelines, coding conventions, PR process |
-| [docs/development/fast-test-loop.md](docs/development/fast-test-loop.md) | **Read before running tests.** Per-test builds, `ctest -L` subsystem labels, macOS first-run-scan exemption, ccache setup, and how to write tests that stay fast. Building the whole suite costs ~32 min; almost nothing needs it. |
+| [docs/development/fast-test-loop.md](docs/development/fast-test-loop.md) | **Read before running tests.** Per-test builds, `ctest -L` subsystem labels, ccache setup, the macOS first-run scan (and why the Developer Tools exemption does not stop it), and how to write tests that stay fast. Since the app became a shared library: rebuilding every test after a `src/core` edit is ~24 s and the full 598-test suite runs in ~110 s. Record load average with any timing you add here; unqualified numbers in this area have been wrong three times. |
 | [STYLEGUIDE.md](STYLEGUIDE.md) | Applet color palette, button states, gauge zones, slider/combo styling |
 | [CHANGELOG.md](CHANGELOG.md) | Version history and per-phase feature additions |
 
