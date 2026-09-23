@@ -115,6 +115,7 @@
 #include "SpectrumWidget.h"
 #include "SpectrumOverlayMenu.h"
 #include "ImdOverlay.h"
+#include "StyleConstants.h"
 #include "spectrum/WaterfallTicker.h"
 #include "widgets/VfoWidget.h"
 #include "ColorSwatchButton.h"
@@ -4859,15 +4860,54 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
 // Overlap between two slices' bands is left to whatever QPainter's default
 // compositing does with the translucent fill, exactly as a single band is
 // composited today. No blend rule, colour or opacity is introduced here.
+//
+// Marker colours. Every marker used to be drawn in slice A's cyan, so with
+// two slices on one pan nothing on the band said which line belonged to which
+// flag. Each marker now takes its own slice's colour, and the slices the
+// operator has not selected are drawn darker, following AetherSDR's
+// drawSliceMarkers, src/gui/SpectrumWidget.cpp:17454-17466 [@9f81dc00]:
+//   - centre line and triangle: the slice colour when selected, its dim
+//     partner otherwise (sliceColorForOverlay, :7922-7926 [@9f81dc00]);
+//   - filter edges: the slice colour when selected, the theme's secondary
+//     text colour otherwise.
+// That split is AetherSDR's second answer. At [@0cd4559], the revision
+// NereusSDR's earlier AetherSDR ports are pinned to, the edges dimmed with the
+// line, and inactive passbands became hard to see; AetherSDR commit 7ca6bacf
+// (#3547) moved them to the neutral grey so colour, not brightness, is what
+// says "not selected". NereusSDR's secondary text colour is
+// Style::kTextSecondary. The shaded passband does not come from here at all:
+// it stays the operator's m_rxFilterColor (Setup > Display) for every slice.
+//
+// "Selected" is RadioModel's active slice, one for the whole window, carried
+// on each flag (VfoWidget::isActiveSlice). A pan that does not host it draws
+// every one of its slices darker, as AetherSDR does. It is deliberately not
+// the pan's own front slice (m_frontSliceIndex), which would light one slice
+// per pan.
+//
+// Paint order follows the same routine (:17710-17714 [@9f81dc00]): every
+// other slice first, the selected slice last so its marker sits on top of any
+// overlap.
 QVector<SpectrumWidget::SliceMarkerGeometry>
 SpectrumWidget::sliceMarkerGeometry() const
 {
+    const auto marker = [](double centreHz, int lowHz, int highHz,
+                           const VfoWidget* flag, int sliceIndex, bool active) {
+        const QColor lineColor = active ? VfoWidget::sliceColor(sliceIndex)
+                                        : VfoWidget::sliceDimColor(sliceIndex);
+        const QColor edgeColor = active ? VfoWidget::sliceColor(sliceIndex)
+                                        : QColor(Style::kTextSecondary);
+        return SliceMarkerGeometry{centreHz, lowHz, highHz, flag,
+                                   sliceIndex, active, lineColor, edgeColor};
+    };
+
     QVector<SliceMarkerGeometry> out;
 
     if (m_vfoWidgets.isEmpty()) {
         if (m_vfoHz > 0.0) {
-            out.append(SliceMarkerGeometry{m_vfoHz, m_filterLowHz,
-                                           m_filterHighHz, nullptr});
+            // No flag to say which slice this is. Slice A, selected, is the
+            // cyan this marker has always been drawn in.
+            out.append(marker(m_vfoHz, m_filterLowHz, m_filterHighHz,
+                              nullptr, 0, true));
         }
         return out;
     }
@@ -4875,14 +4915,23 @@ SpectrumWidget::sliceMarkerGeometry() const
     // QMap, so this walks slices in index order and the paint order is stable
     // frame to frame rather than hash-dependent.
     out.reserve(m_vfoWidgets.size());
+    QVector<SliceMarkerGeometry> selected;
     for (auto it = m_vfoWidgets.constBegin(); it != m_vfoWidgets.constEnd(); ++it) {
         const VfoWidget* flag = it.value();
         if (!flag || flag->frequency() <= 0.0) {
             continue;
         }
-        out.append(SliceMarkerGeometry{flag->frequency(), flag->filterLow(),
-                                       flag->filterHigh(), flag});
+        const SliceMarkerGeometry g = marker(flag->frequency(), flag->filterLow(),
+                                             flag->filterHigh(), flag,
+                                             flag->sliceIndex(),
+                                             flag->isActiveSlice());
+        if (g.active) {
+            selected.append(g);
+        } else {
+            out.append(g);
+        }
     }
+    out += selected;
     return out;
 }
 
@@ -4898,16 +4947,14 @@ void SpectrumWidget::drawVfoMarker(QPainter& p, const QRect& specRect, const QRe
 //
 // Body unchanged by the Phase 3F split; it reads its centre and filter edges
 // off the passed-in marker instead of the pan's m_vfoHz / m_filterLowHz /
-// m_filterHighHz, so the same paint runs once per hosted slice.
+// m_filterHighHz, so the same paint runs once per hosted slice. Its colours
+// come off the marker too (see sliceMarkerGeometry for the rule); this used
+// to paint every slice in slice A's cyan.
 void SpectrumWidget::drawSliceMarker(QPainter& p, const QRect& specRect,
                                      const QRect& wfRect,
                                      const SliceMarkerGeometry& g)
 {
     int vfoX = hzToX(g.centreHz, specRect);
-
-    // Per-slice color — from AetherSDR SliceColors.h:15-20
-    // Slice 0 (A) = cyan, active
-    static constexpr int kSliceR = 0x00, kSliceG = 0xd4, kSliceB = 0xff;
 
     // Filter passband rectangle
     double loHz = g.centreHz + g.filterLowHz;
@@ -4944,19 +4991,26 @@ void SpectrumWidget::drawSliceMarker(QPainter& p, const QRect& specRect,
         p.fillRect(xLo, wfRect.top(), fW, wfRect.height(), m_rxFilterColor);
     }
 
-    // Filter edge lines — from AetherSDR line 3237: slice color, alpha=130
+    // Filter edge lines: the marker's edge colour at alpha 130.
+    // From AetherSDR src/gui/SpectrumWidget.cpp:17539-17544 [@9f81dc00].
     // Clip the spectrum-side edge to specBottomClipped so the line stops at
     // the bandplan strip's top edge.
-    p.setPen(QPen(QColor(kSliceR, kSliceG, kSliceB, 130), 1));
+    QColor edgeColor = g.edgeColor;
+    edgeColor.setAlpha(130);
+    p.setPen(QPen(edgeColor, 1));
     p.drawLine(xLo, specRect.top(), xLo, specBottomClipped);
     p.drawLine(xLo, wfRect.top(),   xLo, wfRect.bottom());
     p.drawLine(xHi, specRect.top(), xHi, specBottomClipped);
     p.drawLine(xHi, wfRect.top(),   xHi, wfRect.bottom());
 
-    // VFO center line — from AetherSDR line 3281: slice color, alpha=220, width=2
-    // Width narrows to 1 when filter edge is ≤4px away (CW modes)
+    // VFO center line: the marker's line colour at alpha 220.
+    // From AetherSDR src/gui/SpectrumWidget.cpp:17587 [@9f81dc00]. The width
+    // is NereusSDR's own, unchanged by the colour work: 2, narrowing to 1
+    // when a filter edge is ≤4px away (CW modes).
     qreal vfoLineW = (std::abs(vfoX - xLo) <= 4 || std::abs(vfoX - xHi) <= 4) ? 1.0 : 2.0;
-    p.setPen(QPen(QColor(kSliceR, kSliceG, kSliceB, 220), vfoLineW));
+    QColor lineColor = g.lineColor;
+    lineColor.setAlpha(220);
+    p.setPen(QPen(lineColor, vfoLineW));
     p.drawLine(vfoX, specRect.top(), vfoX, wfRect.bottom());
 
     // VFO triangle marker — from AetherSDR line 3285-3293
@@ -4980,8 +5034,10 @@ void SpectrumWidget::drawSliceMarker(QPainter& p, const QRect& specRect,
         // Clamp to spectrum area
         triTop = std::max(triTop, specRect.top());
 
+        // Opaque, in the same colour as the centre line.
+        // From AetherSDR src/gui/SpectrumWidget.cpp:17590-17594 [@9f81dc00].
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(kSliceR, kSliceG, kSliceB));
+        p.setBrush(g.lineColor);
         QPolygon tri;
         tri << QPoint(vfoX - kTriHalf, triTop)
             << QPoint(vfoX + kTriHalf, triTop)
@@ -8765,6 +8821,13 @@ VfoWidget* SpectrumWidget::addVfoWidget(int sliceIndex)
     auto* w = new VfoWidget(this);
     w->setSliceIndex(sliceIndex);
     m_vfoWidgets[sliceIndex] = w;
+    // Whether the flag's slice is the selected one decides its marker's
+    // colours (sliceMarkerGeometry). The GPU path caches the markers in the
+    // static overlay, so a flip has to invalidate that cache; a bare update()
+    // would redraw the old colours from it.
+    connect(w, &VfoWidget::activeSliceChanged, this, [this](bool) {
+        markOverlayDirty();
+    });
     w->show();
     w->raise();
     return w;

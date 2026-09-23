@@ -2218,6 +2218,15 @@ void VfoWidget::setTxSlice(bool isTx)
     m_txBadge->setChecked(isTx);
 }
 
+void VfoWidget::setActiveSlice(bool active)
+{
+    if (m_activeSlice == active) {
+        return;
+    }
+    m_activeSlice = active;
+    emit activeSliceChanged(active);
+}
+
 void VfoWidget::setAntennaList(const QStringList& ants)
 {
     m_antennaList = ants;
@@ -3125,6 +3134,21 @@ QColor VfoWidget::sliceColor(int index)
     case 2: return QColor(0x40, 0xff, 0x40);  // green
     case 3: return QColor(0xff, 0xff, 0x00);  // yellow
     default: return QColor(0x00, 0xd4, 0xff);
+    }
+}
+
+QColor VfoWidget::sliceDimColor(int index)
+{
+    // From AetherSDR src/gui/SliceColors.h:16-19 [@0cd4559]: the dim half
+    // (dr, dg, db) of each kSliceColors entry. Current AetherSDR carries the
+    // same four values as color.slice.dim.a-d in
+    // resources/themes/default-dark.json:227-230 [@9f81dc00].
+    switch (index) {
+    case 0: return QColor(0x00, 0x60, 0x80);  // cyan, dim
+    case 1: return QColor(0x80, 0x20, 0x80);  // magenta, dim
+    case 2: return QColor(0x20, 0x80, 0x20);  // green, dim
+    case 3: return QColor(0x80, 0x80, 0x00);  // yellow, dim
+    default: return QColor(0x00, 0x60, 0x80);
     }
 }
 

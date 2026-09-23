@@ -1077,6 +1077,12 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     if (TxSliceArbiter* arb = m_radioModel->txSliceArbiter()) {
         newFlag->setTxSlice(arb->txBoundSliceId() == sliceIndex);
     }
+    // Which slice is selected decides this flag's marker colours on the pan.
+    // Seeded here because the selection can predate the flag (a slice that
+    // migrated pans, or one selected before its flag was built); the
+    // RadioModel::activeSliceChanged fan-out in buildUI(), next to the TX
+    // badge's, keeps it current after that.
+    newFlag->setActiveSlice(m_radioModel->activeSlice() == slice);
 
     // --- Intent signals (Sub-Epic C T9 + Sub-Epic E T4 mirror) ---
     connect(newFlag, &VfoWidget::txHandoffRequested, this,
@@ -4021,6 +4027,27 @@ void MainWindow::buildUI()
                       ToastSeverity::Info, 2000);
         });
     }
+
+    // Same fan-out for the selected slice, which colours the markers on the
+    // pans: the selected slice draws in its full colour, every other slice
+    // darker (SpectrumWidget::sliceMarkerGeometry). Every flag on every pan
+    // is told, not only the ones on the pan hosting the selection, because a
+    // pan that does not host it draws all of its slices darker. The flag
+    // invalidates its own pan's cached overlay when its state flips.
+    //
+    // activeSliceChanged carries a list position, so the selection is
+    // resolved through activeSlice()->sliceIndex(), as the handler that
+    // fronts the selected flag does.
+    connect(m_radioModel, &RadioModel::activeSliceChanged, this, [this](int) {
+        const SliceModel* active = m_radioModel->activeSlice();
+        const int activeId = active ? active->sliceIndex() : -1;
+        for (auto it = m_vfoWidgetsBySlice.constBegin();
+             it != m_vfoWidgetsBySlice.constEnd(); ++it) {
+            if (VfoWidget* flag = it.value()) {
+                flag->setActiveSlice(flag->sliceIndex() == activeId);
+            }
+        }
+    });
 
     // MOX transition fast-attack trigger — Thetis display.cs:889-892:
     //   if (rx == 1) FastAttackNoiseFloorRX1 = true;

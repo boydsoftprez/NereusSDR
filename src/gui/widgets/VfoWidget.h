@@ -361,6 +361,23 @@ public:
     void setStepHz(int hz);
     void setSliceIndex(int index);
     void setTxSlice(bool isTx);
+
+    /// Whether this flag's slice is the one the operator has selected:
+    /// RadioModel's active slice, the single selection every pan shares. Not
+    /// the pan's own front slice (SpectrumWidget::setFrontSliceIndex); with
+    /// two pans open each pan has a front flag, but only one slice is
+    /// selected.
+    ///
+    /// Read back by SpectrumWidget::sliceMarkerGeometry(), which draws the
+    /// selected slice's marker in its full slice colour and every other
+    /// slice's marker darker. MainWindow seeds it in createSliceFlag and fans
+    /// every change out from RadioModel::activeSliceChanged, the same way it
+    /// keeps the TX badge current. Defaults to true, so a flag nobody has
+    /// told otherwise draws exactly as every marker did before the
+    /// distinction existed.
+    void setActiveSlice(bool active);
+    bool isActiveSlice() const { return m_activeSlice; }
+
     void setAntennaList(const QStringList& ants);
     void setSmeter(double dbm);
 
@@ -584,6 +601,11 @@ signals:
     // MOX (RF-safe) before flipping the TX-bound slice.
     void txHandoffRequested(int sliceIndex);
 
+    // Emitted by setActiveSlice() when the state actually changes. The
+    // hosting SpectrumWidget listens (addVfoWidget) so its cached marker
+    // overlay is redrawn in the new colours.
+    void activeSliceChanged(bool active);
+
     // Phase 3F Sub-Epic E Task 4: right-click context menu intent signals.
     // MainWindow listens and routes to SliceModel / FilterPolicyDialog /
     // RadioModel::removeSlice. antennaChangeRequested is fired by the
@@ -654,6 +676,7 @@ private:
 
     // Slice identity
     int m_sliceIndex{0};
+    bool m_activeSlice{true};  // see setActiveSlice()
     int m_stepHz{100};
     double m_frequency{14225000.0};
     // Signed Hz offsets from m_frequency. Seeded with the same LSB defaults
@@ -744,6 +767,10 @@ public:
     // From AetherSDR SliceColors.h. Public static so the RX applet's
     // per-slice tab row (Phase 3F Bug 3) shares the exact flag palette.
     static QColor sliceColor(int index);
+
+    // The darker partner of each sliceColor() entry, used for the panadapter
+    // markers of slices the operator has not selected (see setActiveSlice).
+    static QColor sliceDimColor(int index);
 
 private:
 
