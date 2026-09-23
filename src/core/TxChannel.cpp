@@ -1507,6 +1507,18 @@ void TxChannel::setTxBandpass(int lowHz, int highHz)
 #endif
 }
 
+int TxChannel::dspBlockFrames() const
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) {
+        return 0;
+    }
+    return ch[m_channelId].dsp_size;
+#else
+    return 0;
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // requestFilterChange()
 //

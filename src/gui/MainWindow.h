@@ -96,6 +96,7 @@ class ConnectionPanel;
 class SupportDialog;
 class WdspEngine;
 class FFTEngine;
+class TxAnalyzer;
 class SpectrumWidget;
 class SliceModel;
 class VfoWidget;
@@ -755,6 +756,32 @@ private:
     /// a single tracker fed from stream 0 would mis-set every other slice.
     QMap<int, class NoiseFloorTracker*> m_streamNoiseFloors;
     QThread*            m_fftThread{nullptr};
+    /// Pan currently showing the transmit spectrum instead of its receiver,
+    /// or empty when not transmitting. Set on the MOX rise edge from the
+    /// TX-bound slice's panKey(), cleared on the fall edge.
+    ///
+    /// Two jobs, and it has to be a stored id rather than a re-derivation
+    /// for both. dispatchFftFrameToPans skips this pan so a receiver that
+    /// survives transmit does not fight the TX trace on the same widget
+    /// (the ORION class keeps RX1 through PureSignal; the HERMES class does
+    /// not, which is why the G2 and the G2E behave differently here). And
+    /// the MOX fall edge restores exactly the pan that was taken over, even
+    /// if the TX binding moved to a different slice while keyed.
+    QString             m_txDisplayPanId;
+
+    // PR #212 follow-up: TX-side panadapter source via WDSP analyzer.
+    // Source-switched in via the MoxController::moxStateChanged lambda
+    // (FFTEngine for RX, TxAnalyzer for TX).  See TxAnalyzer.h header.
+    TxAnalyzer*         m_txAnalyzer{nullptr};
+    // Saved RX panadapter state captured on MOX-up so we can restore on
+    // MOX-down.  During TX, the SpectrumWidget is reconfigured to display
+    // the *TX filter passband* (a few-kHz window around the carrier) per
+    // Thetis's UpdateTXDisplayVars + CalcSpectrum (console.cs:8015-8049 +
+    // specHPSDR.cs:738-806 [v2.10.3.13]) — so all four state values
+    // (sample rate, center, bandwidth, DDC center) need to flip on MOX
+    // edge and restore on un-key.
+    double              m_savedSpectrumSampleRate{0.0};
+    double              m_savedSpectrumDdcHz{0.0};
 
     /// Last centre + sample rate RadioModel published for each stream, kept
     /// so a pan that subscribes AFTER the stream was centred still learns

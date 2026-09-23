@@ -308,7 +308,15 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// Forward decl for the Custom-palette gradient picker (Phase 3M-5c).
+class GradientPickerWidget;
+
 // Display > TX Display
+// From Thetis tpDisplayTransmit [setup.designer.cs:36232 v2.10.3.13+501e3f51].
+// 3M-5b: Waterfall Amplitude Scale group is functional.
+// 3M-5c: Custom Gradient Picker (visible when palette = Custom).
+// Remaining groups (FFT, Panadapter, Waterfall FFT, TX Grid Scale) are
+// placeholder labels naming the sub-phase that wires them.
 // ---------------------------------------------------------------------------
 class TxDisplayPage : public SetupPage {
     Q_OBJECT
@@ -318,11 +326,36 @@ public:
 private:
     void buildUI();
 
-    // Section: TX Spectrum
-    QLabel*         m_bgColorLabel{nullptr};    // placeholder color swatch
-    QLabel*         m_gridColorLabel{nullptr};  // placeholder color swatch
-    QSlider*        m_lineWidthSlider{nullptr}; // 1–3
-    QDoubleSpinBox* m_calOffsetSpin{nullptr};   // dBm offset
+    // Group 4: Waterfall Amplitude Scale (functional in 3M-5b).
+    // From Thetis grpTXWFAmpScale [setup.designer.cs:36246 v2.10.3.13+501e3f51].
+    QSpinBox*          m_txWfLowLevelSpin{nullptr};   // udTXWFAmpMin: range -200..200, step 5, default -70 dBm
+    QSpinBox*          m_txWfHighLevelSpin{nullptr};  // udTXWFAmpMax: range -200..200, step 5, default +30 dBm
+    QComboBox*         m_txWfPaletteCombo{nullptr};   // comboColorPalette_tx: 7-item Thetis list
+    ColorSwatchButton* m_txWfLowColorBtn{nullptr};    // clrbtnWaterfallLow_tx: default Black
+
+    // Group 4 (cont.): Custom Gradient Picker (functional in 3M-5c).
+    // From Thetis lgLinearGradientTX_waterfall [setup.designer.cs:3283 area
+    // v2.10.3.13+501e3f51]. The picker row is hidden unless palette = Custom.
+    GradientPickerWidget* m_txWfGradientPicker{nullptr};
+    QWidget*              m_txWfGradientRowLabel{nullptr}; // form-row label widget; toggled with picker
+
+    // Groups 1-3 (functional in 3M-5d): FFT, Panadapter, Waterfall.
+    // 9 controls total -- all bound to TxAnalyzer via lambdas.
+    // From Thetis tpDisplayTransmit groups groupBoxTS8 / groupBoxTS7 /
+    // groupBoxTS9 at setup.designer.cs:36511-36768 [v2.10.3.13+501e3f51].
+    QSlider*    m_txFftSizeSlider{nullptr};   // tbTXDisplayFFTSize (Min=0 Max=6)
+    QLabel*     m_txFftSizeReadout{nullptr};  // lblTXFFT_size  (Bisque numeric)
+    QLabel*     m_txBinWidthLabel{nullptr};   // lblTXDispBinWidth (Bisque numeric)
+    QComboBox*  m_txWindowCombo{nullptr};     // comboTXDispWinType (7 windows)
+
+    QComboBox*  m_txPanDetectorCombo{nullptr};   // comboTXDispPanDetector (5 items + RMS)
+    QComboBox*  m_txPanAveragingCombo{nullptr};  // comboTXDispPanAveraging (4 items)
+    QSpinBox*   m_txPanAvTimeSpin{nullptr};      // udTXDisplayAVGTime ms (default 30)
+    QCheckBox*  m_txPanNormalizeCheck{nullptr};  // chkDispTXNormalize (gated on PanDet>=2)
+
+    QComboBox*  m_txWfDetectorCombo{nullptr};    // comboTXDispWFDetector (4 items, no RMS)
+    QComboBox*  m_txWfAveragingCombo{nullptr};   // comboTXDispWFAveraging (4 items)
+    QSpinBox*   m_txWfAvTimeSpin{nullptr};       // udTXDisplayAVTime ms (default 120)
 };
 
 } // namespace NereusSDR

@@ -546,6 +546,7 @@ set(CORE_SOURCES
     src/core/TxSliceArbiter.cpp
     src/core/TxSliceArbiter.h
     src/core/FFTEngine.cpp
+    src/core/TxAnalyzer.cpp
     src/core/NoiseFloorEstimator.cpp
     src/core/NoiseFloorTracker.cpp
     src/core/ClarityController.cpp
@@ -710,6 +711,9 @@ set(GUI_SOURCES
     src/gui/widgets/DspParamPopup.cpp
     src/gui/widgets/FilterPassbandWidget.cpp
     src/gui/widgets/FilterPresetEditDialog.cpp
+    src/gui/widgets/GradientPickerWidget.h
+    src/gui/widgets/GradientPickerWidget.cpp
+    src/gui/widgets/GradientStop.h
     src/gui/widgets/GuardedComboBox.h
     src/gui/widgets/GuardedSlider.h
     src/gui/widgets/MeterSlider.h
