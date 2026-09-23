@@ -11,6 +11,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23: Added changeTuneStepUp/Down, ported from Thetis
+//                 ChangeTuneStepUp/Down, by J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -476,6 +479,52 @@ void SliceModel::setStepHz(int hz)
         m_stepHz = hz;
         emit stepHzChanged(hz);
     }
+}
+
+// From Thetis console.cs:6124-6128 [v2.10.3.15]: ChangeTuneStepUp.
+void SliceModel::changeTuneStepUp()
+{
+    //MW0LGE_21j
+    const int index = tuneStepIndexForHz(m_stepHz);
+    if (index >= 0) {
+        // TuneStepIndex = (tune_step_index + 1) % tune_step_list.Count;
+        setStepHz(kTuneStepList[(index + 1) % kTuneStepListSize].stepHz);
+        return;
+    }
+
+    // NereusSDR-native: Thetis holds an index, so it has no off-list case.
+    // An off-list Hz value (persisted or hand-edited) moves to the smallest
+    // entry above it, wrapping to the first entry when none is larger.
+    for (int i = 0; i < kTuneStepListSize; ++i) {
+        if (kTuneStepList[i].stepHz > m_stepHz) {
+            setStepHz(kTuneStepList[i].stepHz);
+            return;
+        }
+    }
+    setStepHz(kTuneStepList[0].stepHz);
+}
+
+// From Thetis console.cs:6130-6134 [v2.10.3.15]: ChangeTuneStepDown.
+void SliceModel::changeTuneStepDown()
+{
+    //MW0LGE_21j
+    const int index = tuneStepIndexForHz(m_stepHz);
+    if (index >= 0) {
+        // TuneStepIndex = (tune_step_index - 1 + tune_step_list.Count) % tune_step_list.Count;
+        setStepHz(kTuneStepList[(index - 1 + kTuneStepListSize) % kTuneStepListSize].stepHz);
+        return;
+    }
+
+    // NereusSDR-native: Thetis holds an index, so it has no off-list case.
+    // An off-list Hz value (persisted or hand-edited) moves to the largest
+    // entry below it, wrapping to the last entry when none is smaller.
+    for (int i = kTuneStepListSize - 1; i >= 0; --i) {
+        if (kTuneStepList[i].stepHz < m_stepHz) {
+            setStepHz(kTuneStepList[i].stepHz);
+            return;
+        }
+    }
+    setStepHz(kTuneStepList[kTuneStepListSize - 1].stepHz);
 }
 
 // ---------------------------------------------------------------------------

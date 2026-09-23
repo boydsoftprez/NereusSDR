@@ -8,6 +8,7 @@
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/radio.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/setup.designer.cs (upstream has no top-of-file header — project-level LICENSE applies)
+//   Project Files/Source/Console/TuneStep.cs, original licence from Thetis source is included below
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -16,6 +17,10 @@
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-09-23: Replaced the STEP stub ladder with a port of Thetis
+//                 tune_step_list (TuneStep pairs) and ChangeTuneStepUp/Down
+//                 by J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -116,6 +121,48 @@
 // Upstream source 'Project Files/Source/Console/setup.designer.cs' has no top-of-file GPL header —
 // project-level Thetis LICENSE applies.
 
+// --- From TuneStep.cs ---
+//=================================================================
+// TuneStep.cs
+//=================================================================
+// PowerSDR is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2011  FlexRadio Systems
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: gpl@flexradio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    4616 W. Howard Lane  Suite 1-150
+//    Austin, TX 78728
+//    USA
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
 #include "Band.h"
 #include "core/NbFamily.h"
 #include "core/SampleRateCatalog.h"
@@ -141,12 +188,61 @@ struct SkuUiProfile;  // issue #257 — passed to refreshAntennasFromAlex so the
                       // RX-only label slot (rxOnly != 0) wins over the main
                       // ANT* label on Mk II BPF / EXT* path reads.
 
-// Stage 1 stub ladder — Stage 2 replaces with Thetis tune_step_list
-// (console.cs tune_step_list has 11 entries; Stage 1 uses this 6-entry
-// subset only for the X/RIT STEP cycle button).
-inline constexpr int kStageOneStepLadder[] = {1, 10, 100, 500, 1000, 10000};
-inline constexpr int kStageOneStepLadderSize =
-    static_cast<int>(sizeof(kStageOneStepLadder) / sizeof(kStageOneStepLadder[0]));
+// From Thetis TuneStep.cs:44-68 [v2.10.3.15]: class TuneStep pairs a step in
+// Hz (StepHz) with its display name (Name). Ported as a plain aggregate.
+struct TuneStep {
+    int stepHz;
+    const char* name;
+};
+
+// A list of available tuning steps  [original inline comment from console.cs:11270]
+// From Thetis console.cs:1953-1982 [v2.10.3.15]: tune_step_list, 26 entries
+// in ascending order. Values, names, order and the index comments are verbatim.
+inline constexpr TuneStep kTuneStepList[] = {
+    {1, "1Hz"},//0
+    {2, "2Hz"},//1
+    {10, "10Hz"},//2
+    {25, "25Hz"},//3
+    {50, "50Hz"},//4
+    {100, "100Hz"},//5
+    {250, "250Hz"},//6
+    {500, "500Hz"},//7
+    {1000, "1kHz"},//8
+    {2000, "2kHz"},//9
+    {2500, "2.5kHz"},//10
+    {5000, "5kHz"},//11
+    {6250, "6.25kHz"},//12
+    {9000, "9kHz"},//13
+    {10000, "10kHz"},//14
+    {12500, "12.5kHz"},//15
+    {15000, "15kHz"},//16
+    {20000, "20kHz"},//17
+    {25000, "25kHz"},//18
+    {30000, "30kHz"},//19
+    {50000, "50kHz"},//20
+    {100000, "100kHz"},//21
+    {250000, "250kHz"},//22
+    {500000, "500kHz"},//23
+    {1000000, "1MHz"},//24
+    {10000000, "10MHz"}//25
+};  // initialize wheel tuning list array
+
+inline constexpr int kTuneStepListSize =
+    static_cast<int>(sizeof(kTuneStepList) / sizeof(kTuneStepList[0]));
+
+// Index of the kTuneStepList entry whose stepHz equals hz, or -1 when hz is
+// not on the list. Mirrors the -1-on-miss contract of Thetis TuneStepLookup
+// (console.cs:11303-11312 [v2.10.3.15]), which keys on the Name string; this
+// keys on Hz because NereusSDR persists the step in Hz, not as an index.
+constexpr int tuneStepIndexForHz(int hz)
+{
+    for (int i = 0; i < kTuneStepListSize; ++i) {
+        if (kTuneStepList[i].stepHz == hz) {
+            return i;
+        }
+    }
+    return -1;
+}
 
 // Represents a single receiver slice.
 // In NereusSDR, slices are a client-side abstraction — the radio has
@@ -427,6 +523,11 @@ public:
 
     int stepHz() const { return m_stepHz; }
     void setStepHz(int hz);
+
+    // Move to the next / previous kTuneStepList entry, wrapping at both
+    // ends. Thetis ChangeTuneStepUp / ChangeTuneStepDown (console.cs:6124-6134 [v2.10.3.15]).
+    void changeTuneStepUp();
+    void changeTuneStepDown();
 
     // ---- Gains ----
 
@@ -1054,7 +1155,8 @@ private:
     int     m_filterLow{100};            // USB default from Thetis F5
     int     m_filterHigh{3000};
     AGCMode m_agcMode{AGCMode::Med};
-    int     m_stepHz{100};               // From Thetis tune_step_list[5] = 100 Hz
+    // From Thetis console.cs:1984 [v2.10.3.15]: Thetis starts at tune_step_index = 2 (10 Hz).
+    int     m_stepHz{100};               // kTuneStepList[5]; NereusSDR default kept pending maintainer review
     int     m_afGain{50};                // 0-100, maps to 0.0-1.0 volume
     int     m_rfGain{80};                // 0-100, maps to AGC gain
     QString m_rxAntenna{QStringLiteral("ANT1")};

@@ -1403,18 +1403,13 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     connect(newFlag, &VfoWidget::xitHzChanged, this, [slice](int hz) {
         slice->setXitHz(hz);
     });
+    // From Thetis console.cs:29034-29038 [v2.10.3.15]: a left click on the
+    // step display (WheelTune_MouseDown) calls ChangeTuneStepUp, which wraps
+    // from the last tune_step_list entry back to the first.
+    // changeTuneStepUp emits stepHzChanged, which updates this flag's STEP
+    // label through the stepHzChanged connection made earlier in createSliceFlag.
     connect(newFlag, &VfoWidget::stepCycleRequested, this, [slice]() {
-        int current = slice->stepHz();
-        int next = kStageOneStepLadder[0];
-        for (int i = 0; i < kStageOneStepLadderSize; ++i) {
-            if (kStageOneStepLadder[i] == current) {
-                next = kStageOneStepLadder[(i + 1) % kStageOneStepLadderSize];
-                break;
-            }
-        }
-        // setStepHz emits stepHzChanged which the :1626-1629 handler uses to
-        // propagate to activeSpectrumWidget()->setStepSize and newFlag->setStepHz.
-        slice->setStepHz(next);
+        slice->changeTuneStepUp();
     });
     connect(newFlag, &VfoWidget::lockChanged, this, [slice](bool locked) {
         slice->setLocked(locked);
