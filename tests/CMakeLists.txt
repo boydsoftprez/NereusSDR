@@ -5922,6 +5922,17 @@ nereus_add_test(tst_wideband_frame_accumulator)
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-f-wideband-plan.md Task 4.
 nereus_add_test(tst_wideband_fft_engine)
 
+# Phase 3F Sub-Epic F Tasks 8 + 9 (finished 2026-08-08): extended-pan
+# listenable-island geometry + wideband wing fill. Closes the bench report
+# that "the extendview wide wings is not working" -- Sub-Epic F shipped the
+# whole wideband DATA path in 2026-05 and never wrote the paint half, so the
+# stored bins had no reader and the DDC trace stretched across the full panel
+# once zoomed past the DDC rate.
+# Source: NereusSDR-original presentation; wing frequency axis and dB
+# calibration ported from Thetis wbDisplay.cs:440, 2106, 4511, 4680-4704
+# [v2.10.3.15].
+nereus_add_test(tst_extended_pan_wings)
+
 # Phase 3F: WdspEngine-owned external-diversity lifecycle/order/process tests
 # for create/destroy/xdiv plus SetEXTDIVRun / Nr / Output / Rotate. Ported
 # from Thetis dsp.cs:609-619 [v2.10.3.15] P/Invoke declarations.

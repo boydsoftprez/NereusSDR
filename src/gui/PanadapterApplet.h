@@ -33,6 +33,20 @@
 //                                    3F design. AI-assisted
 //                                    transformation via Anthropic Claude
 //                                    Code.
+//   2026-08-08  J.J. Boyd / KG4VCF  Bench report: a floated pan "does
+//                                    not live inside a container like I
+//                                    would expect". Adds a
+//                                    floating-only title strip (grip,
+//                                    pan name, Dock button) plus
+//                                    setFloatingState() / isFloating() /
+//                                    dockRequested. Strip shape from
+//                                    AetherSDR
+//                                    src/gui/PanadapterApplet.cpp:46-83,
+//                                    552-565 [@1e0718ad]; NereusSDR shows
+//                                    it only while floating, where
+//                                    upstream carries it on docked pans
+//                                    too. AI-assisted transformation via
+//                                    Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -67,6 +81,22 @@ public:
 
     QString panId() const { return m_panId; }
     SpectrumWidget* spectrumWidget() const { return m_spectrum; }
+
+    /// Show/hide this pan's own title strip, which exists only while the pan
+    /// is popped out of the console.
+    ///
+    /// Bench report 2026-08-08: a floated pan "does not live inside a
+    /// container like I would expect". A bare window gave the operator no
+    /// name for what they were looking at and no way back except the OS close
+    /// box, where every other detachable surface in the app (the meter
+    /// containers) carries a title bar with a dock button.
+    ///
+    /// Deliberately floating-ONLY: AetherSDR shows this strip on docked pans
+    /// too (PanadapterApplet.cpp:46-83 [@1e0718ad]), but adopting that here
+    /// would put a 16 px bar on top of every docked panadapter, which is a
+    /// redesign of the docked stack rather than a fix to the float path.
+    void setFloatingState(bool floating);
+    bool isFloating() const { return m_isFloating; }
 
     /// Associate a slice (its flag will overlay when in visible range).
     void addSlice(int sliceIndex);
@@ -170,6 +200,11 @@ signals:
     void addSliceRequested(const QString& panId);
     void floatRequested(const QString& panId);
 
+    /// The floating-only title strip's Dock button. PanadapterStack wires it
+    /// to the same dockPanadapter() the window close box reaches, so the two
+    /// routes back cannot diverge.
+    void dockRequested(const QString& panId);
+
 protected:
     /// Right-align the status strip clear of the dBm scale strip. Re-run
     /// whenever a pill lights or goes dark: the strip's minimum width grows to
@@ -196,14 +231,21 @@ private:
     /// untouched. Mirrors SMeterWidget::buildContextMenu().
     QMenu* buildContextMenu(QObject* parent);
 
+    /// Build the floating-only title strip. Constructed hidden by the ctor so
+    /// setFloatingState() is a pure show/hide and the docked pan pays nothing
+    /// for it beyond one hidden 18 px widget.
+    void buildFloatTitleBar();
+
     QString                 m_panId;
     SpectrumWidget*         m_spectrum {nullptr};
     SpectrumStatusOverlay*  m_statusOverlay {nullptr};
+    QWidget*                m_floatTitleBar {nullptr};
     int                     m_activeSliceIndex {-1};
     QSet<int>               m_associatedSlices;
     double                  m_centerMhz {14.225};
     double                  m_bandwidthMhz {0.192};
     bool                    m_extendedViewEnabled {true};  // Phase 3F Sub-Epic F Task 13
+    bool                    m_isFloating {false};
 };
 
 } // namespace NereusSDR
