@@ -1027,21 +1027,29 @@ set_target_properties(NereusSDR PROPERTIES
     MACOSX_BUNDLE_COPYRIGHT "© 2026 J.J. Boyd (KG4VCF); GPL port of Thetis (ramdor/Thetis) and mi0bot/OpenHPSDR-Thetis; descends from FlexRadio PowerSDR lineage. GPLv3."
 )
 
-# macOS strict mode requires NSMicrophoneUsageDescription in Info.plist
-# for any app that opens an audio capture stream — without it the stream
-# opens but macOS silently delivers zero-filled buffers (no permission
-# dialog, no error). CMake's MACOSX_BUNDLE template doesn't include the
-# key; inject it post-build + re-sign so TCC accepts the updated bundle.
+# macOS: packaging/macos/Info.plist.in is the bundle's Info.plist template.
+# CMake fills its MACOSX_BUNDLE_* placeholders from the properties above;
+# every other key the app needs, including the privacy usage strings, lives
+# in that file. NSMicrophoneUsageDescription must be present for any app
+# that opens an audio capture stream: without it macOS refuses the
+# microphone with no permission dialog and no error. The key used to be
+# injected after the build, but CMake rewrites the bundle's Info.plist from
+# its template whenever it re-runs, so a re-configure with no relink
+# dropped the key and left the signature not matching the plist.
 #
-# Uses Set-then-Add pattern via /bin/sh so the operation is idempotent:
-# Set succeeds when the key already exists from a prior build; falls
-# through to Add on the first build (when the key is absent).
+# The ad-hoc re-sign keeps the signature covering the finished bundle, so it
+# must run after every other step that writes into the bundle; a file added
+# after signing breaks the seal. POST_BUILD commands run in the order they
+# are declared, and the DFNR block below copies its model into
+# Contents/Resources, so the signing command is deferred to the end of this
+# file.
 if(APPLE)
-    set(_nereus_mic_desc "NereusSDR uses the microphone for SSB voice transmission and live mic level monitoring.")
-    add_custom_command(TARGET NereusSDR POST_BUILD
-        COMMAND /bin/sh -c "/usr/libexec/PlistBuddy -c \"Set :NSMicrophoneUsageDescription '${_nereus_mic_desc}'\" \"$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Info.plist\" 2>/dev/null || /usr/libexec/PlistBuddy -c \"Add :NSMicrophoneUsageDescription string '${_nereus_mic_desc}'\" \"$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Info.plist\""
+    set_target_properties(NereusSDR PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/Info.plist.in"
+    )
+    cmake_language(DEFER CALL add_custom_command TARGET NereusSDR POST_BUILD
         COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:NereusSDR>"
-        COMMENT "Inject NSMicrophoneUsageDescription + re-sign bundle (mic-permission gate)"
+        COMMENT "Re-sign NereusSDR.app (ad-hoc) after every step that writes into it"
         VERBATIM
     )
 endif()

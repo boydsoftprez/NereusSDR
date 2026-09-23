@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Info.plist template for NereusSDR.app, set as the NereusSDR target's
+    MACOSX_BUNDLE_INFO_PLIST in CMakeLists.txt. CMake fills each
+    MACOSX_BUNDLE_* placeholder from the target properties set there, so the
+    name, identifier and versions keep a single source.
+
+    The keys mirror CMake's default MacOSXBundleInfo.plist.in. This template
+    adds the privacy usage strings. They live here rather than in a post-build
+    step because CMake rewrites the bundle's Info.plist from its template on
+    every re-configure: a string injected after the build was lost on the next
+    CMake run, and macOS then refused the permission without asking.
+
+    Add any further usage string to the privacy block at the end of the dict.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>English</string>
+    <key>CFBundleExecutable</key>
+    <string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
+    <key>CFBundleGetInfoString</key>
+    <string>${MACOSX_BUNDLE_INFO_STRING}</string>
+    <key>CFBundleIconFile</key>
+    <string>${MACOSX_BUNDLE_ICON_FILE}</string>
+    <key>CFBundleIdentifier</key>
+    <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleLongVersionString</key>
+    <string>${MACOSX_BUNDLE_LONG_VERSION_STRING}</string>
+    <key>CFBundleName</key>
+    <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleVersion</key>
+    <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+    <key>CSResourcesFileMapped</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>${MACOSX_BUNDLE_COPYRIGHT}</string>
+
+    <!-- Privacy usage strings. macOS shows these in its permission prompts
+         and refuses the permission outright when the matching key is
+         missing. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>NereusSDR uses the microphone for SSB voice transmission and live mic level monitoring.</string>
+</dict>
+</plist>
