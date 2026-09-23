@@ -818,6 +818,7 @@ nereus_add_test(tst_slice_nb_persistence)
 
 # ── Phase 3G-10 Stage 2: RIT/XIT client offset (S2.8) ───────────────────────
 nereus_add_test(tst_slice_rit_xit)
+nereus_add_test(tst_slice_tune_step_list)
 
 # ── Phase 3G-10 Stage 2: Frequency lock (S2.9) ──────────────────────────────
 nereus_add_test(tst_slice_frequency_lock)

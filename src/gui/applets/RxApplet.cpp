@@ -436,8 +436,7 @@ void RxApplet::buildUi()
     leftCol->setSpacing(2);
 
     // Control 17: Step size row — STEP: [<] [value] [>]
-    // Cycles SliceModel::stepHz through kStageOneStepLadder
-    // {1, 10, 100, 500, 1k, 10k}.
+    // Cycles SliceModel::stepHz through kTuneStepList.
     {
         auto* row = new QHBoxLayout;
         row->setSpacing(0);
@@ -462,29 +461,17 @@ void RxApplet::buildUi()
 
         leftCol->addLayout(row);
 
-        // Step arrows cycle through kStageOneStepLadder
-        // {1, 10, 100, 500, 1k, 10k}. Down = previous, Up = next.
-        // Wraps at both ends. Issue #69.
+        // From Thetis console.cs:30635-30643 [v2.10.3.15]:
+        // btnChangeTuneStepSmaller_Click calls ChangeTuneStepDown and
+        // btnChangeTuneStepLarger_Click calls ChangeTuneStepUp. Down = previous,
+        // Up = next, wrapping at both ends of the list. Issue #69.
         connect(m_stepDown, &QPushButton::clicked, this, [this]() {
             if (!m_slice) { return; }
-            const int current = m_slice->stepHz();
-            int idx = 0;
-            for (int i = 0; i < kStageOneStepLadderSize; ++i) {
-                if (kStageOneStepLadder[i] == current) { idx = i; break; }
-            }
-            const int prev = (idx - 1 + kStageOneStepLadderSize)
-                             % kStageOneStepLadderSize;
-            m_slice->setStepHz(kStageOneStepLadder[prev]);
+            m_slice->changeTuneStepDown();
         });
         connect(m_stepUp, &QPushButton::clicked, this, [this]() {
             if (!m_slice) { return; }
-            const int current = m_slice->stepHz();
-            int idx = 0;
-            for (int i = 0; i < kStageOneStepLadderSize; ++i) {
-                if (kStageOneStepLadder[i] == current) { idx = i; break; }
-            }
-            const int next = (idx + 1) % kStageOneStepLadderSize;
-            m_slice->setStepHz(kStageOneStepLadder[next]);
+            m_slice->changeTuneStepUp();
         });
     }
 

@@ -1761,7 +1761,8 @@ void VfoWidget::buildXRitTab()
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
 
-        // Step cycle button — NOT NYI (wires to live SliceModel::setStepHz)
+        // Step cycle button: emits stepCycleRequested, which
+        // MainWindow::createSliceFlag routes to SliceModel::changeTuneStepUp().
         m_stepCycleBtn = new QPushButton(
             QStringLiteral("%1 Hz").arg(m_stepHz), ritWidget);
         m_stepCycleBtn->setFlat(true);
@@ -1772,8 +1773,13 @@ void VfoWidget::buildXRitTab()
                            "}"
                            "QPushButton:hover { border: 1px solid #0090e0; }"));
         m_stepCycleBtn->setFixedHeight(22);
-        // NereusSDR native — Thetis has no equivalent step-cycle button
-        // (Thetis uses wheel on the VFO display directly; step size is implicit)
+        // From Thetis console.cs:29034-29038 [v2.10.3.15]: a left click on the step
+        // display (txtWheelTune, whose MouseDown is bound to WheelTune_MouseDown at
+        // console.Designer.cs:2870) calls ChangeTuneStepUp, which advances the step
+        // and wraps. Thetis also has larger / smaller step buttons,
+        // btnChangeTuneStepLarger_Click and btnChangeTuneStepSmaller_Click
+        // (console.cs:30635-30643). This single button mirrors the left-click
+        // behaviour.
         m_stepCycleBtn->setToolTip(QStringLiteral("Cycle tuning step size (click to advance to next step)"));
         row->addWidget(m_stepCycleBtn, 1);
 
