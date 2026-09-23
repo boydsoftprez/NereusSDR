@@ -1815,6 +1815,17 @@ public:
     /// From Thetis wdsp/compress.c:111-117 [v2.10.3.13].
     void setTxCpdrGainDb(double dB);
 
+    /// AM / SAM / DSB carrier level, percent (0..100).  Thin wrapper over
+    /// WDSP SetTXAAMCarrierLevel using the Thetis mapping from setup.cs:9965
+    /// [v2.10.3.15]:  c_level = sqrt(0.01 * percent) * 0.5.
+    void setTxAmCarrierLevel(int percent);
+
+    /// AM modulation monitor tap.  When set, every TX I/Q block that is
+    /// handed to RadioConnection::sendTxIq is also pushed into the
+    /// analyzer (thread-safe; runs on the TX worker thread).  nullptr
+    /// detaches.  NereusSDR-original (AM Mod Monitor applet).
+    void setAmModulationTap(class AmModulationAnalyzer* tap);
+
     /// CESSB (osctrl) run gate.  Wraps SetTXAosctrlRun(channel, on ? 1 : 0).
     ///
     /// SIDE EFFECT 1: SetTXAosctrlRun calls TXASetupBPFilters(channel)
@@ -2623,6 +2634,7 @@ private:
     // Convert from m_out (double) → m_outInterleavedFloat (float) before
     // calling sendTxIq.  Size: 2 * m_outputBufferSize floats.
     std::vector<float> m_outInterleavedFloat;
+    std::atomic<class AmModulationAnalyzer*> m_amModTap{nullptr};  // AM Mod Monitor tap
 
     // Float scratch for the post-fexchange0 MON siphon emit — the
     // sip1OutputReady signal carries `const float*`, but m_out is double,
@@ -3033,6 +3045,7 @@ private:
     // CPDR carry (mirrors WDSP-wired setTxCpdrOn/GainDb)
     bool    m_cpdrOn       {false};
     double  m_cpdrLevelDb  {0.0};
+    int     m_amCarrierPct {100};   // carry; AM/SAM/DSB carrier level
 
     // PureSignal carry — 3M-4 work
     bool    m_pureSignalEnabled {false};

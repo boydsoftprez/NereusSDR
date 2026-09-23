@@ -327,6 +327,7 @@ warren@wpratt.com
 #include "applets/VaxApplet.h"
 #include "applets/DigitalApplet.h"
 #include "applets/PureSignalApplet.h"
+#include "applets/ModMonitorApplet.h"
 #include "applets/DiversityApplet.h"
 #include "applets/CwxApplet.h"
 #include "applets/DvkApplet.h"
@@ -4904,6 +4905,13 @@ void MainWindow::populateDefaultMeter()
     m_pureSignalApplet->setVisible(
         m_radioModel->boardCapabilities().hasPureSignal);
 
+    // AM Mod Monitor (NereusSDR-original): peak-reading +/- modulation
+    // meters, flashers, carrier lamp and envelope scope, fed by the TX
+    // I/Q tap or the PureSignal feedback receiver.  Visibility is a plain
+    // user preference (View > Containers > Applets).
+    m_modMonApplet = new ModMonitorApplet(m_radioModel, nullptr);
+    panel->insertApplet(0, m_modMonApplet);   // directly below the S-Meter
+
     // Phase 23: TCI applets — live in Container #0 below the existing applets.
     // Visibility is now managed by AppletVisibilityController below
     // (registered as ids "Tci" + "ClientChain", keys AppletTciVisible +
@@ -5129,6 +5137,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("Rade")]       = m_radeApplet;
     m_appletsById[QStringLiteral("Vax")]        = m_vaxApplet;
     m_appletsById[QStringLiteral("PureSignal")] = m_pureSignalApplet;
+    m_appletsById[QStringLiteral("ModMon")]     = m_modMonApplet;
     m_appletsById[QStringLiteral("Amp")]        = m_ampApplet;
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
     m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
@@ -5168,6 +5177,8 @@ void MainWindow::populateDefaultMeter()
                                 QStringLiteral("VAX"),          true);
     m_appletVis->registerApplet(QStringLiteral("PureSignal"),
                                 QStringLiteral("PureSignal"),   true);
+    m_appletVis->registerApplet(QStringLiteral("ModMon"),
+                                QStringLiteral("AM Mod Monitor"), true);
     m_appletVis->registerApplet(QStringLiteral("Amp"),
                                 QStringLiteral("Power Genius"), true);
     m_appletVis->registerApplet(QStringLiteral("Tuner"),

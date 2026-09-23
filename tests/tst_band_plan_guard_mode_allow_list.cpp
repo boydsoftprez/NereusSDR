@@ -23,9 +23,9 @@ private slots:
     // ── isModeAllowedForTx: rejected modes ────────────────────────────────
     void cwl_isRejected();
     void cwu_isRejected();
-    void am_isRejected();
-    void sam_isRejected();
-    void dsb_isRejected();
+    void am_isAllowed();
+    void sam_isAllowed();
+    void dsb_isAllowed();
     void fm_isRejected();
     void drm_isRejected();
     void spec_isRejected();
@@ -33,9 +33,9 @@ private slots:
     // ── checkMoxAllowed: reason strings ───────────────────────────────────
     void cwl_checkMox_reasonIsCwPhase();
     void cwu_checkMox_reasonIsCwPhase();
-    void am_checkMox_reasonIsAudioModes();
-    void sam_checkMox_reasonIsAudioModes();
-    void dsb_checkMox_reasonIsAudioModes();
+    void am_checkMox_isAllowed();
+    void sam_checkMox_isAllowed();
+    void dsb_checkMox_isAllowed();
     void fm_checkMox_reasonIsAudioModes();
     void drm_checkMox_reasonIsAudioModes();
     void spec_checkMox_reasonIsNotSupported();
@@ -109,22 +109,22 @@ void TestBandPlanGuardModeAllowList::cwu_isRejected()
     QVERIFY(!guard.isModeAllowedForTx(DSPMode::CWU));
 }
 
-void TestBandPlanGuardModeAllowList::am_isRejected()
+void TestBandPlanGuardModeAllowList::am_isAllowed()
 {
     BandPlanGuard guard;
-    QVERIFY(!guard.isModeAllowedForTx(DSPMode::AM));
+    QVERIFY(guard.isModeAllowedForTx(DSPMode::AM));
 }
 
-void TestBandPlanGuardModeAllowList::sam_isRejected()
+void TestBandPlanGuardModeAllowList::sam_isAllowed()
 {
     BandPlanGuard guard;
-    QVERIFY(!guard.isModeAllowedForTx(DSPMode::SAM));
+    QVERIFY(guard.isModeAllowedForTx(DSPMode::SAM));
 }
 
-void TestBandPlanGuardModeAllowList::dsb_isRejected()
+void TestBandPlanGuardModeAllowList::dsb_isAllowed()
 {
     BandPlanGuard guard;
-    QVERIFY(!guard.isModeAllowedForTx(DSPMode::DSB));
+    QVERIFY(guard.isModeAllowedForTx(DSPMode::DSB));
 }
 
 void TestBandPlanGuardModeAllowList::fm_isRejected()
@@ -173,31 +173,31 @@ void TestBandPlanGuardModeAllowList::cwu_checkMox_reasonIsCwPhase()
     QCOMPARE(r.reason, QStringLiteral("CW TX coming in Phase 3M-2"));
 }
 
-void TestBandPlanGuardModeAllowList::am_checkMox_reasonIsAudioModes()
+void TestBandPlanGuardModeAllowList::am_checkMox_isAllowed()
 {
     BandPlanGuard guard;
     auto r = guard.checkMoxAllowed(kRegion, kValidHz, DSPMode::AM,
                                    kBand20m, kBand20m, false, false);
-    QVERIFY(!r.ok);
-    QCOMPARE(r.reason, QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)"));
+    QVERIFY(r.ok);
+    QVERIFY(r.reason.isEmpty());
 }
 
-void TestBandPlanGuardModeAllowList::sam_checkMox_reasonIsAudioModes()
+void TestBandPlanGuardModeAllowList::sam_checkMox_isAllowed()
 {
     BandPlanGuard guard;
     auto r = guard.checkMoxAllowed(kRegion, kValidHz, DSPMode::SAM,
                                    kBand20m, kBand20m, false, false);
-    QVERIFY(!r.ok);
-    QCOMPARE(r.reason, QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)"));
+    QVERIFY(r.ok);
+    QVERIFY(r.reason.isEmpty());
 }
 
-void TestBandPlanGuardModeAllowList::dsb_checkMox_reasonIsAudioModes()
+void TestBandPlanGuardModeAllowList::dsb_checkMox_isAllowed()
 {
     BandPlanGuard guard;
     auto r = guard.checkMoxAllowed(kRegion, kValidHz, DSPMode::DSB,
                                    kBand20m, kBand20m, false, false);
-    QVERIFY(!r.ok);
-    QCOMPARE(r.reason, QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)"));
+    QVERIFY(r.ok);
+    QVERIFY(r.reason.isEmpty());
 }
 
 void TestBandPlanGuardModeAllowList::fm_checkMox_reasonIsAudioModes()
@@ -206,7 +206,7 @@ void TestBandPlanGuardModeAllowList::fm_checkMox_reasonIsAudioModes()
     auto r = guard.checkMoxAllowed(kRegion, kValidHz, DSPMode::FM,
                                    kBand20m, kBand20m, false, false);
     QVERIFY(!r.ok);
-    QCOMPARE(r.reason, QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)"));
+    QCOMPARE(r.reason, QStringLiteral("FM TX coming in Phase 3M-3b (pre-emphasis)"));
 }
 
 void TestBandPlanGuardModeAllowList::drm_checkMox_reasonIsAudioModes()
@@ -215,7 +215,7 @@ void TestBandPlanGuardModeAllowList::drm_checkMox_reasonIsAudioModes()
     auto r = guard.checkMoxAllowed(kRegion, kValidHz, DSPMode::DRM,
                                    kBand20m, kBand20m, false, false);
     QVERIFY(!r.ok);
-    QCOMPARE(r.reason, QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)"));
+    QCOMPARE(r.reason, QStringLiteral("FM TX coming in Phase 3M-3b (pre-emphasis)"));
 }
 
 void TestBandPlanGuardModeAllowList::spec_checkMox_reasonIsNotSupported()

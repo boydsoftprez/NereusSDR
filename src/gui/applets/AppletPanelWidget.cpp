@@ -25,6 +25,9 @@
 
 #include "AppletPanelWidget.h"
 #include "AppletWidget.h"
+#include "AppletFloatingWindow.h"
+#include "core/AppSettings.h"
+#include <QTimer>
 #include "gui/StyleConstants.h"
 // Task 40 (Phase 3P-II): analog S-Meter replaces the composite MeterWidget
 // header.  The right-click context menu (Tasks 38/39) is the only entry
@@ -199,18 +202,135 @@ void AppletPanelWidget::addApplet(AppletWidget* applet)
 
     applet->setParent(this);
     applet->show();
-    QWidget* wrapped = wrapWithTitleBar(applet, applet->appletTitle());
+    QWidget* wrapped = wrapWithTitleBar(applet, applet->appletTitle(),
+                                        applet->canFloat() ? makeFloatButton(applet) : nullptr);
     m_wrappers[applet] = wrapped;
+    m_wantVisible[applet] = true;
 
     // Insert before the trailing stretch
     int idx = m_stackLayout->count() - 1;
     m_stackLayout->insertWidget(idx, wrapped);
+    restoreFloatState(applet);
+}
+
+void AppletPanelWidget::insertApplet(int index, AppletWidget* applet)
+{
+    if (!applet) { return; }
+    if (m_applets.contains(applet)) { return; }  // already present
+    // m_stackLayout keeps a trailing stretch item; applet wrappers occupy
+    // [0, count-1).  Clamp so a large index appends before the stretch.
+    const int appletCount = m_stackLayout->count() - 1;
+    const int at = (index < 0 || index > appletCount) ? appletCount : index;
+    m_applets.insert(std::min(at, static_cast<int>(m_applets.size())), applet);
+    applet->setParent(this);
+    applet->show();
+    QWidget* wrapped = wrapWithTitleBar(applet, applet->appletTitle(),
+                                        applet->canFloat() ? makeFloatButton(applet) : nullptr);
+    m_wrappers[applet] = wrapped;
+    m_wantVisible[applet] = true;
+    m_stackLayout->insertWidget(at, wrapped);
+    restoreFloatState(applet);
+}
+
+// ── Floating applets ─────────────────────────────────────────────────────
+namespace {
+QString floatKey(const AppletWidget* a)     { return QStringLiteral("Applet%1Floating").arg(a->appletId()); }
+QString floatGeomKey(const AppletWidget* a) { return QStringLiteral("Applet%1FloatGeometry").arg(a->appletId()); }
+}
+
+QWidget* AppletPanelWidget::makeFloatButton(AppletWidget* applet)
+{
+    auto* btn = new QPushButton(QString(QChar(0x2197)), this);   // ↗
+    btn->setToolTip(QStringLiteral("Pop this applet out into its own window."));
+    btn->setFixedSize(18, 16);
+    btn->setCursor(Qt::PointingHandCursor);
+    btn->setStyleSheet(QStringLiteral(
+        "QPushButton { color: %1; background: transparent; border: 1px solid %2;"
+        " border-radius: 3px; font-size: 10px; padding: 0; }"
+        "QPushButton:hover { background: %3; }")
+        .arg(QLatin1String(Style::kTitleText), QLatin1String(Style::kTitleBorder),
+             QLatin1String(Style::kButtonHover)));
+    connect(btn, &QPushButton::clicked, this, [this, applet]() { floatApplet(applet); });
+    return btn;
+}
+
+void AppletPanelWidget::restoreFloatState(AppletWidget* applet)
+{
+    if (!applet || !applet->canFloat()) { return; }
+    const bool wasFloating = AppSettings::instance()
+        .value(floatKey(applet), QStringLiteral("False")).toString() == QLatin1String("True");
+    if (!wasFloating) { return; }
+    // Defer until the main window exists and is shown, so the floating
+    // window gets a sensible parent/screen and saved geometry applies.
+    QTimer::singleShot(0, this, [this, applet]() {
+        if (m_applets.contains(applet)) { floatApplet(applet); }
+    });
+}
+
+bool AppletPanelWidget::isAppletFloating(AppletWidget* applet) const
+{
+    return applet && m_floating.contains(applet);
+}
+
+void AppletPanelWidget::floatApplet(AppletWidget* applet)
+{
+    if (!applet || !m_applets.contains(applet) || m_floating.contains(applet)) { return; }
+    QWidget* wrapper = m_wrappers.value(applet, nullptr);
+    if (!wrapper) { return; }
+    // Lift the applet out of its wrapper and hide the (now empty) wrapper.
+    if (auto* lay = wrapper->layout()) {
+        lay->removeWidget(applet);
+    }
+    wrapper->hide();
+    applet->setParent(nullptr);
+
+    auto* win = new AppletFloatingWindow(applet, window());
+    m_floating[applet] = win;
+    connect(win, &AppletFloatingWindow::dockRequested, this,
+            [this](AppletWidget* a) { dockApplet(a); });
+    connect(win, &AppletFloatingWindow::geometryChanged, this,
+            [](AppletWidget* a, const QByteArray& g) {
+        if (a) {
+            AppSettings::instance().setValue(floatGeomKey(a), QString::fromLatin1(g.toHex()));
+        }
+    });
+    const QString geomHex = AppSettings::instance().value(floatGeomKey(applet)).toString();
+    if (!geomHex.isEmpty()) {
+        win->restoreGeometry(QByteArray::fromHex(geomHex.toLatin1()));
+    }
+    AppSettings::instance().setValue(floatKey(applet), QStringLiteral("True"));
+    win->show();
+    win->raise();
+}
+
+void AppletPanelWidget::dockApplet(AppletWidget* applet)
+{
+    if (!applet) { return; }
+    AppletFloatingWindow* win = m_floating.take(applet);
+    if (!win) { return; }
+    win->releaseApplet();
+    win->deleteLater();
+
+    QWidget* wrapper = m_wrappers.value(applet, nullptr);
+    if (wrapper) {
+        applet->setParent(wrapper);
+        if (auto* lay = wrapper->layout()) {
+            lay->addWidget(applet);
+        }
+        applet->show();
+        wrapper->setVisible(m_wantVisible.value(applet, true));
+    }
+    AppSettings::instance().setValue(floatKey(applet), QStringLiteral("False"));
 }
 
 void AppletPanelWidget::removeApplet(AppletWidget* applet)
 {
     if (!applet) { return; }
     if (!m_applets.contains(applet)) { return; }
+    if (m_floating.contains(applet)) {
+        dockApplet(applet);
+    }
+    m_wantVisible.remove(applet);
 
     QWidget* wrapper = m_wrappers.value(applet, nullptr);
     if (wrapper) {
@@ -229,6 +349,12 @@ void AppletPanelWidget::setAppletVisible(AppletWidget* applet, bool visible)
     if (!applet) { return; }
     QWidget* wrapper = m_wrappers.value(applet, nullptr);
     if (!wrapper) { return; }  // applet not in this panel
+    m_wantVisible[applet] = visible;
+    if (AppletFloatingWindow* win = m_floating.value(applet, nullptr)) {
+        // Hiding a floating applet hides its window; showing brings it back.
+        win->setVisible(visible);
+        return;
+    }
     wrapper->setVisible(visible);
 }
 

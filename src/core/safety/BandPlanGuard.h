@@ -183,8 +183,9 @@ public:
     // -----------------------------------------------------------------------
 
     /// Returns true if \p mode is allowed to TX in the current 3M-1b scope.
-    /// Allowed:  LSB, USB, DIGL, DIGU (SSB voice family).
-    /// Rejected: CWL, CWU (→ Phase 3M-2), AM/SAM/DSB/FM/DRM (→ Phase 3M-3),
+    /// Allowed:  LSB, USB, DIGL, DIGU (SSB voice family), RADE_U/RADE_L,
+    ///           AM, SAM, DSB (WDSP ammod stage).
+    /// Rejected: CWL, CWU (→ Phase 3M-2), FM/DRM (→ Phase 3M-3b pre-emphasis),
     ///           SPEC (never a TX mode).
     bool isModeAllowedForTx(DSPMode mode) const noexcept;
 

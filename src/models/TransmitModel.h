@@ -1524,6 +1524,12 @@ public:
     bool cpdrOn() const noexcept       { return m_cpdrOn; }
     int  cpdrLevelDb() const noexcept  { return m_cpdrLevelDb; }
 
+    // ── AM carrier level getter (AM / SAM / DSB TX) ───────────────────────
+    /// Carrier level in percent (0..100).  Thetis TXProfile "AM_Carrier_Level"
+    /// (database.cs AddTXProfileTable, default 100); setup.cs:9965 maps it to
+    /// WDSP as sqrt(0.01 * pct) * 0.5 via SetTXAAMCarrierLevel.
+    int  amCarrierLevel() const noexcept { return m_amCarrierLevel; }
+
     // ── CESSB getters ─────────────────────────────────────────────────────
     bool cessbOn() const noexcept      { return m_cessbOn; }
 
@@ -1571,6 +1577,11 @@ public:
     // console.CPDRLevel which is the ptbCPDR value (console.cs:15683-15695).
     static constexpr int kCpdrLevelDbMin = 0;
     static constexpr int kCpdrLevelDbMax = 20;
+
+    // AM carrier level range per Thetis setup.Designer.cs udTXAMCarrierLevel
+    // (Minimum 0, Maximum 100, percent).
+    static constexpr int kAmCarrierLevelMin = 0;
+    static constexpr int kAmCarrierLevelMax = 100;
 
     // ── TX EQ + Leveler + ALC properties (3M-3a-i Task C) ───────────────
     //
@@ -1717,6 +1728,9 @@ public slots:
     void setCpdrOn(bool on);
     void setCpdrLevelDb(int dB);
 
+    // ── AM carrier level setter ───────────────────────────────────────────
+    void setAmCarrierLevel(int percent);
+
     // ── CESSB setters (3M-3a-ii Batch 2) ──────────────────────────────────
     void setCessbOn(bool on);
 
@@ -1795,6 +1809,9 @@ signals:
     // ── CPDR signals (3M-3a-ii Batch 2) ───────────────────────────────────
     void cpdrOnChanged(bool on);
     void cpdrLevelDbChanged(int dB);
+
+    // ── AM carrier level signal ───────────────────────────────────────────
+    void amCarrierLevelChanged(int percent);
 
     // ── CESSB signals (3M-3a-ii Batch 2) ──────────────────────────────────
     void cessbOnChanged(bool on);
@@ -2430,6 +2447,10 @@ private:
     // CPDR level: database.cs:4339 + 4580 [v2.10.3.13]:
     //   dr["CompanderLevel"] = 2;
     int  m_cpdrLevelDb = 2;
+
+    // AM carrier level (percent).  Thetis database.cs AddTXProfileTable:
+    //   dr["AM_Carrier_Level"] = 100;
+    int  m_amCarrierLevel = 100;
 
     // CESSB.  database.cs:4689 [v2.10.3.13]:
     //   dr["CESSB_On"] = false;

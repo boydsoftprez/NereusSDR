@@ -246,6 +246,7 @@ warren@wpratt.com
 */
 
 #include "RadioModel.h"
+#include "core/AmModulationAnalyzer.h"
 #include "BandDefaults.h"
 #include "RxDspWorker.h"
 #include "core/FFTEngine.h"
@@ -1529,6 +1530,37 @@ RadioModel::RadioModel(QObject* parent)
     // setInterlockPolicy: MoxController's setMox(true) consults the policy
     // immediately after the BandPlanGuard (K.2) check.
     m_moxController->setInterlockPolicy(m_txInterlockPolicy);
+
+    // ── AM Mod Monitor (NereusSDR-original) ───────────────────────────────
+    // Two analyzers: the TX I/Q tap is installed on the TxChannel when it
+    // is created (txSetup lambda in connectToRadio); the feedback analyzer
+    // listens to the stream-tagged RX I/Q fork below.  Both are reset on
+    // every key-down so peak-hold and the carrier reference start fresh.
+    m_amModTx = std::make_unique<AmModulationAnalyzer>();
+    m_amModFb = std::make_unique<AmModulationAnalyzer>();
+    connect(m_moxController, &MoxController::moxStateChanged, this, [this](bool on) {
+        m_amModMoxOn.store(on, std::memory_order_release);
+        if (on) {
+            if (m_amModTx) { m_amModTx->reset(); }
+            if (m_amModFb) {
+                m_amModFb->reset();
+                const int st = m_amModFbStream.load();
+                const int fs = m_streamAllocator.streamSampleRateHz(st);
+                if (fs > 0) { m_amModFb->setSampleRate(fs); }
+            }
+        }
+    });
+    // Direct connection: forkIqToTaps runs on the connection thread and
+    // the analyzer is thread-safe, so no queuing / copying is needed.
+    connect(this, &RadioModel::rawIqDataForStream, this,
+            [this](int streamIndex, const QVector<float>& samples) {
+        if (!m_amModFbWanted.load(std::memory_order_acquire)) { return; }
+        if (!m_amModMoxOn.load(std::memory_order_acquire))    { return; }
+        if (streamIndex != m_amModFbStream.load(std::memory_order_acquire)) { return; }
+        if (m_amModFb) {
+            m_amModFb->pushIq(samples.constData(), samples.size() / 2);
+        }
+    }, Qt::DirectConnection);
 
     // Amp state cache: amplifierChanged(bool) and ampStateChanged() together
     // carry the m_hasAmplifier / m_ampOperate snapshot. We can't connect them
@@ -6399,6 +6431,11 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 return;
             }
             m_txChannel->setConnection(m_connection);
+            // AM Mod Monitor: tap the TX I/Q at the radio's TX rate.
+            if (m_amModTx) {
+                m_amModTx->setSampleRate(txOutRate);
+                m_txChannel->setAmModulationTap(m_amModTx.get());
+            }
 
             // Task 4.2: give TxChannel a handle to WdspEngine so onModeChanged()
             // can call rebuild() when the active mode's DSP-Options settings change.
@@ -7273,6 +7310,9 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 m_txChannel->setTxCpdrGainDb(
                     static_cast<double>(m_transmitModel.cpdrLevelDb()));
 
+                // ── AM / SAM / DSB carrier level (1) ──
+                m_txChannel->setTxAmCarrierLevel(m_transmitModel.amCarrierLevel());
+
                 // ── 3M-3a-ii Batch 3 — CESSB (1) ──
                 m_txChannel->setTxCessbOn(m_transmitModel.cessbOn());
 
@@ -7459,6 +7499,12 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             connect(&m_transmitModel, &TransmitModel::cpdrLevelDbChanged,
                     m_txChannel, [this](int dB) {
                 m_txChannel->setTxCpdrGainDb(static_cast<double>(dB));
+            });
+
+            // 26a. amCarrierLevelChanged → setTxAmCarrierLevel (AM/SAM/DSB TX).
+            connect(&m_transmitModel, &TransmitModel::amCarrierLevelChanged,
+                    m_txChannel, [this](int pct) {
+                m_txChannel->setTxAmCarrierLevel(pct);
             });
 
             // 27. cessbOnChanged → setTxCessbOn.
@@ -10556,6 +10602,22 @@ void RadioModel::pushTxModeAndBandpass()
         tx->setTxMode(mode);
         tx->requestFilterChange(audioLow, audioHigh, mode);
     });
+}
+
+// ── AM Mod Monitor accessors (NereusSDR-original) ─────────────────────────
+AmModulationAnalyzer* RadioModel::amModulationAnalyzer(int source) const
+{
+    return source == 1 ? m_amModFb.get() : m_amModTx.get();
+}
+
+void RadioModel::setAmModFeedbackStream(int streamIndex)
+{
+    m_amModFbStream.store(std::clamp(streamIndex, 0, 4), std::memory_order_release);
+}
+
+void RadioModel::setAmModFeedbackWanted(bool wanted)
+{
+    m_amModFbWanted.store(wanted, std::memory_order_release);
 }
 
 void RadioModel::applyTxAntennaFromBoundSlice()
