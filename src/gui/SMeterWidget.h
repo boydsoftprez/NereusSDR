@@ -39,16 +39,28 @@
 //                 to AppSettings: PeakHoldEnabled ("True"/"False") and
 //                 PeakDecayRate ("Fast"/"Medium"/"Slow").
 //                 buildContextMenuForTesting() public accessor for Task 39 test.
+//   2026-09-18  Vintage meter faces (Lee, AI-assisted via Anthropic Claude
+//                 Code).  FaceStyle enum + setFaceStyle(): six vintage panel-
+//                 meter faces drawn by gui/VintageMeterFace (design carried
+//                 over from Lee's TubeMeter project) alongside the original
+//                 AetherSDR look, kept as FaceStyle::Classic.  "Meter Face"
+//                 submenu appended to the context menu (index 3, so the
+//                 Task 39 indices are unchanged); persisted as
+//                 SMeter_FaceStyle.  The static face is cached in a pixmap;
+//                 only pointer, markers and readouts are drawn per frame.
+//                 NereusSDR-native; no upstream equivalent.
 // =================================================================
 #pragma once
 
 #include <QWidget>
+#include <QPixmap>
 #include <QTimer>
 #include <QElapsedTimer>
 
 // Forward declarations
 class QContextMenuEvent;
 class QMenu;
+class QPainter;
 
 namespace NereusSDR {
 
@@ -93,6 +105,13 @@ public:
     // MaxBin        -> WDSP GetDetectMaxBin (Task 32 WdspEngine::getMaxBinDbm).
     enum class RxMode { SMeter, SignalAverage, SMeterPeak, MaxBin };
     enum class DecayRate { Fast, Medium, Slow };
+
+    // Meter face.  The first six are the vintage panel-meter themes of
+    // gui/VintageMeterFace, in its theme-table order; Classic is the flat
+    // AetherSDR / SmartSDR look this widget was ported with.
+    // NereusSDR-native; no upstream equivalent.
+    enum class FaceStyle { AgedCream, VuAmber, CollinsWhite, Blackface, Carbon, Ice, Classic };
+    FaceStyle faceStyle() const { return m_faceStyle; }
 
     // Current RX/TX mode accessors.
     // Used by MeterPoller::pollSMeter() (Task 41) to branch on the active
@@ -167,6 +186,10 @@ public slots:
     void setPeakDecayRate(const QString& rate);
     void resetPeak();
 
+    // Select the meter face; persists SMeter_FaceStyle.
+    // NereusSDR-native; no upstream equivalent.
+    void setFaceStyle(FaceStyle style);
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     // Right-click context menu delegates to buildContextMenu().
@@ -176,6 +199,16 @@ protected:
     void contextMenuEvent(QContextMenuEvent* ev) override;
 
 private:
+    // paintEvent dispatches on m_faceStyle.  paintClassic is the AetherSDR
+    // paint body, unchanged; paintVintage draws via gui/VintageMeterFace.
+    void paintClassic(QPainter& p);
+    void paintVintage(QPainter& p);
+
+    // Persisted name <-> enum for SMeter_FaceStyle, and the menu label.
+    static QString faceStyleKey(FaceStyle style);
+    static FaceStyle faceStyleFromKey(const QString& key);
+    static QString faceStyleLabel(FaceStyle style);
+
     void updateNeedleTarget();
     void animateNeedle();
     void updatePeakHoldValue();
@@ -234,6 +267,12 @@ private:
     TxMode  m_txMode{TxMode::Power};
     RxMode  m_rxMode{RxMode::SMeter};
     bool    m_transmitting{false};
+
+    // Vintage face: the static artwork (bezel, card, scale, lettering) is
+    // rendered once per size / theme / scale and blitted each frame.
+    FaceStyle m_faceStyle{FaceStyle::AgedCream};
+    QPixmap   m_faceCache;
+    QString   m_faceCacheKey;
 
     // From AetherSDR src/gui/SMeterWidget.h:96-99 [@0cd4559]
     QTimer  m_needleAnimation;
