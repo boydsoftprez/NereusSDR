@@ -92,7 +92,7 @@ class HookRepo:
     def run(self, *, fail_verifier: str = "", grep_error: bool = False
             ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
         env = os.environ.copy()
-        for name in ("THETIS", "MI0BOT", "DESKHPSDR", "FREEDV"):
+        for name in ("THETIS", "THETIS_V21015", "MI0BOT", "DESKHPSDR", "FREEDV"):
             env[f"NEREUS_{name}_DIR"] = str(self.upstream)
         env.pop("NEREUS_SKIP_TAG_CHECK", None)
         env.pop("CHECK_NEW_PORTS_FULL", None)
