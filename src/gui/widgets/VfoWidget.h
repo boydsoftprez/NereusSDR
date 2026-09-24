@@ -763,10 +763,15 @@ public:
     // callsign survives subsequent SNR pushes.
     void setRadeCallsign(const QString& callsign);
 
-    // Slice color table: A=cyan, B=magenta, C=green, D=yellow.
+    // Slice color table: A=cyan, B=magenta, C=green, D=yellow, E=orange,
+    // F=teal, G=coral, H=lavender, indexed by slice index % 8.
     // From AetherSDR SliceColors.h. Public static so the RX applet's
     // per-slice tab row (Phase 3F Bug 3) shares the exact flag palette.
     static QColor sliceColor(int index);
+
+    // From AetherSDR src/gui/SliceColors.h:26 [@0cd4559]: the palette holds
+    // eight colours, one per slice A to H.
+    static constexpr int kSliceColorCount = 8;
 
     // The darker partner of each sliceColor() entry, used for the panadapter
     // markers of slices the operator has not selected (see setActiveSlice).

@@ -50,9 +50,12 @@
 #include <QPushButton>
 #include <QSet>
 
+#include "core/BoardCapabilities.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/StyleConstants.h"
 #include "gui/widgets/VfoWidget.h"
+
+#include <algorithm>
 
 using namespace NereusSDR;
 
@@ -82,6 +85,17 @@ void placePan(SpectrumWidget& w)
     w.setSampleRate(kSpanHz);
     w.setDdcCenterFrequency(kCentreHz);
     w.setFrequencyRange(kCentreHz, kSpanHz);
+}
+
+// The most slices any supported radio allows (BoardCapabilities::maxSlices),
+// so the colour tests cover every slice letter a real radio can reach.
+int largestSliceCount()
+{
+    int most = 0;
+    for (const BoardCapabilities& caps : BoardCapsTable::all()) {
+        most = std::max(most, caps.maxSlices);
+    }
+    return most;
 }
 
 // A sibling widget's position in its parent's QObject::children() list IS
@@ -524,14 +538,17 @@ private slots:
         QCOMPARE(a.edgeColor, VfoWidget::sliceColor(0));
     }
 
-    // Four slices on one pan, each selected in turn. Every marker carries
-    // its own slice's colour, bright or dim, and no two markers share one.
+    // As many slices on one pan as the largest radio allows (five today:
+    // slices A to E), each selected in turn. Every marker carries its own
+    // slice's colour, bright or dim, and no two markers share one.
     void every_slice_has_a_colour_of_its_own()
     {
         SpectrumWidget w;
         placePan(w);
 
-        constexpr int kSlices = 4;
+        const int kSlices = largestSliceCount();
+        QVERIFY2(kSlices <= VfoWidget::kSliceColorCount,
+                 "a radio allows more slices than the palette has colours");
         QVector<VfoWidget*> flags;
         for (int i = 0; i < kSlices; ++i) {
             VfoWidget* flag = w.addVfoWidget(i);
@@ -557,6 +574,28 @@ private slots:
             QCOMPARE(seen.size(), kSlices);
             QCOMPARE(geo.last().sliceIndex, selected);
         }
+    }
+
+    // The palette itself: every slice any supported radio allows has its own
+    // bright and dim colour, and slice E (the five-slice radios) takes
+    // AetherSDR's orange rather than falling back to slice A's cyan.
+    // Values from AetherSDR src/gui/SliceColors.h:20 [@0cd4559].
+    void every_slice_a_radio_allows_has_its_own_palette_entry()
+    {
+        const int slices = largestSliceCount();
+        QVERIFY(slices >= 1);
+        QSet<QRgb> bright;
+        QSet<QRgb> dim;
+        for (int i = 0; i < slices; ++i) {
+            bright.insert(VfoWidget::sliceColor(i).rgb());
+            dim.insert(VfoWidget::sliceDimColor(i).rgb());
+        }
+        QCOMPARE(bright.size(), slices);
+        QCOMPARE(dim.size(), slices);
+
+        QCOMPARE(VfoWidget::sliceColor(4), QColor(0xff, 0xa0, 0x00));
+        QCOMPARE(VfoWidget::sliceDimColor(4), QColor(0x80, 0x50, 0x00));
+        QVERIFY(VfoWidget::sliceColor(4) != VfoWidget::sliceColor(0));
     }
 
     // The selected slice's marker paints last whatever its slice index, so
