@@ -35,13 +35,27 @@
 // order is the parent's QObject::children() list order (raise()/lower() are
 // implemented by reordering it), so it is assertable here without a shown,
 // rendering QRhiWidget.
+//
+// Fourth, the markers' colours. Every slice's centre line, edge lines and
+// triangle were drawn in slice A's cyan, so with two slices on one pan the
+// lines could not be told apart; only the flags carried the slice colour.
+// Each marker now takes its own slice's colour, and the slices the operator
+// has not selected draw darker with neutral grey edges (AetherSDR's current
+// rule, picked by JJ 2026-09-23). The colours are part of
+// sliceMarkerGeometry(), so they are pinned here with the rest of the
+// marker decision.
 // =================================================================
 #include <QtTest/QtTest>
 #include <QApplication>
 #include <QPushButton>
+#include <QSet>
 
+#include "core/BoardCapabilities.h"
 #include "gui/SpectrumWidget.h"
+#include "gui/StyleConstants.h"
 #include "gui/widgets/VfoWidget.h"
+
+#include <algorithm>
 
 using namespace NereusSDR;
 
@@ -71,6 +85,17 @@ void placePan(SpectrumWidget& w)
     w.setSampleRate(kSpanHz);
     w.setDdcCenterFrequency(kCentreHz);
     w.setFrequencyRange(kCentreHz, kSpanHz);
+}
+
+// The most slices any supported radio allows (BoardCapabilities::maxSlices),
+// so the colour tests cover every slice letter a real radio can reach.
+int largestSliceCount()
+{
+    int most = 0;
+    for (const BoardCapabilities& caps : BoardCapsTable::all()) {
+        most = std::max(most, caps.maxSlices);
+    }
+    return most;
 }
 
 // A sibling widget's position in its parent's QObject::children() list IS
@@ -452,6 +477,265 @@ private slots:
         QVERIFY2(indexInParent(flagB) > indexInParent(flagA),
                  "a pin for a slice this pan does not host must not perturb "
                  "this pan's own flag order");
+    }
+
+    // ---- Marker colours (fourth report) ----
+
+    // The reported shape: B selected on a pan it shares with A. B's centre
+    // line, triangle and edges must be B's own colour, not A's cyan.
+    void the_selected_slice_draws_in_its_own_colour()
+    {
+        SpectrumWidget w;
+        placePan(w);
+
+        VfoWidget* flagA = w.addVfoWidget(0);
+        VfoWidget* flagB = w.addVfoWidget(1);
+        flagA->setFrequency(kSliceAHz);
+        flagB->setFrequency(kSliceBHz);
+        flagA->setActiveSlice(false);
+        flagB->setActiveSlice(true);
+
+        const auto geo = w.sliceMarkerGeometry();
+        QCOMPARE(geo.size(), 2);
+        const auto& b = geo[1];  // the selected slice paints last
+        QCOMPARE(b.flag, static_cast<const VfoWidget*>(flagB));
+        QCOMPARE(b.sliceIndex, 1);
+        QVERIFY(b.active);
+        QCOMPARE(b.lineColor, VfoWidget::sliceColor(1));
+        QCOMPARE(b.edgeColor, VfoWidget::sliceColor(1));
+        QVERIFY2(b.lineColor != VfoWidget::sliceColor(0),
+                 "slice B's marker is still drawn in slice A's cyan");
+    }
+
+    // A slice the operator has not selected draws its centre line and
+    // triangle in the darker partner of its own colour, and its edges in the
+    // neutral grey so its passband stays easy to see.
+    void a_slice_not_selected_draws_darker_with_grey_edges()
+    {
+        SpectrumWidget w;
+        placePan(w);
+
+        VfoWidget* flagA = w.addVfoWidget(0);
+        VfoWidget* flagB = w.addVfoWidget(1);
+        flagA->setFrequency(kSliceAHz);
+        flagB->setFrequency(kSliceBHz);
+        flagA->setActiveSlice(true);
+        flagB->setActiveSlice(false);
+
+        const auto geo = w.sliceMarkerGeometry();
+        QCOMPARE(geo.size(), 2);
+
+        const auto& b = geo[0];
+        QCOMPARE(b.sliceIndex, 1);
+        QVERIFY(!b.active);
+        QCOMPARE(b.lineColor, VfoWidget::sliceDimColor(1));
+        QCOMPARE(b.edgeColor, QColor(Style::kTextSecondary));
+
+        const auto& a = geo[1];
+        QCOMPARE(a.sliceIndex, 0);
+        QVERIFY(a.active);
+        QCOMPARE(a.lineColor, VfoWidget::sliceColor(0));
+        QCOMPARE(a.edgeColor, VfoWidget::sliceColor(0));
+    }
+
+    // As many slices on one pan as the largest radio allows (five today:
+    // slices A to E), each selected in turn. Every marker carries its own
+    // slice's colour, bright or dim, and no two markers share one.
+    void every_slice_has_a_colour_of_its_own()
+    {
+        SpectrumWidget w;
+        placePan(w);
+
+        const int kSlices = largestSliceCount();
+        QVERIFY2(kSlices <= VfoWidget::kSliceColorCount,
+                 "a radio allows more slices than the palette has colours");
+        QVector<VfoWidget*> flags;
+        for (int i = 0; i < kSlices; ++i) {
+            VfoWidget* flag = w.addVfoWidget(i);
+            flag->setFrequency(kSliceAHz + i * 20'000.0);
+            flags.append(flag);
+        }
+
+        for (int selected = 0; selected < kSlices; ++selected) {
+            for (int i = 0; i < kSlices; ++i) {
+                flags[i]->setActiveSlice(i == selected);
+            }
+
+            const auto geo = w.sliceMarkerGeometry();
+            QCOMPARE(geo.size(), kSlices);
+            QSet<QRgb> seen;
+            for (const auto& g : geo) {
+                QCOMPARE(g.active, g.sliceIndex == selected);
+                QCOMPARE(g.lineColor, g.active
+                                          ? VfoWidget::sliceColor(g.sliceIndex)
+                                          : VfoWidget::sliceDimColor(g.sliceIndex));
+                seen.insert(g.lineColor.rgb());
+            }
+            QCOMPARE(seen.size(), kSlices);
+            QCOMPARE(geo.last().sliceIndex, selected);
+        }
+    }
+
+    // The palette itself: every slice any supported radio allows has its own
+    // bright and dim colour, and slice E (the five-slice radios) takes
+    // AetherSDR's orange rather than falling back to slice A's cyan.
+    // Values from AetherSDR src/gui/SliceColors.h:20 [@0cd4559].
+    void every_slice_a_radio_allows_has_its_own_palette_entry()
+    {
+        const int slices = largestSliceCount();
+        QVERIFY(slices >= 1);
+        QSet<QRgb> bright;
+        QSet<QRgb> dim;
+        for (int i = 0; i < slices; ++i) {
+            bright.insert(VfoWidget::sliceColor(i).rgb());
+            dim.insert(VfoWidget::sliceDimColor(i).rgb());
+        }
+        QCOMPARE(bright.size(), slices);
+        QCOMPARE(dim.size(), slices);
+
+        QCOMPARE(VfoWidget::sliceColor(4), QColor(0xff, 0xa0, 0x00));
+        QCOMPARE(VfoWidget::sliceDimColor(4), QColor(0x80, 0x50, 0x00));
+        QVERIFY(VfoWidget::sliceColor(4) != VfoWidget::sliceColor(0));
+    }
+
+    // The selected slice's marker paints last whatever its slice index, so
+    // it sits on top wherever two markers overlap.
+    void the_selected_marker_paints_on_top()
+    {
+        SpectrumWidget w;
+        placePan(w);
+
+        VfoWidget* flagA = w.addVfoWidget(0);
+        VfoWidget* flagB = w.addVfoWidget(1);
+        flagA->setFrequency(kSliceAHz);
+        flagB->setFrequency(kSliceBHz);
+
+        flagA->setActiveSlice(true);
+        flagB->setActiveSlice(false);
+        auto geo = w.sliceMarkerGeometry();
+        QCOMPARE(geo.size(), 2);
+        QCOMPARE(geo[0].flag, static_cast<const VfoWidget*>(flagB));
+        QCOMPARE(geo[1].flag, static_cast<const VfoWidget*>(flagA));
+
+        flagA->setActiveSlice(false);
+        flagB->setActiveSlice(true);
+        geo = w.sliceMarkerGeometry();
+        QCOMPARE(geo.size(), 2);
+        QCOMPARE(geo[0].flag, static_cast<const VfoWidget*>(flagA));
+        QCOMPARE(geo[1].flag, static_cast<const VfoWidget*>(flagB));
+    }
+
+    // One selection for the whole window: with it on another pan, this pan
+    // hosts no selected slice and every marker on it draws darker, in slice
+    // order.
+    void a_pan_without_the_selected_slice_draws_every_marker_darker()
+    {
+        SpectrumWidget w;
+        placePan(w);
+
+        VfoWidget* flagA = w.addVfoWidget(0);
+        VfoWidget* flagB = w.addVfoWidget(1);
+        flagA->setFrequency(kSliceAHz);
+        flagB->setFrequency(kSliceBHz);
+        flagA->setActiveSlice(false);
+        flagB->setActiveSlice(false);
+
+        const auto geo = w.sliceMarkerGeometry();
+        QCOMPARE(geo.size(), 2);
+        for (int i = 0; i < 2; ++i) {
+            QCOMPARE(geo[i].sliceIndex, i);
+            QVERIFY(!geo[i].active);
+            QCOMPARE(geo[i].lineColor, VfoWidget::sliceDimColor(i));
+            QCOMPARE(geo[i].edgeColor, QColor(Style::kTextSecondary));
+        }
+    }
+
+    // A single-slice pan must look exactly as it did before slices had
+    // colours: slice A's cyan on the edges, the centre line and the
+    // triangle. A new flag defaults to selected, so it holds before anyone
+    // tells the flag, and after.
+    void a_lone_slice_marker_stays_cyan()
+    {
+        SpectrumWidget w;
+        placePan(w);
+
+        VfoWidget* flagA = w.addVfoWidget(0);
+        flagA->setFrequency(kSliceAHz);
+        const QColor cyan(0x00, 0xd4, 0xff);
+
+        auto geo = w.sliceMarkerGeometry();
+        QCOMPARE(geo.size(), 1);
+        QVERIFY(geo[0].active);
+        QCOMPARE(geo[0].lineColor, cyan);
+        QCOMPARE(geo[0].edgeColor, cyan);
+
+        flagA->setActiveSlice(true);
+        geo = w.sliceMarkerGeometry();
+        QCOMPARE(geo.size(), 1);
+        QCOMPARE(geo[0].lineColor, cyan);
+        QCOMPARE(geo[0].edgeColor, cyan);
+    }
+
+    // The no-flag-yet fallback has no flag to name its slice. It is slice A,
+    // selected: the cyan this marker has always been drawn in.
+    void the_no_flag_fallback_stays_cyan()
+    {
+        SpectrumWidget w;
+        placePan(w);
+        w.setVfoFrequency(kSliceAHz);
+
+        const auto geo = w.sliceMarkerGeometry();
+        QCOMPARE(geo.size(), 1);
+        QCOMPARE(geo[0].sliceIndex, 0);
+        QVERIFY(geo[0].active);
+        QCOMPARE(geo[0].lineColor, QColor(0x00, 0xd4, 0xff));
+        QCOMPARE(geo[0].edgeColor, QColor(0x00, 0xd4, 0xff));
+    }
+
+    // A flag reports a change of selection once, and only when it changes.
+    void a_flag_reports_only_real_selection_changes()
+    {
+        SpectrumWidget w;
+        VfoWidget* flag = w.addVfoWidget(0);
+        QSignalSpy spy(flag, &VfoWidget::activeSliceChanged);
+
+        flag->setActiveSlice(true);   // already the default
+        QCOMPARE(spy.count(), 0);
+
+        flag->setActiveSlice(false);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toBool(), false);
+        QVERIFY(!flag->isActiveSlice());
+
+        flag->setActiveSlice(false);
+        QCOMPARE(spy.count(), 1);
+    }
+
+    // The GPU path caches the markers in the static overlay, so a change of
+    // selection must throw that cache away; a bare update() would keep
+    // showing the old colours on the shipping path.
+    void a_selection_change_redraws_the_cached_markers()
+    {
+#ifdef NEREUS_GPU_SPECTRUM
+        SpectrumWidget w;
+        placePan(w);
+        VfoWidget* flagA = w.addVfoWidget(0);
+        VfoWidget* flagB = w.addVfoWidget(1);
+        flagA->setFrequency(kSliceAHz);
+        flagB->setFrequency(kSliceBHz);
+
+        w.clearOverlayStaticDirtyForTest();
+        flagB->setActiveSlice(false);
+        QVERIFY2(w.overlayStaticDirtyForTest(),
+                 "a selection change did not invalidate the static overlay");
+
+        w.clearOverlayStaticDirtyForTest();
+        flagB->setActiveSlice(false);  // no change
+        QVERIFY2(!w.overlayStaticDirtyForTest(),
+                 "re-sending the same selection invalidated the overlay");
+#else
+        QSKIP("no cached overlay texture on the CPU-only spectrum path");
+#endif
     }
 };
 

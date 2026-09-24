@@ -986,15 +986,29 @@ public:
     /// One RX marker's inputs: a slice centre, that slice's own signed filter
     /// edges, and the flag whose bottom edge its triangle hangs from (null
     /// when the pan is drawing its own VFO with no flag created yet).
+    ///
+    /// Also which slice the marker belongs to, whether that slice is the one
+    /// the operator has selected (VfoWidget::isActiveSlice), and the two
+    /// colours that follow from those. The selected slice draws everything in
+    /// its own slice colour. Any other slice draws its centre line and
+    /// triangle in the darker partner of its colour and its filter edges in
+    /// a neutral grey. Both colours are opaque; drawSliceMarker applies each
+    /// element's own alpha. The shaded passband is not here: it stays the
+    /// operator's m_rxFilterColor for every slice.
     struct SliceMarkerGeometry {
         double centreHz{0.0};
         int    filterLowHz{0};
         int    filterHighHz{0};
         const VfoWidget* flag{nullptr};
+        int    sliceIndex{0};
+        bool   active{true};
+        QColor lineColor;  // VFO centre line and triangle
+        QColor edgeColor;  // filter edge lines
     };
 
-    /// Every RX marker this pan must paint, one per hosted slice, in slice
-    /// order.
+    /// Every RX marker this pan must paint, one per hosted slice, in paint
+    /// order: the slices the operator has not selected first, in slice order,
+    /// then the selected slice, so its marker lands on top where two overlap.
     ///
     /// This is drawVfoMarker()'s whole decision, split out so it is reachable
     /// without a live QPainter or a shown QRhiWidget: the harness cannot

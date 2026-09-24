@@ -2218,6 +2218,15 @@ void VfoWidget::setTxSlice(bool isTx)
     m_txBadge->setChecked(isTx);
 }
 
+void VfoWidget::setActiveSlice(bool active)
+{
+    if (m_activeSlice == active) {
+        return;
+    }
+    m_activeSlice = active;
+    emit activeSliceChanged(active);
+}
+
 void VfoWidget::setAntennaList(const QStringList& ants)
 {
     m_antennaList = ants;
@@ -3118,13 +3127,41 @@ QString VfoWidget::formatFilterWidth(int low, int high) const
 
 QColor VfoWidget::sliceColor(int index)
 {
-    // From AetherSDR SliceColors.h
-    switch (index) {
-    case 0: return QColor(0x00, 0xd4, 0xff);  // cyan
-    case 1: return QColor(0xff, 0x40, 0xff);  // magenta
-    case 2: return QColor(0x40, 0xff, 0x40);  // green
-    case 3: return QColor(0xff, 0xff, 0x00);  // yellow
+    // From AetherSDR src/gui/SliceColors.h:5, 16-23 [@0cd4559]: the bright
+    // half (r, g, b) of all eight kSliceColors entries, indexed by slice id
+    // % 8 as there. Current AetherSDR carries the same eight values as
+    // color.slice.a-h in resources/themes/default-dark.json:217-224
+    // [@9f81dc00]. The five-slice radios reach slice E.
+    switch (index % kSliceColorCount) {
+    case 0: return QColor(0x00, 0xd4, 0xff);  // A = cyan
+    case 1: return QColor(0xff, 0x40, 0xff);  // B = magenta
+    case 2: return QColor(0x40, 0xff, 0x40);  // C = green
+    case 3: return QColor(0xff, 0xff, 0x00);  // D = yellow
+    case 4: return QColor(0xff, 0xa0, 0x00);  // E = orange
+    case 5: return QColor(0x00, 0xe0, 0xc0);  // F = teal
+    case 6: return QColor(0xff, 0x60, 0x80);  // G = coral
+    case 7: return QColor(0xb0, 0x80, 0xff);  // H = lavender
     default: return QColor(0x00, 0xd4, 0xff);
+    }
+}
+
+QColor VfoWidget::sliceDimColor(int index)
+{
+    // From AetherSDR src/gui/SliceColors.h:5, 16-23 [@0cd4559]: the dim half
+    // (dr, dg, db) of all eight kSliceColors entries, indexed by slice id % 8
+    // as there. Current AetherSDR carries the same eight values as
+    // color.slice.dim.a-h in resources/themes/default-dark.json:227-234
+    // [@9f81dc00].
+    switch (index % kSliceColorCount) {
+    case 0: return QColor(0x00, 0x60, 0x80);  // A = cyan, dim
+    case 1: return QColor(0x80, 0x20, 0x80);  // B = magenta, dim
+    case 2: return QColor(0x20, 0x80, 0x20);  // C = green, dim
+    case 3: return QColor(0x80, 0x80, 0x00);  // D = yellow, dim
+    case 4: return QColor(0x80, 0x50, 0x00);  // E = orange, dim
+    case 5: return QColor(0x00, 0x70, 0x60);  // F = teal, dim
+    case 6: return QColor(0x80, 0x30, 0x40);  // G = coral, dim
+    case 7: return QColor(0x58, 0x40, 0x80);  // H = lavender, dim
+    default: return QColor(0x00, 0x60, 0x80);
     }
 }
 
