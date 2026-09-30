@@ -63,7 +63,7 @@
 > **Existing users: no action required.** Saved radios, mic profiles, DSP settings, container layout, spectrum / waterfall settings, PA cal points, per-band tune power, spot-system identity, and FreeDV Reporter hidden state all carry forward. No `SettingsSchemaVersion` bump (last bump was v5 in v0.4.0). The new applet-visibility menu starts with every applet visible; toggle to taste and the state persists.
 
 > [!NOTE]
-> **No PGXL / TGXL or ANAN-G2E? Still useful.** v0.5.2's applet-visibility menu, TCI live-state fixes, PS-A persistence, PA quit handling, and the 4O3A discovery broadcast-subnet fix are all testable on any supported radio. The 3P-II bench-verification matrix (36 rows at `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md`) and the ANAN-G2E matrix (12 rows at `docs/architecture/2026-05-21-anan-g2e-verification/README.md`) gate the marquee features on live hardware; both are next on the bench.
+> **No PGXL / TGXL or ANAN-G2E? Still useful.** v0.5.2's applet-visibility menu, TCI live-state fixes, PS-A persistence, PA quit handling, and the 4O3A discovery broadcast-subnet fix are all testable on any supported radio. The 3P-II bench-verification matrix (36 rows at `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md`) and the ANAN-G2E matrix (12 rows at `docs/architecture/anan-g2e-verification/README.md`) gate the marquee features on live hardware; both are next on the bench.
 
 ### Phase 3P-II: 4O3A external RF accessories + analog S-Meter port
 
@@ -142,7 +142,7 @@ Apache Labs' newest ANAN-family radio is now a first-class supported SKU, on par
 - `SendStop` retries with bounds-checked I/Q batch; closes a G2E gateware lockup + crash mode observed in early bench testing.
 - Disconnect uses `CmdGeneral` winddown (no `run=0` frame), matching Thetis P2 sequence.
 
-**Bench verification:** 12-row matrix at `docs/architecture/2026-05-21-anan-g2e-verification/README.md` pending live G2E hardware. Rows F2 / F3 / F4 / F6 are documented as `DONE_WITH_CONCERNS` for bench-time follow-up.
+**Bench verification:** 12-row matrix at `docs/architecture/anan-g2e-verification/README.md` pending live G2E hardware. Rows F2 / F3 / F4 / F6 are documented as `DONE_WITH_CONCERNS` for bench-time follow-up.
 
 ### Applet visibility controller
 

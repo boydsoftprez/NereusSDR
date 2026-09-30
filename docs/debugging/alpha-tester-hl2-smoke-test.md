@@ -1,6 +1,28 @@
 # NereusSDR Alpha Test — OpenHPSDR Radios (P1 & P2)
 
+> [!WARNING]
+> **Historical document — describes the v0.2.x alpha (April 2026). Do not test against it.**
+>
+> The transmit and signing statements below were true when this was written and
+> are **no longer true**:
+>
+> - **"Do not key up" is obsolete.** The TX pipeline (Phase 3M) shipped in v0.3.0.
+>   SSB transmit works, and transmit is covered properly in the
+>   [v0.5.2 tester guide](v0.5.2-alpha-tester-smoketest.md).
+> - **"Ad-hoc codesigned, not notarized" is obsolete.** Builds are signed with an
+>   Apple Developer ID and notarized as of v0.3.0. You do not need
+>   right-click → Open.
+> - The **Setup page shells** described below (Transmit, CAT/Network, Appearance,
+>   Keyboard Setup) have since been populated.
+>
+> It is kept for the record because its **wired-vs-stub breakdown methodology**
+> is still the right way to write an alpha guide. For what to test *now*, start
+> with the [v0.5.2 alpha tester guide](v0.5.2-alpha-tester-smoketest.md).
+
 **Hi, and thank you.** You're helping test an **alpha-stage** SDR console. This doc walks you through what to try, what "success" looks like, and — just as important — what does **not** work yet so you don't waste time filing bugs for features we know are missing.
+
+> The remainder of this document is preserved **as it was written in April 2026**.
+> Where it contradicts the warning above, the warning is correct.
 
 **What this build is:**
 - A ground-up C++/Qt6 port of [Thetis](https://github.com/ramdor/Thetis) (the Apache Labs / OpenHPSDR console), architecturally modelled on [AetherSDR](https://github.com/ten9876/AetherSDR).

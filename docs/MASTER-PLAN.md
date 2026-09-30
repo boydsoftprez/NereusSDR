@@ -179,7 +179,7 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 ### Up Next (after v0.5.2)
 - **Phase 3M-2 - CW TX** (next up). Sidetone, firmware keyer, QSK / break-in. Absorbs the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-1252 [@c26a8a4]`). Detail in §"Phase 3M-2".
 - **Phase 3M-3b — FM pre-emphasis** (de-scoped from 3M-3a-ii during v0.3.1; runs after 3M-2).
-- **Phase 3F (Multi-panadapter)**, after 3M-2. Re-exposes the Active RX count widget (hidden in v0.4.0 because it was stuck-at-1 in single-RX) and finally exercises `RadioModel::setActiveRxCountLive`. Also lands the aamix anti-VOX path that the v0.4.0 single-RX direct pump deferred. Also unblocks RADE-on-A while SSB-on-B multi-slice scenarios (currently a known limitation per Row 12 of the Phase 3R bench matrix).
+- **Phase 3F (Multi-panadapter)** — **shipped**, ahead of 3M-2, in `[Unreleased]` targeting v0.6.0. Re-exposed the Active RX count widget and finally exercises `RadioModel::setActiveRxCountLive`. The aamix anti-VOX path and RADE-on-A-while-SSB-on-B remain open under Phase 3F-1 (per-slice DSP routing); see the `[Unreleased]` CHANGELOG sections "Deferred" and "Known limitations for v0.6.0".
 - **HL2 RADE bench follow-up**, gated on closure of the HL2 ATT/filter safety audit. Tracked by Row 9 of `docs/architecture/phase3r-verification/README.md`.
 - **Phase 3H (Skin system)**, **Phase 3K (CAT / rigctld)**, **Phase 3M-recording (WAV + I/Q recording)** all remain not-started.
 
@@ -189,7 +189,7 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 - **Phase 3P-II (External RF accessories + analog S-Meter port).** Four-phase epic shipped (slotted before 3M-2 per `docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-design.md` §13). Phase 1 PGXL/TGXL baseline (AetherSDR 1:1: `PgxlConnection` TCP 9008 V/R/S parser, `TgxlConnection` TCP 9010 V/R/S parser, `TunerModel` 13 Q_PROPERTYs, `LanDiscovery` UDP broadcast on 9008/9010, `AmpApplet`, `TunerApplet` rewire, `RelayBar`, Setup → Network → Peripherals with Scan LAN dialog). Phase 2 analog S-Meter port from Thetis (`SMeterWidget` 180° needle arc + S-unit scale, four RX modes: Signal / Sig Avg `RXA_S_AV` / Signal Peak / Max Bin `SetupDetectMaxBin`+`GetDetectMaxBin`, right-click context menu replaces inline strip, PGXL 2 kW snap, peak hold Fast/Medium/Slow, AppSettings round-trip). Phase 3 connection robustness (exponential auto-reconnect 1/2/5/10/30/60 s, keepalive 30 s, RTT-correlated ping 10 s, full PGXL pairing flow `amplifier create` + `flexradio pair` with paired-serial capture, band-change notifications, `ConnectionDiagnostics` 10 Q_PROPERTYs at 1 Hz coalesce, PeripheralsPage live status). Phase 4 advanced UI (`PgxlAdvancedPage` + `TgxlAdvancedPage` Setup pages, `FaultLog` 10-entry ring buffer with likelyCause heuristic, `TuneMemoryStore` per-(antenna, band) auto-recall, `TxInterlockPolicy` Disabled/Warn/Block + SWR gate + grace, `PgxlInterlockPage` under Setup → Transmit, antenna label persistence, power-cap soft-alert toast, applet right-click navigation). Bench verification matrix at `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md` (36 rows pending live PGXL + TGXL hardware; Row 18 HL2 gated on ATT/filter audit).
 
-- **ANAN-G2E (HermesC10) SKU port.** New board enum + capability row, hardware profile init verified against Thetis v2.10.3.15, codec wrappers (`SetADCSupply` + `LRAudioSwap`), discovery byte 0x14 → `HPSDRHW::HermesC10`, BPF1 algorithm family (`setAlex1HPF`), Hermes-class DDC4 + DDC0 + PS-DDC, PA telemetry (fwd-power triplet, current / supply-volts), per-model preamp items, `SkuUiProfile` EXT label overrides, `AddCustomRadioDialog` wiring. 12 ANAN-G2E bench tasks (A3 / A4 / B4'-B7' / D1-D5 / E1-E5 / F1-F6). G2E P2 RX unblock (mask dither/random for HermesC10, zero rate on disabled DDCs, retry SendStop + bounds-check I/Q batch) + Thetis-faithful disconnect (CmdGeneral winddown, no `run=0` frame). Bench-verification matrix at `docs/architecture/2026-05-21-anan-g2e-verification/README.md` (12 rows; F2/F3/F4/F6 documented as `DONE_WITH_CONCERNS`; pending live G2E hardware).
+- **ANAN-G2E (HermesC10) SKU port.** New board enum + capability row, hardware profile init verified against Thetis v2.10.3.15, codec wrappers (`SetADCSupply` + `LRAudioSwap`), discovery byte 0x14 → `HPSDRHW::HermesC10`, BPF1 algorithm family (`setAlex1HPF`), Hermes-class DDC4 + DDC0 + PS-DDC, PA telemetry (fwd-power triplet, current / supply-volts), per-model preamp items, `SkuUiProfile` EXT label overrides, `AddCustomRadioDialog` wiring. 12 ANAN-G2E bench tasks (A3 / A4 / B4'-B7' / D1-D5 / E1-E5 / F1-F6). G2E P2 RX unblock (mask dither/random for HermesC10, zero rate on disabled DDCs, retry SendStop + bounds-check I/Q batch) + Thetis-faithful disconnect (CmdGeneral winddown, no `run=0` frame). Bench-verification matrix at `docs/architecture/anan-g2e-verification/README.md` (12 rows; F2/F3/F4/F6 documented as `DONE_WITH_CONCERNS`; pending live G2E hardware).
 
 - **Applet visibility controller.** New `AppletVisibilityController` + AppSettings round-trip, hamburger menu embedded in the AppletPanel banner / S-Meter title bar, View → Containers → Applets show/hide section, two-way menu sync, capability-gated `setAvailable` axis, RADE-aware routing, master-toggle live UI gating via `RadioModel::fourO3AEnabledChanged`. Retires View → Network Applets. `setAppletVisible` preserves stack order so reordering survives visibility toggles. Sweep across all applets dedupes the double-header bug from the prior banner row.
 
@@ -205,7 +205,7 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 **Deferred / known limitations in v0.5.2:**
 - Live PGXL + TGXL hardware bench (36-row matrix at `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md`).
-- Live ANAN-G2E hardware bench (12-row matrix at `docs/architecture/2026-05-21-anan-g2e-verification/README.md`; 4 documented `DONE_WITH_CONCERNS` gaps F2/F3/F4/F6).
+- Live ANAN-G2E hardware bench (12-row matrix at `docs/architecture/anan-g2e-verification/README.md`; 4 documented `DONE_WITH_CONCERNS` gaps F2/F3/F4/F6).
 - HL2 RADE bench verification still gated on HL2 ATT/filter audit closure (Row 9 of the Phase 3R bench matrix).
 - RADE multi-slice (RADE on A while SSB on B); Phase 3F future.
 
@@ -851,6 +851,18 @@ Thetis source: `PSForm.cs` (1164 lines), `calcc.c`, `iqc.c`, `TXA.c:557-591`
 Verification: Enable PS on ANAN-G2, feedback level green, measurable IMD improvement.
 
 ### Phase 3F: Multi-Panadapter Layout
+**Status: shipped** in `[Unreleased]`, targeting v0.6.0 — 8 sub-epics, ~110 commits,
+17/17 targeted ctest green. The plan text below is the original design intent, kept
+for the record. The shipped architecture went further: Sub-Epic A per-band
+SliceModel persistence and BoardCapabilities maxSlices, B a 5-slice codec chain with
+a per-ADC Alex BPF state machine, C TxSliceArbiter, D PanadapterStack with
+PanadapterApplet/FFTRouter/PanFloatingWindow/PanLayoutDialog, E SpectrumStatusOverlay
+and HardwareDdcRoutingPage, F the P2 wideband data path end to end, G diversity
+wrappers with DiversityRadarWidget and DiversityDialog. The nine-layout `+PAN`
+picker and the consolidated `ChromeBarController` bottom banner also landed.
+Outstanding work is tracked as Phase 3F-1 (per-slice DSP routing) and in
+`CHANGELOG.md` under `[Unreleased]` → Deferred / Known limitations.
+
 **Goal:** Support 1-4 panadapters with proper DDC-to-ADC mapping and multiple active receivers.
 Multi-receiver plumbing from Phase 3E is a prerequisite.
 
@@ -1191,7 +1203,12 @@ Combines AetherSDR's organized hierarchy with Thetis's quick-access approach:
 - ☐ NB (Noise Blanker)
 - ☐ NB2
 - ☐ ANF (Auto Notch Filter)
-- ☐ TNF (Tracking Notch Filter)
+- ☐ TNF (Tracking Notch Filter) — **not a menu toggle; shipped** as `Setup → DSP → TNF`
+  (`MnfSetupPage`) and the `+TNF` overlay button on the spectrum strip, backed by
+  `src/models/NotchModel.h` and `src/core/dsp/Notch.h`. Adding it to this menu is
+  still outstanding. Design, plan and bench matrix:
+  `2026-07-28-tunable-notch-filter-design.md`, `2026-07-29-tunable-notch-filter-plan.md`,
+  `2026-07-28-tnf-verification/README.md`.
 - ☐ BIN (Binaural)
 - ─────
 - AGC ▸ (Off, Slow, Medium, Fast, Custom)
