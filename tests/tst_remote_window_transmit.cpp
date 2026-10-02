@@ -94,6 +94,9 @@
 //               again, keepalives stop) on each end before its carrier
 //               keyed. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-02: provide a real test-only TX channel for the pre-carrier
+//               tune-ended cases and verify gate cleanup. J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include <QtTest>
@@ -122,7 +125,9 @@
 #include "core/TgxlConnection.h"
 #include "core/TciBinaryFrame.h"
 #include "core/TciServer.h"
+#include "core/TxChannel.h"
 #include "core/TxSliceArbiter.h"
+#include "core/WdspEngine.h"
 #include "core/safety/TransmitHolder.h"
 #include "core/safety/TxRefusal.h"
 #include "core/meters/TxMeterPump.h"
@@ -484,6 +489,16 @@ private slots:
         const auto restoreHandler =
             qScopeGuard([]() { qInstallMessageHandler(g_unopenedSocketsPrevious); });
         Test::RemoteAudioSessionHarness h;
+        // A connected Core has a TX channel. These ends all begin while
+        // PGXL standby is pending, so its real gate stays closed: no WDSP
+        // channel or radio is initialized, and readiness is not forged.
+        TxChannel carrier{WdspEngine::kTxChannelId};
+        h.station.injectTxChannelForTest(&carrier);
+        h.station.wireTxChannelKeyingForTest();
+        const auto detachCarrier = qScopeGuard([&]() {
+            carrier.closeRfGate();
+            h.station.injectTxChannelForTest(nullptr);
+        });
         h.pairWindow = true;
         h.makeTransmitReady();
         h.openFakeMicrophoneLine();
@@ -502,6 +517,7 @@ private slots:
         QVERIFY(tx->tuneAsked());
         QVERIFY(tx->keepaliveRunning());
         QVERIFY(!coreMox->isMox());
+        QVERIFY(!carrier.isRfGateOpen());
         QVERIFY(!h.remote.tunePressAsksOn(true));   // a press now asks off
 
         switch (how) {
@@ -545,6 +561,7 @@ private slots:
         } else {
             QVERIFY(!coreMox->isMox());
         }
+        QTRY_VERIFY(!carrier.isRfGateOpen());
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 

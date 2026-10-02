@@ -1345,7 +1345,10 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("notStarted"), QStringLiteral("busy"),
           // beginTgxlAutotune's transmit block, with its own literal
           // alongside (both scanned: MoxController.cpp and here).
-          QStringLiteral("transmitBlockReasonAlongside(remoteReason)")}},
+          QStringLiteral("transmitBlockReasonAlongside(remoteReason)"),
+          // Carrier availability: tunerTuneEndedReason's six literal
+          // reasons are scanned in the RadioModel.cpp entry below.
+          QStringLiteral("tunerTuneEndedReason(TunerTuneEnd::CarrierNotStarted)")}},
         // Tune-ended lane: the words a device's Tuner Genius autotune that
         // ended before its carrier keyed is told (notice tuneEnded).
         {"src/models/RadioModel.cpp", {QStringLiteral("tunerTuneEndedReason")}, {}, 6},
