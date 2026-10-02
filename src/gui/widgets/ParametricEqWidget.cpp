@@ -1505,6 +1505,12 @@ void ParametricEqWidget::drawAxisScales(QPainter& g, const QRect& plot) {
     QFontMetrics fm(font());
 
     double stepDb  = getYAxisStepDb();
+    // Native editor labels adapt to short plots; keep the configured step
+    // and legacy renderer unchanged, including their grid/axis math.
+    const int labelGap = fm.height() + 2;
+    if (m_editorPresentationEnabled && m_dbMax > m_dbMin) {
+        while (stepDb * plot.height() / (m_dbMax - m_dbMin) < labelGap) { stepDb *= 2; }
+    }
     double startDb = std::ceil(m_dbMin / stepDb) * stepDb;
 
     bool drewMin = false;
@@ -1525,6 +1531,9 @@ void ParametricEqWidget::drawAxisScales(QPainter& g, const QRect& plot) {
     };
 
     for (double db = startDb; db <= m_dbMax + 0.000001; db += stepDb) {
+        if (m_editorPresentationEnabled && db > m_dbMin + 0.000001 && db < m_dbMax - 0.000001
+            && (std::fabs(yFromDb(plot, db) - yFromDb(plot, m_dbMin)) < labelGap
+                || std::fabs(yFromDb(plot, db) - yFromDb(plot, m_dbMax)) < labelGap)) { continue; }
         if (std::fabs(db - m_dbMin) < 0.000001) drewMin = true;
         if (std::fabs(db - m_dbMax) < 0.000001) drewMax = true;
         drawDbLabel(db);
