@@ -480,6 +480,9 @@
 //               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+// 2026-10-01: Authenticated Core address inventory and reconnect learning.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+
 #include "core/session/NetworkTrouble.h"
 #include "core/session/SystemProxy.h"
 #include "core/session/StationClient.h"
@@ -867,6 +870,7 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // G-38: 2 adds Repair invalid settings (station.repairSettings).
     m_declaredFeatures.insert(QByteArrayLiteral("settingsHygiene"), 2);
     m_declaredFeatures.insert(QByteArrayLiteral("coreBuildInfo"), 1);
+    m_declaredFeatures.insert(QByteArrayLiteral("coreAddresses"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("settingsBackup"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("radioAntennaRows"), 1);
     // R-IOS-26 / R-R3-49: this window knows 2 m as its own band (Band 27).
@@ -1279,6 +1283,15 @@ void StationClient::connectToStation(const QUrl& url, const QString& token,
 void StationClient::setCachedAddresses(const QList<QUrl>& addresses)
 {
     m_cachedAddresses = addresses;
+    // An authenticated devices delta can add direct listeners while the
+    // session is on the service. Existing retry/upgrade races use this plan.
+    if (m_handshakeComplete && m_raceMode && !m_lastAllowUnpinned) {
+        m_dialPlan.clear();
+        for (const QUrl& address : addresses) {
+            if (address.isValid() && !m_dialPlan.contains(address)) { m_dialPlan.append(address); }
+        }
+        if (!m_lastUrl.isEmpty() && !m_dialPlan.contains(m_lastUrl)) { m_dialPlan.append(m_lastUrl); }
+    }
 }
 
 void StationClient::connectThroughService(const QList<QUrl>& servers,
@@ -2401,7 +2414,11 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     // refusal, auth refusal, preemption, peer-limit refusal --
     // attemptReconnect false on all of those call sites) is deliberately
     // NOT retried.
-    if (attemptReconnect && m_lastUrl.isValid()) {
+    // A paired race may have no configured URL: its authenticated learned
+    // listeners and/or service route still provide something to redial.
+    const bool pairedRaceRoute = m_raceMode && m_stationIdentity.size() == 32
+        && !m_lastAllowUnpinned && (!m_dialPlan.isEmpty() || !m_serviceRoute.servers.isEmpty());
+    if (attemptReconnect && (m_lastUrl.isValid() || pairedRaceRoute)) {
         scheduleReconnect();
     }
     emit connectionActivityChanged();
@@ -2605,7 +2622,8 @@ void StationClient::scheduleReconnect()
 void StationClient::onReconnectTimeout()
 {
     // Task 29: a paired Core is raced again.
-    if (m_raceMode && m_lastUrl.isValid()) {
+    if (m_raceMode && m_stationIdentity.size() == 32 && !m_lastAllowUnpinned
+        && (!m_dialPlan.isEmpty() || !m_serviceRoute.servers.isEmpty())) {
         startRace();
         return;
     }
@@ -8566,7 +8584,7 @@ bool StationClient::canMovePathNow() const
     return true;
 }
 
-bool StationClient::moveSessionForTest(SessionTransport* next, int rank)
+bool StationClient::moveSessionForTest(SessionTransport* next, int rank, const QUrl& url)
 {
     if (next == nullptr || !canMovePathNow() || m_upgrade) {
         return false;
@@ -8574,6 +8592,7 @@ bool StationClient::moveSessionForTest(SessionTransport* next, int rank)
     PathRacer::Ready ready;
     ready.transport = next;
     ready.rank = rank;
+    ready.url = url;
     ready.kind = PathRacer::PathKind::Direct;
     ready.address = next->peerDescription();
     beginUpgrade(ready);

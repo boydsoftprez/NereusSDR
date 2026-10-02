@@ -26,6 +26,9 @@
 // follow later edits and forgets of records they already contain.
 // =================================================================
 
+// 2026-10-01: Authenticated Core address inventory and reconnect learning.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+
 #pragma once
 
 #include "core/session/RemoteStationOptions.h"
@@ -84,6 +87,10 @@ public:
                               QString* error = nullptr);
     bool select(const QString& id, QString* error = nullptr);
 
+    /// Parse the existing devices.coreAddresses contract. No service/ICE URLs.
+    static QStringList parseCoreAddresses(const QString& text);
+    bool rememberCoreAddresses(const QString& id, const QByteArray& identity,
+                              const QString& text, QString* error = nullptr);
     static QString createId();
 
 private:

@@ -99,6 +99,84 @@ class TstCoreTargetStore : public QObject {
     Q_OBJECT
 
 private slots:
+    void coreListedAddressesUseGlobalLiteralsExactPortsAndSeparateIdentity()
+    {
+        const QString wire = QString::fromUtf8("{\"addresses\":[\"[2001:0DB8::5]:47912\",\"[2001:db8::5]:47912\",\"8.8.8.8:47913\",\"192.168.1.2:47910\",\"100.64.0.2:47910\",\"[fe80::1]:47910\",\"[fd00::1]:47910\",\"[::ffff:8.8.8.8]:47910\",\"core.test:47910\",\"8.8.4.4:0\",\"8.8.4.4:65536\",\"wss://8.8.4.4:47910\",7]}");
+        const QStringList expected{QStringLiteral("wss://[2001:db8::5]:47912"), QStringLiteral("wss://8.8.8.8:47913")};
+        QCOMPARE(CoreTargetStore::parseCoreAddresses(wire), expected);
+        QCOMPARE(CoreTargetStore::parseCoreAddresses(QStringLiteral("broken")), QStringList{});
+        QTemporaryDir directory;
+        AppSettings settings(directory.filePath(QStringLiteral("settings.xml")));
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        SavedCoreTarget saved = makeTarget(QStringLiteral("paired"));
+        saved.connection.identityFingerprint = someIdentity();
+        saved.connection.cachedAddresses = {QStringLiteral("wss://192.0.2.9:47910")};
+        QVERIFY(store.upsert(saved));
+        QVERIFY(!store.rememberCoreAddresses(saved.id, QByteArray(32, 'x'), wire));
+        QVERIFY(store.target(saved.id)->connection.coreAddresses.isEmpty());
+        QVERIFY(store.rememberCoreAddresses(saved.id, saved.connection.identityFingerprint, wire));
+        QCOMPARE(store.target(saved.id)->connection.coreAddresses, expected);
+        QCOMPARE(store.target(saved.id)->connection.cachedAddresses, saved.connection.cachedAddresses);
+        QCOMPARE(store.target(saved.id)->connection.url, saved.connection.url);
+        for (const QString& empty : {QStringLiteral("broken"), QStringLiteral("{}"), QString::fromUtf8("{\"addresses\":[]}")}) {
+            QVERIFY(store.rememberCoreAddresses(saved.id, saved.connection.identityFingerprint, empty));
+            QCOMPARE(store.target(saved.id)->connection.coreAddresses, expected);
+        }
+        QStringList many;
+        for (int i = 1; i <= 12; ++i) { many.append(QStringLiteral("[2001:db8::%1]:47910").arg(i)); }
+        const QString manyWire = QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("addresses"), QJsonArray::fromStringList(many)}}).toJson());
+        QCOMPARE(CoreTargetStore::parseCoreAddresses(manyWire).size(), 8);
+        QVERIFY(store.rememberCoreAddresses(saved.id, saved.connection.identityFingerprint, manyWire));
+        QCOMPARE(store.target(saved.id)->connection.coreAddresses.size(), 8);
+        QVERIFY(store.remove(saved.id));
+        QVERIFY(!store.rememberCoreAddresses(saved.id, saved.connection.identityFingerprint, wire));
+    }
+
+    void failedLearnedAddressSaveKeepsPriorIdentityHistoryAndList()
+    {
+        QTemporaryDir directory;
+        const QString path = directory.filePath(QStringLiteral("settings.xml"));
+        AppSettings settings(path);
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        SavedCoreTarget saved = makeTarget(QStringLiteral("paired"));
+        saved.connection.identityFingerprint = someIdentity();
+        saved.connection.cachedAddresses = {saved.connection.url};
+        QVERIFY(store.upsert(saved));
+        const QString first = QString::fromUtf8("{\"addresses\":[\"[2001:db8::5]:47912\"]}");
+        QVERIFY(store.rememberCoreAddresses(saved.id, saved.connection.identityFingerprint, first));
+        const auto before = *store.target(saved.id);
+        const QString document = settings.value(QLatin1String(kTargetKey)).toString();
+        QVERIFY(QFile::remove(path));
+        QVERIFY(QDir().mkdir(path));
+        QString error;
+        QVERIFY(!store.rememberCoreAddresses(saved.id, saved.connection.identityFingerprint,
+            QString::fromUtf8("{\"addresses\":[\"[2001:db8::6]:47913\"]}"), &error));
+        QVERIFY(!error.isEmpty());
+        QCOMPARE(store.target(saved.id)->connection.coreAddresses, before.connection.coreAddresses);
+        QCOMPARE(store.target(saved.id)->connection.cachedAddresses, before.connection.cachedAddresses);
+        QCOMPARE(store.target(saved.id)->connection.identityFingerprint, before.connection.identityFingerprint);
+        QCOMPARE(settings.value(QLatin1String(kTargetKey)).toString(), document);
+    }
+
+    void learnedCoreAddressesPersistSeparatelyWithIdentity()
+    {
+        QTemporaryDir directory;
+        AppSettings settings(directory.filePath(QStringLiteral("settings.xml")));
+        QJsonObject record = jsonTarget(QStringLiteral("paired"), StationIdentity::toBase64Url(someIdentity()));
+        const QJsonArray learned{QStringLiteral("wss://[2001:db8::5]:47912"), QStringLiteral("wss://8.8.8.8:47913")};
+        record.insert(QStringLiteral("coreAddresses"), learned);
+        record.insert(QStringLiteral("lastAddresses"), QJsonArray{QStringLiteral("wss://192.0.2.9:47910")});
+        settings.setValue(QLatin1String(kTargetKey), documentFor(QJsonArray{record}));
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        QVERIFY(store.upsert(*store.target(QStringLiteral("paired"))));
+        const auto persisted = QJsonDocument::fromJson(settings.value(QLatin1String(kTargetKey)).toString().toUtf8()).object()
+            .value(QStringLiteral("cores")).toArray().first().toObject();
+        QCOMPARE(persisted.value(QStringLiteral("coreAddresses")).toArray(), learned);
+        QCOMPARE(persisted.value(QStringLiteral("lastAddresses")).toArray(), record.value(QStringLiteral("lastAddresses")).toArray());
+    }
     void pairedServiceOnlyTargetIsRemoteAndPersistsWithoutChangingV2()
     {
         QTemporaryDir directory;

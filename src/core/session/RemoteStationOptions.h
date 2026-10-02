@@ -1,3 +1,6 @@
+// 2026-10-01: Authenticated Core address inventory and reconnect learning.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+
 #pragma once
 // =================================================================
 // src/core/session/RemoteStationOptions.h  (NereusSDR)
@@ -86,6 +89,10 @@ struct RemoteStationOptions {
     /// reconnect never needs the remote access service.
     static constexpr int kMaxCachedAddresses = 4;
     QStringList cachedAddresses;
+    /// Authenticated devices.coreAddresses, scoped to identityFingerprint.
+    /// Separate from operator URL and four successful endpoints. Link 7.1.
+    QStringList coreAddresses;
+
 
     /// iPhone app plan Task 28 fix wave (R-IOS-16; the safety review's
     /// Important 5): the controlChannelVersion the Core sent at this
@@ -152,6 +159,7 @@ struct RemoteStationOptions {
 
     /// A direct URL keeps its existing rules. Without one, only a paired
     /// identity and service route can identify a remote Core.
+    bool hasAuthenticatedDirectAddresses() const;
     bool isValidRemoteTarget(QString* whyNot = nullptr) const;
 
     /// Whether `candidate` is a station URL this build can dial.

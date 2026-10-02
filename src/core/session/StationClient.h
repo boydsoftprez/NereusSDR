@@ -1,3 +1,6 @@
+// 2026-10-01: Authenticated Core address inventory and reconnect learning.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+
 #pragma once
 // =================================================================
 // src/core/session/StationClient.h  (NereusSDR)
@@ -840,7 +843,7 @@ public:
     /// upgrade does: a ticket on the session, this window's hello and
     /// path.join on `next`, then the barrier. `rank` is pathRank() once
     /// moved. False when the session cannot move now (canMovePathNow()).
-    bool moveSessionForTest(SessionTransport* next, int rank);
+    bool moveSessionForTest(SessionTransport* next, int rank, const QUrl& url = {});
     /// Test seam: the service attempt's bound
     /// (RendezvousDialer::kDialDeadlineMs).
     void setServiceDialDeadlineMs(int ms) { m_serviceDialDeadlineMs = ms; }

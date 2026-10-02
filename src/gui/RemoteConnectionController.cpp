@@ -1,9 +1,13 @@
 // no-port-check: NereusSDR-original. R3 Core session presentation and actions.
+// 2026-10-01: Authenticated Core address inventory and reconnect learning.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+
 #include "RemoteConnectionController.h"
 #include "core/AppSettings.h"
 #include "core/session/RemoteDevicesState.h"
 #include "core/session/RendezvousClient.h"
 #include "core/session/StationClient.h"
+#include "core/session/PathRacer.h"
 #include "gui/OperatorReasonText.h"
 #include "gui/RemoteAudioStatus.h"
 #include "gui/RemoteMediaController.h"
@@ -114,10 +118,18 @@ RemoteConnectionController::RemoteConnectionController(
 
 QString RemoteConnectionController::endpointText() const
 {
-    if (m_options.url.isEmpty() && !m_options.rendezvousId.isEmpty()) {
-        return tr("Remote access");
+    if ((!m_client || !m_client->isHandshakeComplete())
+        && m_options.url.isEmpty() && !m_options.rendezvousId.isEmpty()) {
+        return m_options.hasAuthenticatedDirectAddresses() ? tr("No configured address") : tr("Remote access");
     }
-    const QUrl url(m_options.url);
+    const QUrl url(m_client && m_client->isHandshakeComplete()
+                       ? m_client->connectedUrl() : QUrl(m_options.url));
+    if (m_client && m_client->isHandshakeComplete() && url.isEmpty()) {
+        if (m_client->pathRank() == PathRacer::ServiceRelayed || m_client->pathRank() == PathRacer::Floor) {
+            return tr("Remote access relay (no direct Core address)");
+        }
+        return tr("Remote access service (no direct Core address)");
+    }
     // Never display URL user-info/query/fragment or the pairing token.
     QString host = url.host();
     if (host.contains(QLatin1Char(':'))) { host = QLatin1Char('[') + host + QLatin1Char(']'); }
@@ -130,9 +142,10 @@ bool RemoteConnectionController::canConnect() const
         return false;
     }
     if (m_options.url.isEmpty()) {
-        return m_options.reachFromAnywhere
+        return m_options.hasAuthenticatedDirectAddresses()
+            || (m_options.reachFromAnywhere
             && m_options.serviceConnectRefusal().isEmpty()
-            && !configuredRemoteAccessServers().isEmpty();
+            && !configuredRemoteAccessServers().isEmpty());
     }
     return true;
 }
@@ -357,6 +370,7 @@ void RemoteConnectionController::connectToStation()
     if (m_currentOptionsSource) {
         if (const std::optional<RemoteStationOptions> current = m_currentOptionsSource()) {
             m_options.cachedAddresses = current->cachedAddresses;
+            m_options.coreAddresses = current->coreAddresses;
             m_options.rendezvousId = current->rendezvousId;
             m_options.relayAllowed = current->relayAllowed;
             m_options.controlChannelVersion = current->controlChannelVersion;
@@ -366,6 +380,11 @@ void RemoteConnectionController::connectToStation()
     QList<QUrl> cached;
     for (const QString& address : std::as_const(m_options.cachedAddresses)) {
         cached.append(QUrl(address));
+    }
+    if (!m_options.identityFingerprint.isEmpty() && !m_options.allowUnpinned) {
+        for (const QString& address : std::as_const(m_options.coreAddresses)) {
+            if (!cached.contains(QUrl(address))) { cached.append(QUrl(address)); }
+        }
     }
     m_client->setCachedAddresses(cached);
     // iPhone app plan Task 29 (R-IOS-16; link section 21.1): a paired Core

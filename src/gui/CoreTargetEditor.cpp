@@ -5,6 +5,9 @@
 // no-port-check: NereusSDR-original. R3 Core session presentation and actions.
 // =================================================================
 
+// 2026-10-01: Authenticated Core address inventory and reconnect learning.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+
 #include "gui/CoreTargetEditor.h"
 
 #include "core/session/RemoteStationOptions.h"
@@ -177,6 +180,7 @@ SavedCoreTarget CoreTargetEditor::target() const
         || after.fingerprint != before.fingerprint || after.allowUnpinned != before.allowUnpinned
         || after.identityFingerprint != before.identityFingerprint) {
         result.connection.cachedAddresses.clear();
+        result.connection.coreAddresses.clear();
         // Task 28 fix wave: what the old Core declared says nothing of the
         // new one.
         result.connection.controlChannelVersion = -1;

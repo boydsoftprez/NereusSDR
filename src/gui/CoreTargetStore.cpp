@@ -31,11 +31,16 @@
 // when an older app opens the profile.
 // =================================================================
 
+// 2026-10-01: Authenticated Core address inventory and reconnect learning.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+
 #include "gui/CoreTargetStore.h"
 
 #include "core/AppSettings.h"
 #include "core/security/StationIdentity.h"
 #include "core/session/RendezvousWire.h"
+#include "core/session/CoreAddresses.h"
+#include "core/session/IceConfiguration.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -148,6 +153,30 @@ bool validateTarget(const SavedCoreTarget& target, QString* error, int version =
             return false;
         }
     }
+    if (!target.connection.coreAddresses.isEmpty()) {
+        if (target.connection.identityFingerprint.size() != kIdentityBytes
+            || target.connection.coreAddresses.size() > CoreAddresses::kMaxAddresses) {
+            setError(error, QStringLiteral("Saved Core target has invalid learned addresses."));
+            return false;
+        }
+        QStringList endpoints;
+        for (const QString& url : target.connection.coreAddresses) {
+            const QUrl parsed(url);
+            QString host = parsed.host();
+            if (host.contains(QLatin1Char(':'))) { host = QLatin1Char('[') + host + QLatin1Char(']'); }
+            endpoints.append(host + QLatin1Char(':') + QString::number(parsed.port()));
+            if (parsed.scheme() != QLatin1String("wss") || !parsed.userInfo().isEmpty()
+                || !parsed.query().isEmpty() || !parsed.fragment().isEmpty() || !parsed.path().isEmpty()) {
+                setError(error, QStringLiteral("Saved Core target has invalid learned addresses."));
+                return false;
+            }
+        }
+        if (CoreTargetStore::parseCoreAddresses(CoreAddresses::toJson(endpoints))
+            != target.connection.coreAddresses) {
+            setError(error, QStringLiteral("Saved Core target has invalid learned addresses."));
+            return false;
+        }
+    }
     return true;
 }
 
@@ -191,6 +220,9 @@ QJsonObject toJson(const SavedCoreTarget& target, int version)
         {QStringLiteral("lastRadioName"), target.lastRadioName},
         {QStringLiteral("lastRadioMac"), target.lastRadioMac},
     };
+    if (version >= kVersion && !target.connection.coreAddresses.isEmpty()) {
+        object.insert(QStringLiteral("coreAddresses"), QJsonArray::fromStringList(target.connection.coreAddresses));
+    }
     if (version >= kV2Version) {
         object.insert(QStringLiteral("identity"),
                       StationIdentity::toBase64Url(target.connection.identityFingerprint));
@@ -329,6 +361,22 @@ bool parseDocument(const QString& text, int expectedVersion, QList<SavedCoreTarg
                         return false;
                     }
                     target.connection.cachedAddresses.append(address.toString());
+                }
+            }
+            if (expectedVersion >= kVersion) {
+                const QJsonValue learned = object.value(QStringLiteral("coreAddresses"));
+                if (!learned.isUndefined()) {
+                    if (!learned.isArray()) {
+                        setError(error, QStringLiteral("Saved Core targets document has invalid learned addresses."));
+                        return false;
+                    }
+                    for (const QJsonValue& value : learned.toArray()) {
+                        if (!value.isString()) {
+                            setError(error, QStringLiteral("Saved Core targets document has invalid learned addresses."));
+                            return false;
+                        }
+                        target.connection.coreAddresses.append(value.toString());
+                    }
                 }
             }
             // Task 28 fix wave: optional; a whole number, at least 0.
@@ -589,6 +637,57 @@ bool CoreTargetStore::rememberAddress(const QString& id, const QString& url, QSt
     while (addresses.size() > RemoteStationOptions::kMaxCachedAddresses) {
         addresses.removeLast();
     }
+    return upsert(updated, error);
+}
+
+// Existing link 7.1 Core address contract, matching accepted phone
+// CoreAddressList at b2383c082; reuse Core's global IP rules rather than
+// importing Swift. Listener ports are supplied here, never ICE candidates.
+QStringList CoreTargetStore::parseCoreAddresses(const QString& text)
+{
+    if (text.size() > 65536) { return {}; }
+    const QJsonDocument doc = QJsonDocument::fromJson(text.toUtf8());
+    if (!doc.isObject() || !doc.object().value(QStringLiteral("addresses")).isArray()) { return {}; }
+    QStringList result;
+    const QRegularExpression pattern(QStringLiteral("^(?:\\[([0-9A-Fa-f:]+)\\]|([0-9.]+)):([0-9]{1,5})$"));
+    for (const QJsonValue& value : doc.object().value(QStringLiteral("addresses")).toArray()) {
+        if (!value.isString()) { continue; }
+        const auto match = pattern.match(value.toString());
+        if (!match.hasMatch()) { continue; }
+        const QString host = match.captured(1).isEmpty() ? match.captured(2) : match.captured(1);
+        const QHostAddress ip(host);
+        const int port = match.captured(3).toInt();
+        if (port < 1 || port > 65535
+            || !(CoreAddresses::isPublicIpv4(ip)
+                 || (ip.protocol() == QAbstractSocket::IPv6Protocol && IceConfiguration::isUsableLocalAddress(ip)))) { continue; }
+        // Bracket syntax must match address family, with no mapped IPv4.
+        if ((match.captured(1).isEmpty()) != (ip.protocol() == QAbstractSocket::IPv4Protocol)) { continue; }
+        QUrl url;
+        url.setScheme(QStringLiteral("wss"));
+        url.setHost(ip.toString().toLower());
+        url.setPort(port);
+        const QString canonical = url.toString();
+        if (!result.contains(canonical)) { result.append(canonical); }
+        if (result.size() == CoreAddresses::kMaxAddresses) { break; }
+    }
+    return result;
+}
+
+bool CoreTargetStore::rememberCoreAddresses(const QString& id, const QByteArray& identity,
+                                           const QString& text, QString* error)
+{
+    const auto found = target(id);
+    if (!found || identity.size() != kIdentityBytes || found->connection.identityFingerprint != identity) {
+        setError(error, QStringLiteral("Saved Core identity no longer matches this connection."));
+        return false;
+    }
+    const QStringList addresses = parseCoreAddresses(text);
+    if (addresses.isEmpty() || addresses == found->connection.coreAddresses) {
+        clearError(error);
+        return true;
+    }
+    SavedCoreTarget updated = *found;
+    updated.connection.coreAddresses = addresses;
     return upsert(updated, error);
 }
 

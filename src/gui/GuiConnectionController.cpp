@@ -8,12 +8,16 @@
 // identity, and is connected to at once by this computer's key. A saved
 // Core from before paired devices enrols this computer's key on its next
 // token sign-in and is saved with its identity from then on.
+// 2026-10-01: Authenticated Core address inventory and reconnect learning.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+
 #include "gui/GuiConnectionController.h"
 
 #include "core/AppSettings.h"
 #include "core/security/ClientDeviceIdentity.h"
 #include "core/security/StationIdentity.h"
 #include "core/session/StationClient.h"
+#include "core/session/RemoteDevicesState.h"
 #include "core/session/RendezvousWire.h"
 #include "gui/AddCustomRadioDialog.h"
 #include "gui/ConnectionPanel.h"
@@ -240,6 +244,8 @@ void GuiConnectionController::attachWindow(MainWindow* window)
         m_windowConnections.append(connect(client, &StationClient::stateSnapshotApplied, this,
             [this, remember] { rememberAuthenticatedCapability(); remember(); }));
         m_windowConnections.append(connect(client, &StationClient::handshakeComplete, this, remember));
+        m_windowConnections.append(connect(client, &StationClient::pathChanged, this, remember));
+        m_windowConnections.append(connect(client->remoteDevices(), &RemoteDevicesState::coreInfoChanged, this, remember));
         m_windowConnections.append(connect(client, &StationClient::stationIdentityLearned, this,
             [this, generation](const QByteArray& identity) {
                 if (generation == m_sessions.generation() && !m_shuttingDown) {
@@ -304,6 +310,12 @@ void GuiConnectionController::refresh()
         if (selected && m_remoteControls) {
             row.state = m_remoteControls->statusText();
             row.radioText = m_remoteControls->radioText();
+            if (exact && m_remoteControls->state() == ConnectionState::Connected) {
+                const auto* client = m_sessions.window()->findChild<StationClient*>();
+                if (client && client->connectedUrl().isEmpty()) {
+                    row.address = m_remoteControls->endpointText();
+                }
+            }
             if (!exact) { row.state += tr(", saved changes pending"); }
             else if (!current.savedAddressBeforeDiscovery.isEmpty()) { row.state += tr(", using the LAN address"); }
         }
@@ -353,12 +365,42 @@ ConnectionTargetRow GuiConnectionController::savedCoreRow(const SavedCoreTarget&
             target.label.isEmpty() ? endpointText(target.connection) : target.label,
             target.lastRadioName.isEmpty() ? tr("Radio unknown")
                                            : tr("%1 (last known)").arg(target.lastRadioName),
-            endpointText(target.connection),
+            target.connection.cachedAddresses.isEmpty()
+                ? (target.connection.url.isEmpty() && !target.connection.coreAddresses.isEmpty()
+                    ? tr("Core-supplied addresses") : endpointText(target.connection))
+                : tr("%1 (last worked)").arg(endpointText(QUrl(target.connection.cachedAddresses.first()))),
             // iPhone app Task 18: a Core this computer paired with says so.
             !isReadyToConnect(target.connection) ? tr("Needs setup")
                 : paired                         ? tr("Paired")
                                                  : tr("Disconnected"),
             true, storeLoaded, storeLoaded};
+}
+
+QString GuiConnectionController::savedCoreDetails(const SavedCoreTarget& target)
+{
+    QStringList lines;
+    lines.append(tr("Name on this computer: %1").arg(target.label));
+    lines.append(tr("Configured address: %1").arg(target.connection.url.isEmpty()
+        ? tr("None") : endpointText(QUrl(target.connection.url))));
+    if (!target.connection.cachedAddresses.isEmpty()) {
+        lines.append(tr("Last worked: %1").arg(endpointText(QUrl(target.connection.cachedAddresses.first()))));
+        lines.append(tr("Previously worked addresses:"));
+        for (const QString& address : target.connection.cachedAddresses) {
+            lines.append(tr("  %1").arg(endpointText(QUrl(address))));
+        }
+    }
+    if (!target.connection.coreAddresses.isEmpty()) {
+        lines.append(tr("Addresses supplied by the authenticated Core (may not be reachable):"));
+        for (const QString& address : target.connection.coreAddresses) {
+            lines.append(tr("  %1").arg(endpointText(QUrl(address))));
+        }
+    }
+    lines.append(tr("Radio: %1 (as of the last connection to this Core)")
+        .arg(target.lastRadioName.isEmpty() ? tr("unknown") : target.lastRadioName));
+    if (!target.connection.identityFingerprint.isEmpty()) {
+        lines.append(tr("Paired with this computer: it signs in with its own key."));
+    }
+    return lines.join(QLatin1Char('\n'));
 }
 
 ConnectionTargetRow GuiConnectionController::lanCoreRow(const StationLanEndpoint& endpoint,
@@ -444,7 +486,7 @@ bool GuiConnectionController::isReadyToConnect(const RemoteStationOptions& conne
 {
     if (!connection.isValidRemoteTarget()) { return false; }
     if (!connection.identityFingerprint.isEmpty()) {
-        return !connection.url.isEmpty()
+        return !connection.url.isEmpty() || connection.hasAuthenticatedDirectAddresses()
             || (connection.reachFromAnywhere
                 && connection.serviceConnectRefusal().isEmpty()
                 && !configuredRemoteAccessServers().isEmpty());
@@ -678,16 +720,17 @@ void GuiConnectionController::showDetails(const QString& key)
         m_selector->setNotice(tr("This computer runs its own Core and does its own signal processing. Choose a radio under Radios on this network to operate it directly from this computer."));
         return;
     }
-    if (key == QLatin1String("current") || key == QStringLiteral("saved:") + m_sessions.selection().savedId) {
+    if (key == QLatin1String("current")) {
         if (m_remoteControls) { m_selector->setNotice(m_remoteControls->detailText()); return; }
     }
     if (key.startsWith(QLatin1String("saved:"))) {
         const auto target = m_store.target(key.mid(6));
         if (target) {
-            m_selector->setNotice(tr("Core: %1\nRadio: %2 (as of the last connection to this Core)%3")
-                .arg(endpointText(target->connection), target->lastRadioName.isEmpty() ? tr("unknown") : target->lastRadioName,
-                     target->connection.identityFingerprint.isEmpty() ? QString()
-                         : tr("\nPaired with this computer: it signs in with its own key.")));
+            QString detail = savedCoreDetails(*target);
+            if (target->id == m_sessions.selection().savedId && m_remoteControls) {
+                detail += tr("\n\nCurrent connection:\n%1").arg(m_remoteControls->detailText());
+            }
+            m_selector->setNotice(detail);
         }
     } else if (key.startsWith(QLatin1String("lan:"))) {
         for (const StationLanEndpoint& endpoint : m_lan.endpoints()) {
@@ -724,6 +767,26 @@ void GuiConnectionController::rememberAuthenticatedRadio()
         if (!target) { return; }
     }
     const auto& caps = client->capabilities();
+    // Link 7.1: only this authenticated paired identity, after negotiated
+    // minor/capability support. Empty/absent/malformed lists retain history.
+    if (client->agreedMinor() >= 11 && caps.coreAddressesVersion >= 1
+        && client->signedInWithDeviceKey()
+        && !target->connection.identityFingerprint.isEmpty()) {
+        QString error;
+        if (!m_store.rememberCoreAddresses(target->id, client->stationIdentityFingerprint(),
+                                          client->remoteDevices()->coreInfo().coreAddresses, &error)) {
+            m_selector->setNotice(error);
+        }
+        target = m_store.target(target->id);
+        if (!target) { return; }
+    }
+    if (!target->connection.identityFingerprint.isEmpty() && !target->connection.allowUnpinned) {
+        QList<QUrl> addresses;
+        for (const QString& url : target->connection.cachedAddresses + target->connection.coreAddresses) {
+            if (!addresses.contains(QUrl(url))) { addresses.append(QUrl(url)); }
+        }
+        client->setCachedAddresses(addresses);
+    }
     // iPhone app plan Task 29 (R-IOS-16; link section 21.1): the Core's
     // rendezvous id and whether it allows the relay, so the next connect
     // races the internet service beside its addresses.

@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original. R-R3-38 operator target selection.
+// 2026-10-01: Authenticated Core address inventory and reconnect learning.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+
 #pragma once
 
 #include "core/RadioDiscovery.h"
@@ -42,6 +45,7 @@ public:
     static QString lanCoreNextStep(const StationLanAnnouncement& advertised);
     /// A saved Core as listed under Your Cores when it is not the live one.
     static ConnectionTargetRow savedCoreRow(const SavedCoreTarget& target, bool storeLoaded);
+    static QString savedCoreDetails(const SavedCoreTarget& target);
     /// True when a saved Core has what a sign-in needs: its identity (a
     /// paired Core), or a token and a pin (or the bench flag).
     static bool isReadyToConnect(const RemoteStationOptions& connection);
