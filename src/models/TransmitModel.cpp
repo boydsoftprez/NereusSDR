@@ -243,6 +243,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <QScopeGuard>
 
 namespace NereusSDR {
 
@@ -305,6 +306,7 @@ DrivePowerSource drivePowerSourceFromString(const QString& s)
 TransmitModel::TransmitModel(QObject* parent)
     : QObject(parent)
 {
+    qRegisterMetaType<CfcProfile>();
     // Initialise per-band tune power to 50W.
     // From Thetis console.cs:1819-1820 [v2.10.3.13]:
     //   tunePower_by_band = new int[(int)Band.LAST];
@@ -1557,41 +1559,45 @@ void TransmitModel::loadFromSettings(const QString& mac)
     setPhaseRotatorStages(s.value(pfx + QLatin1String("CFCPhaseRotatorStages"),
                                    QStringLiteral("8")).toInt());
 
-    // ── CFC scalars (3M-3a-ii Batch 2) ────────────────────────────────────
-    // Defaults from Thetis database.cs:4724-4733 [v2.10.3.13].
-    setCfcEnabled(s.value(pfx + QLatin1String("CFCEnabled"),
-                           QStringLiteral("False")).toString() == QLatin1String("True"));
-    setCfcPostEqEnabled(s.value(pfx + QLatin1String("CFCPostEqEnabled"),
-                                 QStringLiteral("False")).toString() == QLatin1String("True"));
-    setCfcPrecompDb(s.value(pfx + QLatin1String("CFCPreComp"),
-                             QStringLiteral("0")).toInt());
-    setCfcPostEqGainDb(s.value(pfx + QLatin1String("CFCPostEqGain"),
-                                QStringLiteral("0")).toInt());
+    {
+        beginCfcProfileUpdate();
+        const auto cfcBatch = qScopeGuard([this] { endCfcProfileUpdate(); });
+        // ── CFC scalars (3M-3a-ii Batch 2) ────────────────────────────────────
+        // Defaults from Thetis database.cs:4724-4733 [v2.10.3.13].
+        setCfcEnabled(s.value(pfx + QLatin1String("CFCEnabled"),
+                               QStringLiteral("False")).toString() == QLatin1String("True"));
+        setCfcPostEqEnabled(s.value(pfx + QLatin1String("CFCPostEqEnabled"),
+                                     QStringLiteral("False")).toString() == QLatin1String("True"));
+        setCfcPrecompDb(s.value(pfx + QLatin1String("CFCPreComp"),
+                                 QStringLiteral("0")).toInt());
+        setCfcPostEqGainDb(s.value(pfx + QLatin1String("CFCPostEqGain"),
+                                    QStringLiteral("0")).toInt());
 
-    // ── CFC per-band arrays (3M-3a-ii Batch 2) ────────────────────────────
-    // Defaults from Thetis database.cs:4735-4766 [v2.10.3.13]:
-    //   CFCEqFreq0..9       = {0, 125, 250, 500, 1000, 2000, 3000, 4000, 5000, 10000}
-    //   CFCPreComp0..9      = all 5 (per-band G[] compression amounts)
-    //   CFCPostEqGain0..9   = all 0 (per-band E[] post-EQ gains)
-    static constexpr int kDefaultCfcFreq[10] =
-        {0, 125, 250, 500, 1000, 2000, 3000, 4000, 5000, 10000};
-    for (int i = 0; i < 10; ++i) {
-        const QString fKey = QStringLiteral("CFCEqFreq%1").arg(i);
-        const int f = s.value(pfx + fKey, QString::number(kDefaultCfcFreq[i])).toInt();
-        setCfcEqFreq(i, f);
+        // ── CFC per-band arrays (3M-3a-ii Batch 2) ────────────────────────────
+        // Defaults from Thetis database.cs:4735-4766 [v2.10.3.13]:
+        //   CFCEqFreq0..9       = {0, 125, 250, 500, 1000, 2000, 3000, 4000, 5000, 10000}
+        //   CFCPreComp0..9      = all 5 (per-band G[] compression amounts)
+        //   CFCPostEqGain0..9   = all 0 (per-band E[] post-EQ gains)
+        static constexpr int kDefaultCfcFreq[10] =
+            {0, 125, 250, 500, 1000, 2000, 3000, 4000, 5000, 10000};
+        for (int i = 0; i < 10; ++i) {
+            const QString fKey = QStringLiteral("CFCEqFreq%1").arg(i);
+            const int f = s.value(pfx + fKey, QString::number(kDefaultCfcFreq[i])).toInt();
+            setCfcEqFreq(i, f);
 
-        const QString cKey = QStringLiteral("CFCPreComp%1").arg(i);
-        const int c = s.value(pfx + cKey, QStringLiteral("5")).toInt();
-        setCfcCompression(i, c);
+            const QString cKey = QStringLiteral("CFCPreComp%1").arg(i);
+            const int c = s.value(pfx + cKey, QStringLiteral("5")).toInt();
+            setCfcCompression(i, c);
 
-        const QString gKey = QStringLiteral("CFCPostEqGain%1").arg(i);
-        const int g = s.value(pfx + gKey, QStringLiteral("0")).toInt();
-        setCfcPostEqBandGain(i, g);
+            const QString gKey = QStringLiteral("CFCPostEqGain%1").arg(i);
+            const int g = s.value(pfx + gKey, QStringLiteral("0")).toInt();
+            setCfcPostEqBandGain(i, g);
+        }
+
+        // CFC parametric-EQ blob — opaque string round-trip.
+        setCfcParaEqData(s.value(pfx + QLatin1String("CFCParaEQData"),
+                                  QStringLiteral("")).toString());
     }
-
-    // CFC parametric-EQ blob — opaque string round-trip.
-    setCfcParaEqData(s.value(pfx + QLatin1String("CFCParaEQData"),
-                              QStringLiteral("")).toString());
 
     // ── CPDR (3M-3a-ii Batch 2) ───────────────────────────────────────────
     // cpdrOn lives at hardware/<mac>/tx/cpdr/on — outside the per-profile
@@ -2757,10 +2763,14 @@ void TransmitModel::setCfcPrecompDb(int dB)
     // Clamp to Thetis Designer range per frmCFCConfig.Designer.cs:408-422
     // [v2.10.3.13]:  nudCFC_precomp.Maximum = 16, .Minimum = 0.
     const int clamped = std::clamp(dB, kCfcPrecompDbMin, kCfcPrecompDbMax);
-    if (clamped == m_cfcPrecompDb) { return; }
+    if (clamped == m_cfcPrecompDb) {
+        updateCfcLegacyValue(CfcLegacyField::Precomp, -1, clamped, false);
+        return;
+    }
     m_cfcPrecompDb = clamped;
     persistOne(QStringLiteral("CFCPreComp"), QString::number(clamped));
     emit cfcPrecompDbChanged(clamped);
+    updateCfcLegacyValue(CfcLegacyField::Precomp, -1, clamped, true);
 }
 
 void TransmitModel::setCfcPostEqGainDb(int dB)
@@ -2769,10 +2779,14 @@ void TransmitModel::setCfcPostEqGainDb(int dB)
     // [v2.10.3.13]:  nudCFC_posteqgain.Maximum = 24, .Minimum = -24
     // (encoded via decimal sign bit in the 4th int).
     const int clamped = std::clamp(dB, kCfcPostEqGainDbMin, kCfcPostEqGainDbMax);
-    if (clamped == m_cfcPostEqGainDb) { return; }
+    if (clamped == m_cfcPostEqGainDb) {
+        updateCfcLegacyValue(CfcLegacyField::PostEqGlobal, -1, clamped, false);
+        return;
+    }
     m_cfcPostEqGainDb = clamped;
     persistOne(QStringLiteral("CFCPostEqGain"), QString::number(clamped));
     emit cfcPostEqGainDbChanged(clamped);
+    updateCfcLegacyValue(CfcLegacyField::PostEqGlobal, -1, clamped, true);
 }
 
 // ── CFC per-band arrays ───────────────────────────────────────────────────
@@ -2801,11 +2815,15 @@ void TransmitModel::setCfcEqFreq(int index, int hz)
     // Clamp to Thetis Designer range per frmCFCConfig.Designer.cs:267-286
     // [v2.10.3.13]:  nudCFC_f.Maximum = 20000, .Minimum = 0.
     const int clamped = std::clamp(hz, kCfcEqFreqHzMin, kCfcEqFreqHzMax);
-    if (clamped == m_cfcEqFreqHz[static_cast<std::size_t>(index)]) { return; }
+    if (clamped == m_cfcEqFreqHz[static_cast<std::size_t>(index)]) {
+        updateCfcLegacyValue(CfcLegacyField::Frequency, index, clamped, false);
+        return;
+    }
     m_cfcEqFreqHz[static_cast<std::size_t>(index)] = clamped;
     // Thetis TXProfile keys: CFCEqFreq0..CFCEqFreq9 (database.cs:4757-4766 [v2.10.3.13]).
     persistOne(QStringLiteral("CFCEqFreq%1").arg(index), QString::number(clamped));
     emit cfcEqFreqChanged(index, clamped);
+    updateCfcLegacyValue(CfcLegacyField::Frequency, index, clamped, true);
 }
 
 void TransmitModel::setCfcCompression(int index, int dB)
@@ -2814,13 +2832,17 @@ void TransmitModel::setCfcCompression(int index, int dB)
     // Clamp to Thetis Designer range per frmCFCConfig.Designer.cs:217-236
     // [v2.10.3.13]:  nudCFC_c.Maximum = 16, .Minimum = 0.
     const int clamped = std::clamp(dB, kCfcCompressionDbMin, kCfcCompressionDbMax);
-    if (clamped == m_cfcCompressionDb[static_cast<std::size_t>(index)]) { return; }
+    if (clamped == m_cfcCompressionDb[static_cast<std::size_t>(index)]) {
+        updateCfcLegacyValue(CfcLegacyField::Compression, index, clamped, false);
+        return;
+    }
     m_cfcCompressionDb[static_cast<std::size_t>(index)] = clamped;
     // Thetis TXProfile keys: CFCPreComp0..CFCPreComp9 (database.cs:4735-4744
     // [v2.10.3.13]) — note the column name says "PreComp" but these are
     // the per-band G[] compression amounts.
     persistOne(QStringLiteral("CFCPreComp%1").arg(index), QString::number(clamped));
     emit cfcCompressionChanged(index, clamped);
+    updateCfcLegacyValue(CfcLegacyField::Compression, index, clamped, true);
 }
 
 void TransmitModel::setCfcPostEqBandGain(int index, int dB)
@@ -2829,22 +2851,127 @@ void TransmitModel::setCfcPostEqBandGain(int index, int dB)
     // Clamp to Thetis Designer range per frmCFCConfig.Designer.cs:564-583
     // [v2.10.3.13]:  nudCFC_gain.Maximum = 24, .Minimum = -24.
     const int clamped = std::clamp(dB, kCfcPostEqBandGainDbMin, kCfcPostEqBandGainDbMax);
-    if (clamped == m_cfcPostEqBandGainDb[static_cast<std::size_t>(index)]) { return; }
+    if (clamped == m_cfcPostEqBandGainDb[static_cast<std::size_t>(index)]) {
+        updateCfcLegacyValue(CfcLegacyField::PostEqBand, index, clamped, false);
+        return;
+    }
     m_cfcPostEqBandGainDb[static_cast<std::size_t>(index)] = clamped;
     // Thetis TXProfile keys: CFCPostEqGain0..CFCPostEqGain9 (database.cs:4746-4755 [v2.10.3.13]).
     persistOne(QStringLiteral("CFCPostEqGain%1").arg(index), QString::number(clamped));
     emit cfcPostEqBandGainChanged(index, clamped);
+    updateCfcLegacyValue(CfcLegacyField::PostEqBand, index, clamped, true);
 }
 
 void TransmitModel::setCfcParaEqData(const QString& data)
 {
-    if (data == m_cfcParaEqData) { return; }
+    const bool cacheChanged = m_activeCfcProfile.has_value();
+    m_activeCfcProfile.reset();
+    if (data == m_cfcParaEqData) {
+        if (cacheChanged) { notifyCfcProfileChange(); }
+        return;
+    }
     // From Thetis database.cs:4768 [v2.10.3.13]: dr["CFCParaEQData"] = "".
-    // Stored as opaque string for forward-compat round-trip with imported
-    // Thetis profiles.  No validation.
+    // Keep unsupported blobs opaque until an explicit edit replaces them.
     m_cfcParaEqData = data;
     persistOne(QStringLiteral("CFCParaEQData"), data);
     emit cfcParaEqDataChanged(data);
+    notifyCfcProfileChange();
+}
+
+CfcProfile TransmitModel::effectiveCfcProfile() const
+{
+    if (m_activeCfcProfile) { return *m_activeCfcProfile; }
+    if (const std::optional<CfcProfile> decoded = decodeCfcProfile(m_cfcParaEqData)) {
+        return *decoded;
+    }
+    CfcProfile fallback;
+    fallback.compression.globalGainDb = m_cfcPrecompDb;
+    fallback.postEq.globalGainDb = m_cfcPostEqGainDb;
+    for (std::size_t i = 0; i < 10; ++i) {
+        fallback.compression.frequenciesHz.append(m_cfcEqFreqHz[i]);
+        fallback.compression.gainsDb.append(m_cfcCompressionDb[i]);
+        fallback.compression.q.append(4.0);
+        fallback.postEq.gainsDb.append(m_cfcPostEqBandGainDb[i]);
+        fallback.postEq.q.append(4.0);
+    }
+    fallback.postEq.frequenciesHz = fallback.compression.frequenciesHz;
+    // Retain the existing dialog seed bounds, widening for legacy endpoints.
+    fallback.compression.frequencyMaxHz = std::max(fallback.compression.frequencyMaxHz,
+        static_cast<double>(*std::max_element(m_cfcEqFreqHz.begin(), m_cfcEqFreqHz.end())));
+    fallback.postEq.frequencyMinHz = fallback.compression.frequencyMinHz;
+    fallback.postEq.frequencyMaxHz = fallback.compression.frequencyMaxHz;
+    return fallback;
+}
+
+void TransmitModel::beginCfcProfileUpdate()
+{
+    if (m_cfcProfileUpdateDepth++ == 0) {
+        // An authoritative load must restore saved precision even for the same blob.
+        m_activeCfcProfile.reset();
+        m_cfcProfileDirty = true;
+    }
+}
+void TransmitModel::endCfcProfileUpdate()
+{
+    Q_ASSERT(m_cfcProfileUpdateDepth > 0);
+    if (--m_cfcProfileUpdateDepth == 0 && m_cfcProfileDirty) {
+        m_cfcProfileDirty = false;
+        emit cfcProfileChanged(effectiveCfcProfile());
+    }
+}
+void TransmitModel::notifyCfcProfileChange()
+{
+    if (m_cfcProfileUpdateDepth > 0) { m_cfcProfileDirty = true; }
+    else { emit cfcProfileChanged(effectiveCfcProfile()); }
+}
+
+bool TransmitModel::setCfcProfile(const CfcProfile& profile)
+{
+    if (!isValidCfcProfile(profile)) { return false; }
+    if (m_activeCfcProfile && *m_activeCfcProfile == profile) { return true; }
+    beginCfcProfileUpdate();
+    const auto batch = qScopeGuard([this] { endCfcProfileUpdate(); });
+    setCfcPrecompDb(qRound(profile.compression.globalGainDb));
+    setCfcPostEqGainDb(qRound(profile.postEq.globalGainDb));
+    if (profile.compression.frequenciesHz.size() == 10) {
+        for (int i = 0; i < 10; ++i) {
+            setCfcEqFreq(i, qRound(profile.compression.frequenciesHz[i]));
+            setCfcCompression(i, qRound(profile.compression.gainsDb[i]));
+            setCfcPostEqBandGain(i, qRound(profile.postEq.gainsDb[i]));
+        }
+    }
+    setCfcParaEqData(encodeCfcProfile(profile));
+    m_activeCfcProfile = profile;
+    return true;
+}
+
+void TransmitModel::updateCfcLegacyValue(CfcLegacyField field, int index, int value, bool changed)
+{
+    if (m_cfcProfileUpdateDepth > 0) { return; }
+    std::optional<CfcProfile> profile = m_activeCfcProfile;
+    if (!profile) { profile = decodeCfcProfile(m_cfcParaEqData); }
+    if (!profile) {
+        if (changed) { notifyCfcProfileChange(); }
+        return;
+    }
+    if (field >= CfcLegacyField::Frequency && profile->compression.frequenciesHz.size() != 10) {
+        setCfcParaEqData(QString());
+        return;
+    }
+    CfcProfile edited = *profile;
+    switch (field) {
+    case CfcLegacyField::Precomp: edited.compression.globalGainDb = value; break;
+    case CfcLegacyField::PostEqGlobal: edited.postEq.globalGainDb = value; break;
+    case CfcLegacyField::Frequency:
+        edited.compression.frequenciesHz[index] = value;
+        edited.postEq.frequenciesHz[index] = value;
+        break;
+    case CfcLegacyField::Compression: edited.compression.gainsDb[index] = value; break;
+    case CfcLegacyField::PostEqBand: edited.postEq.gainsDb[index] = value; break;
+    default: return;
+    }
+    if (edited == *profile) { return; }
+    if (!setCfcProfile(edited)) { setCfcParaEqData(QString()); }
 }
 
 // ── CPDR ──────────────────────────────────────────────────────────────────

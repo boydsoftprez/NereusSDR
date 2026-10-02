@@ -238,6 +238,7 @@
 #pragma once
 
 #include "Band.h"
+#include "core/CfcProfile.h"
 #include "core/HpsdrModel.h"
 #include "core/WdspTypes.h"
 #include "core/audio/CompositeTxMicRouter.h"
@@ -1518,6 +1519,11 @@ public:
     /// Opaque parametric-EQ blob.  No setter validation — pass-through for
     /// forward-compat round-trip with imported Thetis profiles (Batch 4).
     const QString& cfcParaEqData() const noexcept { return m_cfcParaEqData; }
+    // Model-thread API. Batches invalidate live precision for authoritative saved reloads.
+    CfcProfile effectiveCfcProfile() const;
+    bool setCfcProfile(const CfcProfile& profile);
+    void beginCfcProfileUpdate();
+    void endCfcProfileUpdate();
 
     // ── CPDR getters ──────────────────────────────────────────────────────
     /// CPDR global on/off (NOT in TXProfile).  See header comment.
@@ -1791,6 +1797,7 @@ signals:
     /// Emitted when a per-band CFC post-EQ gain changes; carries index + new value.
     void cfcPostEqBandGainChanged(int index, int dB);
     void cfcParaEqDataChanged(const QString& data);
+    void cfcProfileChanged(const CfcProfile& profile);
 
     // ── CPDR signals (3M-3a-ii Batch 2) ───────────────────────────────────
     void cpdrOnChanged(bool on);
@@ -2421,6 +2428,12 @@ private:
     // Opaque parametric-EQ blob.  database.cs:4768 [v2.10.3.13]:
     //   dr["CFCParaEQData"] = "";
     QString m_cfcParaEqData;
+    std::optional<CfcProfile> m_activeCfcProfile;
+    int m_cfcProfileUpdateDepth = 0;
+    bool m_cfcProfileDirty = false;
+    void notifyCfcProfileChange();
+    enum class CfcLegacyField { Precomp, PostEqGlobal, Frequency, Compression, PostEqBand };
+    void updateCfcLegacyValue(CfcLegacyField field, int index, int value, bool changed);
 
     // CPDR.  cpdrOn is global console state (NOT in TXProfile) — Thetis
     // wires it via SetGeneralSetting(0, OtherButtonId.COMP, ...) at

@@ -110,6 +110,7 @@
 #include <QString>
 #include <QList>
 #include <QThread>
+#include <QPointer>
 
 #include <limits>   // 2026-05-22 NaN sentinel for m_lastEmittedRxMeterOffsetDb
 
@@ -1667,6 +1668,8 @@ public:
     // WDSP-init lambda inside connectToRadio() (see "createTxChannel(kTxChannelId)"
     // around RadioModel.cpp:1514).
     void injectTxChannelForTest(class TxChannel* ch) { m_txChannel = ch; }
+    void bindCfcProfileChannelForTest(TxChannel* ch) { bindCfcProfileChannel(ch); }
+    void replayCfcProfileForTest() { replayCfcProfile(); }
 
     // Phase 4 Agent 4A of issue #167 — test seam to inject the HPSDRModel
     // hardware profile directly. setBoardForTest(HPSDRHW::OrionMKII) maps
@@ -3508,6 +3511,10 @@ private:
     // safe to call from the main thread per the WDSP API contract.
     // From Thetis dsp.cs:926-944 [v2.10.3.13] — WDSP.id(1, 0) = channel 1.
     TxChannel* m_txChannel{nullptr};
+    QPointer<TxChannel> m_cfcProfileChannel;
+    QList<QMetaObject::Connection> m_cfcProfileConnections;
+    void bindCfcProfileChannel(TxChannel* channel);
+    void replayCfcProfile();
 
     // TX mic source — strategy interface for silence (3M-1a) or real mic (3M-1b).
     // Owned by RadioModel via unique_ptr. NullMicSource for 3M-1a; replaced with

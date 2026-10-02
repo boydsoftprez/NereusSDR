@@ -2220,6 +2220,10 @@ public:
     static void setPSTxIdx(int txid, int idx);
 
 #ifdef NEREUS_BUILD_TESTS
+    std::array<std::vector<double>, 5> lastCfcProfileForTest() const { return m_lastCfcProfile; }
+    quint64 cfcProfileApplyCountForTest() const { return m_cfcProfileApplyCount; }
+    double lastCfcPrecompDbForTest() const { return m_lastCfcPrecompDb; }
+    double lastCfcPostEqGainDbForTest() const { return m_lastCfcPostEqGainDb; }
     // ── Test seam (Phase 3M-1b D.1, updated for 3M-1c E.1 push model) ─────
     //
     // Synchronously drive one fexchange2 cycle by pushing the given mic
@@ -3016,6 +3020,12 @@ private:
     int     m_alcDecayMs       {10};
 
     // CFC carry (mirrors WDSP-wired setTxCfcRunning/PostEqRunning/PrecompDb/PrePeqDb)
+#ifdef NEREUS_BUILD_TESTS
+    std::array<std::vector<double>, 5> m_lastCfcProfile;
+    quint64 m_cfcProfileApplyCount = 0;
+    double m_lastCfcPrecompDb = 0;
+    double m_lastCfcPostEqGainDb = 0;
+#endif
     bool    m_cfcOn            {false};
     bool    m_cfcPostEqOn      {false};
     double  m_cfcPrecompDb     {0.0};

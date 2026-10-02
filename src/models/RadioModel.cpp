@@ -245,6 +245,47 @@ warren@wpratt.com
 
 */
 
+// --- From frmCFCConfig.cs ---
+/*  frmCFCConfig.cs
+
+This file is part of a program that implements a Software-Defined Radio.
+
+This code/file can be found on GitHub : https://github.com/ramdor/Thetis
+
+Copyright (C) 2020-2026 Richard Samphire MW0LGE
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at
+
+mw0lge@grange-lane.co.uk
+*/
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
 #include "RadioModel.h"
 #include "BandDefaults.h"
 #include "RxDspWorker.h"
@@ -7198,31 +7239,6 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 m_txChannel->setTxEqProfile(freqs10, gains11);
             };
 
-            // CFC profile rebuild — mirrors pushEqProfile above.  CFC operates
-            // on 10 user-visible bands.  WDSP setter signature:
-            //   SetTXACFCOMPprofile(channel, nfreqs, F[], G[], E[], Qg[], Qe[])
-            // We pass empty Qg / Qe vectors (translates to NULL inside the
-            // wrapper), opting out of per-band Q skirts — the parametric Q
-            // controls aren't yet exposed on the user surface (CFCParaEQData
-            // schema column is currently an opaque blob).  cfcomp.c:669-682
-            // [v2.10.3.13] documents the NULL semantic.
-            auto pushCfcProfile = [this]() {
-                if (!m_txChannel) { return; }
-                constexpr int kCfcBands = 10;
-                std::vector<double> F(kCfcBands);
-                std::vector<double> G(kCfcBands);
-                std::vector<double> E(kCfcBands);
-                for (int i = 0; i < kCfcBands; ++i) {
-                    F[static_cast<std::size_t>(i)] =
-                        static_cast<double>(m_transmitModel.cfcEqFreq(i));
-                    G[static_cast<std::size_t>(i)] =
-                        static_cast<double>(m_transmitModel.cfcCompression(i));
-                    E[static_cast<std::size_t>(i)] =
-                        static_cast<double>(m_transmitModel.cfcPostEqBandGain(i));
-                }
-                m_txChannel->setTxCfcProfile(F, G, E, /*Qg=*/{}, /*Qe=*/{});
-            };
-
             // Full-chain push — mirrors all 27 connect lambdas below by reading
             // current TransmitModel state and pushing to TxChannel.  Used for
             // the initial on-connect sync (loadFromSettings already fired the
@@ -7233,7 +7249,7 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // already-loaded live keys, so signal-driven sync isn't reliable).
             // Covers EQ + Leveler + ALC (3M-3a-i) AND CFC + CPDR + CESSB +
             // PhRot (3M-3a-ii Batch 3) — full 28-property TX-chain restore.
-            auto pushTxProcessingChain = [this, pushEqProfile, pushCfcProfile]() {
+            auto pushTxProcessingChain = [this, pushEqProfile]() {
                 if (!m_txChannel) { return; }
                 m_txChannel->setTxEqRunning(m_transmitModel.txEqEnabled());
                 pushEqProfile();
@@ -7256,17 +7272,6 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 m_txChannel->setTxPhrotCornerHz(
                     static_cast<double>(m_transmitModel.phaseRotatorFreqHz()));
                 m_txChannel->setTxPhrotNstages(m_transmitModel.phaseRotatorStages());
-
-                // ── 3M-3a-ii Batch 3 — CFC scalars (4) ──
-                m_txChannel->setTxCfcRunning(m_transmitModel.cfcEnabled());
-                m_txChannel->setTxCfcPostEqRunning(m_transmitModel.cfcPostEqEnabled());
-                m_txChannel->setTxCfcPrecompDb(
-                    static_cast<double>(m_transmitModel.cfcPrecompDb()));
-                m_txChannel->setTxCfcPrePeqDb(
-                    static_cast<double>(m_transmitModel.cfcPostEqGainDb()));
-
-                // ── 3M-3a-ii Batch 3 — CFC profile arrays (1 helper) ──
-                pushCfcProfile();
 
                 // ── 3M-3a-ii Batch 3 — CPDR (2) ──
                 m_txChannel->setTxCpdrOn(m_transmitModel.cpdrOn());
@@ -7406,48 +7411,8 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 m_txChannel->setTxPhrotNstages(stages);
             });
 
-            // 18. cfcEnabledChanged → setTxCfcRunning.
-            connect(&m_transmitModel, &TransmitModel::cfcEnabledChanged,
-                    m_txChannel, [this](bool on) {
-                m_txChannel->setTxCfcRunning(on);
-            });
-
-            // 19. cfcPostEqEnabledChanged → setTxCfcPostEqRunning.
-            connect(&m_transmitModel, &TransmitModel::cfcPostEqEnabledChanged,
-                    m_txChannel, [this](bool on) {
-                m_txChannel->setTxCfcPostEqRunning(on);
-            });
-
-            // 20. cfcPrecompDbChanged → setTxCfcPrecompDb.
-            connect(&m_transmitModel, &TransmitModel::cfcPrecompDbChanged,
-                    m_txChannel, [this](int dB) {
-                m_txChannel->setTxCfcPrecompDb(static_cast<double>(dB));
-            });
-
-            // 21. cfcPostEqGainDbChanged → setTxCfcPrePeqDb.
-            connect(&m_transmitModel, &TransmitModel::cfcPostEqGainDbChanged,
-                    m_txChannel, [this](int dB) {
-                m_txChannel->setTxCfcPrePeqDb(static_cast<double>(dB));
-            });
-
-            // 22. cfcEqFreqChanged → rebuild full CFC Profile (any single
-            //     band edit pushes the whole 10-band F[]/G[]/E[] vector).
-            connect(&m_transmitModel, &TransmitModel::cfcEqFreqChanged,
-                    m_txChannel, [pushCfcProfile](int /*idx*/, int /*Hz*/) {
-                pushCfcProfile();
-            });
-
-            // 23. cfcCompressionChanged → rebuild full CFC Profile (G[]).
-            connect(&m_transmitModel, &TransmitModel::cfcCompressionChanged,
-                    m_txChannel, [pushCfcProfile](int /*idx*/, int /*dB*/) {
-                pushCfcProfile();
-            });
-
-            // 24. cfcPostEqBandGainChanged → rebuild full CFC Profile (E[]).
-            connect(&m_transmitModel, &TransmitModel::cfcPostEqBandGainChanged,
-                    m_txChannel, [pushCfcProfile](int /*idx*/, int /*dB*/) {
-                pushCfcProfile();
-            });
+            // Bind the same complete-profile route used by initial connect and replay.
+            bindCfcProfileChannel(m_txChannel);
 
             // 25. cpdrOnChanged → setTxCpdrOn.
             connect(&m_transmitModel, &TransmitModel::cpdrOnChanged,
@@ -15411,6 +15376,61 @@ void RadioModel::invokeCodecDdcAssignment()
     }
 
     publishDdcAssignment(assignment);
+}
+
+namespace {
+void applyCfcProfile(TxChannel* channel, const CfcProfile& profile)
+{
+    const CfcCurveState& comp = profile.compression;
+    const CfcCurveState& eq = profile.postEq;
+    // From Thetis frmCFCConfig.cs:366-390 [v2.10.3.15] — all bands; both Q flags required.
+    //pre comp
+    channel->setTxCfcPrecompDb(comp.globalGainDb);
+    //pre eq gain
+    channel->setTxCfcPrePeqDb(eq.globalGainDb);
+    const bool useQ = comp.useQ && eq.useQ;
+    //profile
+    channel->setTxCfcProfile(
+        std::vector<double>(comp.frequenciesHz.begin(), comp.frequenciesHz.end()),
+        std::vector<double>(comp.gainsDb.begin(), comp.gainsDb.end()),
+        std::vector<double>(eq.gainsDb.begin(), eq.gainsDb.end()),
+        useQ ? std::vector<double>(comp.q.begin(), comp.q.end()) : std::vector<double>{},
+        useQ ? std::vector<double>(eq.q.begin(), eq.q.end()) : std::vector<double>{});
+}
+} // namespace
+
+void RadioModel::bindCfcProfileChannel(TxChannel* channel)
+{
+    for (const QMetaObject::Connection& connection : m_cfcProfileConnections) {
+        disconnect(connection);
+    }
+    m_cfcProfileConnections.clear();
+    m_cfcProfileChannel = channel;
+    if (!channel) { return; }
+    m_cfcProfileConnections.append(connect(&m_transmitModel, &TransmitModel::cfcProfileChanged,
+        channel, [channel](const CfcProfile& profile) { applyCfcProfile(channel, profile); }));
+    m_cfcProfileConnections.append(connect(&m_transmitModel, &TransmitModel::cfcEnabledChanged,
+        channel, [channel](bool enabled) { channel->setTxCfcRunning(enabled); }));
+    m_cfcProfileConnections.append(connect(&m_transmitModel, &TransmitModel::cfcPostEqEnabledChanged,
+        channel, [channel](bool enabled) { channel->setTxCfcPostEqRunning(enabled); }));
+    // Profile activation's scoped model batch publishes once even for unchanged blobs.
+    // Initial connect and reconnect still need explicit replay because binding is new.
+    replayCfcProfile();
+}
+
+void RadioModel::replayCfcProfile()
+{
+    TxChannel* channel = m_cfcProfileChannel.data();
+    if (!channel) { return; }
+    // Capture on the model thread. No queued receiver reads the mutable model cache.
+    const CfcProfile profile = m_transmitModel.effectiveCfcProfile();
+    const bool enabled = m_transmitModel.cfcEnabled();
+    const bool postEqEnabled = m_transmitModel.cfcPostEqEnabled();
+    QMetaObject::invokeMethod(channel, [channel, profile, enabled, postEqEnabled] {
+        channel->setTxCfcRunning(enabled);
+        channel->setTxCfcPostEqRunning(postEqEnabled);
+        applyCfcProfile(channel, profile);
+    }, Qt::AutoConnection);
 }
 
 } // namespace NereusSDR

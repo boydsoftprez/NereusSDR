@@ -542,6 +542,7 @@ set(CORE_SOURCES
     src/core/MoxController.cpp
     src/core/MicProfileManager.cpp
     src/core/ParaEqEnvelope.cpp
+    src/core/CfcProfile.cpp
     src/core/TwoToneController.cpp
     src/core/TxSliceArbiter.cpp
     src/core/TxSliceArbiter.h

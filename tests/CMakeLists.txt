@@ -6195,3 +6195,7 @@ if(_label_names)
     endforeach()
     message(STATUS "NereusSDR: per-label test targets: ${_label_names}")
 endif()
+
+# Complete CFC profiles and production model-to-audio snapshot routing.
+nereus_add_test(tst_cfc_profile)
+nereus_add_test(tst_radio_model_cfc_profile_wiring)

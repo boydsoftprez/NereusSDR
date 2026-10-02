@@ -28,6 +28,7 @@
 // is cited inline below.
 
 #include "MicProfileManager.h"
+#include <QScopeGuard>
 
 #include "AppSettings.h"
 #include "LogCategories.h"
@@ -1426,30 +1427,34 @@ void MicProfileManager::applyValuesToModel(const QHash<QString, QVariant>& value
                                     QStringLiteral("338")).toInt());
     tx->setPhaseRotatorStages(take(QStringLiteral("CFCPhaseRotatorStages"),
                                     QStringLiteral("8")).toInt());
-    // CFC scalars (4) — defaults from database.cs:4724-4733 [v2.10.3.13].
-    tx->setCfcEnabled(take(QStringLiteral("CFCEnabled"),
-                            QStringLiteral("False")) == QLatin1String("True"));
-    tx->setCfcPostEqEnabled(take(QStringLiteral("CFCPostEqEnabled"),
-                                  QStringLiteral("False")) == QLatin1String("True"));
-    tx->setCfcPrecompDb(take(QStringLiteral("CFCPreComp"),    QStringLiteral("0")).toInt());
-    tx->setCfcPostEqGainDb(take(QStringLiteral("CFCPostEqGain"), QStringLiteral("0")).toInt());
-    // CFC profile arrays (30) — defaults from database.cs:4735-4766 [v2.10.3.13].
-    //   CFCEqFreq{0..9}    = {0, 125, 250, 500, 1000, 2000, 3000, 4000, 5000, 10000}
-    //   CFCPreComp{0..9}   = 5 (per-band G[])
-    //   CFCPostEqGain{0..9} = 0 (per-band E[])
-    static constexpr int kDefaultCfcFreq[10] = {0, 125, 250, 500, 1000, 2000, 3000, 4000, 5000, 10000};
-    static constexpr int kDefaultCfcComp[10] = {5, 5, 5, 5, 5, 5, 5, 5, 5, 5};
-    static constexpr int kDefaultCfcPostEq[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-    for (int i = 0; i < 10; ++i) {
-        tx->setCfcEqFreq(i, take(QStringLiteral("CFCEqFreq%1").arg(i),
-                                  QString::number(kDefaultCfcFreq[i])).toInt());
-        tx->setCfcCompression(i, take(QStringLiteral("CFCPreComp%1").arg(i),
-                                       QString::number(kDefaultCfcComp[i])).toInt());
-        tx->setCfcPostEqBandGain(i, take(QStringLiteral("CFCPostEqGain%1").arg(i),
-                                          QString::number(kDefaultCfcPostEq[i])).toInt());
+    {
+        tx->beginCfcProfileUpdate();
+        const auto cfcBatch = qScopeGuard([tx] { tx->endCfcProfileUpdate(); });
+        // CFC scalars (4) — defaults from database.cs:4724-4733 [v2.10.3.13].
+        tx->setCfcEnabled(take(QStringLiteral("CFCEnabled"),
+                                QStringLiteral("False")) == QLatin1String("True"));
+        tx->setCfcPostEqEnabled(take(QStringLiteral("CFCPostEqEnabled"),
+                                      QStringLiteral("False")) == QLatin1String("True"));
+        tx->setCfcPrecompDb(take(QStringLiteral("CFCPreComp"),    QStringLiteral("0")).toInt());
+        tx->setCfcPostEqGainDb(take(QStringLiteral("CFCPostEqGain"), QStringLiteral("0")).toInt());
+        // CFC profile arrays (30) — defaults from database.cs:4735-4766 [v2.10.3.13].
+        //   CFCEqFreq{0..9}    = {0, 125, 250, 500, 1000, 2000, 3000, 4000, 5000, 10000}
+        //   CFCPreComp{0..9}   = 5 (per-band G[])
+        //   CFCPostEqGain{0..9} = 0 (per-band E[])
+        static constexpr int kDefaultCfcFreq[10] = {0, 125, 250, 500, 1000, 2000, 3000, 4000, 5000, 10000};
+        static constexpr int kDefaultCfcComp[10] = {5, 5, 5, 5, 5, 5, 5, 5, 5, 5};
+        static constexpr int kDefaultCfcPostEq[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        for (int i = 0; i < 10; ++i) {
+            tx->setCfcEqFreq(i, take(QStringLiteral("CFCEqFreq%1").arg(i),
+                                      QString::number(kDefaultCfcFreq[i])).toInt());
+            tx->setCfcCompression(i, take(QStringLiteral("CFCPreComp%1").arg(i),
+                                           QString::number(kDefaultCfcComp[i])).toInt());
+            tx->setCfcPostEqBandGain(i, take(QStringLiteral("CFCPostEqGain%1").arg(i),
+                                              QString::number(kDefaultCfcPostEq[i])).toInt());
+        }
+        // CFC blob (1) — opaque QString; empty default per database.cs:4768.
+        tx->setCfcParaEqData(take(QStringLiteral("CFCParaEQData"), QString()));
     }
-    // CFC blob (1) — opaque QString; empty default per database.cs:4768.
-    tx->setCfcParaEqData(take(QStringLiteral("CFCParaEQData"), QString()));
     // CPDR (1) — cpdrOn is global console state, NOT applied here.
     tx->setCpdrLevelDb(take(QStringLiteral("CompanderLevel"), QStringLiteral("2")).toInt());
     // CESSB (1)

@@ -3871,6 +3871,11 @@ void TxChannel::setTxCfcProfile(const std::vector<double>& F,
     Q_UNUSED(Qg);
     Q_UNUSED(Qe);
 #endif
+#ifdef NEREUS_BUILD_TESTS
+    // Accepted arguments, after WDSP's channel guard and setter boundary.
+    m_lastCfcProfile = {F, G, E, Qg, Qe};
+    ++m_cfcProfileApplyCount;
+#endif
 }
 
 void TxChannel::setTxCfcPrecompDb(double dB)
@@ -3884,6 +3889,9 @@ void TxChannel::setTxCfcPrecompDb(double dB)
     SetTXACFCOMPPrecomp(m_channelId, dB);
 #else
     Q_UNUSED(dB);
+#endif
+#ifdef NEREUS_BUILD_TESTS
+    m_lastCfcPrecompDb = dB;
 #endif
 }
 
@@ -3910,6 +3918,9 @@ void TxChannel::setTxCfcPrePeqDb(double dB)
     SetTXACFCOMPPrePeq(m_channelId, dB);
 #else
     Q_UNUSED(dB);
+#endif
+#ifdef NEREUS_BUILD_TESTS
+    m_lastCfcPostEqGainDb = dB;
 #endif
 }
 
