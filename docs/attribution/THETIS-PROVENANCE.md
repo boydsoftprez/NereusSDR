@@ -192,6 +192,7 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | src/gui/containers/ContainerManager.h | Project Files/Source/Console/MeterManager.cs | full | port | thetis-samphire | duplicate-container path |
 | src/gui/containers/ContainerSettingsDialog.cpp | Project Files/Source/Console/setup.cs; Project Files/Source/Console/MeterManager.cs | 24522-24566; 24443; 24447; 21266; 22472 | port | thetis-samphire | |
 | src/gui/containers/ContainerSettingsDialog.h | Project Files/Source/Console/MeterManager.cs | full | port | thetis-samphire | .h orphan pair; .cpp was already in outbound audit; 3-column Available/In-use/Properties layout |
+| src/gui/containers/ContainerTypes.h | Project Files/Source/Console/ucMeter.cs | 49-59 | port | thetis-samphire | AxisLock extracted from existing ContainerWidget.h with saved numeric values unchanged; verified v2.10.3.15. Other enums are NereusSDR-original. |
 | src/gui/containers/ContainerWidget.cpp | Project Files/Source/Console/ucMeter.cs | 49-59; 281-294; 319-374; 400-407; 489-518; 520-572; 574-593; 912-935; 974-993; 1198-1229 | port | thetis-samphire | |
 | src/gui/containers/ContainerWidget.h | Project Files/Source/Console/ucMeter.cs; Project Files/Source/Console/setup.cs; Project Files/Source/Console/MeterManager.cs | full | port | thetis-samphire | axis enum, container highlight, ContainerMinimised flag |
 | src/gui/containers/FloatingContainer.cpp | Project Files/Source/Console/frmMeterDisplay.cs | 114-179 | port | thetis-samphire | lifecycle, close, console state |

@@ -597,6 +597,10 @@ private slots:
             << QStringLiteral("audio/Vax1/RxGain") << int(SettingsScope::OperatorLocal);
         QTest::newRow("audio/Vax1/Muted is OperatorLocal (this computer's VAX mute)")
             << QStringLiteral("audio/Vax1/Muted") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("ContainerWorkspace remains client-local")
+            << QStringLiteral("ContainerWorkspace") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("ContainerWorkspaceBackup remains client-local")
+            << QStringLiteral("ContainerWorkspaceBackup") << int(SettingsScope::OperatorLocal);
         QTest::newRow("TciLogWindowGeometry is OperatorLocal (GUI dialog geometry)")
             << QStringLiteral("TciLogWindowGeometry") << int(SettingsScope::OperatorLocal);
         QTest::newRow("hardware/oc/pennyExtCtrl is Station (oc is a literal segment, not a MAC)")

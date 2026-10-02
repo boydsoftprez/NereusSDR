@@ -1735,6 +1735,13 @@ set(GUI_SOURCES
     src/gui/LanScanDialog.h
     src/gui/PgxlSaveRebootDialog.cpp
     src/gui/PgxlSaveRebootDialog.h
+    src/gui/containers/ContainerTypes.h
+    src/gui/containers/ContainerDocument.h
+    src/gui/containers/ContainerDocument.cpp
+    src/gui/containers/ContainerDocumentCodec.h
+    src/gui/containers/ContainerDocumentCodec.cpp
+    src/gui/containers/ContainerWorkspaceStore.h
+    src/gui/containers/ContainerWorkspaceStore.cpp
     src/gui/containers/ContainerWidget.cpp
     src/gui/containers/FloatingContainer.cpp
     src/gui/containers/ContainerManager.cpp

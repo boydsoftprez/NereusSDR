@@ -151,6 +151,8 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+#include "ContainerTypes.h"
+
 #include <QWidget>
 #include <QPoint>
 #include <QSize>
@@ -165,19 +167,6 @@ namespace NereusSDR {
 
 struct BoardCapabilities;
 class MeterItem;
-
-// From Thetis ucMeter.cs:49-59 — axis lock positions for docked containers.
-enum class AxisLock {
-    Left = 0, TopLeft, Top, TopRight,
-    Right, BottomRight, Bottom, BottomLeft
-};
-
-// Docking mode for a container within the application layout.
-enum class DockMode {
-    PanelDocked,    // In QSplitter (Container #0 default)
-    OverlayDocked,  // Absolute position over central widget (Thetis style)
-    Floating        // Separate window
-};
 
 class FloatingContainer;
 
