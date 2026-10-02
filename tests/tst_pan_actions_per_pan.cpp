@@ -23,6 +23,8 @@
 //   2026-10-02  J.J. Boyd / KG4VCF. Real window/fake Core TX-letter Take
 //                regressions: cancellation, current refusal, unchanged RX
 //                history, and target lifetime. AI-assisted via OpenAI Codex.
+//   2026-10-02  J.J. Boyd / KG4VCF. Selected-pan Clarity grid and output
+//                 lifetime regressions. AI-assisted via OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Unkeyed TX-letter shared-pan history
 //                 lifecycle regression. AI-assisted via OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Primary empty-key Max Bin regression
@@ -39,6 +41,7 @@
 #include <QLabel>
 #include <QLoggingCategory>
 #include <QPushButton>
+#include <QPointer>
 #include <QSignalSpy>
 
 #include <memory>
@@ -641,6 +644,103 @@ private slots:
         QVERIFY(!sw0->clarityActive());
         QVERIFY(badge(QStringLiteral("pan-0"))->isHidden());
         QVERIFY(!badge(QStringLiteral("pan-1"))->isHidden());
+    }
+
+    // The estimator's actual output follows the selected pane; retaining
+    // the construction-time receiver moves an inactive pane's grid instead.
+    void clarityNoiseFloorGridFollowsSelectedPan()
+    {
+        std::unique_ptr<MainWindow> window = openLocalWindow(QStringLiteral("2v"));
+        QTRY_VERIFY(stripFor(window.get(), QStringLiteral("pan-1")));
+        auto* stack = window->findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        SpectrumWidget* const sw0 = stack->spectrum(QStringLiteral("pan-0"));
+        SpectrumWidget* const sw1 = stack->spectrum(QStringLiteral("pan-1"));
+        QVERIFY(sw0 && sw1);
+        ClarityController* const clarity = window->radioModel()->clarityController();
+        QVERIFY(clarity);
+        clarity->setEnabled(true);
+        clarity->setPollIntervalMs(0);
+        clarity->setSmoothingTauSec(0.0f);
+        for (SpectrumWidget* sw : {sw0, sw1}) {
+            sw->setAdjustGridMinToNoiseFloor(true);
+            sw->setNFOffsetGridFollow(-10);
+            sw->setMaintainNFAdjustDelta(true);
+        }
+        sw0->setDbmRange(-150.0f, -50.0f);
+        sw1->setDbmRange(-140.0f, -40.0f);
+
+        stack->setActivePan(QStringLiteral("pan-1"));
+        clarity->retuneNow();
+        clarity->feedBins(QVector<float>(1024, -100.0f), 1000);
+        QCOMPARE(sw1->gridMin(), -110);
+        QCOMPARE(sw1->gridMax(), -10);
+        QCOMPARE(sw0->gridMin(), -150);
+        QCOMPARE(sw0->gridMax(), -50);
+        QVERIFY(sw1->clarityActive());
+        QVERIFY(!sw0->clarityActive());
+
+        stack->setActivePan(QStringLiteral("pan-0"));
+        clarity->feedBins(QVector<float>(1024, -125.0f), 2000);
+        QCOMPARE(sw0->gridMin(), -135);
+        QCOMPARE(sw0->gridMax(), -35);
+        QCOMPARE(sw1->gridMin(), -110);
+        QCOMPARE(sw1->gridMax(), -10);
+        QVERIFY(sw0->clarityActive());
+        QVERIFY(!sw1->clarityActive());
+    }
+
+    // Destroying the original pane must not disconnect the surviving
+    // owner's floor delivery. Exercise the stack's actual retirement path.
+    void clarityNoiseFloorSurvivesInitialPanRemoval()
+    {
+        std::unique_ptr<MainWindow> window = openLocalWindow(QStringLiteral("2v"));
+        QTRY_VERIFY(stripFor(window.get(), QStringLiteral("pan-1")));
+        auto* stack = window->findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        QPointer<SpectrumWidget> retired = stack->spectrum(QStringLiteral("pan-0"));
+        SpectrumWidget* const survivor = stack->spectrum(QStringLiteral("pan-1"));
+        QVERIFY(retired && survivor);
+        ClarityController* const clarity = window->radioModel()->clarityController();
+        QVERIFY(clarity);
+        clarity->setEnabled(true);
+        clarity->setPollIntervalMs(0);
+        clarity->setSmoothingTauSec(0.0f);
+        survivor->setAdjustGridMinToNoiseFloor(true);
+        survivor->setNFOffsetGridFollow(-10);
+        survivor->setMaintainNFAdjustDelta(true);
+        stack->setActivePan(QStringLiteral("pan-1"));
+        stack->removePanadapter(QStringLiteral("pan-0"));
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(retired.isNull());
+        QCOMPARE(stack->activePanId(), QStringLiteral("pan-1"));
+        QCOMPARE(window->activeSpectrumWidget(), survivor);
+        survivor->setDbmRange(-140.0f, -40.0f);
+        clarity->setLowMarginDb(-5.0f);
+        clarity->setHighMarginDb(55.0f);
+        clarity->setMinGapDb(30.0f);
+        const float savedLow = survivor->wfLowThreshold();
+        const float savedHigh = survivor->wfHighThreshold();
+        clarity->retuneNow();
+        clarity->feedBins(QVector<float>(1024, -115.0f), 1000);
+        QCOMPARE(survivor->wfActiveLowThreshold(), -120.0f);
+        QCOMPARE(survivor->wfActiveHighThreshold(), -60.0f);
+        QCOMPARE(survivor->gridMin(), -125);
+        QCOMPARE(survivor->gridMax(), -25);
+        QCOMPARE(survivor->wfLowThreshold(), savedLow);
+        QCOMPARE(survivor->wfHighThreshold(), savedHigh);
+        QVERIFY(survivor->clarityActive());
+
+        // No pane remains after the current owner is retired. Both output
+        // routes must safely ignore a valid new controller estimate.
+        QPointer<SpectrumWidget> lastOwner = survivor;
+        stack->removePanadapter(QStringLiteral("pan-1"));
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(lastOwner.isNull());
+        QVERIFY(stack->activePanId().isEmpty());
+        QVERIFY(window->activeSpectrumWidget() == nullptr);
+        clarity->feedBins(QVector<float>(1024, -100.0f), 2000);
+        QCOMPARE(clarity->smoothedFloor(), -100.0f);
     }
 
     // A left-click on a spot: the widget tunes the pan's slice, and the

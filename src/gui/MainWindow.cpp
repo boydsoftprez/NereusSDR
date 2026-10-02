@@ -14,6 +14,9 @@
 //   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
 //                Take and select action, with current access and target
 //                lifetime checks. AI-assisted via OpenAI Codex.
+//   2026-10-02 - J.J. Boyd (KG4VCF). Clarity grid and waterfall output
+//                follow the selected pan and survive original-pan retirement.
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Opt-in numeric TX-choice timestamps
 //                for RX history diagnosis. AI-assisted via OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Remote Max Bin follows the window
@@ -8254,7 +8257,7 @@ void MainWindow::buildUI()
     // calls were silently overwriting the user's saved thresholds via
     // scheduleSettingsSave() on every Clarity tick.
     connect(m_clarityController, &ClarityController::waterfallThresholdsChanged,
-            activeSpectrumWidget(), [this](float low, float high) {
+            this, [this](float low, float high) {
         // PR #212 follow-up bench fix (KG4VCF, 2026-05-10): suppress
         // Clarity threshold updates while MOX is active.  Clarity tracks
         // RX noise floor and would otherwise re-enable itself with
@@ -8277,16 +8280,24 @@ void MainWindow::buildUI()
         if (m_moxDisplay && m_moxDisplay->isKeyed()) {
             return;
         }
-        activeSpectrumWidget()->setClarityActive(true);
-        activeSpectrumWidget()->setClarityWaterfallThresholds(low, high);
+        if (SpectrumWidget* sw = activeSpectrumWidget()) {
+            sw->setClarityActive(true);
+            sw->setClarityWaterfallThresholds(low, high);
+        }
     });
 
     // Clarity → SpectrumWidget NF-aware grid (Task 2.9).
     // NereusSDR-original — no Thetis equivalent.
     // noiseFloorChanged fires after EWMA smoothing but before the deadband
     // gate so the grid tracks the floor at every cadence tick.
+    // The window owns both output routes; retiring the initial pane must
+    // neither disconnect them nor leave its grid receiving another pane's floor.
     connect(m_clarityController, &ClarityController::noiseFloorChanged,
-            activeSpectrumWidget(), &SpectrumWidget::onNoiseFloorChanged);
+            this, [this](float nf) {
+        if (SpectrumWidget* sw = activeSpectrumWidget()) {
+            sw->onNoiseFloorChanged(nf);
+        }
+    });
 
     // Task 2.10: per-band NF priming — settle detector.
     // NereusSDR-original — no Thetis equivalent.
