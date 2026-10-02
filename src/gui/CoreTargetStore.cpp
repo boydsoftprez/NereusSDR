@@ -40,6 +40,7 @@
 
 #include "core/AppSettings.h"
 #include "core/security/StationIdentity.h"
+#include "core/security/StationLabel.h"
 #include "core/session/RendezvousWire.h"
 #include "core/session/CoreAddresses.h"
 #include "core/session/IceConfiguration.h"
@@ -164,6 +165,18 @@ bool validateTarget(const SavedCoreTarget& target, QString* error, int version =
         setError(error, QStringLiteral("Saved Core target has an invalid Core identity."));
         return false;
     }
+    if (version >= kVersion && target.lastKnownCoreName) {
+        const AuthenticatedCoreName& observation = *target.lastKnownCoreName;
+        const auto parsed = StationLabel::parse(observation.name);
+        if (!parsed || parsed->display() != observation.name
+            || observation.pairedIdentity.size() != kIdentityBytes
+            || observation.pairedIdentity != target.connection.identityFingerprint
+            || target.connection.allowUnpinned || observation.observedMs < 0
+            || observation.observedMs > 9007199254740991LL) {
+            setError(error, QStringLiteral("Saved Core name lacks authenticated paired identity provenance."));
+            return false;
+        }
+    }
     if (target.manualAddresses.size() > CoreTargetStore::kMaxManualAddresses) {
         setError(error, QStringLiteral("A Core can retain at most four manual addresses."));
         return false;
@@ -265,6 +278,14 @@ QJsonObject toJson(const SavedCoreTarget& target, int version)
     }
     if (version >= kVersion && !target.manualAddresses.isEmpty()) {
         object.insert(QStringLiteral("manualAddresses"), QJsonArray::fromStringList(target.manualAddresses));
+    }
+    if (version >= kVersion && target.lastKnownCoreName) {
+        const AuthenticatedCoreName& observation = *target.lastKnownCoreName;
+        object.insert(QStringLiteral("lastKnownCoreName"), QJsonObject{
+            {QStringLiteral("name"), observation.name},
+            {QStringLiteral("identity"), StationIdentity::toBase64Url(observation.pairedIdentity)},
+            {QStringLiteral("observedMs"), static_cast<double>(observation.observedMs)},
+        });
     }
     if (version >= kV2Version) {
         object.insert(QStringLiteral("identity"),
@@ -407,6 +428,24 @@ bool parseDocument(const QString& text, int expectedVersion, QList<SavedCoreTarg
                 }
             }
             if (expectedVersion >= kVersion) {
+                // Optional presentation cache: malformed or mismatched provenance
+                // means unknown, and never compromises the saved pairing record.
+                const QJsonObject observation = object.value(QStringLiteral("lastKnownCoreName")).toObject();
+                const QJsonValue name = observation.value(QStringLiteral("name"));
+                const QJsonValue identityValue = observation.value(QStringLiteral("identity"));
+                const QJsonValue observed = observation.value(QStringLiteral("observedMs"));
+                const auto parsedName = name.isString() ? StationLabel::parse(name.toString()) : std::nullopt;
+                bool decodedNameIdentity = false;
+                const QByteArray nameIdentity = identityValue.isString()
+                    ? StationIdentity::fromBase64Url(identityValue.toString(), &decodedNameIdentity) : QByteArray();
+                const double stamp = observed.toDouble(-1);
+                if (parsedName && parsedName->display() == name.toString()
+                    && decodedNameIdentity && nameIdentity.size() == kIdentityBytes
+                    && nameIdentity == target.connection.identityFingerprint && !target.connection.allowUnpinned
+                    && observed.isDouble() && stamp >= 0 && stamp <= 9007199254740991.0
+                    && stamp == static_cast<double>(static_cast<qint64>(stamp))) {
+                    target.lastKnownCoreName = AuthenticatedCoreName{name.toString(), nameIdentity, static_cast<qint64>(stamp)};
+                }
                 const QJsonValue manual = object.value(QStringLiteral("manualAddresses"));
                 if (!manual.isUndefined()) {
                     if (!manual.isArray()) {
@@ -749,7 +788,27 @@ bool CoreTargetStore::upsert(const SavedCoreTarget& target, QString* error)
         setError(error, QStringLiteral("Saved Core targets must be loaded before changes can be made."));
         return false;
     }
-    if (!validateTarget(target, error)) {
+    SavedCoreTarget replacement = target;
+    const auto previous = this->target(target.id);
+    if ((previous && previous->connection.identityFingerprint != target.connection.identityFingerprint)
+        || target.connection.allowUnpinned) {
+        replacement.lastKnownCoreName.reset();
+    } else if (previous && previous->lastKnownCoreName) {
+        // Ordinary metadata writers cannot roll back a newer authenticated
+        // observation held by the store. rememberCoreName is its writer.
+        replacement.lastKnownCoreName = previous->lastKnownCoreName;
+    } else if (!replacement.lastKnownCoreName && target.connection.identityFingerprint.size() == kIdentityBytes) {
+        // A second saved route to the same paired Core shares its authoritative
+        // name, while retaining its own historical local nickname.
+        for (const SavedCoreTarget& candidate : std::as_const(m_targets)) {
+            if (candidate.connection.identityFingerprint == target.connection.identityFingerprint
+                && !candidate.connection.allowUnpinned && candidate.lastKnownCoreName) {
+                replacement.lastKnownCoreName = candidate.lastKnownCoreName;
+                break;
+            }
+        }
+    }
+    if (!validateTarget(replacement, error)) {
         return false;
     }
 
@@ -761,7 +820,7 @@ bool CoreTargetStore::upsert(const SavedCoreTarget& target, QString* error)
             identityChanged = existing.connection.identityFingerprint != target.connection.identityFingerprint
                 || existing.connection.fingerprint != target.connection.fingerprint
                 || existing.connection.allowUnpinned != target.connection.allowUnpinned;
-            existing = target;
+            existing = replacement;
             replaced = true;
             break;
         }
@@ -771,7 +830,7 @@ bool CoreTargetStore::upsert(const SavedCoreTarget& target, QString* error)
             setError(error, QStringLiteral("Saved Core target limit has been reached."));
             return false;
         }
-        updated.append(target);
+        updated.append(replacement);
     }
 
     if (!persist(updated, m_selectedId, error)) {
@@ -920,6 +979,33 @@ bool CoreTargetStore::rememberCoreAddresses(const QString& id, const QByteArray&
     SavedCoreTarget updated = *found;
     updated.connection.coreAddresses = addresses;
     return upsert(updated, error);
+}
+
+bool CoreTargetStore::rememberCoreName(const QString& id, const QByteArray& identity,
+                                     const QString& stationLabel, QString* error)
+{
+    const auto found = target(id);
+    if (!m_loaded || !found || identity.size() != kIdentityBytes
+        || found->connection.identityFingerprint != identity || found->connection.allowUnpinned) {
+        setError(error, QStringLiteral("Saved Core identity no longer matches this authenticated connection."));
+        return false;
+    }
+    const auto parsed = StationLabel::parse(stationLabel);
+    if (!parsed) {
+        setError(error, StationLabel::ruleText());
+        return false;
+    }
+    const AuthenticatedCoreName observation{parsed->display(), identity, m_clock()};
+    QList<SavedCoreTarget> updated = m_targets;
+    for (SavedCoreTarget& candidate : updated) {
+        if (candidate.connection.identityFingerprint == identity && !candidate.connection.allowUnpinned) {
+            candidate.lastKnownCoreName = observation;
+        }
+    }
+    if (!persist(updated, m_selectedId, error)) { return false; }
+    m_targets = std::move(updated);
+    clearError(error);
+    return true;
 }
 
 bool CoreTargetStore::rememberControlChannelVersion(const QString& id, int version,

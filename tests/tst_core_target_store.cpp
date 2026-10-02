@@ -101,6 +101,175 @@ class TstCoreTargetStore : public QObject {
     Q_OBJECT
 
 private slots:
+    void staleMetadataCannotReplaceNewerAuthenticatedName()
+    {
+        QTemporaryDir directory;
+        AppSettings settings(directory.filePath(QStringLiteral("settings.xml")));
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        SavedCoreTarget one = makeTarget(QStringLiteral("one"));
+        one.connection.identityFingerprint = someIdentity();
+        QVERIFY(store.upsert(one));
+        QVERIFY(store.rememberCoreName(one.id, one.connection.identityFingerprint, QStringLiteral("KG4VCF/Old")));
+        SavedCoreTarget stale = *store.target(one.id);
+        QVERIFY(store.rememberCoreName(one.id, one.connection.identityFingerprint, QStringLiteral("KG4VCF/New")));
+        stale.lastRadioName = QStringLiteral("Updated radio");
+        QVERIFY(store.upsert(stale));
+        QCOMPARE(store.target(one.id)->lastKnownCoreName->name, QStringLiteral("KG4VCF/New"));
+        QCOMPARE(store.target(one.id)->lastRadioName, QStringLiteral("Updated radio"));
+    }
+
+    void authoritativeNamesPropagateByIdentityAndNeverReplaceNicknames()
+    {
+        QTemporaryDir directory;
+        const QString path = directory.filePath(QStringLiteral("settings.xml"));
+        AppSettings settings(path);
+        CoreTargetStore store(settings, [] { return 1234; });
+        QVERIFY(store.load());
+        SavedCoreTarget one = makeTarget(QStringLiteral("one"));
+        one.connection.identityFingerprint = someIdentity();
+        one.label = QStringLiteral("Old local nickname");
+        SavedCoreTarget two = one;
+        two.id = QStringLiteral("two");
+        two.label = QStringLiteral("Another nickname");
+        SavedCoreTarget other = makeTarget(QStringLiteral("other"));
+        other.connection.identityFingerprint = someIdentity();
+        QVERIFY(store.upsert(one));
+        QVERIFY(store.upsert(two));
+        QVERIFY(store.upsert(other));
+        const quint64 lease = store.targetIncarnation(one.id);
+        QVERIFY(!store.target(one.id)->lastKnownCoreName);
+        QVERIFY(store.rememberCoreName(one.id, one.connection.identityFingerprint, QStringLiteral(" KG4VCF/Remote ")));
+        for (const QString& id : {one.id, two.id}) {
+            QVERIFY(store.target(id)->lastKnownCoreName);
+            QCOMPARE(store.target(id)->lastKnownCoreName->name, QStringLiteral("KG4VCF/Remote"));
+            QCOMPARE(store.target(id)->lastKnownCoreName->pairedIdentity, one.connection.identityFingerprint);
+            QCOMPARE(store.target(id)->lastKnownCoreName->observedMs, qint64(1234));
+        }
+        QCOMPARE(store.targetIncarnation(one.id), lease);
+        QCOMPARE(store.target(one.id)->label, one.label);
+        QCOMPARE(store.target(two.id)->label, two.label);
+        QVERIFY(!store.target(other.id)->lastKnownCoreName);
+        SavedCoreTarget third = one;
+        third.id = QStringLiteral("third");
+        QVERIFY(store.upsert(third));
+        QVERIFY(store.target(third.id)->lastKnownCoreName);
+        QCOMPARE(store.target(third.id)->lastKnownCoreName->name, QStringLiteral("KG4VCF/Remote"));
+        AppSettings loadedSettings(path);
+        loadedSettings.load();
+        CoreTargetStore loaded(loadedSettings);
+        QVERIFY(loaded.load());
+        QCOMPARE(loaded.target(one.id)->lastKnownCoreName->name, QStringLiteral("KG4VCF/Remote"));
+        QCOMPARE(loaded.target(two.id)->lastKnownCoreName->pairedIdentity, one.connection.identityFingerprint);
+        QVERIFY(!loaded.target(other.id)->lastKnownCoreName);
+        QVERIFY(!settings.value(QLatin1String(kV2Key)).toString().contains(QLatin1String("lastKnownCoreName")));
+        SavedCoreTarget replaced = *store.target(one.id);
+        replaced.connection.identityFingerprint = someIdentity();
+        QVERIFY(store.upsert(replaced));
+        QVERIFY(!store.target(one.id)->lastKnownCoreName);
+        QVERIFY(store.target(two.id)->lastKnownCoreName);
+        QVERIFY(!store.rememberCoreName(one.id, one.connection.identityFingerprint, QStringLiteral("KG4VCF/Wrong")));
+    }
+    void invalidOrUntrustedNamesCannotSave()
+    {
+        QTemporaryDir directory;
+        AppSettings settings(directory.filePath(QStringLiteral("settings.xml")));
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        SavedCoreTarget one = makeTarget(QStringLiteral("one"));
+        one.connection.identityFingerprint = someIdentity();
+        QVERIFY(store.upsert(one));
+        const QString before = settings.value(QLatin1String(kTargetKey)).toString();
+        QString error;
+        QVERIFY(!store.rememberCoreName(QStringLiteral("missing"), one.connection.identityFingerprint, QStringLiteral("KG4VCF/Core"), &error));
+        QVERIFY(!store.rememberCoreName(one.id, someIdentity(), QStringLiteral("KG4VCF/Core"), &error));
+        for (const QString& name : {QString(), QStringLiteral("Core nickname!"), QString(1000, QLatin1Char('x'))}) {
+            QVERIFY(!store.rememberCoreName(one.id, one.connection.identityFingerprint, name, &error));
+            QVERIFY(!error.isEmpty());
+        }
+        QCOMPARE(settings.value(QLatin1String(kTargetKey)).toString(), before);
+        one.connection.allowUnpinned = true;
+        QVERIFY(store.upsert(one));
+        QVERIFY(!store.rememberCoreName(one.id, one.connection.identityFingerprint, QStringLiteral("KG4VCF/Core"), &error));
+        QVERIFY(!store.target(one.id)->lastKnownCoreName);
+    }
+    void authoritativeNameSaveFailureIsAtomicForDuplicateRecords()
+    {
+        QTemporaryDir directory;
+        const QString path = directory.filePath(QStringLiteral("settings.xml"));
+        AppSettings settings(path);
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        SavedCoreTarget one = makeTarget(QStringLiteral("one"));
+        one.connection.identityFingerprint = someIdentity();
+        SavedCoreTarget two = one;
+        two.id = QStringLiteral("two");
+        QVERIFY(store.upsert(one));
+        QVERIFY(store.upsert(two));
+        QVERIFY(store.rememberCoreName(one.id, one.connection.identityFingerprint, QStringLiteral("KG4VCF/Old")));
+        const QString before = settings.value(QLatin1String(kTargetKey)).toString();
+        QVERIFY(QFile::remove(path));
+        QVERIFY(QDir().mkpath(path));
+        QString error;
+        QVERIFY(!store.rememberCoreName(one.id, one.connection.identityFingerprint, QStringLiteral("KG4VCF/New"), &error));
+        QVERIFY(!error.isEmpty());
+        QCOMPARE(settings.value(QLatin1String(kTargetKey)).toString(), before);
+        QCOMPARE(store.target(one.id)->lastKnownCoreName->name, QStringLiteral("KG4VCF/Old"));
+        QCOMPARE(store.target(two.id)->lastKnownCoreName->name, QStringLiteral("KG4VCF/Old"));
+    }
+    void malformedNameProvenanceIsUnknownWithoutBreakingTrust()
+    {
+        QTemporaryDir directory;
+        AppSettings settings(directory.filePath(QStringLiteral("settings.xml")));
+        const QString identity = StationIdentity::toBase64Url(someIdentity());
+        const QJsonObject good{{QStringLiteral("name"), QStringLiteral("KG4VCF/Core")},
+            {QStringLiteral("identity"), identity}, {QStringLiteral("observedMs"), 1234}};
+        QList<QJsonValue> bad{QJsonValue(7), QJsonValue(QJsonObject{})};
+        for (const auto& pair : {std::pair{QStringLiteral("name"), QJsonValue(QStringLiteral("Bad nickname!"))},
+                 std::pair{QStringLiteral("identity"), QJsonValue(StationIdentity::toBase64Url(someIdentity()))},
+                 std::pair{QStringLiteral("observedMs"), QJsonValue(-1)},
+                 std::pair{QStringLiteral("observedMs"), QJsonValue(1.5)}}) {
+            QJsonObject invalid = good;
+            invalid.insert(pair.first, pair.second);
+            bad.append(invalid);
+        }
+        for (const QJsonValue& invalid : bad) {
+            QJsonObject record = jsonTarget(QStringLiteral("one"), identity);
+            record.insert(QStringLiteral("lastKnownCoreName"), invalid);
+            settings.setValue(QLatin1String(kTargetKey), documentFor(QJsonArray{record}));
+            CoreTargetStore store(settings);
+            QVERIFY(store.load());
+            QVERIFY(!store.target(QStringLiteral("one"))->lastKnownCoreName);
+            QCOMPARE(store.target(QStringLiteral("one"))->connection.identityFingerprint, StationIdentity::fromBase64Url(identity));
+            QVERIFY(store.targetIncarnation(QStringLiteral("one")) != 0);
+        }
+    }
+
+    void authenticatedNameProvenanceSurvivesAddressMutation()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("settings.xml")));
+        const QString identity = StationIdentity::toBase64Url(someIdentity());
+        QJsonObject record = jsonTarget(QStringLiteral("named"), identity);
+        record.insert(QStringLiteral("label"), QStringLiteral("Historical local nickname"));
+        const QJsonObject observation{
+            {QStringLiteral("name"), QStringLiteral("KG4VCF/Remote")},
+            {QStringLiteral("identity"), identity},
+            {QStringLiteral("observedMs"), 1234},
+        };
+        record.insert(QStringLiteral("lastKnownCoreName"), observation);
+        settings.setValue(QLatin1String(kTargetKey), documentFor(QJsonArray{record}));
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        QVERIFY(store.addManualAddress(QStringLiteral("named"), QStringLiteral("wss://core.test:47910")));
+        const QJsonObject saved = QJsonDocument::fromJson(settings.value(QLatin1String(kTargetKey))
+            .toString().toUtf8()).object().value(QStringLiteral("cores")).toArray().first().toObject();
+        QCOMPARE(saved.value(QStringLiteral("lastKnownCoreName")).toObject(), observation);
+        QCOMPARE(saved.value(QStringLiteral("label")).toString(), QStringLiteral("Historical local nickname"));
+        QVERIFY(!settings.value(QLatin1String(kV2Key)).toString().contains(QLatin1String("lastKnownCoreName")));
+    }
+
     void manualEndpointNormalization_data()
     {
         QTest::addColumn<QString>("input");

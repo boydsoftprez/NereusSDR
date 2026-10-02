@@ -1618,6 +1618,8 @@ set(GUI_SOURCES
     src/gui/RemoteDiagnosticsDialog.cpp
     src/gui/RemoteConnectionController.cpp
     src/gui/CoreTargetStore.cpp
+    src/gui/CoreAddressProbe.cpp
+    src/gui/CoreAddressController.cpp
     src/gui/StationStartupSelection.cpp
     src/gui/StationServiceManager.cpp
     src/gui/StationLanSelection.cpp

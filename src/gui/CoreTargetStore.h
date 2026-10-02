@@ -46,6 +46,14 @@ namespace NereusSDR {
 
 class AppSettings;
 
+/// Last authenticated devices.coreInfo.stationLabel, never a local nickname or
+/// hello peerName. Offline presentation must call this last-known, not current.
+struct AuthenticatedCoreName {
+    QString name;
+    QByteArray pairedIdentity;
+    qint64 observedMs = -1;
+};
+
 struct SavedCoreTarget {
     QString id;
     QString label;
@@ -57,6 +65,7 @@ struct SavedCoreTarget {
     bool autoConnect{true};
     /// Listener URLs explicitly retained on this computer; not connection evidence.
     QStringList manualAddresses;
+    std::optional<AuthenticatedCoreName> lastKnownCoreName;
 };
 
 class CoreTargetStore {
@@ -111,6 +120,10 @@ public:
     static QStringList parseCoreAddresses(const QString& text);
     bool rememberCoreAddresses(const QString& id, const QByteArray& identity,
                               const QString& text, QString* error = nullptr);
+    /// Caller supplies the actual stationLabel from a proved paired session.
+    /// Updates matching saved paired identities atomically; label stays local.
+    bool rememberCoreName(const QString& id, const QByteArray& identity,
+                          const QString& stationLabel, QString* error = nullptr);
     static QString createId();
 
 private:
