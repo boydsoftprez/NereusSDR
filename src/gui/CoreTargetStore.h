@@ -28,11 +28,14 @@
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+// 2026-10-02: Separate manual listener retention and current-target leases.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
 
 #pragma once
 
 #include "core/session/RemoteStationOptions.h"
 
+#include <QHash>
 #include <QList>
 #include <QString>
 
@@ -52,16 +55,33 @@ struct SavedCoreTarget {
     // This computer's launch preference for this saved Core. Older records
     // retain their former connect-at-launch behavior.
     bool autoConnect{true};
+    /// Listener URLs explicitly retained on this computer; not connection evidence.
+    QStringList manualAddresses;
 };
 
 class CoreTargetStore {
 public:
     explicit CoreTargetStore(AppSettings&, std::function<qint64()> clock = {});
+    static constexpr int kMaxManualAddresses = 4;
 
     bool load(QString* error = nullptr);
     QList<SavedCoreTarget> targets() const;
     std::optional<SavedCoreTarget> target(const QString& id) const;
     QString selectedId() const;
+    /// Process-local lease for a writable target; zero after failed load or forget.
+    quint64 targetIncarnation(const QString& id) const;
+
+    /// Host/IP plus port, optionally pasted host:port or [IPv6]:port. A pasted
+    /// port takes precedence. Returns canonical wss listener URL, or empty/error.
+    /// IPv6 scope input is raw (e.g. %en0); stored URLs encode it as %25en0.
+    static QString normalizeManualAddress(const QString& hostOrEndpoint, int port,
+                                          QString* error = nullptr);
+    /// Address is a wss listener URL. These operations affect retention only.
+    bool addManualAddress(const QString& id, const QString& address, QString* error = nullptr);
+    /// previousAddress must match the current canonical entry exactly.
+    bool updateManualAddress(const QString& id, const QString& previousAddress,
+                             const QString& address, QString* error = nullptr);
+    bool removeManualAddress(const QString& id, const QString& address, QString* error = nullptr);
 
     bool upsert(const SavedCoreTarget&, QString* error = nullptr);
     bool remove(const QString& id, QString* error = nullptr);
@@ -94,6 +114,7 @@ public:
     static QString createId();
 
 private:
+    void renewTargetIncarnations();
     bool persist(const QList<SavedCoreTarget>& targets, const QString& selectedId,
                  QString* error);
 
@@ -102,6 +123,7 @@ private:
     QList<SavedCoreTarget> m_targets;
     QString m_selectedId{QStringLiteral("local")};
     bool m_loaded{false};
+    QHash<QString, quint64> m_targetIncarnations;
     std::optional<QString> m_networkFingerprint;
 };
 

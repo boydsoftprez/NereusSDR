@@ -8,6 +8,8 @@
 // iPhone app Task 18 (R-IOS-08): the list lives under ConnectionTargets/V2
 // with each Core's identity fingerprint; a V1 list migrates once, every
 // record's trust details exactly, and is never read again.
+// 2026-10-02: Manual listener retention, canonicalization and target leases.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -99,6 +101,377 @@ class TstCoreTargetStore : public QObject {
     Q_OBJECT
 
 private slots:
+    void manualEndpointNormalization_data()
+    {
+        QTest::addColumn<QString>("input");
+        QTest::addColumn<int>("port");
+        QTest::addColumn<QString>("expected");
+        QTest::newRow("hostname") << QStringLiteral("CoRe.Example.Test.") << 47910
+            << QStringLiteral("wss://core.example.test:47910");
+        QTest::newRow("single-label") << QStringLiteral("Core") << 1
+            << QStringLiteral("wss://core:1");
+        QTest::newRow("decimal-ipv4") << QStringLiteral("192.168.001.042") << 65535
+            << QStringLiteral("wss://192.168.1.42:65535");
+        QTest::newRow("pasted-port") << QStringLiteral("CORE.Example.Test.:047911") << 47910
+            << QStringLiteral("wss://core.example.test:47911");
+        QTest::newRow("pasted-ipv4") << QStringLiteral("192.168.001.042:47912") << 47910
+            << QStringLiteral("wss://192.168.1.42:47912");
+        QTest::newRow("ipv6") << QStringLiteral("2001:0DB8:0:0:0:0:0:5") << 47910
+            << QStringLiteral("wss://[2001:db8::5]:47910");
+        QTest::newRow("bracketed-ipv6") << QStringLiteral("[2001:DB8::5]") << 47910
+            << QStringLiteral("wss://[2001:db8::5]:47910");
+        QTest::newRow("pasted-ipv6") << QStringLiteral("[2001:DB8::5]:47912") << 47910
+            << QStringLiteral("wss://[2001:db8::5]:47912");
+        QTest::newRow("ipv6-scope") << QStringLiteral("fe80::1%en0") << 47910
+            << QStringLiteral("wss://[fe80::1%25en0]:47910");
+        QTest::newRow("numeric-scope") << QStringLiteral("fe80::1%25") << 47910
+            << QStringLiteral("wss://[fe80::1%2525]:47910");
+    }
+
+    void manualEndpointNormalization()
+    {
+        QFETCH(QString, input);
+        QFETCH(int, port);
+        QFETCH(QString, expected);
+        QString error = QStringLiteral("old error");
+        QCOMPARE(CoreTargetStore::normalizeManualAddress(input, port, &error), expected);
+        QVERIFY(error.isEmpty());
+    }
+
+    void manualEndpointRejectsNonListenerInput_data()
+    {
+        QTest::addColumn<QString>("input");
+        QTest::addColumn<int>("port");
+        for (const QString& input : {
+            QString(), QStringLiteral("wss://core.test"), QStringLiteral("https://core.test"),
+            QStringLiteral("turn:core.test"), QStringLiteral("stun:core.test"),
+            QStringLiteral("user@core.test"), QStringLiteral("core.test/path"),
+            QStringLiteral("core.test?token=secret"), QStringLiteral("core.test#fragment"),
+            QStringLiteral(" core.test"), QStringLiteral("core.test "), QStringLiteral("core\ttest"),
+            QStringLiteral("256.1.2.3"), QStringLiteral("127.1"), QStringLiteral("1234"),
+            QStringLiteral("1.2.3.4.5"), QStringLiteral("core..test"), QStringLiteral("-core.test"),
+            QStringLiteral("core-.test"), QStringLiteral("core_test"),
+            QStringLiteral("[2001:db8::1"), QStringLiteral("2001:db8::1]"),
+            QStringLiteral("[2001:db8::1]]:47910"), QStringLiteral("[192.168.1.42]:47910"),
+            QStringLiteral("[2001:db8::1]:0"), QStringLiteral("[2001:db8::1]:65536"),
+            QStringLiteral("core.test:bad"), QStringLiteral("core.test:"),
+            QStringLiteral("fe80::1%"), QStringLiteral("fe80::1%bad%scope"),
+            QString(64, QLatin1Char('a')) + QStringLiteral(".test")}) {
+            QTest::newRow(qPrintable(input.isEmpty() ? QStringLiteral("empty") : input)) << input << 47910;
+        }
+        QTest::newRow("port-zero") << QStringLiteral("core.test") << 0;
+        QTest::newRow("port-overflow") << QStringLiteral("core.test") << 65536;
+        QTest::newRow("port-negative") << QStringLiteral("core.test") << -1;
+    }
+
+    void manualEndpointRejectsNonListenerInput()
+    {
+        QFETCH(QString, input);
+        QFETCH(int, port);
+        QString error;
+        QVERIFY(CoreTargetStore::normalizeManualAddress(input, port, &error).isEmpty());
+        QVERIFY(!error.isEmpty());
+    }
+
+    void manualMutationsDeduplicateAndReplaceAtCapacityWithoutChangingEvidence()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("settings.xml")));
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        SavedCoreTarget saved = makeTarget(QStringLiteral("paired"));
+        saved.connection.identityFingerprint = someIdentity();
+        saved.connection.cachedAddresses = {QStringLiteral("wss://192.0.2.9:47912")};
+        saved.connection.coreAddresses = {QStringLiteral("wss://[2001:db8::5]:47913")};
+        saved.autoConnect = false;
+        QVERIFY(store.upsert(saved));
+        QVERIFY(store.select(saved.id));
+        const quint64 lease = store.targetIncarnation(saved.id);
+        const QString before = settings.value(QLatin1String(kTargetKey)).toString();
+        const QStringList expected{QStringLiteral("wss://core.test:47910"),
+            QStringLiteral("wss://192.168.1.42:47911"), QStringLiteral("wss://[2001:db8::5]:47912"),
+            QStringLiteral("wss://192.0.2.9:47912")};
+        QVERIFY(store.addManualAddress(saved.id, QStringLiteral("wss://CORE.Test.:47910")));
+        QVERIFY(store.addManualAddress(saved.id, QStringLiteral("wss://192.168.001.042:47911")));
+        QVERIFY(store.addManualAddress(saved.id, QStringLiteral("wss://[2001:0DB8::5]:47912")));
+        QVERIFY(store.addManualAddress(saved.id, expected.last()));
+        QCOMPARE(store.target(saved.id)->manualAddresses, expected);
+        const QString full = settings.value(QLatin1String(kTargetKey)).toString();
+        QString error;
+        for (const QString& duplicate : {QStringLiteral("wss://CORE.TEST:47910"),
+                 QStringLiteral("wss://192.168.001.042:47911"),
+                 QStringLiteral("wss://[2001:0db8:0:0:0:0:0:5]:47912")}) {
+            QVERIFY(!store.addManualAddress(saved.id, duplicate, &error));
+            QVERIFY(!error.isEmpty());
+            QCOMPARE(settings.value(QLatin1String(kTargetKey)).toString(), full);
+        }
+        QVERIFY(!store.addManualAddress(saved.id, QStringLiteral("wss://fifth.test:47910"), &error));
+        QCOMPARE(settings.value(QLatin1String(kTargetKey)).toString(), full);
+        QVERIFY(!store.addManualAddress(saved.id, QStringLiteral("ws://unsafe.test:47910"), &error));
+        QVERIFY(!store.updateManualAddress(saved.id, QStringLiteral("wss://CORE.TEST:47910"),
+                                          QStringLiteral("wss://new.test:47910"), &error));
+        QVERIFY(!store.updateManualAddress(saved.id, expected.first(), expected.at(1), &error));
+        QCOMPARE(settings.value(QLatin1String(kTargetKey)).toString(), full);
+        QVERIFY(store.updateManualAddress(saved.id, expected.first(), QStringLiteral("wss://NEW.Test.:47914"), &error));
+        QStringList replaced = expected;
+        replaced[0] = QStringLiteral("wss://new.test:47914");
+        QCOMPARE(store.target(saved.id)->manualAddresses, replaced);
+        QVERIFY(store.updateManualAddress(saved.id, replaced.first(), QStringLiteral("wss://NEW.Test.:47914"), &error));
+        QVERIFY(error.isEmpty());
+        QVERIFY(!store.removeManualAddress(saved.id, QStringLiteral("wss://NEW.Test:47914"), &error));
+        for (const QString& address : replaced) { QVERIFY(store.removeManualAddress(saved.id, address)); }
+        QVERIFY(store.target(saved.id)->manualAddresses.isEmpty());
+        // Removing even an address that also worked affects retention only.
+        QCOMPARE(settings.value(QLatin1String(kTargetKey)).toString(), before);
+        QCOMPARE(store.selectedId(), saved.id);
+        QCOMPARE(store.targetIncarnation(saved.id), lease);
+    }
+
+    void manualScopeRoundTripsWithoutChangingItsInterface()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("settings.xml"));
+        AppSettings settings(path);
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        const SavedCoreTarget saved = makeTarget(QStringLiteral("scope"));
+        QVERIFY(store.upsert(saved));
+        QVERIFY(store.addManualAddress(saved.id, QStringLiteral("wss://[fe80::1%25en0]:47910")));
+        QVERIFY(store.addManualAddress(saved.id, QStringLiteral("wss://[fe80::1%2525]:47910")));
+        QCOMPARE(store.target(saved.id)->manualAddresses,
+                 (QStringList{QStringLiteral("wss://[fe80::1%25en0]:47910"),
+                              QStringLiteral("wss://[fe80::1%2525]:47910")}));
+        AppSettings loadedSettings(path);
+        loadedSettings.load();
+        CoreTargetStore loaded(loadedSettings);
+        QVERIFY(loaded.load());
+        QCOMPARE(loaded.target(saved.id)->manualAddresses, store.target(saved.id)->manualAddresses);
+    }
+
+    void malformedManualDocumentsCannotReplaceLoadedTargets()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("settings.xml")));
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        SavedCoreTarget saved = makeTarget(QStringLiteral("one"));
+        saved.manualAddresses = {QStringLiteral("wss://core.test:47910")};
+        QVERIFY(store.upsert(saved));
+        QVERIFY(store.select(saved.id));
+        const QString good = settings.value(QLatin1String(kTargetKey)).toString();
+        const QJsonObject record = QJsonDocument::fromJson(good.toUtf8()).object()
+            .value(QStringLiteral("cores")).toArray().first().toObject();
+        for (const QJsonValue& bad : {QJsonValue(QStringLiteral("not-array")), QJsonValue(QJsonArray{7}),
+                 QJsonValue(QJsonArray{QString()}),
+                 QJsonValue(QJsonArray{QStringLiteral("wss://CORE.test:47910")}),
+                 QJsonValue(QJsonArray{QStringLiteral("ws://core.test:47910")}),
+                 QJsonValue(QJsonArray{QStringLiteral("wss://core.test:47910/path")}),
+                 QJsonValue(QJsonArray{QStringLiteral("wss://core.test")}),
+                 QJsonValue(QJsonArray{QStringLiteral("wss://core.test:47910"), QStringLiteral("wss://core.test:47910")}),
+                 QJsonValue(QJsonArray{QStringLiteral("wss://a.test:1"), QStringLiteral("wss://b.test:2"),
+                     QStringLiteral("wss://c.test:3"), QStringLiteral("wss://d.test:4"), QStringLiteral("wss://e.test:5")})}) {
+            QJsonObject invalid = record;
+            invalid.insert(QStringLiteral("manualAddresses"), bad);
+            const QString document = documentFor(QJsonArray{invalid}, saved.id);
+            settings.setValue(QLatin1String(kTargetKey), document);
+            QString error;
+            QVERIFY(!store.load(&error));
+            QVERIFY(!error.isEmpty());
+            QCOMPARE(store.target(saved.id)->manualAddresses, saved.manualAddresses);
+            QCOMPARE(store.selectedId(), saved.id);
+            QCOMPARE(store.targetIncarnation(saved.id), quint64(0));
+            QVERIFY(!store.addManualAddress(saved.id, QStringLiteral("wss://new.test:47910"), &error));
+            QCOMPARE(settings.value(QLatin1String(kTargetKey)).toString(), document);
+            settings.setValue(QLatin1String(kTargetKey), good);
+            QVERIFY(store.load());
+        }
+    }
+
+    void manualPersistenceFailureRollsBackAllDocumentsAndLease()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("settings.xml"));
+        AppSettings settings(path);
+        const QString id = QStringLiteral("one");
+        settings.setValue(QLatin1String(kV1Key), documentFor(QJsonArray{jsonV1Target(id)}, id, 1));
+        settings.setValue(QLatin1String(kV2Key), documentFor(QJsonArray{jsonTarget(id)}, id, 2));
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        QVERIFY(store.addManualAddress(id, QStringLiteral("wss://core.test:47910")));
+        const quint64 lease = store.targetIncarnation(id);
+        QStringList documents;
+        for (const char* key : {kTargetKey, kV2Key, kV1Key}) {
+            documents.append(settings.value(QLatin1String(key)).toString());
+        }
+        QVERIFY(QFile::remove(path));
+        QVERIFY(QDir().mkdir(path));
+        QString error;
+        QVERIFY(!store.addManualAddress(id, QStringLiteral("wss://new.test:47911"), &error));
+        QVERIFY(!error.isEmpty());
+        QVERIFY(!store.updateManualAddress(id, QStringLiteral("wss://core.test:47910"),
+                                          QStringLiteral("wss://new.test:47911"), &error));
+        QVERIFY(!store.removeManualAddress(id, QStringLiteral("wss://core.test:47910"), &error));
+        QVERIFY(!store.remove(id, &error));
+        SavedCoreTarget changedIdentity = *store.target(id);
+        changedIdentity.connection.identityFingerprint = QByteArray(32, 'x');
+        QVERIFY(!store.upsert(changedIdentity, &error));
+        QCOMPARE(store.targetIncarnation(id), lease);
+        QCOMPARE(store.target(id)->manualAddresses, QStringList{QStringLiteral("wss://core.test:47910")});
+        QCOMPARE(store.selectedId(), id);
+        int index = 0;
+        for (const char* key : {kTargetKey, kV2Key, kV1Key}) {
+            QCOMPARE(settings.value(QLatin1String(key)).toString(), documents.at(index++));
+        }
+    }
+
+    void failedReloadRepairCannotAuthorizeFromPreservedPresentation()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("settings.xml"));
+        AppSettings settings(path);
+        CoreTargetStore store(settings, [] { return qint64(900); });
+        QVERIFY(store.load());
+        SavedCoreTarget saved = makeTarget(QStringLiteral("one"));
+        saved.connection.controlChannelVersion = 0;
+        saved.connection.negativeControlObservedMs = 1000;
+        QVERIFY(store.upsert(saved));
+        const QString before = settings.value(QLatin1String(kTargetKey)).toString();
+        QVERIFY(store.targetIncarnation(saved.id) != 0);
+        QVERIFY(QFile::remove(path));
+        QVERIFY(QDir().mkdir(path));
+        QString error;
+        QVERIFY(!store.load(&error)); // Future-observation repair cannot be saved.
+        QVERIFY(!error.isEmpty());
+        QCOMPARE(store.target(saved.id)->connection.negativeControlObservedMs, qint64(1000));
+        QCOMPARE(store.targetIncarnation(saved.id), quint64(0));
+        QVERIFY(!store.addManualAddress(saved.id, QStringLiteral("wss://new.test:47910"), &error));
+        QCOMPARE(settings.value(QLatin1String(kTargetKey)).toString(), before);
+    }
+
+    void manualRetentionDoesNotChangeOlderRollbackDocuments()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("settings.xml")));
+        const QString id = QStringLiteral("one");
+        const QString v1 = documentFor(QJsonArray{jsonV1Target(id)}, id, 1);
+        const QString v2 = documentFor(QJsonArray{jsonTarget(id)}, id, 2);
+        settings.setValue(QLatin1String(kV1Key), v1);
+        settings.setValue(QLatin1String(kV2Key), v2);
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        QVERIFY(store.target(id)->manualAddresses.isEmpty());
+        QVERIFY(store.addManualAddress(id, QStringLiteral("wss://core.test:47910")));
+        QCOMPARE(settings.value(QLatin1String(kV1Key)).toString(), v1);
+        QCOMPARE(settings.value(QLatin1String(kV2Key)).toString(), v2);
+        QVERIFY(store.removeManualAddress(id, QStringLiteral("wss://core.test:47910")));
+        QCOMPARE(settings.value(QLatin1String(kV1Key)).toString(), v1);
+        QCOMPARE(settings.value(QLatin1String(kV2Key)).toString(), v2);
+    }
+
+    void targetLeaseRetiresOnRecreationIdentityChangeAndReload()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("settings.xml")));
+        CoreTargetStore store(settings);
+        const QString id = QStringLiteral("one");
+        QCOMPARE(store.targetIncarnation(id), quint64(0));
+        QVERIFY(store.load());
+        SavedCoreTarget saved = makeTarget(id);
+        saved.connection.identityFingerprint = QByteArray(32, 'a');
+        QVERIFY(store.upsert(saved));
+        const quint64 first = store.targetIncarnation(id);
+        QVERIFY(first != 0);
+        saved.label = QStringLiteral("Edited legacy label");
+        QVERIFY(store.upsert(saved));
+        QVERIFY(store.rememberAddress(id, QStringLiteral("wss://192.0.2.9:47910")));
+        QCOMPARE(store.targetIncarnation(id), first);
+        const SavedCoreTarget beforeForget = *store.target(id);
+        QVERIFY(store.remove(id));
+        QCOMPARE(store.targetIncarnation(id), quint64(0));
+        QVERIFY(store.upsert(beforeForget));
+        const quint64 recreated = store.targetIncarnation(id);
+        QVERIFY(recreated > first);
+        SavedCoreTarget replacement = *store.target(id);
+        replacement.connection.identityFingerprint = QByteArray(32, 'b');
+        QVERIFY(store.upsert(replacement));
+        const quint64 identityChanged = store.targetIncarnation(id);
+        QVERIFY(identityChanged > recreated);
+        replacement.connection.fingerprint = QStringLiteral("new-pin");
+        QVERIFY(store.upsert(replacement));
+        const quint64 trustChanged = store.targetIncarnation(id);
+        QVERIFY(trustChanged > identityChanged);
+        replacement.connection.allowUnpinned = true;
+        QVERIFY(store.upsert(replacement));
+        const quint64 trustPolicyChanged = store.targetIncarnation(id);
+        QVERIFY(trustPolicyChanged > trustChanged);
+        QVERIFY(store.load());
+        const quint64 reloaded = store.targetIncarnation(id);
+        QVERIFY(reloaded > trustPolicyChanged);
+        CoreTargetStore anotherStore(settings);
+        QVERIFY(anotherStore.load());
+        QVERIFY(anotherStore.targetIncarnation(id) > reloaded);
+        settings.setValue(QLatin1String(kTargetKey), QStringLiteral("broken"));
+        QVERIFY(!store.load());
+        QVERIFY(store.target(id).has_value()); // Presentation survives, authority does not.
+        QCOMPARE(store.targetIncarnation(id), quint64(0));
+    }
+
+    void manualAddressesSurviveV3RoundTripWithoutChangingCoreEvidence()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("settings.xml"));
+        AppSettings settings(path);
+        const QString id = QStringLiteral("paired");
+        QJsonObject record = jsonTarget(id, StationIdentity::toBase64Url(someIdentity()));
+        const QJsonArray manual{QStringLiteral("wss://192.168.1.42:47910"),
+                                QStringLiteral("wss://core.example.test:47911")};
+        record.insert(QStringLiteral("manualAddresses"), manual);
+        record.insert(QStringLiteral("lastAddresses"),
+                      QJsonArray{QStringLiteral("wss://192.0.2.9:47912")});
+        record.insert(QStringLiteral("coreAddresses"),
+                      QJsonArray{QStringLiteral("wss://[2001:db8::5]:47913")});
+        record.insert(QStringLiteral("autoConnect"), false);
+        settings.setValue(QLatin1String(kTargetKey), documentFor(QJsonArray{record}, id));
+
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        const auto loaded = store.target(id);
+        QVERIFY(loaded.has_value());
+        QVERIFY(store.upsert(*loaded));
+        QCOMPARE(store.selectedId(), id);
+        QJsonObject persisted = QJsonDocument::fromJson(
+            settings.value(QLatin1String(kTargetKey)).toString().toUtf8()).object()
+            .value(QStringLiteral("cores")).toArray().first().toObject();
+        QJsonObject originalEvidence = record;
+        originalEvidence.remove(QStringLiteral("manualAddresses"));
+        QJsonObject persistedEvidence = persisted;
+        persistedEvidence.remove(QStringLiteral("manualAddresses"));
+        QCOMPARE(persistedEvidence, originalEvidence);
+        // These were entered by the operator, not proved by a connection.
+        // Dropping them during an ordinary save loses the address book.
+        QCOMPARE(persisted.value(QStringLiteral("manualAddresses")).toArray(), manual);
+
+        AppSettings reloadedSettings(path);
+        reloadedSettings.load();
+        CoreTargetStore reloaded(reloadedSettings);
+        QVERIFY(reloaded.load());
+        QCOMPARE(reloaded.selectedId(), id);
+        QVERIFY(reloaded.target(id).has_value());
+        QVERIFY(reloaded.upsert(*reloaded.target(id)));
+        const QJsonObject afterReload = QJsonDocument::fromJson(
+            reloadedSettings.value(QLatin1String(kTargetKey)).toString().toUtf8()).object()
+            .value(QStringLiteral("cores")).toArray().first().toObject();
+        QCOMPARE(afterReload, record);
+    }
+
     void coreListedAddressesUseGlobalLiteralsExactPortsAndSeparateIdentity()
     {
         const QString wire = QString::fromUtf8("{\"addresses\":[\"[2001:0DB8::5]:47912\",\"[2001:db8::5]:47912\",\"8.8.8.8:47913\",\"192.168.1.2:47910\",\"100.64.0.2:47910\",\"[fe80::1]:47910\",\"[fd00::1]:47910\",\"[::ffff:8.8.8.8]:47910\",\"core.test:47910\",\"8.8.4.4:0\",\"8.8.4.4:65536\",\"wss://8.8.4.4:47910\",7]}");
