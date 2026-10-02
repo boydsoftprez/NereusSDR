@@ -37,6 +37,7 @@
 #include <QSignalSpy>
 #include <QTest>
 #include <QWheelEvent>
+#include <limits>
 
 // Tester shim: friended in ParametricEqWidget.h so this subclass can
 // reach private state for hand-computed expecteds.  We keep public
@@ -48,6 +49,8 @@ public:
     // Promote the math + ordering helpers so we can hand-compute pixel
     // positions and dB/Hz round-trips precisely.
     using NereusSDR::ParametricEqWidget::computePlotRect;
+    using NereusSDR::ParametricEqWidget::widthHandlePosition;
+    using NereusSDR::ParametricEqWidget::isDraggingNow;
     using NereusSDR::ParametricEqWidget::xFromFreq;
     using NereusSDR::ParametricEqWidget::yFromDb;
     using NereusSDR::ParametricEqWidget::freqFromX;
@@ -97,6 +100,16 @@ public:
 class TestParametricEqInteraction : public QObject {
     Q_OBJECT
 private slots:
+    void widthDragChangesOnlyQ();
+    void widthHandleAtZeroAndNegativeGain_data();
+    void widthHandleAtZeroAndNegativeGain();
+    void clippedHandleDoesNotMutateQ();
+    void clippedWidthDragIsGradualAndReturnsExactly();
+    void widthDisabledWithoutQ();
+    void gestureSignalsBracketFinalCommit();
+    void crossingRetainsBandId();
+    void externalLoadCancelsDrag();
+    void runtimeStateRestoresExactValuesAndIds();
     void leftClickOnBandSelectsIt();
     void leftDragMovesBandFreqAndGain();
     void leftDragOnEndpointMovesGainOnly();
@@ -567,6 +580,238 @@ void TestParametricEqInteraction::clickOnEmptyAreaDeselects() {
     QCOMPARE(unsel.at(4).toDouble(), prevQ);
 
     QTest::mouseRelease(&w, Qt::LeftButton, Qt::NoModifier, emptySpot);
+}
+
+void TestParametricEqInteraction::widthDragChangesOnlyQ() {
+    ParametricEqInteractionTester w;
+    w.setEditorPresentationEnabled(true);
+    w.resize(800, 400);
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    w.setSelectedIndex(4);
+    const auto before = w.points().at(4);
+    const QRect plot = w.computePlotRect();
+    const QPoint handle(qRound(w.xFromFreq(plot, before.frequencyHz + 4000.0 / 24.0)),
+                        qRound(w.yFromDb(plot, before.gainDb)) + 22);
+    QTest::mousePress(&w, Qt::LeftButton, Qt::NoModifier, handle);
+    QTest::mouseMove(&w, handle + QPoint(25, 0));
+    QTest::mouseRelease(&w, Qt::LeftButton, Qt::NoModifier, handle + QPoint(25, 0));
+    QCOMPARE(w.points().at(4).frequencyHz, before.frequencyHz);
+    QCOMPARE(w.points().at(4).gainDb, before.gainDb);
+    QVERIFY(w.points().at(4).q < before.q);
+}
+
+void TestParametricEqInteraction::widthHandleAtZeroAndNegativeGain_data() {
+    QTest::addColumn<int>("count");
+    QTest::addColumn<bool>("log");
+    QTest::addColumn<double>("gain");
+    QTest::addColumn<double>("q");
+    for (int count : {5, 10, 18}) {
+        for (bool log : {false, true}) {
+            for (double gain : {0.0, -8.0}) {
+                for (double q : {0.2, 20.0}) {
+                    QTest::newRow(qPrintable(QString("%1-%2-%3-%4").arg(count).arg(log).arg(gain).arg(q))) << count << log << gain << q;
+                }
+            }
+        }
+    }
+}
+
+void TestParametricEqInteraction::widthHandleAtZeroAndNegativeGain() {
+    QFETCH(int, count); QFETCH(bool, log); QFETCH(double, gain); QFETCH(double, q);
+    ParametricEqInteractionTester w;
+    w.setEditorPresentationEnabled(true);
+    w.setBandCount(count);
+    w.setLogScale(log);
+    w.setQMax(20);
+    w.resize(800, 400); w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    const int index = count/2;
+    QVERIFY(w.setPointData(index, w.points().at(index).frequencyHz, gain, q));
+    w.setSelectedIndex(index);
+    const auto before = w.points().at(index);
+    const QRect plot = w.computePlotRect();
+    const QPoint handle = w.widthHandlePosition(plot, 1);
+    QTest::mousePress(&w, Qt::LeftButton, Qt::NoModifier, handle);
+    QVERIFY(w.isDraggingNow());
+    const QPoint moved = handle + QPoint(q == 0.2 ? -30 : 30, 0);
+    QTest::mouseMove(&w, moved);
+    QTest::mouseRelease(&w, Qt::LeftButton, Qt::NoModifier, moved);
+    QCOMPARE(w.points().at(index).frequencyHz, before.frequencyHz);
+    QCOMPARE(w.points().at(index).gainDb, before.gainDb);
+    QVERIFY(w.points().at(index).q != before.q);
+    QVERIFY(!w.isDraggingNow());
+}
+
+void TestParametricEqInteraction::clippedHandleDoesNotMutateQ() {
+    for (int index : {0, 9}) {
+        ParametricEqInteractionTester w;
+        w.setEditorPresentationEnabled(true); w.resize(800, 400); w.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&w));
+        w.setPointData(index, w.points().at(index).frequencyHz, 0, 0.2);
+        w.setSelectedIndex(index);
+        const QByteArray before = w.saveEditState();
+        QSignalSpy committed(&w, &NereusSDR::ParametricEqWidget::pointsChanged);
+        QSignalSpy started(&w, &NereusSDR::ParametricEqWidget::editStarted);
+        const QPoint handle = w.widthHandlePosition(w.computePlotRect(), index == 0 ? -1 : 1);
+        QTest::mouseClick(&w, Qt::LeftButton, Qt::NoModifier, handle);
+        QCOMPARE(w.saveEditState(), before);
+        QCOMPARE(committed.count(), 0);
+        QCOMPARE(started.count(), 0);
+    }
+}
+
+void TestParametricEqInteraction::clippedWidthDragIsGradualAndReturnsExactly() {
+    for (bool log : {false, true}) {
+        for (int index : {0, 9}) {
+            ParametricEqInteractionTester w;
+            w.setEditorPresentationEnabled(true);
+            w.setLogScale(log);
+            w.resize(800, 400);
+            w.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&w));
+            QVERIFY(w.setPointData(index, w.points().at(index).frequencyHz, 0.0, 0.2));
+            w.setSelectedIndex(index);
+            const QByteArray before = w.saveEditState();
+            const QPoint handle = w.widthHandlePosition(w.computePlotRect(), index == 0 ? -1 : 1);
+            const QPoint inward = handle + QPoint(index == 0 ? 1 : -1, 0);
+            QTest::mousePress(&w, Qt::LeftButton, Qt::NoModifier, handle);
+            QTest::mouseMove(&w, inward);
+            QVERIFY(w.points().at(index).q >= 0.2);
+            QVERIFY(w.points().at(index).q < 0.21);
+            QTest::mouseMove(&w, handle);
+            QCOMPARE(w.saveEditState(), before);
+            QTest::mouseRelease(&w, Qt::LeftButton, Qt::NoModifier, handle);
+            QCOMPARE(w.saveEditState(), before);
+        }
+    }
+}
+
+void TestParametricEqInteraction::widthDisabledWithoutQ() {
+    ParametricEqInteractionTester w;
+    w.setEditorPresentationEnabled(true); w.resize(800, 400); w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    w.setSelectedIndex(4);
+    const QPoint handle = w.widthHandlePosition(w.computePlotRect(), 1);
+    w.setParametricEq(false);
+    const QByteArray before = w.saveEditState();
+    QTest::mousePress(&w, Qt::LeftButton, Qt::NoModifier, handle);
+    QVERIFY(!w.isDraggingNow());
+    QTest::mouseMove(&w, handle + QPoint(30, 0));
+    QTest::mouseRelease(&w, Qt::LeftButton, Qt::NoModifier, handle);
+    QCOMPARE(w.saveEditState(), before);
+}
+
+void TestParametricEqInteraction::gestureSignalsBracketFinalCommit() {
+    ParametricEqInteractionTester w;
+    w.setEditorPresentationEnabled(true); w.resize(800, 400); w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    QStringList order;
+    QByteArray atStart;
+    QObject::connect(&w, &NereusSDR::ParametricEqWidget::editStarted, [&] { order << "start"; atStart = w.saveEditState(); });
+    QObject::connect(&w, &NereusSDR::ParametricEqWidget::pointsChanged, [&](bool dragging) { order << (dragging ? "move" : "commit"); });
+    QObject::connect(&w, &NereusSDR::ParametricEqWidget::pointDataChanged, [&](int, int, double, double, double, bool dragging) { if (!dragging) { order << "data"; } });
+    QObject::connect(&w, &NereusSDR::ParametricEqWidget::editFinished, [&] { order << "finish"; });
+    w.setSelectedIndex(4);
+    const QByteArray before = w.saveEditState();
+    const QPoint handle = w.widthHandlePosition(w.computePlotRect(), 1);
+    QTest::mousePress(&w, Qt::LeftButton, Qt::NoModifier, handle);
+    QTest::mouseMove(&w, handle + QPoint(30, 0));
+    QTest::mouseRelease(&w, Qt::LeftButton, Qt::NoModifier, handle + QPoint(30, 0));
+    QCOMPARE(atStart, before);
+    QCOMPARE(order, (QStringList{"start", "move", "commit", "data", "finish"}));
+    order.clear();
+    sendWheel(&w, handle, 120, Qt::ShiftModifier);
+    QCOMPARE(order, (QStringList{"start", "commit", "data", "finish"}));
+    order.clear();
+    const QPoint dot(qRound(w.xFromFreq(w.computePlotRect(), w.points().at(4).frequencyHz)), qRound(w.yFromDb(w.computePlotRect(), w.points().at(4).gainDb)));
+    const QByteArray after = w.saveEditState();
+    QTest::mouseClick(&w, Qt::LeftButton, Qt::NoModifier, dot);
+    QCOMPARE(w.saveEditState(), after);
+    QVERIFY(order.isEmpty());
+}
+
+void TestParametricEqInteraction::crossingRetainsBandId() {
+    ParametricEqInteractionTester w;
+    w.setEditorPresentationEnabled(true); w.setBandCount(5); w.resize(800, 400); w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    const QRect plot = w.computePlotRect();
+    const auto point = w.points().at(1);
+    const QPoint dot(qRound(w.xFromFreq(plot, point.frequencyHz)), qRound(w.yFromDb(plot, point.gainDb)));
+    const QPoint moved(qRound(w.xFromFreq(plot, w.points().at(3).frequencyHz + 100)), dot.y()-10);
+    QTest::mousePress(&w, Qt::LeftButton, Qt::NoModifier, dot);
+    QTest::mouseMove(&w, moved);
+    QTest::mouseRelease(&w, Qt::LeftButton, Qt::NoModifier, moved);
+    const int index = w.getIndexFromBandId(point.bandId);
+    QVERIFY(index > 1);
+    QCOMPARE(w.points().at(index).bandColor, point.bandColor);
+    QCOMPARE(w.points().at(w.selectedIndex()).bandId, point.bandId);
+}
+
+void TestParametricEqInteraction::externalLoadCancelsDrag() {
+    ParametricEqInteractionTester w;
+    w.setEditorPresentationEnabled(true); w.resize(800, 400); w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    const QString authoritative = w.saveToJson();
+    const QRect plot = w.computePlotRect();
+    const QPoint dot(qRound(w.xFromFreq(plot, w.points().at(4).frequencyHz)), qRound(w.yFromDb(plot, 0)));
+    QTest::mousePress(&w, Qt::LeftButton, Qt::NoModifier, dot);
+    QTest::mouseMove(&w, dot + QPoint(20, 20));
+    QVERIFY(w.loadFromJson(authoritative));
+    QVERIFY(!w.isDraggingNow());
+    const QByteArray loaded = w.saveEditState();
+    QSignalSpy commit(&w, &NereusSDR::ParametricEqWidget::pointsChanged);
+    QSignalSpy finished(&w, &NereusSDR::ParametricEqWidget::editFinished);
+    QTest::mouseMove(&w, dot + QPoint(50, 30));
+    QTest::mouseRelease(&w, Qt::LeftButton, Qt::NoModifier, dot);
+    QCOMPARE(w.saveEditState(), loaded);
+    QCOMPARE(commit.count(), 0);
+    QCOMPARE(finished.count(), 0);
+}
+
+void TestParametricEqInteraction::runtimeStateRestoresExactValuesAndIds() {
+    ParametricEqInteractionTester w;
+    w.setBandCount(5);
+    const int id = w.points().at(1).bandId;
+    QVERIFY(w.setPointData(1, 3333.123456789, -1.23456789, 1.23456789));
+    w.setGlobalGainDb(0.123456789);
+    const int index = w.getIndexFromBandId(id);
+    QVERIFY(index > 1);
+    w.pointsMut()[index].bandColor = QColor(12, 34, 56, 78);
+    const QColor color = w.points().at(index).bandColor;
+    const QByteArray state = w.saveEditState();
+    w.setSelectedIndex(index);
+    QCOMPARE(w.saveEditState(), state);
+    w.drawBarChartData(QVector<double>{1,2,3,4,5});
+    QCOMPARE(w.saveEditState(), state);
+    w.setBandCount(18);
+    QVERIFY(w.restoreEditState(state));
+    QCOMPARE(w.saveEditState(), state);
+    QCOMPARE(w.bandCount(), 5);
+    const auto restored = w.points().at(w.getIndexFromBandId(id));
+    QCOMPARE(restored.frequencyHz, 3333.123456789);
+    QCOMPARE(restored.gainDb, -1.23456789);
+    QCOMPARE(restored.q, 1.23456789);
+    QCOMPARE(restored.bandColor, color);
+    QCOMPARE(w.globalGainDb(), 0.123456789);
+    QVector<QByteArray> invalidStates;
+    QByteArray badVersion = state;
+    badVersion[5] = 2;
+    invalidStates.append(badVersion);
+    w.pointsMut()[2].bandId = w.points().at(0).bandId;
+    invalidStates.append(w.saveEditState());
+    QVERIFY(w.restoreEditState(state));
+    w.pointsMut()[2].q = std::numeric_limits<double>::quiet_NaN();
+    invalidStates.append(w.saveEditState());
+    QVERIFY(w.restoreEditState(state));
+    for (const QByteArray& invalid : invalidStates) {
+        QVERIFY(!w.restoreEditState(invalid));
+        QCOMPARE(w.saveEditState(), state);
+    }
+    for (const QByteArray corrupt : {state.left(state.size()-1), state + QByteArray("extra"), QByteArray("invalid")}) {
+        QVERIFY(!w.restoreEditState(corrupt));
+        QCOMPARE(w.saveEditState(), state);
+    }
 }
 
 QTEST_MAIN(TestParametricEqInteraction)
