@@ -4275,6 +4275,9 @@ nereus_add_test(tst_chrome_bar_items)
 # -- Phase 3M-3a-ii follow-up Batch 1: ParametricEqWidget skeleton --
 nereus_add_test(tst_parametric_eq_widget_skeleton)
 
+# Exact session-local transactions shared by the EQ and CFC editors.
+nereus_add_test(tst_eq_edit_history)
+
 # -- Phase 3M-3a-ii follow-up Batch 2: ParametricEqWidget axis math + ordering --
 nereus_add_test(tst_parametric_eq_widget_axis)
 
