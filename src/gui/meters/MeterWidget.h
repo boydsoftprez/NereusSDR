@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 
 // =================================================================
 // src/gui/meters/MeterWidget.h  (NereusSDR)
@@ -9,6 +10,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -62,6 +65,7 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+#include "MeterItem.h"
 #include <QWidget>
 #include <QHash>
 #include <QImage>
@@ -97,6 +101,25 @@ public:
     QVector<MeterItem*> items() const { return m_items; }
 
     void updateMeterValue(int bindingId, double value);
+    // MMIO remains an individual item's cached endpoint source.
+    void updateMmioValue(MeterItem* item, double value, const QString& unavailableReason = {});
+    void advanceMeters(qint64 monotonicMs);
+#ifdef NEREUS_BUILD_TESTS
+    quint64 readingInvalidationsForTest() const { return m_readingInvalidations; }
+#ifdef NEREUS_GPU_SPECTRUM
+    void clearReadingLayerDirtyFlagsForTest() { m_bgDirty = m_overlayStaticDirty = m_overlayDynamicDirty = false; }
+    bool backgroundDirtyForTest() const { return m_bgDirty; }
+    bool overlayStaticDirtyForTest() const { return m_overlayStaticDirty; }
+    bool overlayDynamicDirtyForTest() const { return m_overlayDynamicDirty; }
+#endif
+#endif
+    void resetForTxTransition(bool inTx);
+    // Source changes discard old samples before the new source is replayed.
+    void clearReadingCache();
+    int powerScale() const { return m_powerScale; }
+    void setUnitMode(MeterItem::MeterUnit unit);
+    MeterItem::MeterUnit unitMode() const;
+
 
     // iPhone app plan Task 39 (NereusSDR-native): the items bound to
     // `bindingId` cannot show a reading here (a remote window's Core does
@@ -167,6 +190,9 @@ public:
     void inferStackFromGeometry();
 
 signals:
+    // Emitted while derived members still exist; QWidget::destroyed may run
+    // later while a QPointer still appears live on some Qt backends.
+    void aboutToDestroy();
     // R-R3-21: an item was added (restore, a preset, Container settings
     // Apply), so MainWindow can give it the saved meter settings and the
     // active slice's state.
@@ -202,16 +228,15 @@ private:
     bool m_mox{false};
     int  m_displayGroup{0};
 
-    // Last value pushed per binding, for the fuzzy guard in
-    // updateMeterValue.  MeterPoller fires every 100 ms across N
-    // bindings × M target widgets; in steady RX a quiet signal walks
-    // by a fraction of a dB or not at all between ticks.  Skipping the
-    // item iteration + update() when the polled value matches the
-    // previous push within FP noise cuts the redundant repaints
-    // (which compose the entire MeterWidget into IOSurface on macOS).
-    // QHash for sparse binding-id keys; std::unordered_map would do
-    // but QHash matches the rest of the file.
+    // Raw latest values seed new items; delivery still occurs on each poll.
     QHash<int, double> m_lastBindingValue;
+    struct MmioReading { double value; QString reason; };
+    QHash<QString, MmioReading> m_lastMmioReading;
+    quint64 m_readingInvalidations{0};
+    void invalidateItemLayers(const MeterItem* item);
+    int m_powerScale{0};
+    std::optional<MeterItem::MeterUnit> m_unitMode;
+    void invalidateReadingLayers(bool staticLayers = false);
 
 #ifdef NEREUS_GPU_SPECTRUM
     bool m_rhiInitialized{false};

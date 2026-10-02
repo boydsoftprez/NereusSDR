@@ -1793,6 +1793,8 @@ set(GUI_SOURCES
     src/gui/containers/meter_property_editors/OtherButtonItemEditor.cpp
     src/gui/containers/meter_property_editors/VoiceRecordPlayItemEditor.cpp
     src/gui/meters/MeterWidget.cpp
+    src/gui/meters/MeterDynamics.cpp
+    src/gui/meters/MeterDynamics.h
     src/gui/meters/MeterItem.cpp
     src/gui/meters/ItemGroup.cpp
     src/gui/meters/MeterPoller.cpp

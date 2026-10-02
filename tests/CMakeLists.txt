@@ -561,6 +561,8 @@ nereus_add_test(tst_container_workspace_store)
 # R-R3-49: container title bar and filter passband use native hand cursors
 # (Qt 6.11.0 crashes drawing SizeAllCursor on macOS).
 nereus_add_test(tst_native_cursors EXTRA_LABELS gui)
+nereus_add_test(tst_meter_composite_dispatch)
+nereus_add_test(tst_meter_dynamics)
 nereus_add_test(tst_meter_item_bar)
 nereus_add_test(tst_reading_name)
 nereus_add_test(tst_meter_item_scale)

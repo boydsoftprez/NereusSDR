@@ -145,3 +145,106 @@ Native rendering, platform drag/GPU behavior, hardware and full-suite gates rema
 with later tasks/integration. This task does not restore composite faces, expose
 unavailable rows in the old dialog, or replace MainWindow/ContainerManager legacy
 writers; the document host and transactional editor tasks own that integration.
+
+
+## Task 3 — Composite samples, source replay and shared cadence (2026-10-02)
+
+Implemented in the isolated `codex/containers-and-objects` worktree from Task2
+revision `017ddf67e316f4cf2cf3cbc533fa3d1d2726bd79`. The primitive adapters and
+registry/raw legacy retention remain; no Core, model, wire or DSP change occurs.
+
+`MeterItem` now exposes binding sets, per-binding pushes, frame advancement,
+TX-transition reset and PA-scale hooks. `MeterWidget` caches raw samples to seed
+new items before repeated-input shortcuts, delivers equal samples for primitive
+smoothing/history, and invalidates only relevant changed items. Complete faces
+with static/dynamic pipelines preserve Background and OverlayStatic during
+reading/frame updates; Background-only dynamic items retain a fallback. A logical
+invalidation counter and GPU cache-flag seam verify this without claiming native
+QRhi rendering. Explicit per-item channel availability supports partial faces;
+a composite is veiled only if every channel is unavailable. Available primitive
+TX -400 readings retain their old semantics; explicit unavailability renders no
+reading and new source-clamped peak IDs can recognize absence safely.
+
+The six GUI-only additions preserve all old IDs: MicPeak=113, AlcPeak=114,
+CompPeak=115, EqPeak=116, LevelerPeak=117, CfcPeak=118. Their existing model
+transforms use -195 dB floors for Mic/ALC peaks and -30 dB for the other four.
+They use the shared TxChannel cached/lane API and existing thetisTxReading;
+independent injected raw peak/average values verify each mapping. Remote DTOs
+have no independent peak fields, so all six remain explicitly unavailable even
+at stage version3. Useful average/gain channels remain visible.
+
+MeterPoller caches RX by canonical JSON source context and binding, and shared
+TX/HW values within the owning poller/window. The GUI adapter supplies cached
+slice/channel data once per context/binding per existing frame, including with
+no default RxChannel. Source/setter changes, destroyed sources, active-slice
+changes and disconnects invalidate affected replay and publish absence; adapters
+are not called when a remote source/snapshot is absent. A scope guard advances
+every existing poll exactly once, including all early returns, using QElapsedTimer
+or an injected monotonic test source. No new timer/reader/subscription per face.
+
+Reconstruction replays MOX, units, PA scale, per-channel availability and current
+same-source raw samples. TX transitions evict all TX IDs100–118 (PA power and
+SWR included), preserving independent HW200–202. Until an actual subsequent PA
+callback arrives, a new face receives absence rather than a fabricated 0W/1:1.
+Primitive bars retain their current TX-off smoothing reset. Each complete face
+owns its source-calibrated minima/history reset. First-view replay seeds raw input;
+MeterDynamics smoothing still starts at the configured family minimum and follows
+the next scheduled update, separately from replay delivery.
+
+MeterDynamics ports MeterManager.cs21323–21458 at Thetis v2.10.3.15 with that
+source's verbatim header, inline comments and same-commit provenance. It preserves
+per-update rise/release recurrence, bounded smoothed history, ignore-sample policy
+and history extrema. Timestamp expiry removes old samples after missed GUI frames;
+missed frames do not synthesize readings or elapsed-frame samples. Peak hold is
+history maximum, with no fabricated independent decay. Configurable update/history/
+ignore values come from later faces; main's 100ms/default settings stay unchanged.
+
+The existing MMIO endpoint cache remains the source. Samples/replay are keyed by
+GUID+variable, with a separate identity-bearing `mmioReadingUpdated` GUI signal.
+Radio samples and radio availability never overwrite a bound MMIO item. Missing
+endpoints, absent/non-numeric variables and non-finite values push absence with an
+item-specific reason and clear stale display/history. Replay checks the current
+existing endpoint cache to prevent stale reconstruction between shared frames.
+The test seam supplies an in-memory MmioEndpoint; no endpoint is registered, worker
+or transport opened, or external write performed. No extra preview poll target.
+
+A destruction regression matching MainWindow's raw `QObject::destroyed` callback
+reproduced SIGSEGV. LLDB proved QWidget can emit destroyed after derived members
+are gone while its QPointer still appears live. MeterWidget now emits
+aboutToDestroy before its members die; the poller captures/removes the target
+there and subsequent destroyed callbacks use identity only. No bypass of the
+existing MainWindow lifecycle is required.
+
+Task4/6/8 handoff: complete faces implement readingBindings/pushBindingValue,
+advanceMeter, resetForTxTransition, setPowerScale; inspect per-channel
+bindingUnavailableReason or override its setter. Use OverlayDynamic/Geometry for
+moving parts with participatesIn/paintForLayer. Task6 should drive poller
+setUnitMode/rescalePowerMeters as shared settings (they survive zero live targets),
+and install a cached-source GUI adapter via setRxReadingSource/setTargetContext.
+Legacy per-widget settings are captured while targets are live. Read-only previews
+call replayReadings, listen to readingUpdated+frameAdvanced and
+bindingAvailabilityChanged, and use mmioReadingUpdated GUID+variable for MMIO;
+none of these registers a target or creates a source subscription.
+
+Evidence: `.crew/2026-10-02-containers-and-objects-plan/task-3-*.log`.
+Missing-interface RED (`task-3-red.log`) exit1; initial compile failure from two
+incorrect RadioStatus getter names (`task-3-build-initial.log`) exit1, corrected to
+existing getters. `task-3-tests-final.log` exit8 reproduces the lifetime SIGSEGV;
+`task-3-lifetime-backtrace.log` contains its LLDB stack. `task-3-tests-complete.log`
+exit8 records a test-fixture mistake: MmioEndpoint defaults to a null GUID; the
+fixture now assigns an explicit UUID. Subsequent final acceptance evidence is
+recorded in the Task3 report. Test-registration and diff-whitespace gates run too.
+
+Native CPU/GPU captures, platform interaction, performance benchmark, hardware
+and full-suite integration remain owned by later tasks/controller. These tests
+verify contracts/dynamics, not whole-face rendering or cross-platform parity.
+
+Final Task3 build: `task-3-build-handoff.log` exit0 rebuilt all13 relevant targets.
+That run's PA assertion failed because the fixture had omitted MainWindow's
+continuing `setRadioStatus(&model.radioStatus())` source connection
+(`task-3-tests-handoff.log`, exit8). The assertion remains50W, with production
+source wiring restored. `task-3-build-delivery.log` exit0 rebuilds the affected
+test; `task-3-tests-delivery.log` passes13/13, exit0, including both new targets,
+eight required existing meter/TX regressions, R1, and the affected Task2 importer/
+preset regressions. `task-3-registration-final.log` exit0; `git diff --check` exit0.
+Normal signed/DCO commit hooks and signature evidence are in the Task3 report.

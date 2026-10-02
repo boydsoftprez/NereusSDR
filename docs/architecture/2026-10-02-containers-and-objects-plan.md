@@ -242,19 +242,19 @@ Expose `replayReadings(MeterWidget*, const QJsonObject&) const -> void` and sign
 `readingUpdated(const QJsonObject& context, int bindingId, double value)` for
 read-only GUI previews; these do not add a Core/DSP subscription or poll target.
 
-- [ ] Write a two-channel test face receiving distinct peak/average bindings;
+- [x] Write a two-channel test face receiving distinct peak/average bindings;
   assert both channels dispatch, unchanged latest values seed a newly added
   face, unavailable bindings propagate, and replacing a target does not double
   target count. Two fake slice contexts with distinct readings never cross-feed;
   changing source invalidates that target's stale replay. An absent slice/source
   yields no reading. Keep association local to the correct window/session.
-- [ ] Write deterministic timestamp tests for rise/release, history expiry and
+- [x] Write deterministic timestamp tests for rise/release, history expiry and
   peak hold under existing supported intervals; repeated equal values still
   advance time. TX reset excludes hardware telemetry. Missing reading uses
   current no-reading semantics, never a fabricated valid zero sample.
-- [ ] Build/run both new tests; expect missing contracts/current stale replay
+- [x] Build/run both new tests; expect missing contracts/current stale replay
   behavior to fail.
-- [ ] Implement fan-out and replay before unchanged-value shortcuts; replay
+- [x] Implement fan-out and replay before unchanged-value shortcuts; replay
   availability, MOX, units and PA scale when constructing views. Emit cadence
   after the existing poll paths, using a monotonic clock/test seam. Recover
   `pushBindingValue(int,double)` selectively; remove primitive-only reset/scale
@@ -263,11 +263,11 @@ read-only GUI previews; these do not add a Core/DSP subscription or poll target.
   Cache latest readings in the poller by context as well as in MeterWidget;
   `addTarget` replays cached values immediately. Source changes/disconnects clear
   affected cache entries and advertise no reading before another view is seeded.
-- [ ] Build/run new targets plus `tst_meter_item_bar`, `tst_meter_item_no_reading`,
+- [x] Build/run new targets plus `tst_meter_item_bar`, `tst_meter_item_no_reading`,
   `tst_meter_poller_tx_bindings`, `tst_remote_meter_poller`,
   `tst_multimeter_timing`, `tst_multimeter_unit_conversion`. Expected: all pass;
   verify local/remote version-gated bindings are still unavailable as appropriate.
-- [ ] Commit: `fix: fan out and replay composite meter readings`.
+- [x] Commit: `fix: fan out and replay composite meter readings`.
 
 ### Task 4: Mic/ALC complete faces with reference motion
 
