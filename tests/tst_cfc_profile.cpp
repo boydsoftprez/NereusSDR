@@ -29,6 +29,26 @@ static CfcProfile profileForCount(int count)
 class TstCfcProfile : public QObject {
     Q_OBJECT
 private slots:
+    void interiorEndpointsFallBackWithoutOverwrite()
+    {
+        CfcProfile p = profileForCount(5);
+        p.compression.frequenciesHz[0] = p.postEq.frequenciesHz[0] = 20;
+        QVERIFY(!isValidCfcProfile(p));
+        const auto good = profileForCount(5);
+        QStringList parts = ParaEqEnvelope::decode(encodeCfcProfile(good))->split("<SEP>");
+        QJsonObject root = QJsonDocument::fromJson(parts[0].toUtf8()).object();
+        QJsonArray points = root["Points"].toArray();
+        QJsonObject first = points[0].toObject();
+        first["FrequencyHz"] = 20;
+        points[0] = first;
+        root["Points"] = points;
+        parts[0] = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+        const QString blob = ParaEqEnvelope::encode(parts.join("<SEP>"));
+        TransmitModel model;
+        model.setCfcParaEqData(blob);
+        QCOMPARE(model.effectiveCfcProfile().compression.frequenciesHz.size(), 10);
+        QCOMPARE(model.cfcParaEqData(), blob);
+    }
     void thetisPascalCaseLoads()
     {
         const CfcProfile expected = profileForCount(5);

@@ -15,6 +15,26 @@ private slots:
     void resetDropsPendingAndHistory();
     void historyRetainsExactBytes();
     void boundedHistory();
+    void retainedStatesFollowBoundedBranch()
+    {
+        EqEditHistory history;
+        history.reset("0");
+        for (int i = 1; i <= 101; ++i) { history.commitEdit(QByteArray::number(i)); }
+        const auto retained = history.retainedStates();
+        QCOMPARE(retained.size(), 101);
+        QVERIFY(!retained.contains("0"));
+        QVERIFY(retained.contains("1"));
+        history.undo(); history.undo();
+        history.commitEdit("branch");
+        const auto branched = history.retainedStates();
+        QVERIFY(branched.contains("1"));
+        QVERIFY(branched.contains("99"));
+        QVERIFY(branched.contains("branch"));
+        QVERIFY(!branched.contains("100"));
+        QVERIFY(!branched.contains("101"));
+        history.reset("new-profile");
+        QCOMPARE(history.retainedStates(), QSet<QByteArray>{"new-profile"});
+    }
     void cancelLeavesCommittedState();
     void availabilityOnlyEmitsOnChange();
 };

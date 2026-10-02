@@ -53,7 +53,7 @@ private slots:
         mgr.setMacAddress(kMacA);
         mgr.load();
         CfcProfile p;
-        p.compression.frequencyMaxHz = p.postEq.frequencyMaxHz = 20000;
+        p.compression.frequencyMaxHz = p.postEq.frequencyMaxHz = 17000;
         p.compression.globalGainDb = 3.54;
         p.postEq.globalGainDb = -2.54;
         p.compression.useQ = p.postEq.useQ = true;

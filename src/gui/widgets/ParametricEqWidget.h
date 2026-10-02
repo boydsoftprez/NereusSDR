@@ -146,6 +146,9 @@ public:
         QVector<EqPoint>   points;        // FrequencyHz / GainDb / Q only -- ignore bandId/color
     };
 
+    // Exact authoritative editor loading; saved JSON precision is unchanged.
+    bool setEditorCurveState(const EqJsonState& state);
+
     explicit ParametricEqWidget(QWidget* parent = nullptr);
     ~ParametricEqWidget() override;
 

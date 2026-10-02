@@ -23,6 +23,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Native matched editor and paired typed-profile/session
+//                 history by J.J. Boyd (KG4VCF), with OpenAI Codex.
 //   2026-04-30 — Phase 3M-3a-ii Batch 6 (Task A): created by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.  Modeless lazy-singleton
@@ -87,6 +89,8 @@
 #include <QDialog>
 #include <QPointer>
 #include <QShowEvent>
+#include <QHash>
+#include "core/CfcProfile.h"
 
 class QButtonGroup;
 class QCheckBox;
@@ -96,64 +100,21 @@ class QPushButton;
 class QRadioButton;
 class QSpinBox;
 class QTimer;
+class QSlider;
+class QLabel;
+class QHBoxLayout;
+class QAbstractSpinBox;
 
 namespace NereusSDR {
 
 class ParametricEqWidget;
+class EqEditHistory;
 class TransmitModel;
 class TxChannel;
 
-// TxCfcDialog — modeless CFC editor with two ParametricEqWidget instances.
-//
-// Layout (1:1 port of Thetis frmCFCConfig.Designer.cs [v2.10.3.13]):
-//
-//   ┌── Top edit row (selected-band controls) ──────────────────────┐
-//   │ # [n]   f [Hz]   Pre-Comp [dB]   Comp [dB]   dB   Q [n.nn]    │
-//   ├──────────────────────┬───── 5-band                            │
-//   │                      │       10-band                          │
-//   │  ucCFC_comp          │       18-band                          │
-//   │  (compression        │                                        │
-//   │   curve + bar chart) │       Low  [____ Hz]                   │
-//   │                      │       High [____ Hz]                   │
-//   │                      │                                        │
-//   │                      │       [x] Use Q Factors                │
-//   │                      │       [ ] Live Update                  │
-//   │                      │       [ ] Log scale                    │
-//   │                      │                                        │
-//   │                      │       [Reset Comp]                     │
-//   ├── Middle edit row ───────────────────────────────────────────┤
-//   │ Post-EQ [dB]   Gain [dB]   dB   Q [n.nn]                      │
-//   ├──────────────────────┬─────────                                │
-//   │                      │       [Reset EQ]                       │
-//   │  ucCFC_eq            │                                        │
-//   │  (post-EQ curve)     │                                        │
-//   │                      │                                        │
-//   │                      │              OG CFC Guide              │
-//   │                      │                  by W1AEX              │
-//   └──────────────────────┴────────────────────────────────────────┘
-//
-// Cross-sync (frmCFCConfig.cs:218-306 [v2.10.3.13]):
-//   - Selecting a band on either widget selects the same bandId on the other.
-//   - Editing a band's frequency on either widget updates the same bandId
-//     freq on the other widget (frequency is a shared per-band property).
-//   - Q factors on the comp curve and the eq curve are independent.
-//
-// Live update gating (frmCFCConfig.cs:206-216 + 257-267 [v2.10.3.13]):
-//   - When NOT dragging OR Live Update checkbox is checked → push values
-//     through TransmitModel to TxChannel (WDSP applies immediately).
-//   - When dragging AND Live Update is OFF → just update the spinbox text;
-//     defer the WDSP push to mouse-release (PointsChanged with isDragging=false).
-//
-// Bar chart (50ms QTimer + Task 7 wrapper):
-//   - Timer started in showEvent, stopped in hideEvent.
-//   - Each tick: TxChannel::getCfcDisplayCompression(bins, 1025).
-//   - Slice bins[startIdx..endIdx] using bin-to-Hz mapping
-//     (binsPerHz = 1025 / 48000) over [FrequencyMinHz..FrequencyMaxHz].
-//   - Push slice to ucCFC_comp.drawBarChartData().
-//
-// Hide-on-close (frmCFCConfig.cs:477-482 [v2.10.3.13]):
-//   - closeEvent overridden to hide() instead of destroying.  TxApplet
-//     keeps the dialog instance alive for fast re-open.
+// Modeless native CFC editor. Both graphs share frequency/selection and one
+// exact session history; complete typed profiles route through TransmitModel.
+// Measured compression bars retain the existing 50 ms show/hide lifecycle.
 class TxCfcDialog : public QDialog {
     Q_OBJECT
 
@@ -173,28 +134,28 @@ public:
     ParametricEqWidget* compWidget()    const { return m_compWidget; }
     ParametricEqWidget* postEqWidget()  const { return m_postEqWidget; }
 
-    // Top edit row (above comp widget).
+    // Selected-band inputs below both graphs; pre-compression is global.
     QSpinBox*       selectedBandSpin() const { return m_selectedBandSpin; }
     QSpinBox*       freqSpin()         const { return m_freqSpin; }
     QDoubleSpinBox* precompSpin()      const { return m_precompSpin; }
     QDoubleSpinBox* compSpin()         const { return m_compSpin; }
     QDoubleSpinBox* compQSpin()        const { return m_compQSpin; }
 
-    // Middle edit row (between widgets).
+    // Independent post-EQ band inputs and global gain.
     QDoubleSpinBox* postEqGainSpin()   const { return m_postEqGainSpin; }
     QDoubleSpinBox* gainSpin()         const { return m_gainSpin; }
     QDoubleSpinBox* eqQSpin()          const { return m_eqQSpin; }
 
-    // Right column band-count radios.
+    // Visible band-count choices.
     QRadioButton*   bands5Radio()      const { return m_bands5Radio; }
     QRadioButton*   bands10Radio()     const { return m_bands10Radio; }
     QRadioButton*   bands18Radio()     const { return m_bands18Radio; }
 
-    // Right column freq-range spinboxes.
+    // Advanced curve-range inputs.
     QSpinBox*       lowSpin()          const { return m_lowSpin; }
     QSpinBox*       highSpin()         const { return m_highSpin; }
 
-    // Right column checkboxes.
+    // Shared Q switch and Advanced presentation/live-update switches.
     QCheckBox*      useQFactorsChk()   const { return m_useQFactorsChk; }
     QCheckBox*      liveUpdateChk()    const { return m_liveUpdateChk; }
     QCheckBox*      logScaleChk()      const { return m_logScaleChk; }
@@ -216,6 +177,8 @@ protected:
     void showEvent (QShowEvent*  event) override;
     void hideEvent (QHideEvent*  event) override;
     void closeEvent(QCloseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 
 private slots:
     // ── Band-count radios ────────────────────────────────────────────────
@@ -227,7 +190,7 @@ private slots:
     void onLowFreqChanged(int hz);
     void onHighFreqChanged(int hz);
 
-    // ── Top edit row (selected-band) ─────────────────────────────────────
+    // ── Compression / shared selected-band inputs (selected-band) ─────────────────────────────────────
     // From Thetis frmCFCConfig.cs:142-204 [v2.10.3.13].
     void onSelectedBandChanged(int oneBased);
     void onFreqSpinChanged(int hz);
@@ -235,7 +198,7 @@ private slots:
     void onCompSpinChanged(double db);
     void onCompQSpinChanged(double q);
 
-    // ── Middle edit row ──────────────────────────────────────────────────
+    // ── Post-EQ inputs ──────────────────────────────────────────────────
     // From Thetis frmCFCConfig.cs:169-194 [v2.10.3.13].
     void onPostEqGainSpinChanged(double db);
     void onGainSpinChanged(double db);
@@ -245,28 +208,6 @@ private slots:
     // From Thetis frmCFCConfig.cs:484-490 + 603-607 [v2.10.3.13].
     void onUseQFactorsToggled(bool on);
     void onLogScaleToggled(bool on);
-
-    // ── Widget event handlers (cross-sync + WDSP push gating) ────────────
-    // From Thetis frmCFCConfig.cs:206-306 [v2.10.3.13].
-    void onCompPointsChanged(bool isDragging);
-    void onCompGlobalGainChanged(bool isDragging);
-    void onCompPointDataChanged(int index, int bandId,
-                                 double frequencyHz, double gainDb, double q,
-                                 bool isDragging);
-    void onCompPointSelected(int index, int bandId,
-                              double frequencyHz, double gainDb, double q);
-    void onCompPointUnselected(int index, int bandId,
-                                double frequencyHz, double gainDb, double q);
-
-    void onEqPointsChanged(bool isDragging);
-    void onEqGlobalGainChanged(bool isDragging);
-    void onEqPointDataChanged(int index, int bandId,
-                               double frequencyHz, double gainDb, double q,
-                               bool isDragging);
-    void onEqPointSelected(int index, int bandId,
-                            double frequencyHz, double gainDb, double q);
-    void onEqPointUnselected(int index, int bandId,
-                              double frequencyHz, double gainDb, double q);
 
     // ── Reset buttons ────────────────────────────────────────────────────
     // From Thetis frmCFCConfig.cs:451-463 [v2.10.3.13].
@@ -288,10 +229,28 @@ private:
     void buildUi();
     void wireSignals();
     void seedWidgetsFromTransmitModel();
-    void seedTransmitModelFromWidgets();
+
     void updateSelectedRowEnable();
     void updateEditRowFromSelection(int index);
     void pushCfcProfileToModel();
+
+    CfcProfile captureProfile() const;
+    void restoreProfile(const CfcProfile& profile);
+    QByteArray captureEditState() const;
+    void restoreEditState(const QByteArray& state);
+    void rebaseEditHistory();
+    void beginEdit();
+    void finishEdit();
+    void changed(bool dragging = false);
+    void syncPairedFrequencies(ParametricEqWidget* source, ParametricEqWidget* target);
+    void refreshControls();
+    void rebuildBandSelectors();
+    void applyBandCount();
+    void cancelBandCount();
+    void resetCurve(ParametricEqWidget* widget);
+    void editSelectedPoint(ParametricEqWidget* widget, double frequency, double gain, double q);
+    void undoEdit();
+    void redoEdit();
 
     // Selected-index helpers — Thetis-style, returns the index across both
     // widgets (frmCFCConfig.cs:307-315 [v2.10.3.13]).
@@ -305,23 +264,49 @@ private:
     bool m_ignoreUnselected = false;
     bool m_updatingFromModel = false;
 
+    EqEditHistory* m_history = nullptr;
+    QHash<QByteArray, int> m_selectionStates;
+    QByteArray m_committedEditState;
+    bool m_liveGestureWrote = false;
+    bool m_compUseQ = false;
+    bool m_eqUseQ = false;
+    bool m_gestureActive = false;
+    bool m_sliderActive = false;
+    QPointer<QAbstractSpinBox> m_numericEditor;
+    QPushButton* m_undoBtn = nullptr;
+    QPushButton* m_redoBtn = nullptr;
+    QPushButton* m_applyBandsBtn = nullptr;
+    QPushButton* m_cancelBandsBtn = nullptr;
+    QWidget* m_countNotice = nullptr;
+    int m_pendingBandCount = 0;
+    QSlider* m_compQSlider = nullptr;
+    QSlider* m_eqQSlider = nullptr;
+    QLabel* m_qGuidance = nullptr;
+    QLabel* m_selectedSummary = nullptr;
+    QLabel* m_invalidCurveGuidance = nullptr;
+    bool m_curveAvailable = true;
+    CfcProfile m_invalidLegacyProfile;
+    QString m_invalidLegacyBlob;
+    QPointer<QSlider> m_cancelledSlider;
+    QHBoxLayout* m_bandSelectors = nullptr;
+
     // ── ParametricEqWidget instances ─────────────────────────────────────
     ParametricEqWidget* m_compWidget   = nullptr;  // ucCFC_comp
     ParametricEqWidget* m_postEqWidget = nullptr;  // ucCFC_eq
 
-    // ── Top edit row ─────────────────────────────────────────────────────
+    // ── Compression / shared selected-band inputs ─────────────────────────────────────────────────────
     QSpinBox*       m_selectedBandSpin = nullptr;
     QSpinBox*       m_freqSpin         = nullptr;
     QDoubleSpinBox* m_precompSpin      = nullptr;
     QDoubleSpinBox* m_compSpin         = nullptr;
     QDoubleSpinBox* m_compQSpin        = nullptr;
 
-    // ── Middle edit row ──────────────────────────────────────────────────
+    // ── Post-EQ inputs ──────────────────────────────────────────────────
     QDoubleSpinBox* m_postEqGainSpin   = nullptr;
     QDoubleSpinBox* m_gainSpin         = nullptr;
     QDoubleSpinBox* m_eqQSpin          = nullptr;
 
-    // ── Right column ─────────────────────────────────────────────────────
+    // ── Count / Advanced controls ─────────────────────────────────────────────────────
     QButtonGroup*   m_bandCountGroup   = nullptr;
     QRadioButton*   m_bands5Radio      = nullptr;
     QRadioButton*   m_bands10Radio     = nullptr;

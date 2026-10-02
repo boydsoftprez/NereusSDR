@@ -76,6 +76,13 @@ bool EqEditHistory::canRedo() const {
     return m_cursor < m_edits.size();
 }
 
+QSet<QByteArray> EqEditHistory::retainedStates() const {
+    QSet<QByteArray> states{m_current};
+    if (m_pendingBefore) { states.insert(*m_pendingBefore); }
+    for (const auto& edit : m_edits) { states.insert(edit.before); states.insert(edit.after); }
+    return states;
+}
+
 void EqEditHistory::emitAvailabilityChange(bool oldUndo, bool oldRedo) {
     if (oldUndo != canUndo() || oldRedo != canRedo()) {
         emit availabilityChanged(canUndo(), canRedo());

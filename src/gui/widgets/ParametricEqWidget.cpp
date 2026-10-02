@@ -189,6 +189,24 @@ void ParametricEqWidget::drawWidthHandles(QPainter& g, const QRect& plot) {
     g.restore();
 }
 
+// NereusSDR-original exact editor loading, following the endpoint contract in
+// Thetis ucParametricEq.cs:1542-1565,3280-3281 [v2.10.3.15]. Legacy JSON stays unchanged.
+bool ParametricEqWidget::setEditorCurveState(const EqJsonState& curve) {
+    QByteArray state;
+    QDataStream stream(&state, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << quint32(0x4e455145) << quint16(1) << qint32(curve.bandCount)
+           << curve.frequencyMinHz << curve.frequencyMaxHz << m_dbMin << m_dbMax
+           << m_qMin << m_qMax << curve.globalGainDb << curve.parametricEq << m_logScale
+           << m_minPointSpacingHz << m_allowPointReorder << quint32(curve.points.size());
+    for (int i = 0; i < curve.points.size(); ++i) {
+        const EqPoint& point = curve.points[i];
+        stream << qint32(point.bandId > 0 ? point.bandId : i + 1) << point.bandColor
+               << point.frequencyHz << point.gainDb << point.q;
+    }
+    return restoreEditState(state);
+}
+
 QByteArray ParametricEqWidget::saveEditState() const {
     QByteArray state;
     QDataStream stream(&state, QIODevice::WriteOnly);
@@ -1176,6 +1194,10 @@ void ParametricEqWidget::drawBandShading(QPainter& g, const QRect& plot) {
                                  m_bandShadeColor.blue(),
                                  m_bandShadeAlpha);
             }
+            if (m_editorPresentationEnabled) {
+                const QColor accent(Style::kAccent);
+                fillCol = QColor(accent.red(), accent.green(), accent.blue(), m_bandShadeAlpha);
+            }
 
             QPolygonF poly;
             poly.reserve(samples + 2);
@@ -1271,9 +1293,16 @@ void ParametricEqWidget::drawBandShading(QPainter& g, const QRect& plot) {
             c0 = m_bandShadeColor;
             c1 = m_bandShadeColor;
         }
+        if (m_editorPresentationEnabled) {
+            c0 = QColor(Style::kAccent);
+            c1 = c0;
+        }
 
-        QColor a0(c0.red(), c0.green(), c0.blue(), m_bandShadeAlpha);
-        QColor a1(c1.red(), c1.green(), c1.blue(), m_bandShadeAlpha);
+        const int alpha = m_editorPresentationEnabled
+                              && (m_selectedIndex < 0 || (i != m_selectedIndex && i != m_selectedIndex + 1))
+                              ? 0 : m_bandShadeAlpha;
+        QColor a0(c0.red(), c0.green(), c0.blue(), alpha);
+        QColor a1(c1.red(), c1.green(), c1.blue(), alpha);
 
         QLinearGradient grad(QPointF(x0, 0.0), QPointF(x1, 0.0));
         grad.setColorAt(0.0, a0);
@@ -1358,23 +1387,25 @@ void ParametricEqWidget::drawPoints(QPainter& g, const QRect& plot) {
 
         bool selected = (i == m_selectedIndex);
 
-        QColor dotCol = getPointDisplayColor(i);
-
         float r = float(m_editorPresentationEnabled ? 10 : m_pointRadius);
         if (selected) r = r + 1.0f;
-
-        g.setBrush(QBrush(dotCol));
-        g.setPen(Qt::NoPen);
-        g.drawEllipse(QPointF(x, y), r, r);
-
-        QPen outline(QColor(35, 35, 35), 1.0);
-        g.setPen(outline);
-        g.setBrush(Qt::NoBrush);
-        g.drawEllipse(QPointF(x, y), r, r);
-
         if (m_editorPresentationEnabled) {
-            g.setPen(QColor(Style::kPanelBg));
+            // Opt-in native styling leaves the stored band palette untouched.
+            g.setPen(QPen(QColor(selected ? Style::kAccent : Style::kTextSecondary), 1.5));
+            g.setBrush(selected ? QBrush(QColor(Style::kAccent)) : QBrush(Qt::NoBrush));
+            g.drawEllipse(QPointF(x, y), r, r);
+            g.setPen(QColor(selected ? Style::kPanelBg : Style::kTextPrimary));
             g.drawText(QRectF(x-r, y-r, 2*r, 2*r), Qt::AlignCenter, QString::number(p.bandId));
+        } else {
+            QColor dotCol = getPointDisplayColor(i);
+            g.setBrush(QBrush(dotCol));
+            g.setPen(Qt::NoPen);
+            g.drawEllipse(QPointF(x, y), r, r);
+
+            QPen outline(QColor(35, 35, 35), 1.0);
+            g.setPen(outline);
+            g.setBrush(Qt::NoBrush);
+            g.drawEllipse(QPointF(x, y), r, r);
         }
 
         if (m_showDotReadings && m_draggingPoint && i == m_dragIndex) {

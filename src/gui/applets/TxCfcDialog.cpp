@@ -20,6 +20,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Native matched editor and paired typed-profile/session
+//                 history by J.J. Boyd (KG4VCF), with OpenAI Codex.
 //   2026-04-30 — Phase 3M-3a-ii Batch 6 (Task A): created by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -84,8 +86,11 @@
 #include "core/TxChannel.h"
 #include "gui/StyleConstants.h"
 #include "gui/widgets/ParametricEqWidget.h"
+#include "gui/widgets/EqEditHistory.h"
 #include "models/TransmitModel.h"
 
+#include <QApplication>
+#include <QScreen>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -105,9 +110,21 @@
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QVector>
+#include <QDataStream>
+#include <QIODevice>
+#include <QScrollArea>
+#include <QSlider>
+#include <QAbstractSpinBox>
+#include <QLineEdit>
+#include <QKeyEvent>
+#include <QScopedValueRollback>
+#include <QScopeGuard>
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
+#include <numeric>
+#include <memory>
 
 namespace NereusSDR {
 
@@ -132,16 +149,6 @@ constexpr double kGainDbMax           =  24.0;
 // nudCFC_q / nudCFC_cq Maximum=20, Minimum=0.2 (line 597-617).
 constexpr double kQMin                = 0.2;
 constexpr double kQMax                = 20.0;
-// nudCFC_selected_band Maximum=10 default, Minimum=1, Value=10 (line 360-385).
-constexpr int    kSelectedBandMin     = 1;
-constexpr int    kSelectedBandDefault = 10;
-
-// Default min/max freqs match the widget defaults (frmCFCConfig.cs:89-99 calls
-// ucCFC_comp.GetDefaults(...,10) which returns minHz=0, maxHz=4000 per
-// ucParametricEq.cs:1107-1131 [v2.10.3.13]).
-constexpr double kDefaultMinHz        = 0.0;
-constexpr double kDefaultMaxHz        = 4000.0;
-
 // frmCFCConfig.cs:122-138 [v2.10.3.13] — Low/High spinboxes enforce a
 // minimum 1 kHz spread when the user types a value that would invert them.
 constexpr int    kMinFreqSpreadHz     = 1000;
@@ -187,10 +194,11 @@ TxCfcDialog::TxCfcDialog(TransmitModel* tm,
                   + QString::fromLatin1(NereusSDR::Style::kRadioButtonStyle)
                   + QString::fromLatin1(NereusSDR::Style::kButtonStyle));
 
+    m_history = new EqEditHistory(this);
     buildUi();
     wireSignals();
     seedWidgetsFromTransmitModel();
-    syncFromModel();
+    rebaseEditHistory();
     updateSelectedRowEnable();
 
     // Bar chart timer.  Started in showEvent, stopped in hideEvent.
@@ -207,1118 +215,917 @@ void TxCfcDialog::setTxChannel(TxChannel* tx)
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// UI build-out — 1:1 with frmCFCConfig.Designer.cs [v2.10.3.13].
-//
-// Hybrid layout choice:
-//   Thetis frmCFCConfig is absolutely positioned (Forms Designer). For
-//   the Qt port we use nested QHBox/QVBox/QGrid layouts so the dialog
-//   reflows under different system fonts / locales.  Group-box headings
-//   replace the loose label-and-spinbox clusters Thetis uses; the
-//   intent ("here are the per-band edits", "here are the global
-//   settings") is preserved.  Within each layout the visual order
-//   (Selected band → f → Pre-Comp → Comp → Q on the top edit row, etc.)
-//   matches Thetis's left-to-right tab order.
+// Native approved editor: matched plots, shared band selector and controls,
+// independent width/amount inputs, separate globals and collapsible Advanced.
+// Retains the Thetis parameter ranges, editing semantics and measured overlay.
 // ─────────────────────────────────────────────────────────────────────
 
 void TxCfcDialog::buildUi()
 {
-    auto* outer = new QHBoxLayout(this);
-    outer->setContentsMargins(8, 8, 8, 8);
-    outer->setSpacing(8);
-
-    // ── Left column: edit rows + two parametric EQ widgets ───────────────
-    auto* leftCol = new QVBoxLayout;
-    leftCol->setSpacing(6);
-
-    // ── Top edit row (above ucCFC_comp) ──────────────────────────────────
-    // From Thetis frmCFCConfig.Designer.cs:30-65 [v2.10.3.13] — labels
-    // labelTS667 ("#"), labelTS664 ("f"), labelTS662 ("Pre-Comp"),
-    // labelTS672 ("Comp"), labelTS673 ("dB"), labelTS1 ("Q").
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(6);
-
-        row->addWidget(new QLabel(tr("#"), this));
-        m_selectedBandSpin = new QSpinBox(this);
-        m_selectedBandSpin->setObjectName(QStringLiteral("TxCfcSelectedBandSpin"));
-        m_selectedBandSpin->setRange(kSelectedBandMin, kSelectedBandDefault);
-        m_selectedBandSpin->setValue(kSelectedBandDefault);
-        m_selectedBandSpin->setReadOnly(true);  // Designer.cs:377
-        m_selectedBandSpin->setToolTip(tr(
-            "Currently selected band number (read-only — click a point on "
-            "either curve to change)."));
-        row->addWidget(m_selectedBandSpin);
-
-        row->addWidget(new QLabel(tr("f"), this));
-        m_freqSpin = new QSpinBox(this);
-        m_freqSpin->setObjectName(QStringLiteral("TxCfcFreqSpin"));
-        m_freqSpin->setRange(kFreqHzMin, kFreqHzMax);
-        m_freqSpin->setSuffix(QStringLiteral(" Hz"));
-        m_freqSpin->setToolTip(tr(
-            "Center frequency of the selected band (0–20000 Hz)."));
-        row->addWidget(m_freqSpin);
-
-        row->addWidget(new QLabel(tr("Pre-Comp"), this));
-        m_precompSpin = new QDoubleSpinBox(this);
-        m_precompSpin->setObjectName(QStringLiteral("TxCfcPrecompSpin"));
-        m_precompSpin->setDecimals(1);  // Designer.cs:401
-        m_precompSpin->setSingleStep(0.1);
-        m_precompSpin->setRange(kPrecompDbMin, kPrecompDbMax);
-        m_precompSpin->setSuffix(QStringLiteral(" dB"));
-        m_precompSpin->setToolTip(tr(
-            "Global pre-compression gain (0–16 dB) applied before "
-            "per-band compression."));
-        row->addWidget(m_precompSpin);
-
-        row->addWidget(new QLabel(tr("Comp"), this));
-        m_compSpin = new QDoubleSpinBox(this);
-        m_compSpin->setObjectName(QStringLiteral("TxCfcCompSpin"));
-        m_compSpin->setDecimals(1);  // Designer.cs:210
-        m_compSpin->setSingleStep(0.1);
-        m_compSpin->setRange(kCompDbMin, kCompDbMax);
-        m_compSpin->setSuffix(QStringLiteral(" dB"));
-        m_compSpin->setToolTip(tr(
-            "Compression amount (0–16 dB) for the selected band."));
-        row->addWidget(m_compSpin);
-
-        row->addWidget(new QLabel(tr("Q"), this));
-        m_compQSpin = new QDoubleSpinBox(this);
-        m_compQSpin->setObjectName(QStringLiteral("TxCfcCompQSpin"));
-        m_compQSpin->setDecimals(2);  // Designer.cs:114
-        m_compQSpin->setSingleStep(0.01);
-        m_compQSpin->setRange(kQMin, kQMax);
-        m_compQSpin->setToolTip(tr(
-            "Q factor for the selected band's compression curve."));
-        row->addWidget(m_compQSpin);
-
-        row->addStretch(1);
-        leftCol->addLayout(row);
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(10, 10, 10, 10);
+    outer->setSpacing(6);
+    auto button = [this](const QString& title, const char* name) {
+        auto* result = new QPushButton(title, this);
+        result->setObjectName(QString::fromLatin1(name));
+        result->setAutoDefault(false);
+        return result;
+    };
+    auto* title = new QLabel(tr("CFC compressor · Compression and tone shaping"), this);
+    outer->addWidget(title);
+    auto* toolbar = new QHBoxLayout;
+    toolbar->addWidget(new QLabel(tr("Bands"), this));
+    m_bandCountGroup = new QButtonGroup(this);
+    m_bands5Radio = new QRadioButton(tr("5"), this);
+    m_bands10Radio = new QRadioButton(tr("10"), this);
+    m_bands18Radio = new QRadioButton(tr("18"), this);
+    for (auto* radio : {m_bands5Radio, m_bands10Radio, m_bands18Radio}) {
+        const int count = radio == m_bands5Radio ? 5 : radio == m_bands10Radio ? 10 : 18;
+        radio->setAccessibleName(tr("%1 CFC bands").arg(count));
+        m_bandCountGroup->addButton(radio, count);
+        toolbar->addWidget(radio);
     }
+    m_bands10Radio->setChecked(true);
+    toolbar->addStretch();
+    m_undoBtn = button(tr("Undo"), "TxCfcUndo");
+    m_redoBtn = button(tr("Redo"), "TxCfcRedo");
+    toolbar->addWidget(m_undoBtn);
+    toolbar->addWidget(m_redoBtn);
+    outer->addLayout(toolbar);
+    m_invalidCurveGuidance = new QLabel(tr("The stored legacy frequencies do not span 1000 Hz. Choose another band count and Apply to reset both curves."), this);
+    m_invalidCurveGuidance->setObjectName(QStringLiteral("TxCfcInvalidCurve"));
+    m_invalidCurveGuidance->setWordWrap(true);
+    outer->addWidget(m_invalidCurveGuidance);
+    m_invalidCurveGuidance->hide();
+    m_countNotice = new QWidget(this);
+    auto* notice = new QHBoxLayout(m_countNotice);
+    notice->setContentsMargins(0, 0, 0, 0);
+    auto* noticeText = new QLabel(tr("Changing band count resets both curves."), m_countNotice);
+    noticeText->setWordWrap(true);
+    notice->addWidget(noticeText, 1);
+    m_applyBandsBtn = button(tr("Apply"), "TxCfcApplyBands");
+    m_cancelBandsBtn = button(tr("Cancel"), "TxCfcCancelBands");
+    notice->addWidget(m_applyBandsBtn);
+    notice->addWidget(m_cancelBandsBtn);
+    outer->addWidget(m_countNotice);
+    m_countNotice->hide();
 
-    // ── ucCFC_comp (compression curve + bar chart) ───────────────────────
-    // From Thetis frmCFCConfig.Designer.cs:155-196 [v2.10.3.13].  Settings:
-    //   - DbMax=16, DbMin=0, FrequencyMaxHz=4000, FrequencyMinHz=0
-    //   - GlobalGainIsHorizLine=true (the pre-comp scalar draws as a
-    //     horizontal line at GlobalGainDb)
-    //   - ShowDotReadingsAsComp=true (per-point readout in dB-comp form)
-    //   - ParametricEQ=true (Q factors enabled)
-    //   - YAxisStepDb=2
     m_compWidget = new ParametricEqWidget(this);
+    m_postEqWidget = new ParametricEqWidget(this);
     m_compWidget->setObjectName(QStringLiteral("TxCfcCompWidget"));
-    m_compWidget->setDbMax(16.0);
-    m_compWidget->setDbMin(0.0);
-    m_compWidget->setFrequencyMaxHz(kDefaultMaxHz);
-    m_compWidget->setFrequencyMinHz(kDefaultMinHz);
+    m_postEqWidget->setObjectName(QStringLiteral("TxCfcEqWidget"));
+    m_compWidget->setDbMin(kCompDbMin);
+    m_compWidget->setDbMax(kCompDbMax);
+    m_postEqWidget->setDbMin(kGainDbMin);
+    m_postEqWidget->setDbMax(kGainDbMax);
     m_compWidget->setGlobalGainIsHorizLine(true);
     m_compWidget->setShowDotReadingsAsComp(true);
-    m_compWidget->setShowDotReadings(true);
-    m_compWidget->setShowReadout(false);
-    m_compWidget->setShowAxisScales(true);
-    m_compWidget->setShowBandShading(true);
-    m_compWidget->setUsePerBandColours(true);
-    m_compWidget->setParametricEq(true);
-    m_compWidget->setYAxisStepDb(2.0);
-    m_compWidget->setMinimumSize(509, 320);  // Designer.cs:188 Size
-
-    leftCol->addWidget(m_compWidget, 1);
-
-    // ── Middle edit row (between widgets) ────────────────────────────────
-    // From Thetis frmCFCConfig.Designer.cs:30-65 [v2.10.3.13] — labels
-    // labelTS671 ("Post-EQ"), labelTS670 ("dB"), labelTS666 ("Gain"),
-    // labelTS663 ("dB"), labelTS665 ("Q").
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(6);
-
-        row->addWidget(new QLabel(tr("Post-EQ"), this));
-        m_postEqGainSpin = new QDoubleSpinBox(this);
-        m_postEqGainSpin->setObjectName(QStringLiteral("TxCfcPostEqGainSpin"));
-        m_postEqGainSpin->setDecimals(1);  // Designer.cs:330
-        m_postEqGainSpin->setSingleStep(0.1);
-        m_postEqGainSpin->setRange(kPostEqGainDbMin, kPostEqGainDbMax);
-        m_postEqGainSpin->setSuffix(QStringLiteral(" dB"));
-        m_postEqGainSpin->setToolTip(tr(
-            "Global Post-EQ make-up gain (-24 to +24 dB)."));
-        row->addWidget(m_postEqGainSpin);
-
-        row->addSpacing(20);
-
-        row->addWidget(new QLabel(tr("Gain"), this));
-        m_gainSpin = new QDoubleSpinBox(this);
-        m_gainSpin->setObjectName(QStringLiteral("TxCfcGainSpin"));
-        m_gainSpin->setDecimals(1);  // Designer.cs:557
-        m_gainSpin->setSingleStep(0.1);
-        m_gainSpin->setRange(kGainDbMin, kGainDbMax);
-        m_gainSpin->setSuffix(QStringLiteral(" dB"));
-        m_gainSpin->setToolTip(tr(
-            "Post-EQ band gain (-24 to +24 dB) for the selected band."));
-        row->addWidget(m_gainSpin);
-
-        row->addWidget(new QLabel(tr("Q"), this));
-        m_eqQSpin = new QDoubleSpinBox(this);
-        m_eqQSpin->setObjectName(QStringLiteral("TxCfcEqQSpin"));
-        m_eqQSpin->setDecimals(2);  // Designer.cs:597
-        m_eqQSpin->setSingleStep(0.01);
-        m_eqQSpin->setRange(kQMin, kQMax);
-        m_eqQSpin->setToolTip(tr(
-            "Q factor for the selected band's post-EQ curve."));
-        row->addWidget(m_eqQSpin);
-
-        row->addStretch(1);
-        leftCol->addLayout(row);
+    m_compWidget->setYAxisStepDb(4);
+    m_postEqWidget->setYAxisStepDb(12);
+    for (auto* graph : {m_compWidget, m_postEqWidget}) {
+        graph->setEditorPresentationEnabled(true);
+        graph->setParametricEq(false);
+        graph->setShowReadout(false);
+        graph->setShowDotReadings(false);
+        graph->setShowBandShading(true);
+        graph->setShowAxisScales(true);
+        graph->setMinimumHeight(80);
+        graph->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     }
+    // Reserve the larger native axis/handle margins on both plots.
+    const int left = qCeil(std::max(m_compWidget->plotRect().left(), m_postEqWidget->plotRect().left()));
+    const int right = qCeil(std::max(m_compWidget->width() - m_compWidget->plotRect().right(),
+                                    m_postEqWidget->width() - m_postEqWidget->plotRect().right()));
+    m_compWidget->setMinimumPlotGutters(left, right);
+    m_postEqWidget->setMinimumPlotGutters(left, right);
+    outer->addWidget(new QLabel(tr("Compression · Configured curve / live measured compression bars"), this));
+    outer->addWidget(m_compWidget, 1);
+    outer->addWidget(new QLabel(tr("EQ after compression · Combined configured curve"), this));
+    outer->addWidget(m_postEqWidget, 1);
 
-    // ── ucCFC_eq (post-EQ curve) ─────────────────────────────────────────
-    // From Thetis frmCFCConfig.Designer.cs:665-703 [v2.10.3.13].  Settings:
-    //   - DbMax=24, DbMin=-24, FrequencyMaxHz=4000, FrequencyMinHz=0
-    //   - GlobalGainIsHorizLine omitted (default false — gain handle on
-    //     LHS gutter rather than horizontal line)
-    //   - ShowDotReadings=true, ShowDotReadingsAsComp=false
-    //   - ParametricEQ=true (Q factors enabled)
-    m_postEqWidget = new ParametricEqWidget(this);
-    m_postEqWidget->setObjectName(QStringLiteral("TxCfcPostEqWidget"));
-    m_postEqWidget->setDbMax(24.0);
-    m_postEqWidget->setDbMin(-24.0);
-    m_postEqWidget->setFrequencyMaxHz(kDefaultMaxHz);
-    m_postEqWidget->setFrequencyMinHz(kDefaultMinHz);
-    m_postEqWidget->setShowDotReadings(true);
-    m_postEqWidget->setShowReadout(false);
-    m_postEqWidget->setShowAxisScales(true);
-    m_postEqWidget->setShowBandShading(true);
-    m_postEqWidget->setUsePerBandColours(true);
-    m_postEqWidget->setParametricEq(true);
-    m_postEqWidget->setMinimumSize(509, 320);  // Designer.cs:696 Size
+    auto* selectorScroll = new QScrollArea(this);
+    selectorScroll->setWidgetResizable(true);
+    selectorScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    selectorScroll->setMaximumHeight(66);
+    selectorScroll->setMinimumHeight(46);
+    auto* selectorHost = new QWidget(selectorScroll);
+    m_bandSelectors = new QHBoxLayout(selectorHost);
+    m_bandSelectors->setContentsMargins(0, 0, 0, 0);
+    m_bandSelectors->setSpacing(4);
+    selectorScroll->setWidget(selectorHost);
+    outer->addWidget(selectorScroll);
 
-    leftCol->addWidget(m_postEqWidget, 1);
-
-    outer->addLayout(leftCol, 1);
-
-    // ── Right column: band-count radios + freq range + checkboxes +
-    //                  reset buttons + OG CFC Guide ──────────────────────
-    auto* rightCol = new QVBoxLayout;
-    rightCol->setSpacing(6);
-
-    // Band-count radios — Designer.cs:470-553.  Default 10 (line 474).
-    {
-        auto* grp = new QGroupBox(tr("Bands"), this);
-        auto* col = new QVBoxLayout(grp);
-        col->setContentsMargins(8, 14, 8, 8);
-        col->setSpacing(2);
-
-        m_bands5Radio  = new QRadioButton(tr("5-band"),  grp);
-        m_bands5Radio->setObjectName(QStringLiteral("TxCfcBands5Radio"));
-        m_bands5Radio->setToolTip(tr(
-            "Switch CFC layout to 5 bands.  Resets per-band points."));
-
-        m_bands10Radio = new QRadioButton(tr("10-band"), grp);
-        m_bands10Radio->setObjectName(QStringLiteral("TxCfcBands10Radio"));
-        m_bands10Radio->setChecked(true);
-        m_bands10Radio->setToolTip(tr(
-            "Switch CFC layout to 10 bands (default).  Resets per-band points."));
-
-        m_bands18Radio = new QRadioButton(tr("18-band"), grp);
-        m_bands18Radio->setObjectName(QStringLiteral("TxCfcBands18Radio"));
-        m_bands18Radio->setToolTip(tr(
-            "Switch CFC layout to 18 bands.  Resets per-band points."));
-
-        m_bandCountGroup = new QButtonGroup(grp);
-        m_bandCountGroup->addButton(m_bands5Radio,   5);
-        m_bandCountGroup->addButton(m_bands10Radio, 10);
-        m_bandCountGroup->addButton(m_bands18Radio, 18);
-
-        col->addWidget(m_bands5Radio);
-        col->addWidget(m_bands10Radio);
-        col->addWidget(m_bands18Radio);
-        rightCol->addWidget(grp);
+    auto* controlsScroll = new QScrollArea(this);
+    controlsScroll->setWidgetResizable(true);
+    controlsScroll->setMinimumHeight(70);
+    // Give the two plots about 180 px each initially. Controls scroll on
+    // laptop-height displays and shrink further when the window is smaller.
+    controlsScroll->setMaximumHeight(220);
+    auto* controls = new QWidget(controlsScroll);
+    auto* controlLayout = new QVBoxLayout(controls);
+    controlLayout->setContentsMargins(4, 4, 4, 4);
+    controlLayout->setSpacing(5);
+    controlsScroll->setWidget(controls);
+    outer->addWidget(controlsScroll);
+    auto spin = [controls](const char* name, double low, double high, int decimals, const QString& label) {
+        auto* result = new QDoubleSpinBox(controls);
+        result->setObjectName(QString::fromLatin1(name));
+        result->setRange(low, high);
+        result->setDecimals(decimals);
+        result->setSingleStep(decimals == 2 ? .01 : .1);
+        result->setKeyboardTracking(false);
+        result->setAccessibleName(label);
+        return result;
+    };
+    auto intSpin = [controls](const char* name, int low, int high, const QString& label) {
+        auto* result = new QSpinBox(controls);
+        result->setObjectName(QString::fromLatin1(name));
+        result->setRange(low, high);
+        result->setKeyboardTracking(false);
+        result->setAccessibleName(label);
+        return result;
+    };
+    auto* selection = new QHBoxLayout;
+    m_selectedSummary = new QLabel(tr("Select a band to edit"), controls);
+    selection->addWidget(m_selectedSummary, 1);
+    auto* bandLabel = new QLabel(tr("Band"), controls);
+    m_selectedBandSpin = intSpin("TxCfcSelectedBandSpin", 1, 10, tr("Selected band"));
+    bandLabel->setBuddy(m_selectedBandSpin);
+    selection->addWidget(bandLabel);
+    selection->addWidget(m_selectedBandSpin);
+    auto* freqLabel = new QLabel(tr("Frequency"), controls);
+    m_freqSpin = intSpin("TxCfcFreqSpin", kFreqHzMin, kFreqHzMax, tr("Shared band frequency in Hz"));
+    m_freqSpin->setSuffix(tr(" Hz"));
+    freqLabel->setBuddy(m_freqSpin);
+    selection->addWidget(freqLabel);
+    selection->addWidget(m_freqSpin);
+    controlLayout->addLayout(selection);
+    m_compSpin = spin("TxCfcCompSpin", kCompDbMin, kCompDbMax, 1, tr("Compression amount in dB"));
+    m_compQSpin = spin("TxCfcCompQSpin", kQMin, kQMax, 2, tr("Compression width Q"));
+    m_gainSpin = spin("TxCfcGainSpin", kGainDbMin, kGainDbMax, 1, tr("EQ after compression gain in dB"));
+    m_eqQSpin = spin("TxCfcEqQSpin", kQMin, kQMax, 2, tr("EQ after compression width Q"));
+    m_compSpin->setSuffix(tr(" dB"));
+    m_gainSpin->setSuffix(tr(" dB"));
+    auto* amounts = new QGridLayout;
+    amounts->setColumnStretch(0, 1);
+    amounts->setColumnStretch(1, 1);
+    for (int col = 0; col < 2; ++col) {
+        auto* group = new QWidget(controls);
+        auto* grid = new QGridLayout(group);
+        grid->setContentsMargins(0, 0, 0, 0);
+        grid->addWidget(new QLabel(col == 0 ? tr("Compression") : tr("EQ after compression"), group), 0, 0, 1, 2);
+        auto* amount = col == 0 ? m_compSpin : m_gainSpin;
+        auto* width = col == 0 ? m_compQSpin : m_eqQSpin;
+        auto* amountLabel = new QLabel(col == 0 ? tr("Amount") : tr("Gain"), group);
+        auto* widthLabel = new QLabel(tr("Width (Q)"), group);
+        amountLabel->setBuddy(amount);
+        widthLabel->setBuddy(width);
+        grid->addWidget(amountLabel, 1, 0);
+        grid->addWidget(widthLabel, 1, 1);
+        grid->addWidget(amount, 2, 0);
+        grid->addWidget(width, 2, 1);
+        auto* slider = new QSlider(Qt::Horizontal, group);
+        slider->setRange(0, 1000);
+        slider->setStyleSheet(Style::sliderHStyle());
+        slider->setAccessibleName(col == 0 ? tr("Compression width, wider to narrower") : tr("EQ width, wider to narrower"));
+        slider->setObjectName(col == 0 ? QStringLiteral("TxCfcCompQSlider") : QStringLiteral("TxCfcEqQSlider"));
+        if (col == 0) { m_compQSlider = slider; } else { m_eqQSlider = slider; }
+        grid->addWidget(slider, 3, 0, 1, 2);
+        grid->addWidget(new QLabel(tr("Wider"), group), 4, 0);
+        auto* narrower = new QLabel(tr("Narrower"), group);
+        narrower->setAlignment(Qt::AlignRight);
+        grid->addWidget(narrower, 4, 1);
+        amounts->addWidget(group, 0, col);
     }
-
-    // Freq range — Designer.cs:440-468 udCFC_low + Designer.cs:625-653
-    // udCFC_high.  Defaults: low=0, high=16000 (line 463/648).
-    {
-        auto* grp = new QGroupBox(tr("Freq Range"), this);
-        auto* g = new QGridLayout(grp);
-        g->setContentsMargins(8, 14, 8, 8);
-        g->setHorizontalSpacing(6);
-        g->setVerticalSpacing(4);
-
-        g->addWidget(new QLabel(tr("Low"),  grp), 0, 0);
-        m_lowSpin = new QSpinBox(grp);
-        m_lowSpin->setObjectName(QStringLiteral("TxCfcLowSpin"));
-        m_lowSpin->setRange(kFreqHzMin, kFreqHzMax);
-        m_lowSpin->setSuffix(QStringLiteral(" Hz"));
-        m_lowSpin->setValue(static_cast<int>(kDefaultMinHz));
-        m_lowSpin->setToolTip(tr(
-            "Lower edge of the visible CFC freq range (Hz).  Must be at "
-            "least 1000 Hz below High."));
-        g->addWidget(m_lowSpin, 0, 1);
-
-        g->addWidget(new QLabel(tr("High"), grp), 1, 0);
-        m_highSpin = new QSpinBox(grp);
-        m_highSpin->setObjectName(QStringLiteral("TxCfcHighSpin"));
-        m_highSpin->setRange(kFreqHzMin, kFreqHzMax);
-        m_highSpin->setSuffix(QStringLiteral(" Hz"));
-        m_highSpin->setValue(static_cast<int>(kDefaultMaxHz));
-        m_highSpin->setToolTip(tr(
-            "Upper edge of the visible CFC freq range (Hz).  Must be at "
-            "least 1000 Hz above Low."));
-        g->addWidget(m_highSpin, 1, 1);
-
-        rightCol->addWidget(grp);
-    }
-
-    // Checkboxes — Designer.cs:90-100, 484-496, 238-247.
-    {
-        m_useQFactorsChk = new QCheckBox(tr("Use Q Factors"), this);
-        m_useQFactorsChk->setObjectName(QStringLiteral("TxCfcUseQFactorsChk"));
-        m_useQFactorsChk->setChecked(true);  // Designer.cs:487 default
-        m_useQFactorsChk->setToolTip(tr(
-            "Use Q factors per band when computing the CFC profile.  When off, "
-            "the Q columns are ignored and the curve degenerates to flat-band."));
-        rightCol->addWidget(m_useQFactorsChk);
-
-        m_liveUpdateChk = new QCheckBox(tr("Live Update"), this);
-        m_liveUpdateChk->setObjectName(QStringLiteral("TxCfcLiveUpdateChk"));
-        m_liveUpdateChk->setChecked(false);  // Designer.cs default unchecked
-        m_liveUpdateChk->setToolTip(tr(
-            "Push CFC values through to the radio while dragging points.  "
-            "When off, the WDSP profile is updated only on mouse-release."));
-        rightCol->addWidget(m_liveUpdateChk);
-
-        m_logScaleChk = new QCheckBox(tr("Log scale"), this);
-        m_logScaleChk->setObjectName(QStringLiteral("TxCfcLogScaleChk"));
-        m_logScaleChk->setChecked(false);
-        m_logScaleChk->setToolTip(tr(
-            "Render both curves on a log frequency axis."));
-        rightCol->addWidget(m_logScaleChk);
-    }
-
-    rightCol->addSpacing(8);
-
-    // Reset Comp + Reset EQ buttons — Designer.cs:142-153 (btnResetEQ
-    // located near top of EQ widget) + 508-519 (btnResetComp at top of
-    // Comp widget).
-    {
-        m_resetCompBtn = new QPushButton(tr("Reset Comp"), this);
-        m_resetCompBtn->setObjectName(QStringLiteral("TxCfcResetCompBtn"));
-        m_resetCompBtn->setToolTip(tr(
-            "Reset the compression curve to default (flat) values."));
-        rightCol->addWidget(m_resetCompBtn);
-
-        m_resetEqBtn = new QPushButton(tr("Reset EQ"), this);
-        m_resetEqBtn->setObjectName(QStringLiteral("TxCfcResetEqBtn"));
-        m_resetEqBtn->setToolTip(tr(
-            "Reset the post-EQ curve to default (flat) values."));
-        rightCol->addWidget(m_resetEqBtn);
-    }
-
-    rightCol->addStretch(1);
-
-    // OG CFC Guide LinkLabel — Designer.cs:78-88.  Verbatim text:
-    //   "OG CFC Guide\r\nby W1AEX"
-    // (newline between the two lines).  We use a flat QPushButton styled
-    // as a hyperlink — Qt has no exact LinkLabel equivalent.
-    {
-        m_ogGuideLink = new QPushButton(tr("OG CFC Guide\nby W1AEX"), this);
-        m_ogGuideLink->setObjectName(QStringLiteral("TxCfcOgGuideLink"));
-        m_ogGuideLink->setFlat(true);
-        m_ogGuideLink->setCursor(Qt::PointingHandCursor);
-        m_ogGuideLink->setStyleSheet(QStringLiteral(
-            "QPushButton { color: palette(link); text-decoration: underline; }"));
-        m_ogGuideLink->setToolTip(tr(
-            "Opens the W1AEX CFC tuning guide in your default web browser."));
-        rightCol->addWidget(m_ogGuideLink, 0, Qt::AlignRight);
-    }
-
-    outer->addLayout(rightCol, 0);
-
-    // Designer.cs:719 ClientSize=624,717.  Use as a sensible minimum.
-    setMinimumSize(620, 700);
+    controlLayout->addLayout(amounts);
+    auto* qRow = new QHBoxLayout;
+    m_useQFactorsChk = new QCheckBox(tr("Use Q Factors"), controls);
+    qRow->addWidget(m_useQFactorsChk);
+    m_qGuidance = new QLabel(tr("Enable Use Q Factors to adjust widths."), controls);
+    m_qGuidance->setWordWrap(true);
+    qRow->addWidget(m_qGuidance, 1);
+    controlLayout->addLayout(qRow);
+    auto* guidance = new QLabel(tr("Drag a point: frequency ↔ amount ↕ · Drag square handles: width"), controls);
+    guidance->setWordWrap(true);
+    controlLayout->addWidget(guidance);
+    m_precompSpin = spin("TxCfcPrecompSpin", kPrecompDbMin, kPrecompDbMax, 1, tr("Global pre-compression in dB"));
+    m_postEqGainSpin = spin("TxCfcPostEqGainSpin", kPostEqGainDbMin, kPostEqGainDbMax, 1, tr("Global post-EQ gain in dB"));
+    m_precompSpin->setSuffix(tr(" dB"));
+    m_postEqGainSpin->setSuffix(tr(" dB"));
+    m_resetCompBtn = button(tr("Reset Compression"), "TxCfcResetComp");
+    m_resetEqBtn = button(tr("Reset EQ"), "TxCfcResetEq");
+    auto* globals = new QGridLayout;
+    auto* preLabel = new QLabel(tr("Pre-compression"), controls);
+    auto* postLabel = new QLabel(tr("Post-EQ gain"), controls);
+    preLabel->setBuddy(m_precompSpin);
+    postLabel->setBuddy(m_postEqGainSpin);
+    globals->addWidget(preLabel, 0, 0);
+    globals->addWidget(m_precompSpin, 0, 1);
+    globals->addWidget(postLabel, 0, 2);
+    globals->addWidget(m_postEqGainSpin, 0, 3);
+    globals->addWidget(m_resetCompBtn, 1, 0, 1, 2);
+    globals->addWidget(m_resetEqBtn, 1, 2, 1, 2);
+    controlLayout->addLayout(globals);
+    auto* advancedToggle = button(tr("Advanced ▸"), "TxCfcAdvanced");
+    advancedToggle->setCheckable(true);
+    controlLayout->addWidget(advancedToggle);
+    auto* advanced = new QWidget(controls);
+    auto* advancedLayout = new QGridLayout(advanced);
+    advancedLayout->setContentsMargins(0, 0, 0, 0);
+    m_lowSpin = intSpin("TxCfcLowSpin", kFreqHzMin, kFreqHzMax, tr("Curve range low frequency"));
+    m_highSpin = intSpin("TxCfcHighSpin", kFreqHzMin, kFreqHzMax, tr("Curve range high frequency"));
+    m_lowSpin->setSuffix(tr(" Hz"));
+    m_highSpin->setSuffix(tr(" Hz"));
+    advancedLayout->addWidget(new QLabel(tr("Curve range (rescales both curves)"), advanced), 0, 0, 1, 2);
+    advancedLayout->addWidget(m_lowSpin, 1, 0);
+    advancedLayout->addWidget(m_highSpin, 1, 1);
+    m_liveUpdateChk = new QCheckBox(tr("Live Update"), advanced);
+    m_logScaleChk = new QCheckBox(tr("Log scale"), advanced);
+    advancedLayout->addWidget(m_liveUpdateChk, 2, 0);
+    advancedLayout->addWidget(m_logScaleChk, 3, 0);
+    m_ogGuideLink = button(tr("OG CFC Guide by W1AEX"), "TxCfcGuide");
+    m_ogGuideLink->setCursor(Qt::PointingHandCursor);
+    advancedLayout->addWidget(m_ogGuideLink, 3, 1);
+    controlLayout->addWidget(advanced);
+    advanced->hide();
+    connect(advancedToggle, &QPushButton::toggled, this, [advanced, advancedToggle](bool on) {
+        advanced->setVisible(on);
+        advancedToggle->setText(on ? tr("Advanced ▾") : tr("Advanced ▸"));
+    });
+    controlLayout->addStretch();
+    const QRect available = screen()->availableGeometry();
+    resize(std::min(760, available.width() - 40), std::min(730, available.height() - 60));
 }
-
-// ─────────────────────────────────────────────────────────────────────
-// Signal wiring
-// ─────────────────────────────────────────────────────────────────────
 
 void TxCfcDialog::wireSignals()
 {
-    // ── Right-column controls ───────────────────────────────────────────
-    connect(m_bandCountGroup, &QButtonGroup::idToggled,
-            this, [this](int /*id*/, bool checked) {
-        if (checked) onBandCountChanged();
+    connect(m_bandCountGroup, &QButtonGroup::idToggled, this, [this](int, bool checked) {
+        if (checked && !m_ignoreUpdates) { onBandCountChanged(); }
     });
-    connect(m_lowSpin,  qOverload<int>(&QSpinBox::valueChanged),
-            this, &TxCfcDialog::onLowFreqChanged);
-    connect(m_highSpin, qOverload<int>(&QSpinBox::valueChanged),
-            this, &TxCfcDialog::onHighFreqChanged);
-    connect(m_useQFactorsChk, &QCheckBox::toggled,
-            this, &TxCfcDialog::onUseQFactorsToggled);
-    connect(m_logScaleChk,    &QCheckBox::toggled,
-            this, &TxCfcDialog::onLogScaleToggled);
-    connect(m_resetCompBtn, &QPushButton::clicked,
-            this, &TxCfcDialog::onResetCompClicked);
-    connect(m_resetEqBtn,   &QPushButton::clicked,
-            this, &TxCfcDialog::onResetEqClicked);
-    connect(m_ogGuideLink,  &QPushButton::clicked,
-            this, &TxCfcDialog::onOgGuideClicked);
-
-    // ── Top edit row ─────────────────────────────────────────────────────
-    connect(m_selectedBandSpin, qOverload<int>(&QSpinBox::valueChanged),
-            this, &TxCfcDialog::onSelectedBandChanged);
-    connect(m_freqSpin,    qOverload<int>(&QSpinBox::valueChanged),
-            this, &TxCfcDialog::onFreqSpinChanged);
-    connect(m_precompSpin, qOverload<double>(&QDoubleSpinBox::valueChanged),
-            this, &TxCfcDialog::onPrecompSpinChanged);
-    connect(m_compSpin,    qOverload<double>(&QDoubleSpinBox::valueChanged),
-            this, &TxCfcDialog::onCompSpinChanged);
-    connect(m_compQSpin,   qOverload<double>(&QDoubleSpinBox::valueChanged),
-            this, &TxCfcDialog::onCompQSpinChanged);
-
-    // ── Middle edit row ──────────────────────────────────────────────────
-    connect(m_postEqGainSpin, qOverload<double>(&QDoubleSpinBox::valueChanged),
-            this, &TxCfcDialog::onPostEqGainSpinChanged);
-    connect(m_gainSpin, qOverload<double>(&QDoubleSpinBox::valueChanged),
-            this, &TxCfcDialog::onGainSpinChanged);
-    connect(m_eqQSpin,  qOverload<double>(&QDoubleSpinBox::valueChanged),
-            this, &TxCfcDialog::onEqQSpinChanged);
-
-    // ── Comp widget events ───────────────────────────────────────────────
-    connect(m_compWidget, &ParametricEqWidget::pointsChanged,
-            this, &TxCfcDialog::onCompPointsChanged);
-    connect(m_compWidget, &ParametricEqWidget::globalGainChanged,
-            this, &TxCfcDialog::onCompGlobalGainChanged);
-    connect(m_compWidget, &ParametricEqWidget::pointDataChanged,
-            this, &TxCfcDialog::onCompPointDataChanged);
-    connect(m_compWidget, &ParametricEqWidget::pointSelected,
-            this, &TxCfcDialog::onCompPointSelected);
-    connect(m_compWidget, &ParametricEqWidget::pointUnselected,
-            this, &TxCfcDialog::onCompPointUnselected);
-
-    // ── Post-EQ widget events ────────────────────────────────────────────
-    connect(m_postEqWidget, &ParametricEqWidget::pointsChanged,
-            this, &TxCfcDialog::onEqPointsChanged);
-    connect(m_postEqWidget, &ParametricEqWidget::globalGainChanged,
-            this, &TxCfcDialog::onEqGlobalGainChanged);
-    connect(m_postEqWidget, &ParametricEqWidget::pointDataChanged,
-            this, &TxCfcDialog::onEqPointDataChanged);
-    connect(m_postEqWidget, &ParametricEqWidget::pointSelected,
-            this, &TxCfcDialog::onEqPointSelected);
-    connect(m_postEqWidget, &ParametricEqWidget::pointUnselected,
-            this, &TxCfcDialog::onEqPointUnselected);
-
-    // ── TM → UI sync ─────────────────────────────────────────────────────
+    connect(m_applyBandsBtn, &QPushButton::clicked, this, &TxCfcDialog::applyBandCount);
+    connect(m_cancelBandsBtn, &QPushButton::clicked, this, &TxCfcDialog::cancelBandCount);
+    connect(m_undoBtn, &QPushButton::clicked, this, &TxCfcDialog::undoEdit);
+    connect(m_redoBtn, &QPushButton::clicked, this, &TxCfcDialog::redoEdit);
+    connect(m_history, &EqEditHistory::availabilityChanged, this, [this](bool undo, bool redo) {
+        m_undoBtn->setEnabled(undo);
+        m_redoBtn->setEnabled(redo);
+    });
+    m_undoBtn->setEnabled(false);
+    m_redoBtn->setEnabled(false);
+    connect(m_lowSpin, qOverload<int>(&QSpinBox::valueChanged), this, &TxCfcDialog::onLowFreqChanged);
+    connect(m_highSpin, qOverload<int>(&QSpinBox::valueChanged), this, &TxCfcDialog::onHighFreqChanged);
+    connect(m_selectedBandSpin, qOverload<int>(&QSpinBox::valueChanged), this, &TxCfcDialog::onSelectedBandChanged);
+    connect(m_freqSpin, qOverload<int>(&QSpinBox::valueChanged), this, &TxCfcDialog::onFreqSpinChanged);
+    connect(m_precompSpin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, &TxCfcDialog::onPrecompSpinChanged);
+    connect(m_compSpin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, &TxCfcDialog::onCompSpinChanged);
+    connect(m_compQSpin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, &TxCfcDialog::onCompQSpinChanged);
+    connect(m_postEqGainSpin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, &TxCfcDialog::onPostEqGainSpinChanged);
+    connect(m_gainSpin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, &TxCfcDialog::onGainSpinChanged);
+    connect(m_eqQSpin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, &TxCfcDialog::onEqQSpinChanged);
+    connect(m_useQFactorsChk, &QCheckBox::toggled, this, &TxCfcDialog::onUseQFactorsToggled);
+    connect(m_logScaleChk, &QCheckBox::toggled, this, &TxCfcDialog::onLogScaleToggled);
+    connect(m_resetCompBtn, &QPushButton::clicked, this, &TxCfcDialog::onResetCompClicked);
+    connect(m_resetEqBtn, &QPushButton::clicked, this, &TxCfcDialog::onResetEqClicked);
+    connect(m_ogGuideLink, &QPushButton::clicked, this, &TxCfcDialog::onOgGuideClicked);
+    for (QAbstractSpinBox* spin : QList<QAbstractSpinBox*>{m_freqSpin, m_lowSpin, m_highSpin,
+                                  m_precompSpin, m_postEqGainSpin, m_compSpin, m_compQSpin, m_gainSpin, m_eqQSpin}) {
+        spin->installEventFilter(this);
+        spin->findChild<QLineEdit*>()->installEventFilter(this);
+        connect(spin, &QAbstractSpinBox::editingFinished, this, [this, spin] {
+            if (m_numericEditor == spin) { m_numericEditor = nullptr; finishEdit(); }
+        });
+    }
+    for (auto* slider : {m_compQSlider, m_eqQSlider}) {
+        slider->installEventFilter(this);
+        connect(slider, &QSlider::sliderPressed, this, [this] { beginEdit(); m_sliderActive = true; });
+        connect(slider, &QSlider::sliderReleased, this, [this] { m_sliderActive = false; finishEdit(); });
+        connect(slider, &QSlider::valueChanged, this, [this, slider](int value) {
+            if (m_ignoreUpdates) { return; }
+            const double q = kQMin * std::pow(kQMax / kQMin, value / 1000.0);
+            auto* widget = slider == m_compQSlider ? m_compWidget : m_postEqWidget;
+            const int index = widget->selectedIndex();
+            if (index < 0) { return; }
+            const auto point = widget->points()[index];
+            editSelectedPoint(widget, point.frequencyHz, point.gainDb, q);
+        });
+    }
+    for (auto* widget : {m_compWidget, m_postEqWidget}) {
+        connect(widget, &ParametricEqWidget::editStarted, this, [this] { beginEdit(); m_gestureActive = true; });
+        connect(widget, &ParametricEqWidget::editFinished, this, [this] { m_gestureActive = false; finishEdit(); });
+        connect(widget, &ParametricEqWidget::pointsChanged, this, [this, widget](bool dragging) {
+            if (m_ignoreUpdates || m_updatingFromModel) { return; }
+            syncPairedFrequencies(widget, widget == m_compWidget ? m_postEqWidget : m_compWidget);
+            changed(dragging);
+        });
+        connect(widget, &ParametricEqWidget::globalGainChanged, this, [this](bool dragging) { changed(dragging); });
+        connect(widget, &ParametricEqWidget::pointDataChanged, this, [this](int, int, double, double, double, bool) {
+            if (!m_ignoreUpdates) { refreshControls(); }
+        });
+        connect(widget, &ParametricEqWidget::pointSelected, this, [this, widget](int, int id, double, double, double) {
+            auto* target = widget == m_compWidget ? m_postEqWidget : m_compWidget;
+            QSignalBlocker blocker(target);
+            target->setSelectedIndex(target->getIndexFromBandId(id));
+            refreshControls();
+        });
+        connect(widget, &ParametricEqWidget::pointUnselected, this, [this, widget](int, int, double, double, double) {
+            if (m_ignoreUnselected || m_ignoreUpdates) { return; }
+            auto* target = widget == m_compWidget ? m_postEqWidget : m_compWidget;
+            QSignalBlocker blocker(target);
+            target->setSelectedIndex(-1);
+            refreshControls();
+        });
+    }
     if (m_tm) {
-        connect(m_tm.data(), &TransmitModel::cfcPrecompDbChanged,
-                this, &TxCfcDialog::syncFromModel);
-        connect(m_tm.data(), &TransmitModel::cfcPostEqGainDbChanged,
-                this, &TxCfcDialog::syncFromModel);
-        connect(m_tm.data(), &TransmitModel::cfcEqFreqChanged,
-                this, &TxCfcDialog::syncFromModel);
-        connect(m_tm.data(), &TransmitModel::cfcCompressionChanged,
-                this, &TxCfcDialog::syncFromModel);
-        connect(m_tm.data(), &TransmitModel::cfcPostEqBandGainChanged,
-                this, &TxCfcDialog::syncFromModel);
+        connect(m_tm, &TransmitModel::cfcProfileChanged, this, [this](const CfcProfile&) { syncFromModel(); });
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Initial seed: copy TransmitModel CFC arrays + globals into both widgets.
-// Q factors default to widget defaults (4.0) since TM doesn't store Q.
-// ─────────────────────────────────────────────────────────────────────
+CfcProfile TxCfcDialog::captureProfile() const
+{
+    CfcProfile profile;
+    auto capture = [](const ParametricEqWidget* widget, CfcCurveState& curve) {
+        widget->getPointsData(curve.frequenciesHz, curve.gainsDb, curve.q);
+        curve.globalGainDb = widget->globalGainDb();
+        curve.frequencyMinHz = widget->frequencyMinHz();
+        curve.frequencyMaxHz = widget->frequencyMaxHz();
+    };
+    capture(m_compWidget, profile.compression);
+    capture(m_postEqWidget, profile.postEq);
+    profile.compression.useQ = m_compUseQ;
+    profile.postEq.useQ = m_eqUseQ;
+    return profile;
+}
+
+void TxCfcDialog::restoreProfile(const CfcProfile& profile)
+{
+    CfcProfile display = profile;
+    if (!isValidCfcProfile(display)) {
+        // Legacy profiles can store centers out of order. Sort both amounts
+        // together for display without writing or moving any configured center.
+        QVector<int> order(display.compression.frequenciesHz.size());
+        std::iota(order.begin(), order.end(), 0);
+        std::stable_sort(order.begin(), order.end(), [&display](int a, int b) {
+            return display.compression.frequenciesHz[a] < display.compression.frequenciesHz[b];
+        });
+        auto sorted = [&order](CfcCurveState& curve) {
+            const auto original = curve;
+            for (int i = 0; i < order.size(); ++i) {
+                curve.frequenciesHz[i] = original.frequenciesHz[order[i]];
+                curve.gainsDb[i] = original.gainsDb[order[i]];
+                curve.q[i] = original.q[order[i]];
+            }
+            curve.frequencyMinHz = curve.frequenciesHz.first();
+            curve.frequencyMaxHz = curve.frequenciesHz.last();
+        };
+        sorted(display.compression); sorted(display.postEq);
+        if (!isValidCfcProfile(display)) {
+            m_curveAvailable = false;
+            m_invalidLegacyProfile = profile;
+            m_invalidLegacyBlob = m_tm ? m_tm->cfcParaEqData() : QString();
+            QSignalBlocker c(m_compWidget), e(m_postEqWidget);
+            m_compWidget->setGlobalGainDb(profile.compression.globalGainDb);
+            m_postEqWidget->setGlobalGainDb(profile.postEq.globalGainDb);
+            m_compWidget->setSelectedIndex(-1);
+            m_postEqWidget->setSelectedIndex(-1);
+            m_compWidget->hide(); m_postEqWidget->hide();
+            m_invalidCurveGuidance->show();
+            rebuildBandSelectors();
+            refreshControls();
+            return;
+        }
+    }
+    m_curveAvailable = true;
+    m_compWidget->show(); m_postEqWidget->show();
+    m_invalidCurveGuidance->hide();
+    const QScopedValueRollback<bool> guard(m_ignoreUpdates, true);
+    m_compUseQ = display.compression.useQ;
+    m_eqUseQ = display.postEq.useQ;
+    auto load = [this](ParametricEqWidget* widget, const CfcCurveState& curve) {
+        ParametricEqWidget::EqJsonState state;
+        state.bandCount = curve.frequenciesHz.size();
+        state.frequencyMinHz = curve.frequencyMinHz;
+        state.frequencyMaxHz = curve.frequencyMaxHz;
+        state.globalGainDb = curve.globalGainDb;
+        state.parametricEq = m_compUseQ && m_eqUseQ;
+        for (int i = 0; i < state.bandCount; ++i) {
+            state.points.append({i + 1, QColor(), curve.frequenciesHz[i], curve.gainsDb[i], curve.q[i]});
+        }
+        QSignalBlocker blocker(widget);
+        widget->setEditorCurveState(state);
+    };
+    load(m_compWidget, display.compression);
+    load(m_postEqWidget, display.postEq);
+    cancelBandCount();
+    rebuildBandSelectors();
+    refreshControls();
+}
+
+QByteArray TxCfcDialog::captureEditState() const
+{
+    QByteArray result;
+    QDataStream stream(&result, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << m_curveAvailable << m_compWidget->saveEditState() << m_postEqWidget->saveEditState() << m_compUseQ << m_eqUseQ;
+    if (!m_curveAvailable) {
+        stream << m_invalidLegacyProfile.compression.frequenciesHz << m_invalidLegacyProfile.compression.gainsDb
+               << m_invalidLegacyProfile.postEq.gainsDb << m_invalidLegacyProfile.compression.globalGainDb
+               << m_invalidLegacyProfile.postEq.globalGainDb << m_invalidLegacyBlob;
+    }
+    return result;
+}
+
+void TxCfcDialog::restoreEditState(const QByteArray& state)
+{
+    QDataStream stream(state);
+    stream.setVersion(QDataStream::Qt_6_0);
+    QByteArray comp, eq;
+    bool compQ = false, eqQ = false, available = true;
+    CfcProfile legacy;
+    QString legacyBlob;
+    stream >> available >> comp >> eq >> compQ >> eqQ;
+    if (!available) {
+        stream >> legacy.compression.frequenciesHz >> legacy.compression.gainsDb >> legacy.postEq.gainsDb
+               >> legacy.compression.globalGainDb >> legacy.postEq.globalGainDb >> legacyBlob;
+    }
+    if (stream.status() != QDataStream::Ok || !stream.atEnd()
+        || (!available && (legacy.compression.frequenciesHz.size() != 10
+            || legacy.compression.gainsDb.size() != 10 || legacy.postEq.gainsDb.size() != 10))) { return; }
+    {
+        const QScopedValueRollback<bool> guard(m_ignoreUpdates, true);
+        QSignalBlocker c(m_compWidget), e(m_postEqWidget);
+        // Restore both exact runtime halves before sending the complete profile.
+        if (!m_compWidget->restoreEditState(comp) || !m_postEqWidget->restoreEditState(eq)) { return; }
+        m_compUseQ = compQ;
+        m_eqUseQ = eqQ;
+        const int id = m_selectionStates.value(state, -1);
+        m_compWidget->setSelectedIndex(m_compWidget->getIndexFromBandId(id));
+        m_postEqWidget->setSelectedIndex(m_postEqWidget->getIndexFromBandId(id));
+    }
+    m_curveAvailable = available;
+    if (!available && m_tm) {
+        // Narrow legacy exception: an invalid pre-edit profile cannot be sent
+        // through the typed validator. Restore its original integers/blob in
+        // one balanced aggregate batch, never fabricate a replacement curve.
+        const QScopedValueRollback<bool> guard(m_updatingFromModel, true);
+        m_tm->beginCfcProfileUpdate();
+        {
+            const auto batch = qScopeGuard([this] { m_tm->endCfcProfileUpdate(); });
+            m_tm->setCfcPrecompDb(qRound(legacy.compression.globalGainDb));
+            m_tm->setCfcPostEqGainDb(qRound(legacy.postEq.globalGainDb));
+            for (int i = 0; i < 10; ++i) {
+                m_tm->setCfcEqFreq(i, qRound(legacy.compression.frequenciesHz[i]));
+                m_tm->setCfcCompression(i, qRound(legacy.compression.gainsDb[i]));
+                m_tm->setCfcPostEqBandGain(i, qRound(legacy.postEq.gainsDb[i]));
+            }
+            m_tm->setCfcParaEqData(legacyBlob);
+        }
+        restoreProfile(m_tm->effectiveCfcProfile());
+    } else {
+        m_compWidget->show(); m_postEqWidget->show();
+        m_invalidCurveGuidance->hide();
+    }
+    cancelBandCount();
+    m_committedEditState = state;
+    rebuildBandSelectors();
+    refreshControls();
+    if (available) { pushCfcProfileToModel(); }
+}
+
+void TxCfcDialog::beginEdit()
+{
+    if (m_ignoreUpdates || m_updatingFromModel) { return; }
+    const QByteArray state = captureEditState();
+    const int index = selectedIndex();
+    m_selectionStates.insert(state, index >= 0 ? m_compWidget->points()[index].bandId : -1);
+    m_history->beginEdit(state);
+}
+
+void TxCfcDialog::finishEdit()
+{
+    if (m_ignoreUpdates || m_updatingFromModel) { return; }
+    const QByteArray state = captureEditState();
+    const int index = selectedIndex();
+    m_selectionStates.insert(state, index >= 0 ? m_compWidget->points()[index].bandId : -1);
+    const bool edited = state != m_committedEditState;
+    m_history->commitEdit(state);
+    const auto retained = m_history->retainedStates();
+    for (auto it = m_selectionStates.begin(); it != m_selectionStates.end();) {
+        if (!retained.contains(it.key())) { it = m_selectionStates.erase(it); } else { ++it; }
+    }
+    m_committedEditState = state;
+    if (edited || m_liveGestureWrote) { pushCfcProfileToModel(); }
+    m_liveGestureWrote = false;
+    refreshControls();
+}
+
+void TxCfcDialog::changed(bool dragging)
+{
+    if (m_ignoreUpdates || m_updatingFromModel) { return; }
+    refreshControls();
+    if (m_gestureActive || m_sliderActive || dragging) {
+        if (m_liveUpdateChk->isChecked()) { pushCfcProfileToModel(); m_liveGestureWrote = true; }
+    } else if (m_numericEditor) {
+        pushCfcProfileToModel();
+    } else {
+        finishEdit();
+    }
+}
+
+void TxCfcDialog::rebaseEditHistory()
+{
+    m_gestureActive = false;
+    m_sliderActive = false;
+    m_numericEditor = nullptr;
+    m_liveGestureWrote = false;
+    m_history->cancelEdit();
+    m_selectionStates.clear();
+    m_committedEditState = captureEditState();
+    m_history->reset(m_committedEditState);
+}
 
 void TxCfcDialog::seedWidgetsFromTransmitModel()
 {
-    if (!m_tm) { return; }
-
-    // Pull TM defaults — TransmitModel.h:1337 [v2.10.3.13] defaults:
-    //   m_cfcEqFreqHz       = {0, 125, 250, 500, 1000, 2000, 3000, 4000, 5000, 10000};
-    //   m_cfcCompressionDb  = {5, 5, 5, 5, 5, 5, 5, 5, 5, 5};
-    //   m_cfcPostEqBandGainDb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-    QVector<double> freqs(10);
-    QVector<double> compGains(10);
-    QVector<double> compQ(10, 4.0);
-    QVector<double> eqGains(10);
-    QVector<double> eqQ(10, 4.0);
-    double maxFreqInTm = 0.0;
-    double minFreqInTm = static_cast<double>(kFreqHzMax);
-    for (int i = 0; i < 10; ++i) {
-        const double f = static_cast<double>(m_tm->cfcEqFreq(i));
-        freqs[i]     = f;
-        compGains[i] = static_cast<double>(m_tm->cfcCompression(i));
-        eqGains[i]   = static_cast<double>(m_tm->cfcPostEqBandGain(i));
-        if (f > maxFreqInTm) { maxFreqInTm = f; }
-        if (f < minFreqInTm) { minFreqInTm = f; }
-    }
-
-    // Widen the freq envelope so the highest TM freq fits.  Thetis's
-    // dialog default is 0..4000 Hz (frmCFCConfig.cs:89-99 [v2.10.3.13])
-    // but the TXProfile defaults extend to 10000 Hz — Thetis only honors
-    // those when a saved profile loads via ConfigData (cs:509-575).  For
-    // NereusSDR the TM IS the source of truth on construction so we
-    // expand the envelope to cover whatever's in TM, then push the
-    // resulting min/max into the Low/High spinboxes.
-    const double seedMinHz = std::min(kDefaultMinHz, minFreqInTm);
-    const double seedMaxHz = std::max(kDefaultMaxHz, maxFreqInTm);
-
-    QSignalBlocker bComp(m_compWidget);
-    QSignalBlocker bEq(m_postEqWidget);
-    QSignalBlocker bLow(m_lowSpin);
-    QSignalBlocker bHigh(m_highSpin);
-
-    m_compWidget->setBandCount(10);
-    m_compWidget->setFrequencyMinHz(seedMinHz);
-    m_compWidget->setFrequencyMaxHz(seedMaxHz);
-    m_compWidget->setPointsData(freqs, compGains, compQ);
-    m_compWidget->setGlobalGainDb(static_cast<double>(m_tm->cfcPrecompDb()));
-
-    m_postEqWidget->setBandCount(10);
-    m_postEqWidget->setFrequencyMinHz(seedMinHz);
-    m_postEqWidget->setFrequencyMaxHz(seedMaxHz);
-    m_postEqWidget->setPointsData(freqs, eqGains, eqQ);
-    m_postEqWidget->setGlobalGainDb(static_cast<double>(m_tm->cfcPostEqGainDb()));
-
-    // Sync the Low/High spinboxes to match the seeded envelope.
-    m_lowSpin->setValue(static_cast<int>(seedMinHz));
-    m_highSpin->setValue(static_cast<int>(seedMaxHz));
+    if (m_tm) { restoreProfile(m_tm->effectiveCfcProfile()); }
 }
-
-// ─────────────────────────────────────────────────────────────────────
-// Selected-index helpers — From Thetis frmCFCConfig.cs:307-315 [v2.10.3.13].
-// ─────────────────────────────────────────────────────────────────────
-
-int TxCfcDialog::selectedIndex() const
-{
-    if (m_compWidget && m_compWidget->selectedIndex() != -1) {
-        return m_compWidget->selectedIndex();
-    }
-    if (m_postEqWidget && m_postEqWidget->selectedIndex() != -1) {
-        return m_postEqWidget->selectedIndex();
-    }
-    return -1;
-}
-
-// From Thetis frmCFCConfig.cs:316-332 [v2.10.3.13] — updateSelected.
-// Enables/disables the per-band edit controls based on whether a band is
-// currently selected.
-void TxCfcDialog::updateSelectedRowEnable()
-{
-    const bool enable = (selectedIndex() != -1);
-    m_freqSpin->setEnabled(enable);
-    m_compSpin->setEnabled(enable);
-    m_compQSpin->setEnabled(enable);
-    m_gainSpin->setEnabled(enable);
-    m_eqQSpin->setEnabled(enable);
-    // Pre-Comp / Post-EQ Gain are global (always enabled).
-}
-
-// Pull the selected band's freq/gain/q values into the edit-row spinboxes.
-// Echo-guarded via m_ignoreUpdates (mirrors Thetis _ignore_udpates).
-void TxCfcDialog::updateEditRowFromSelection(int index)
-{
-    if (!m_compWidget || !m_postEqWidget) { return; }
-    if (index < 0 || index >= m_compWidget->points().size() ||
-                     index >= m_postEqWidget->points().size()) {
-        return;
-    }
-
-    double cf = 0.0, cg = 0.0, cq = 0.0;
-    double ef = 0.0, eg = 0.0, eq = 0.0;
-    m_compWidget->getPointData(index, cf, cg, cq);
-    m_postEqWidget->getPointData(index, ef, eg, eq);
-
-    m_ignoreUpdates = true;
-    {
-        QSignalBlocker b(m_selectedBandSpin);
-        m_selectedBandSpin->setValue(index + 1);
-    }
-    {
-        QSignalBlocker b(m_freqSpin);
-        m_freqSpin->setValue(static_cast<int>(std::round(cf)));
-    }
-    {
-        QSignalBlocker b(m_compSpin);
-        m_compSpin->setValue(cg);
-    }
-    {
-        QSignalBlocker b(m_compQSpin);
-        m_compQSpin->setValue(cq);
-    }
-    {
-        QSignalBlocker b(m_gainSpin);
-        m_gainSpin->setValue(eg);
-    }
-    {
-        QSignalBlocker b(m_eqQSpin);
-        m_eqQSpin->setValue(eq);
-    }
-    m_ignoreUpdates = false;
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Push current widget state back into TransmitModel.  This is the
-// NereusSDR equivalent of Thetis's setCFCProfile WDSP-direct push:
-// frmCFCConfig.cs:333-392 [v2.10.3.13] writes through to WDSP, but
-// NereusSDR routes everything through TransmitModel which dispatches
-// to TxChannel via its existing per-property change handlers (wired in
-// 3M-3a-ii Batch 2 via RadioModel).
-// ─────────────────────────────────────────────────────────────────────
-
-void TxCfcDialog::pushCfcProfileToModel()
-{
-    if (!m_tm || !m_compWidget || !m_postEqWidget) { return; }
-
-    QVector<double> cf, cg, cq, ef, eg, eq;
-    m_compWidget->getPointsData(cf, cg, cq);
-    m_postEqWidget->getPointsData(ef, eg, eq);
-
-    if (cf.size() != 10 || ef.size() != 10) {
-        // Non-10-band layouts (5-band / 18-band) don't fit TM's fixed
-        // 10-element arrays.  Profile push for those layouts is gated
-        // until the TM array width grows (separate follow-up; matches
-        // Thetis radCFC_5/18 which still calls setCFCProfile but has
-        // the variable-length WDSP API).  For now we just sync the
-        // GlobalGainDb scalars and skip the per-band push.
-        m_updatingFromModel = true;
-        m_tm->setCfcPrecompDb(static_cast<int>(std::round(m_compWidget->globalGainDb())));
-        m_tm->setCfcPostEqGainDb(static_cast<int>(std::round(m_postEqWidget->globalGainDb())));
-        m_updatingFromModel = false;
-        return;
-    }
-
-    m_updatingFromModel = true;
-    m_tm->setCfcPrecompDb(static_cast<int>(std::round(m_compWidget->globalGainDb())));
-    m_tm->setCfcPostEqGainDb(static_cast<int>(std::round(m_postEqWidget->globalGainDb())));
-    for (int i = 0; i < 10; ++i) {
-        m_tm->setCfcEqFreq        (i, static_cast<int>(std::round(cf[i])));
-        m_tm->setCfcCompression   (i, static_cast<int>(std::round(cg[i])));
-        m_tm->setCfcPostEqBandGain(i, static_cast<int>(std::round(eg[i])));
-    }
-    m_updatingFromModel = false;
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Right-column control slots
-// ─────────────────────────────────────────────────────────────────────
-
-// From Thetis frmCFCConfig.cs:108-118 [v2.10.3.13] — radCFC_bands_CheckedChanged.
-void TxCfcDialog::onBandCountChanged()
-{
-    int bands = currentBandCount();
-
-    m_selectedBandSpin->setMaximum(bands);
-
-    QSignalBlocker bComp(m_compWidget);
-    QSignalBlocker bEq(m_postEqWidget);
-    m_compWidget->setBandCount(bands);
-    m_postEqWidget->setBandCount(bands);
-
-    updateSelectedRowEnable();
-}
-
-// From Thetis frmCFCConfig.cs:120-129 [v2.10.3.13] — udCFC_low_ValueChanged.
-void TxCfcDialog::onLowFreqChanged(int hz)
-{
-    if (hz > m_highSpin->value() - kMinFreqSpreadHz) {
-        QSignalBlocker b(m_lowSpin);
-        m_lowSpin->setValue(m_highSpin->value() - kMinFreqSpreadHz);
-        return;
-    }
-    m_compWidget->setFrequencyMinHz  (static_cast<double>(hz));
-    m_postEqWidget->setFrequencyMinHz(static_cast<double>(hz));
-}
-
-// From Thetis frmCFCConfig.cs:131-140 [v2.10.3.13] — udCFC_high_ValueChanged.
-void TxCfcDialog::onHighFreqChanged(int hz)
-{
-    if (hz < m_lowSpin->value() + kMinFreqSpreadHz) {
-        QSignalBlocker b(m_highSpin);
-        m_highSpin->setValue(m_lowSpin->value() + kMinFreqSpreadHz);
-        return;
-    }
-    m_compWidget->setFrequencyMaxHz  (static_cast<double>(hz));
-    m_postEqWidget->setFrequencyMaxHz(static_cast<double>(hz));
-}
-
-int TxCfcDialog::currentBandCount() const
-{
-    if (m_bands5Radio  && m_bands5Radio->isChecked())  return 5;
-    if (m_bands18Radio && m_bands18Radio->isChecked()) return 18;
-    return 10;
-}
-
-// From Thetis frmCFCConfig.cs:484-490 [v2.10.3.13] — chkCFC_UseQFactors.
-void TxCfcDialog::onUseQFactorsToggled(bool on)
-{
-    m_compWidget->setParametricEq(on);
-    m_postEqWidget->setParametricEq(on);
-    pushCfcProfileToModel();
-}
-
-// From Thetis frmCFCConfig.cs:603-607 [v2.10.3.13] — chkLogScale.
-void TxCfcDialog::onLogScaleToggled(bool on)
-{
-    m_compWidget->setLogScale(on);
-    m_postEqWidget->setLogScale(on);
-}
-
-// From Thetis frmCFCConfig.cs:451-456 [v2.10.3.13] — btnResetComp_Click.
-//
-// Note: NereusSDR's ParametricEqWidget does not expose a public ResetPoints()
-// (Thetis ucParametricEq.cs:1041-1046).  The same effect is achieved by
-// re-seeding via setPointsData with the default flat profile (gain=0, q=4)
-// across the current frequency span.  See Task 5 review for the
-// intentional decision to keep resetPointsDefault private.
-void TxCfcDialog::onResetCompClicked()
-{
-    if (!m_compWidget) { return; }
-    const int bands = currentBandCount();
-    QVector<double> f(bands), g(bands, 0.0), q(bands, 4.0);
-    const double minHz = m_compWidget->frequencyMinHz();
-    const double maxHz = m_compWidget->frequencyMaxHz();
-    const double span = (maxHz > minHz) ? (maxHz - minHz) : 1.0;
-    for (int i = 0; i < bands; ++i) {
-        const double t = (bands > 1) ? double(i) / double(bands - 1) : 0.0;
-        f[i] = minHz + t * span;
-    }
-    {
-        QSignalBlocker b(m_compWidget);
-        m_compWidget->setSelectedIndex(-1);
-        m_compWidget->setGlobalGainDb(0.0);
-        m_compWidget->setPointsData(f, g, q);
-    }
-    pushCfcProfileToModel();
-    syncFromModel();
-    updateSelectedRowEnable();
-}
-
-// From Thetis frmCFCConfig.cs:458-463 [v2.10.3.13] — btnResetEQ_Click.
-void TxCfcDialog::onResetEqClicked()
-{
-    if (!m_postEqWidget) { return; }
-    const int bands = currentBandCount();
-    QVector<double> f(bands), g(bands, 0.0), q(bands, 4.0);
-    const double minHz = m_postEqWidget->frequencyMinHz();
-    const double maxHz = m_postEqWidget->frequencyMaxHz();
-    const double span = (maxHz > minHz) ? (maxHz - minHz) : 1.0;
-    for (int i = 0; i < bands; ++i) {
-        const double t = (bands > 1) ? double(i) / double(bands - 1) : 0.0;
-        f[i] = minHz + t * span;
-    }
-    {
-        QSignalBlocker b(m_postEqWidget);
-        m_postEqWidget->setSelectedIndex(-1);
-        m_postEqWidget->setGlobalGainDb(0.0);
-        m_postEqWidget->setPointsData(f, g, q);
-    }
-    pushCfcProfileToModel();
-    syncFromModel();
-    updateSelectedRowEnable();
-}
-
-// From Thetis frmCFCConfig.cs:598-601 [v2.10.3.13] — lblOGGuide_LinkClicked.
-void TxCfcDialog::onOgGuideClicked()
-{
-    QDesktopServices::openUrl(QUrl(QString::fromUtf8(kOgGuideUrl)));
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Top edit row slots
-// ─────────────────────────────────────────────────────────────────────
-
-// From Thetis frmCFCConfig.cs:465-475 [v2.10.3.13] — nudCFC_selected_band_ValueChanged.
-void TxCfcDialog::onSelectedBandChanged(int oneBased)
-{
-    if (m_ignoreUpdates) return;
-
-    m_ignoreUnselected = true;
-    {
-        QSignalBlocker bComp(m_compWidget);
-        QSignalBlocker bEq(m_postEqWidget);
-        m_compWidget->setSelectedIndex(oneBased - 1);
-        m_postEqWidget->setSelectedIndex(m_compWidget->selectedIndex());
-    }
-    m_ignoreUnselected = false;
-
-    updateEditRowFromSelection(m_compWidget->selectedIndex());
-    updateSelectedRowEnable();
-}
-
-// From Thetis frmCFCConfig.cs:142-150 [v2.10.3.13] — nudCFC_f_ValueChanged.
-void TxCfcDialog::onFreqSpinChanged(int hz)
-{
-    if (m_ignoreUpdates) return;
-    if (!m_compWidget) return;
-
-    const int index = m_compWidget->selectedIndex();
-    if (index < 0) return;
-
-    double f = 0.0, g = 0.0, q = 0.0;
-    m_compWidget->getPointData(index, f, g, q);
-    f = static_cast<double>(hz);
-    {
-        QSignalBlocker b(m_compWidget);
-        m_compWidget->setPointData(index, f, g, q);
-    }
-    // Cross-sync: the post-EQ widget shares per-band frequency.
-    if (m_postEqWidget && index < m_postEqWidget->points().size()) {
-        const int bandId = m_compWidget->points().at(index).bandId;
-        QSignalBlocker b(m_postEqWidget);
-        m_postEqWidget->setPointHz(bandId, f, false);
-    }
-    pushCfcProfileToModel();
-}
-
-// From Thetis frmCFCConfig.cs:152-157 [v2.10.3.13] — nudCFC_precomp_ValueChanged.
-void TxCfcDialog::onPrecompSpinChanged(double db)
-{
-    if (m_ignoreUpdates) return;
-    if (!m_compWidget) return;
-    {
-        QSignalBlocker b(m_compWidget);
-        m_compWidget->setGlobalGainDb(db);
-    }
-    if (m_tm && !m_updatingFromModel) {
-        m_updatingFromModel = true;
-        m_tm->setCfcPrecompDb(static_cast<int>(std::round(db)));
-        m_updatingFromModel = false;
-    }
-}
-
-// From Thetis frmCFCConfig.cs:159-167 [v2.10.3.13] — nudCFC_c_ValueChanged.
-void TxCfcDialog::onCompSpinChanged(double db)
-{
-    if (m_ignoreUpdates) return;
-    if (!m_compWidget) return;
-
-    const int index = m_compWidget->selectedIndex();
-    if (index < 0) return;
-
-    double f = 0.0, g = 0.0, q = 0.0;
-    m_compWidget->getPointData(index, f, g, q);
-    g = db;
-    {
-        QSignalBlocker b(m_compWidget);
-        m_compWidget->setPointData(index, f, g, q);
-    }
-    if (m_tm && !m_updatingFromModel) {
-        m_updatingFromModel = true;
-        m_tm->setCfcCompression(index, static_cast<int>(std::round(g)));
-        m_updatingFromModel = false;
-    }
-}
-
-// From Thetis frmCFCConfig.cs:196-204 [v2.10.3.13] — nudCFC_cq_ValueChanged.
-void TxCfcDialog::onCompQSpinChanged(double q)
-{
-    if (m_ignoreUpdates) return;
-    if (!m_compWidget) return;
-
-    const int index = m_compWidget->selectedIndex();
-    if (index < 0) return;
-
-    double f = 0.0, g = 0.0, oldQ = 0.0;
-    m_compWidget->getPointData(index, f, g, oldQ);
-    {
-        QSignalBlocker b(m_compWidget);
-        m_compWidget->setPointData(index, f, g, q);
-    }
-    pushCfcProfileToModel();
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Middle edit row slots
-// ─────────────────────────────────────────────────────────────────────
-
-// From Thetis frmCFCConfig.cs:169-174 [v2.10.3.13] — nudCFC_posteqgain_ValueChanged.
-void TxCfcDialog::onPostEqGainSpinChanged(double db)
-{
-    if (m_ignoreUpdates) return;
-    if (!m_postEqWidget) return;
-    {
-        QSignalBlocker b(m_postEqWidget);
-        m_postEqWidget->setGlobalGainDb(db);
-    }
-    if (m_tm && !m_updatingFromModel) {
-        m_updatingFromModel = true;
-        m_tm->setCfcPostEqGainDb(static_cast<int>(std::round(db)));
-        m_updatingFromModel = false;
-    }
-}
-
-// From Thetis frmCFCConfig.cs:176-184 [v2.10.3.13] — nudCFC_gain_ValueChanged.
-void TxCfcDialog::onGainSpinChanged(double db)
-{
-    if (m_ignoreUpdates) return;
-    if (!m_postEqWidget) return;
-
-    const int index = m_postEqWidget->selectedIndex();
-    if (index < 0) return;
-
-    double f = 0.0, g = 0.0, q = 0.0;
-    m_postEqWidget->getPointData(index, f, g, q);
-    g = db;
-    {
-        QSignalBlocker b(m_postEqWidget);
-        m_postEqWidget->setPointData(index, f, g, q);
-    }
-    if (m_tm && !m_updatingFromModel) {
-        m_updatingFromModel = true;
-        m_tm->setCfcPostEqBandGain(index, static_cast<int>(std::round(g)));
-        m_updatingFromModel = false;
-    }
-}
-
-// From Thetis frmCFCConfig.cs:186-194 [v2.10.3.13] — nudCFC_q_ValueChanged.
-void TxCfcDialog::onEqQSpinChanged(double q)
-{
-    if (m_ignoreUpdates) return;
-    if (!m_postEqWidget) return;
-
-    const int index = m_postEqWidget->selectedIndex();
-    if (index < 0) return;
-
-    double f = 0.0, g = 0.0, oldQ = 0.0;
-    m_postEqWidget->getPointData(index, f, g, oldQ);
-    {
-        QSignalBlocker b(m_postEqWidget);
-        m_postEqWidget->setPointData(index, f, g, q);
-    }
-    pushCfcProfileToModel();
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Comp widget event handlers
-// ─────────────────────────────────────────────────────────────────────
-
-// From Thetis frmCFCConfig.cs:234-238 [v2.10.3.13] — ucCFC_comp_PointsChanged.
-void TxCfcDialog::onCompPointsChanged(bool isDragging)
-{
-    if (isDragging) return;
-    pushCfcProfileToModel();
-}
-
-// From Thetis frmCFCConfig.cs:206-216 [v2.10.3.13] — ucCFC_comp_GlobalGainChanged.
-void TxCfcDialog::onCompGlobalGainChanged(bool isDragging)
-{
-    const bool live = m_liveUpdateChk && m_liveUpdateChk->isChecked();
-    if (!isDragging || live) {
-        pushCfcProfileToModel();
-    } else {
-        // just_text: don't push to WDSP, just update edit-row text.
-        // Mirror Thetis's setCFCProfile(-1, true) — UI text update only.
-        m_ignoreUpdates = true;
-        {
-            QSignalBlocker b(m_precompSpin);
-            m_precompSpin->setValue(m_compWidget->globalGainDb());
-        }
-        m_ignoreUpdates = false;
-    }
-}
-
-// From Thetis frmCFCConfig.cs:218-232 [v2.10.3.13] — ucCFC_comp_PointDataChanged.
-void TxCfcDialog::onCompPointDataChanged(int index, int bandId,
-                                          double frequencyHz,
-                                          double /*gainDb*/, double /*q*/,
-                                          bool isDragging)
-{
-    // Cross-sync: push the same band's frequency to the post-EQ widget +
-    // mirror the selection.
-    if (m_postEqWidget) {
-        QSignalBlocker b(m_postEqWidget);
-        m_postEqWidget->setPointHz(bandId, frequencyHz, isDragging);
-        const int eqIndex = m_postEqWidget->getIndexFromBandId(bandId);
-        m_postEqWidget->setSelectedIndex(eqIndex);
-    }
-
-    // Update the edit-row spinboxes from the new point data.
-    updateEditRowFromSelection(index);
-
-    const bool live = m_liveUpdateChk && m_liveUpdateChk->isChecked();
-    if (!isDragging || live) {
-        pushCfcProfileToModel();
-    }
-    // (drag-without-live: just update text, defer push to release.)
-}
-
-// From Thetis frmCFCConfig.cs:240-246 [v2.10.3.13] — ucCFC_comp_PointSelected.
-void TxCfcDialog::onCompPointSelected(int index, int bandId,
-                                       double /*frequencyHz*/,
-                                       double /*gainDb*/, double /*q*/)
-{
-    if (m_postEqWidget) {
-        QSignalBlocker b(m_postEqWidget);
-        const int eqIndex = m_postEqWidget->getIndexFromBandId(bandId);
-        m_postEqWidget->setSelectedIndex(eqIndex);
-    }
-    updateEditRowFromSelection(index);
-    updateSelectedRowEnable();
-}
-
-// From Thetis frmCFCConfig.cs:248-255 [v2.10.3.13] — ucCFC_comp_PointUnselected.
-void TxCfcDialog::onCompPointUnselected(int /*index*/, int /*bandId*/,
-                                         double /*frequencyHz*/,
-                                         double /*gainDb*/, double /*q*/)
-{
-    if (m_ignoreUnselected) return;
-
-    if (m_postEqWidget) {
-        QSignalBlocker b(m_postEqWidget);
-        m_postEqWidget->setSelectedIndex(-1);
-    }
-    updateSelectedRowEnable();
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Post-EQ widget event handlers (mirror comp handlers)
-// ─────────────────────────────────────────────────────────────────────
-
-// From Thetis frmCFCConfig.cs:285-289 [v2.10.3.13] — ucCFC_eq_PointsChanged.
-void TxCfcDialog::onEqPointsChanged(bool isDragging)
-{
-    if (isDragging) return;
-    pushCfcProfileToModel();
-}
-
-// From Thetis frmCFCConfig.cs:257-267 [v2.10.3.13] — ucCFC_eq_GlobalGainChanged.
-void TxCfcDialog::onEqGlobalGainChanged(bool isDragging)
-{
-    const bool live = m_liveUpdateChk && m_liveUpdateChk->isChecked();
-    if (!isDragging || live) {
-        pushCfcProfileToModel();
-    } else {
-        m_ignoreUpdates = true;
-        {
-            QSignalBlocker b(m_postEqGainSpin);
-            m_postEqGainSpin->setValue(m_postEqWidget->globalGainDb());
-        }
-        m_ignoreUpdates = false;
-    }
-}
-
-// From Thetis frmCFCConfig.cs:269-283 [v2.10.3.13] — ucCFC_eq_PointDataChanged.
-void TxCfcDialog::onEqPointDataChanged(int index, int bandId,
-                                        double frequencyHz,
-                                        double /*gainDb*/, double /*q*/,
-                                        bool isDragging)
-{
-    if (m_compWidget) {
-        QSignalBlocker b(m_compWidget);
-        m_compWidget->setPointHz(bandId, frequencyHz, isDragging);
-        const int compIndex = m_compWidget->getIndexFromBandId(bandId);
-        m_compWidget->setSelectedIndex(compIndex);
-    }
-
-    updateEditRowFromSelection(index);
-
-    const bool live = m_liveUpdateChk && m_liveUpdateChk->isChecked();
-    if (!isDragging || live) {
-        pushCfcProfileToModel();
-    }
-}
-
-// From Thetis frmCFCConfig.cs:291-297 [v2.10.3.13] — ucCFC_eq_PointSelected.
-void TxCfcDialog::onEqPointSelected(int index, int bandId,
-                                     double /*frequencyHz*/,
-                                     double /*gainDb*/, double /*q*/)
-{
-    if (m_compWidget) {
-        QSignalBlocker b(m_compWidget);
-        const int compIndex = m_compWidget->getIndexFromBandId(bandId);
-        m_compWidget->setSelectedIndex(compIndex);
-    }
-    updateEditRowFromSelection(index);
-    updateSelectedRowEnable();
-}
-
-// From Thetis frmCFCConfig.cs:299-306 [v2.10.3.13] — ucCFC_eq_PointUnselected.
-void TxCfcDialog::onEqPointUnselected(int /*index*/, int /*bandId*/,
-                                       double /*frequencyHz*/,
-                                       double /*gainDb*/, double /*q*/)
-{
-    if (m_ignoreUnselected) return;
-
-    if (m_compWidget) {
-        QSignalBlocker b(m_compWidget);
-        m_compWidget->setSelectedIndex(-1);
-    }
-    updateSelectedRowEnable();
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Model → UI sync (echo-guarded)
-// ─────────────────────────────────────────────────────────────────────
 
 void TxCfcDialog::syncFromModel()
 {
-    if (!m_tm || !m_compWidget || !m_postEqWidget) { return; }
+    if (!m_tm || m_updatingFromModel) { return; }
+    const QScopedValueRollback<bool> guard(m_updatingFromModel, true);
+    m_compWidget->cancelEditGesture();
+    m_postEqWidget->cancelEditGesture();
+    for (auto* slider : {m_compQSlider, m_eqQSlider}) {
+        if (slider->isSliderDown()) {
+            m_cancelledSlider = slider;
+            QSignalBlocker blocker(slider);
+            slider->setSliderDown(false);
+        }
+    }
+    rebaseEditHistory();
+    restoreProfile(m_tm->effectiveCfcProfile());
+    rebaseEditHistory();
+}
 
-    // Avoid re-entrant model writes during an in-flight pushCfcProfileToModel.
-    if (m_updatingFromModel) { return; }
+void TxCfcDialog::pushCfcProfileToModel()
+{
+    if (!m_tm || m_updatingFromModel || m_ignoreUpdates || !m_curveAvailable) { return; }
+    const QScopedValueRollback<bool> guard(m_updatingFromModel, true);
+    m_tm->setCfcProfile(captureProfile());
+}
 
-    m_updatingFromModel = true;
+void TxCfcDialog::syncPairedFrequencies(ParametricEqWidget* source, ParametricEqWidget* target)
+{
+    ParametricEqWidget::EqJsonState state;
+    state.bandCount = source->bandCount();
+    state.frequencyMinHz = source->frequencyMinHz();
+    state.frequencyMaxHz = source->frequencyMaxHz();
+    state.globalGainDb = target->globalGainDb();
+    state.parametricEq = m_compUseQ && m_eqUseQ;
+    for (const auto& point : source->points()) {
+        const int index = target->getIndexFromBandId(point.bandId);
+        if (index < 0) { return; }
+        auto partner = target->points()[index];
+        partner.frequencyHz = point.frequencyHz;
+        state.points.append(partner);
+    }
+    QSignalBlocker blocker(target);
+    target->setEditorCurveState(state);
+    const int index = source->selectedIndex();
+    target->setSelectedIndex(index >= 0 ? target->getIndexFromBandId(source->points()[index].bandId) : -1);
+}
 
-    // Pre-comp + post-EQ gain scalars → top edit row + widgets.
+int TxCfcDialog::selectedIndex() const { return m_compWidget->selectedIndex(); }
+int TxCfcDialog::currentBandCount() const { return m_compWidget->bandCount(); }
+
+void TxCfcDialog::rebuildBandSelectors()
+{
+    while (m_bandSelectors->count() > 0) {
+        std::unique_ptr<QLayoutItem> item(m_bandSelectors->takeAt(0));
+        if (item->widget()) {
+            item->widget()->setObjectName(QString());
+            item->widget()->hide();
+            item->widget()->deleteLater();
+        }
+    }
+    for (int i = 0; i < currentBandCount(); ++i) {
+        auto* selector = new QPushButton(this);
+        selector->setAutoDefault(false);
+        selector->setCheckable(true);
+        selector->setStyleSheet(Style::blueCheckedStyle());
+        selector->setObjectName(QStringLiteral("TxCfcBand%1").arg(i + 1));
+        selector->setMinimumWidth(48);
+        m_bandSelectors->addWidget(selector);
+        connect(selector, &QPushButton::clicked, this, [this, selector] {
+            onSelectedBandChanged(selector->property("bandId").toInt());
+        });
+    }
+    m_bandSelectors->addStretch();
+}
+
+void TxCfcDialog::refreshControls()
+{
+    const QScopedValueRollback<bool> guard(m_ignoreUpdates, true);
+    std::vector<QSignalBlocker> blockers;
+    blockers.reserve(14);
+    for (QObject* control : QList<QObject*>{m_selectedBandSpin, m_freqSpin, m_compSpin, m_gainSpin,
+                            m_compQSpin, m_eqQSpin, m_precompSpin, m_postEqGainSpin, m_lowSpin, m_highSpin,
+                            m_useQFactorsChk, m_logScaleChk, m_compQSlider, m_eqQSlider}) { blockers.emplace_back(control); }
+    m_selectedBandSpin->setMaximum(currentBandCount());
+    m_precompSpin->setValue(m_compWidget->globalGainDb());
+    m_postEqGainSpin->setValue(m_postEqWidget->globalGainDb());
+    m_lowSpin->setValue(qRound(m_compWidget->frequencyMinHz()));
+    m_highSpin->setValue(qRound(m_compWidget->frequencyMaxHz()));
+    m_useQFactorsChk->setChecked(m_compUseQ && m_eqUseQ);
+    m_logScaleChk->setChecked(m_compWidget->logScale());
+    const int index = selectedIndex();
+    if (index >= 0) {
+        const auto& comp = m_compWidget->points()[index];
+        const auto& eq = m_postEqWidget->points()[index];
+        m_selectedBandSpin->setValue(comp.bandId);
+        m_freqSpin->setValue(qRound(comp.frequencyHz));
+        m_compSpin->setValue(comp.gainDb);
+        m_gainSpin->setValue(eq.gainDb);
+        m_compQSpin->setValue(comp.q);
+        m_eqQSpin->setValue(eq.q);
+        m_compQSlider->setValue(qRound(1000 * std::log(comp.q / kQMin) / std::log(kQMax / kQMin)));
+        m_eqQSlider->setValue(qRound(1000 * std::log(eq.q / kQMin) / std::log(kQMax / kQMin)));
+        m_selectedSummary->setText(tr("Band %1 · %2 Hz").arg(comp.bandId).arg(comp.frequencyHz, 0, 'f', 0));
+    } else { m_selectedSummary->setText(tr("Select a band to edit")); }
+
+    for (int i = 0; i < currentBandCount() && i < m_bandSelectors->count(); ++i) {
+        auto* button = qobject_cast<QPushButton*>(m_bandSelectors->itemAt(i)->widget());
+        if (!button) { continue; }
+        const double hz = m_compWidget->points()[i].frequencyHz;
+        const int id = m_compWidget->points()[i].bandId;
+        button->setText(tr("%1\n%2 Hz").arg(id).arg(hz, 0, 'f', 0));
+        button->setObjectName(QStringLiteral("TxCfcBand%1").arg(id));
+        button->setProperty("bandId", id);
+        button->setToolTip(tr("Select band %1 at %2 Hz").arg(id).arg(hz, 0, 'f', 3));
+        button->setAccessibleName(button->toolTip());
+        button->setChecked(i == index);
+    }
+    updateSelectedRowEnable();
+}
+
+void TxCfcDialog::updateSelectedRowEnable()
+{
+    const bool selected = m_curveAvailable && selectedIndex() >= 0;
+    m_selectedBandSpin->setEnabled(m_curveAvailable);
+    m_precompSpin->setEnabled(m_curveAvailable);
+    m_postEqGainSpin->setEnabled(m_curveAvailable);
+    m_lowSpin->setEnabled(m_curveAvailable);
+    m_highSpin->setEnabled(m_curveAvailable);
+    m_useQFactorsChk->setEnabled(m_curveAvailable);
+    m_resetCompBtn->setEnabled(m_curveAvailable);
+    m_resetEqBtn->setEnabled(m_curveAvailable);
+    for (int i = 0; i < currentBandCount() && i < m_bandSelectors->count(); ++i) {
+        if (m_bandSelectors->itemAt(i)->widget()) { m_bandSelectors->itemAt(i)->widget()->setEnabled(m_curveAvailable); }
+    }
+    m_freqSpin->setEnabled(selected);
+    m_compSpin->setEnabled(selected);
+    m_gainSpin->setEnabled(selected);
+    const bool q = selected && m_compUseQ && m_eqUseQ;
+    m_compQSpin->setEnabled(q);
+    m_eqQSpin->setEnabled(q);
+    m_compQSlider->setEnabled(q);
+    m_eqQSlider->setEnabled(q);
+    m_qGuidance->setVisible(!(m_compUseQ && m_eqUseQ));
+}
+void TxCfcDialog::updateEditRowFromSelection(int) { refreshControls(); }
+
+void TxCfcDialog::onBandCountChanged()
+{
+    m_pendingBandCount = m_bandCountGroup->checkedId();
+    m_countNotice->setVisible(m_pendingBandCount != currentBandCount());
+}
+
+void TxCfcDialog::cancelBandCount()
+{
+    const QSignalBlocker blocker(m_bandCountGroup);
+    m_bandCountGroup->button(currentBandCount())->setChecked(true);
+    m_pendingBandCount = 0;
+    m_countNotice->hide();
+}
+
+void TxCfcDialog::applyBandCount()
+{
+    if (m_pendingBandCount == 0 || m_pendingBandCount == currentBandCount()) { cancelBandCount(); return; }
+    beginEdit();
     {
-        QSignalBlocker b(m_precompSpin);
-        m_precompSpin->setValue(static_cast<double>(m_tm->cfcPrecompDb()));
+        QSignalBlocker c(m_compWidget), e(m_postEqWidget);
+        m_compWidget->setBandCount(m_pendingBandCount);
+        m_postEqWidget->setBandCount(m_pendingBandCount);
     }
+    m_curveAvailable = true;
+    m_compWidget->show(); m_postEqWidget->show();
+    m_invalidCurveGuidance->hide();
+    cancelBandCount();
+    rebuildBandSelectors();
+    finishEdit();
+}
+
+// From Thetis frmCFCConfig.cs:120-140 [v2.10.3.15] — shared rescale, 1000 Hz minimum spread.
+void TxCfcDialog::onLowFreqChanged(int hz)
+{
+    if (m_ignoreUpdates) { return; }
+    beginEdit();
+    hz = std::min(hz, static_cast<int>(std::floor(m_compWidget->frequencyMaxHz() - kMinFreqSpreadHz)));
+    { QSignalBlocker c(m_compWidget), e(m_postEqWidget);
+      m_compWidget->setFrequencyMinHz(hz); m_postEqWidget->setFrequencyMinHz(hz); }
+    changed();
+}
+void TxCfcDialog::onHighFreqChanged(int hz)
+{
+    if (m_ignoreUpdates) { return; }
+    beginEdit();
+    hz = std::max(hz, static_cast<int>(std::ceil(m_compWidget->frequencyMinHz() + kMinFreqSpreadHz)));
+    { QSignalBlocker c(m_compWidget), e(m_postEqWidget);
+      m_compWidget->setFrequencyMaxHz(hz); m_postEqWidget->setFrequencyMaxHz(hz); }
+    changed();
+}
+
+void TxCfcDialog::onUseQFactorsToggled(bool on)
+{
+    if (m_ignoreUpdates) { return; }
+    beginEdit();
+    m_compUseQ = m_eqUseQ = on;
+    { QSignalBlocker c(m_compWidget), e(m_postEqWidget);
+      m_compWidget->setParametricEq(on); m_postEqWidget->setParametricEq(on); }
+    finishEdit();
+}
+
+void TxCfcDialog::onLogScaleToggled(bool on)
+{
+    if (m_ignoreUpdates) { return; }
+    { QSignalBlocker c(m_compWidget), e(m_postEqWidget);
+      m_compWidget->setLogScale(on); m_postEqWidget->setLogScale(on); }
+    // Presentation changes are not audio edits. Rebase the current snapshot
+    // only when history is empty; later audio undo retains its exact graph config.
+    m_committedEditState = captureEditState();
+    if (!m_history->canUndo() && !m_history->canRedo()) { rebaseEditHistory(); }
+}
+
+void TxCfcDialog::resetCurve(ParametricEqWidget* widget)
+{
+    beginEdit();
+    { QSignalBlocker blocker(widget);
+      ParametricEqWidget::EqJsonState state;
+      state.bandCount = widget->bandCount();
+      state.frequencyMinHz = widget->frequencyMinHz();
+      state.frequencyMaxHz = widget->frequencyMaxHz();
+      state.parametricEq = widget->parametricEq();
+      state.points = widget->points();
+      for (auto& point : state.points) { point.gainDb = 0; point.q = 4; }
+      widget->setEditorCurveState(state); }
+    finishEdit();
+}
+void TxCfcDialog::onResetCompClicked() { resetCurve(m_compWidget); }
+void TxCfcDialog::onResetEqClicked() { resetCurve(m_postEqWidget); }
+void TxCfcDialog::onOgGuideClicked() { QDesktopServices::openUrl(QUrl(QString::fromUtf8(kOgGuideUrl))); }
+
+void TxCfcDialog::onSelectedBandChanged(int oneBased)
+{
+    if (m_ignoreUpdates || !m_curveAvailable) { return; }
+    { QSignalBlocker c(m_compWidget), e(m_postEqWidget);
+      m_compWidget->setSelectedIndex(m_compWidget->getIndexFromBandId(oneBased));
+      m_postEqWidget->setSelectedIndex(m_postEqWidget->getIndexFromBandId(oneBased)); }
+    refreshControls();
+}
+
+void TxCfcDialog::editSelectedPoint(ParametricEqWidget* widget, double f, double g, double q)
+{
+    if (m_ignoreUpdates || widget->selectedIndex() < 0) { return; }
+    if (!m_sliderActive && !m_numericEditor) { beginEdit(); }
     {
-        QSignalBlocker b(m_postEqGainSpin);
-        m_postEqGainSpin->setValue(static_cast<double>(m_tm->cfcPostEqGainDb()));
+        QSignalBlocker blocker(widget);
+        const int index = widget->selectedIndex();
+        if (f == widget->points()[index].frequencyHz) {
+            // Amount/width edits must not run the legacy frequency-spacing
+            // sweep over exact centers loaded from a saved profile.
+            ParametricEqWidget::EqJsonState state;
+            state.bandCount = widget->bandCount();
+            state.frequencyMinHz = widget->frequencyMinHz();
+            state.frequencyMaxHz = widget->frequencyMaxHz();
+            state.globalGainDb = widget->globalGainDb();
+            state.parametricEq = widget->parametricEq();
+            state.points = widget->points();
+            state.points[index].gainDb = std::clamp(g, widget->dbMin(), widget->dbMax());
+            state.points[index].q = std::clamp(q, widget->qMin(), widget->qMax());
+            widget->setEditorCurveState(state);
+        } else {
+            widget->setPointData(index, f, g, q);
+        }
     }
+    syncPairedFrequencies(widget, widget == m_compWidget ? m_postEqWidget : m_compWidget);
+    changed();
+}
+void TxCfcDialog::onFreqSpinChanged(int hz)
+{
+    const int index = selectedIndex();
+    if (index < 0) { return; }
+    const auto point = m_compWidget->points()[index];
+    editSelectedPoint(m_compWidget, hz, point.gainDb, point.q);
+}
+void TxCfcDialog::onCompSpinChanged(double db)
+{
+    const int index = selectedIndex(); if (index < 0) { return; }
+    const auto point = m_compWidget->points()[index];
+    editSelectedPoint(m_compWidget, point.frequencyHz, db, point.q);
+}
+void TxCfcDialog::onCompQSpinChanged(double q)
+{
+    const int index = selectedIndex(); if (index < 0) { return; }
+    const auto point = m_compWidget->points()[index];
+    editSelectedPoint(m_compWidget, point.frequencyHz, point.gainDb, q);
+}
+void TxCfcDialog::onGainSpinChanged(double db)
+{
+    const int index = selectedIndex(); if (index < 0) { return; }
+    const auto point = m_postEqWidget->points()[index];
+    editSelectedPoint(m_postEqWidget, point.frequencyHz, db, point.q);
+}
+void TxCfcDialog::onEqQSpinChanged(double q)
+{
+    const int index = selectedIndex(); if (index < 0) { return; }
+    const auto point = m_postEqWidget->points()[index];
+    editSelectedPoint(m_postEqWidget, point.frequencyHz, point.gainDb, q);
+}
+void TxCfcDialog::onPrecompSpinChanged(double db)
+{
+    if (m_ignoreUpdates) { return; }
+    if (!m_numericEditor) { beginEdit(); }
+    { QSignalBlocker blocker(m_compWidget); m_compWidget->setGlobalGainDb(db); }
+    changed();
+}
+void TxCfcDialog::onPostEqGainSpinChanged(double db)
+{
+    if (m_ignoreUpdates) { return; }
+    if (!m_numericEditor) { beginEdit(); }
+    { QSignalBlocker blocker(m_postEqWidget); m_postEqWidget->setGlobalGainDb(db); }
+    changed();
+}
 
-    // Per-band freq / comp / post-EQ → both widgets (preserving current Q).
-    // We can only push to widgets that have the matching band count — TM
-    // always carries 10 entries, so the 10-band layout round-trips natively;
-    // 5/18 layouts are handled by user reset (band-radio change reseeds via
-    // setBandCount, which calls resetPointsDefault internally).
-    if (m_compWidget->bandCount() == 10 && m_postEqWidget->bandCount() == 10) {
-        // Find the max TM freq so we can widen the envelope if needed
-        // (mirrors seedWidgetsFromTransmitModel logic).
-        double maxFreqInTm = 0.0;
-        for (int i = 0; i < 10; ++i) {
-            const double f = static_cast<double>(m_tm->cfcEqFreq(i));
-            if (f > maxFreqInTm) { maxFreqInTm = f; }
-        }
-        if (maxFreqInTm > m_compWidget->frequencyMaxHz()) {
-            QSignalBlocker bComp(m_compWidget);
-            QSignalBlocker bEq(m_postEqWidget);
-            QSignalBlocker bHigh(m_highSpin);
-            m_compWidget->setFrequencyMaxHz(maxFreqInTm);
-            m_postEqWidget->setFrequencyMaxHz(maxFreqInTm);
-            m_highSpin->setValue(static_cast<int>(maxFreqInTm));
+bool TxCfcDialog::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == m_cancelledSlider) {
+        if (event->type() == QEvent::MouseButtonRelease) { m_cancelledSlider = nullptr; event->accept(); return true; }
+        if (event->type() == QEvent::MouseMove) { event->accept(); return true; }
+    }
+    if (auto* editor = qobject_cast<QLineEdit*>(watched); editor && event->type() == QEvent::KeyPress) {
+        auto* key = static_cast<QKeyEvent*>(event);
+        const bool undo = key->matches(QKeySequence::Undo);
+        const bool redo = key->matches(QKeySequence::Redo);
+        if ((undo && !editor->isUndoAvailable()) || (redo && !editor->isRedoAvailable())) {
+            if (undo) { undoEdit(); } else { redoEdit(); }
+            key->accept(); return true;
         }
     }
-    if (m_compWidget->bandCount() == 10) {
-        QVector<double> cf(10), cg(10), cq(10);
-        m_compWidget->getPointsData(cf, cg, cq);
-        for (int i = 0; i < 10; ++i) {
-            cf[i] = static_cast<double>(m_tm->cfcEqFreq(i));
-            cg[i] = static_cast<double>(m_tm->cfcCompression(i));
+    auto* spin = qobject_cast<QAbstractSpinBox*>(watched);
+    if (!spin && qobject_cast<QLineEdit*>(watched)) { spin = qobject_cast<QAbstractSpinBox*>(watched->parent()); }
+    if (spin && event->type() == QEvent::FocusIn && !m_ignoreUpdates && !m_updatingFromModel) {
+        if (m_numericEditor != spin) {
+            if (m_numericEditor) { m_numericEditor = nullptr; finishEdit(); }
+            beginEdit(); m_numericEditor = spin;
         }
-        QSignalBlocker b(m_compWidget);
-        m_compWidget->setPointsData(cf, cg, cq);
-        m_compWidget->setGlobalGainDb(static_cast<double>(m_tm->cfcPrecompDb()));
     }
-    if (m_postEqWidget->bandCount() == 10) {
-        QVector<double> ef(10), eg(10), eq(10);
-        m_postEqWidget->getPointsData(ef, eg, eq);
-        for (int i = 0; i < 10; ++i) {
-            ef[i] = static_cast<double>(m_tm->cfcEqFreq(i));
-            eg[i] = static_cast<double>(m_tm->cfcPostEqBandGain(i));
-        }
-        QSignalBlocker b(m_postEqWidget);
-        m_postEqWidget->setPointsData(ef, eg, eq);
-        m_postEqWidget->setGlobalGainDb(static_cast<double>(m_tm->cfcPostEqGainDb()));
+    if (qobject_cast<QSlider*>(watched) && event->type() == QEvent::MouseButtonPress) {
+        beginEdit();
+        m_sliderActive = true;
     }
+    if (qobject_cast<QSlider*>(watched) && event->type() == QEvent::MouseButtonRelease) {
+        // Groove clicks do not emit sliderReleased. Finish after native handling;
+        // handle releases already finish through the slider's own signal.
+        QTimer::singleShot(0, this, [this] {
+            if (m_sliderActive) { m_sliderActive = false; finishEdit(); }
+        });
+    }
+    // Width sliders live inside a scroll area; avoid accidental wheel edits.
+    if (qobject_cast<QSlider*>(watched) && event->type() == QEvent::Wheel) { event->accept(); return true; }
+    return QDialog::eventFilter(watched, event);
+}
 
-    // If a band is currently selected, refresh its edit-row spinboxes.
-    if (selectedIndex() != -1) {
-        m_updatingFromModel = false;
-        updateEditRowFromSelection(selectedIndex());
-        return;
+void TxCfcDialog::undoEdit()
+{
+    if (m_numericEditor) { m_numericEditor = nullptr; finishEdit(); }
+    if (const auto state = m_history->undo()) { restoreEditState(*state); }
+}
+void TxCfcDialog::redoEdit()
+{
+    if (m_numericEditor) { m_numericEditor = nullptr; finishEdit(); }
+    if (const auto state = m_history->redo()) { restoreEditState(*state); }
+}
+void TxCfcDialog::keyPressEvent(QKeyEvent* event)
+{
+    if (event->matches(QKeySequence::Undo) || event->matches(QKeySequence::Redo)) {
+        // Focused text fields consume their standard undo before propagation.
+        auto* editor = qobject_cast<QLineEdit*>(QApplication::focusWidget());
+        if (editor && ((event->matches(QKeySequence::Undo) && editor->isUndoAvailable())
+                    || (event->matches(QKeySequence::Redo) && editor->isRedoAvailable()))) {
+            if (event->matches(QKeySequence::Undo)) { editor->undo(); } else { editor->redo(); }
+        } else if (event->matches(QKeySequence::Undo)) { undoEdit(); } else { redoEdit(); }
+        event->accept(); return;
     }
-
-    m_updatingFromModel = false;
+    QDialog::keyPressEvent(event);
 }
 
 // ─────────────────────────────────────────────────────────────────────

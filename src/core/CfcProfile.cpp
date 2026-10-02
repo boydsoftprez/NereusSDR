@@ -114,6 +114,9 @@ bool validCurve(const CfcCurveState& curve, bool compression)
         || !inRange(curve.globalGainDb, compression ? 0 : -24, compression ? 16 : 24)) {
         return false;
     }
+    // From Thetis ucParametricEq.cs:3280-3281 [v2.10.3.15] — endpoint anchors.
+    if (curve.frequenciesHz.first() != curve.frequencyMinHz
+        || curve.frequenciesHz.last() != curve.frequencyMaxHz) { return false; }
     for (qsizetype i = 0; i < count; ++i) {
         if (!inRange(curve.frequenciesHz[i], curve.frequencyMinHz, curve.frequencyMaxHz)
             || !inRange(curve.gainsDb[i], compression ? 0 : -24, compression ? 16 : 24)

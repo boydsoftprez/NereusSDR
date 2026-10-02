@@ -2,6 +2,7 @@
 #pragma once
 #include <QByteArray>
 #include <QObject>
+#include <QSet>
 #include <optional>
 #include <vector>
 
@@ -23,6 +24,8 @@ public:
     std::optional<QByteArray> redo();
     bool canUndo() const;
     bool canRedo() const;
+    // Snapshot keys for caller-owned bounded sidecars (e.g. selection).
+    QSet<QByteArray> retainedStates() const;
 signals:
     void availabilityChanged(bool canUndo, bool canRedo);
 
