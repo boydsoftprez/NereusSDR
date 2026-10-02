@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
+//                Take and select action, with current access and target
+//                lifetime checks. AI-assisted via OpenAI Codex.
 //   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -2172,11 +2175,13 @@ void TxApplet::setTransmitSliceResolver(std::function<SliceModel*()> resolver)
 
 void TxApplet::setTransmitSliceChoices(std::function<bool(int)> controlled,
                                        std::function<void(int)> choose,
-                                       std::function<QString()> unavailableReason)
+                                       std::function<QString()> unavailableReason,
+                                       std::function<TransmitSliceChoice(int)> availability)
 {
     m_txSliceControlled = std::move(controlled);
     m_txSliceChoose = std::move(choose);
     m_txSliceUnavailable = std::move(unavailableReason);
+    m_txSliceAvailability = std::move(availability);
     refreshTransmitSliceChoices();
 }
 
@@ -2208,9 +2213,13 @@ void TxApplet::refreshTransmitSliceChoices()
         button->setProperty("sliceId", id);
         button->setAccessibleName(QStringLiteral("Transmit on slice %1").arg(slice->sliceLetter()));
         // Disabled, never hidden: the reason is the tooltip.
-        button->setEnabled(reason.isEmpty());
-        button->setToolTip(reason.isEmpty()
-            ? QStringLiteral("Transmit on slice %1").arg(slice->sliceLetter()) : reason);
+        const TransmitSliceChoice availability = m_txSliceAvailability
+            ? m_txSliceAvailability(id)
+            : TransmitSliceChoice{reason.isEmpty(), reason};
+        button->setEnabled(availability.enabled);
+        button->setToolTip(availability.toolTip.isEmpty()
+            ? QStringLiteral("Transmit on slice %1").arg(slice->sliceLetter())
+            : availability.toolTip);
         connect(button, &QPushButton::clicked, this, [this, button, id](bool) {
             // The model's answer checks the row; the press alone does not.
             if (button) { button->setChecked(transmitSlice()

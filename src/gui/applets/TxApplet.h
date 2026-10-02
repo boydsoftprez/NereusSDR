@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
+//                Take and select action, with current access and target
+//                lifetime checks. AI-assisted via OpenAI Codex.
 //   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -449,9 +452,16 @@ public:
     /// ruling 8.10). `unavailableReason` non-empty shows the row disabled
     /// with that reason. Empty functions: every slice, the radio's own
     /// handoff (RadioModel::requestTxHandoffToSlice), always available.
+    /// Optional per-slice availability replaces the row-wide reason and
+    /// supplies the words for a guarded Take or current refusal.
+    struct TransmitSliceChoice {
+        bool enabled{true};
+        QString toolTip;
+    };
     void setTransmitSliceChoices(std::function<bool(int)> controlled,
                                  std::function<void(int)> choose,
-                                 std::function<QString()> unavailableReason = {});
+                                 std::function<QString()> unavailableReason = {},
+                                 std::function<TransmitSliceChoice(int)> availability = {});
     /// Rebuilds the letter row (a slice came or went, control changed).
     void refreshTransmitSliceChoices();
     QList<QPushButton*> transmitSliceButtons() const { return m_txSliceButtons; }
@@ -729,6 +739,7 @@ private:
     std::function<bool(int)> m_txSliceControlled;
     std::function<void(int)> m_txSliceChoose;
     std::function<QString()> m_txSliceUnavailable;
+    std::function<TransmitSliceChoice(int)> m_txSliceAvailability;
 
     // Defaults to local-direct behaviour. Remote MainWindow wiring replaces it
     // after handshake/capability evaluation.

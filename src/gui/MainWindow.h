@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
+//                Take and select action, with current access and target
+//                lifetime checks. AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -1016,6 +1019,9 @@ private slots:
     void pushSpectrumCalToPans();
 
 private:
+#ifdef NEREUS_BUILD_TESTS
+    friend class TxLetterTakeWindowAccess;
+#endif
     // Parity Task 21 (R-IOS-18, B6.2, B6.3): the Core's radio from a remote
     // window: Setup > This Core opened on what the menu asked for.
     enum class ThisCoreFocus { ChangeRadio, EditRadio, ForgetRadio };
@@ -1801,7 +1807,20 @@ private:
     // then makes the slice the TX slice. Two requests in sequence: a slice
     // take never carries transmit (ruling Q8). Nothing keys.
     enum class TxBadgeStage { None, Slice, Transmit };
-    // What the flag's badge offers now (VfoWidget::TxBadgeOffer).
+    struct TxSliceAction {
+        bool offered{false};
+        QString toolTip;
+        QString heldReason;
+        bool enabled{false};
+        QString effectiveWords;
+    };
+    TxSliceAction txSliceAction(int sliceId) const;
+    void activateTransmitSlice(int sliceId, bool controlledOnly);
+    quint64 txSliceIncarnation(int sliceId) const;
+    bool txTakeTargetValid(int sliceId, SliceModel* target, quint64 incarnation,
+                           bool requireControl) const;
+    // The flag and letter share current eligibility; neither widget is
+    // authority for the action or the pending target's Core lifetime.
     void applyTxBadgeOffer(VfoWidget* flag) const;
     // Whether this window holds transmit: the station device's hold in a
     // hosting window, the Core's word in a remote one, always on its own.
@@ -1827,6 +1846,10 @@ private:
     int m_flagRequestSlice{-1};
     // TX badge take: the slice a badge click is taking, and its stage.
     int m_txBadgeTakeSlice{-1};
+    QPointer<SliceModel> m_txBadgeTarget;
+    quint64 m_txBadgeIncarnation{0};
+    // A flag's slice.takeControl answer can precede its access delta.
+    bool m_txBadgeTakingSlice{false};
     TxBadgeStage m_txBadgeTakeStage{TxBadgeStage::None};
     // The badge's own take of transmit: the hosting take's id, the remote
     // tx.take's command id, and whether it was granted. Only that take's
