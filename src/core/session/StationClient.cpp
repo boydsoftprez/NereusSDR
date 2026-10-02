@@ -1874,6 +1874,11 @@ void StationClient::startSession(SessionTransport* transport, const QString& tok
     m_lastUrl.clear();
     // iPhone app plan Task 27: nothing to redial, so no addresses either.
     m_dialPlan.clear();
+    // An adopted transport owns no paired race target either. Cancel any
+    // prior race and retire its route before this session takes ownership.
+    stopRace();
+    m_raceMode = false;
+    m_serviceRoute = ServiceRoute{};
     // Task 28: nor a route through the service.
     stopServiceDial();
     m_serviceServers.clear();

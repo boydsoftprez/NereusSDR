@@ -2131,9 +2131,9 @@ private:
     /// and later runs a startSession()-based seam session would otherwise
     /// keep the STALE latch from the earlier real dial, and a
     /// retry-eligible close of the seam session would silently redial that
-    /// unrelated earlier target. scheduleReconnect() checks this before
-    /// arming anything, which is what keeps a session with nothing latched
-    /// from ever being auto-retried: there is nothing to redial.
+    /// unrelated earlier target. The adopted entry also clears paired-race
+    /// ownership and service routes. endSession() checks the owned URL or
+    /// paired race before arming a retry: an adopted link has neither.
     QUrl m_lastUrl;
     /// iPhone app plan Task 27: the addresses one attempt tries in order
     /// (the cached ones, then the one asked for), where it stands, what it
