@@ -14635,6 +14635,17 @@ void MainWindow::openNetworkDiagnostics()
     dlg->show();
 }
 
+void MainWindow::openCoreSettings(const QString& targetId)
+{
+    SetupDialog* dialog = createSetupDialog();
+    if (!dialog) { return; }
+    // createSetupDialog emits setupDialogCreated before returning, so the host
+    // installs its canonical store/context and lazy page binder before inspection.
+    dialog->inspectCoreTarget(targetId);
+    dialog->show();
+    dialog->raise();
+}
+
 SetupDialog* MainWindow::createSetupDialog()
 {
     // R-R3-21 / R-R3-10: Setup opens in every state. A remote window that is

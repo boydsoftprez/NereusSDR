@@ -25,12 +25,16 @@ public:
     void refreshTargets();
     void inspectTarget(const QString& id);
     QString inspectedId() const { return m_inspectedId; }
+    quint64 inspectedIncarnation() const { return m_incarnation; }
     void cancelOperations();
     /// Serial rename binder must echo all three fences. The accepted name is
     /// obtained from authoritative coreInfo by the host; it is not a nickname.
     void finishRename(const CoreRenameRequest& request, bool accepted, const QString& reason);
     void setStationSettingsAvailable(bool available, const QString& reason) override;
 signals:
+    /// Emitted after retiring pending operations and updating inspection. Zero
+    /// incarnation means this target has no writable lease in the bound store.
+    void inspectedTargetChanged(QString targetId, quint64 incarnation);
     void renameRequested(NereusSDR::CoreRenameRequest request);
     void renameCancelled(quint64 requestId);
     void connectionDetailsRequested();

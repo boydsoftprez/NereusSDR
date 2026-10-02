@@ -326,6 +326,8 @@ public:
     void startInitialConnection();
     void retireForSessionSwitch();
     void setConnectionPickerManaged(bool managed);
+    /// Present Settings for a saved Core without changing the window's session.
+    void openCoreSettings(const QString& targetId);
     RadioModel* radioModel() const { return m_radioModel; }
     // Caller owns the controller and model; local windows only.
     void setDesktopStationController(DesktopStationController* controller);

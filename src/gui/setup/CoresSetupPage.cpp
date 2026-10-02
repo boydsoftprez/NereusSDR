@@ -495,9 +495,7 @@ void CoresSetupPage::refreshTargets()
         inspectTarget({});
         return;
     }
-    if (!m_store->target(m_inspectedId)) {
-        m_inspectedId = targets.first().id;
-    }
+    const QString inspectedId = m_store->target(m_inspectedId) ? m_inspectedId : targets.first().id;
     QPointer<QPushButton> selectedEntry;
     QStringList unknownIdentifiers;
     for (const SavedCoreTarget& target : targets) {
@@ -538,7 +536,7 @@ void CoresSetupPage::refreshTargets()
         auto* subtitle = text(description, entry);
         subtitle->setStyleSheet(QStringLiteral("font-size:11px; background:transparent;"));
         entryLayout->addWidget(subtitle);
-        if (target.id == m_inspectedId) {
+        if (target.id == inspectedId) {
             selectedEntry = entry;
             entry->setStyleSheet(QStringLiteral("QPushButton { background:#00b4d8; border:0; border-radius:0; padding:0; } QLabel { color:#0f0f1a; }"));
             for (QLabel* label : entry->findChildren<QLabel*>()) {
@@ -553,13 +551,14 @@ void CoresSetupPage::refreshTargets()
     }
     m_coreGrid->setColumnStretch(0, 1);
     m_coreGrid->setColumnStretch(1, 1);
-    inspectTarget(m_inspectedId);
+    inspectTarget(inspectedId);
     if (restoreCoreFocus && selectedEntry) { selectedEntry->setFocus(); }
 }
 void CoresSetupPage::inspectTarget(const QString& id)
 {
     const quint64 incarnation = m_store ? m_store->targetIncarnation(id) : 0;
-    if (id != m_inspectedId || incarnation != m_incarnation) {
+    const bool changed = id != m_inspectedId || incarnation != m_incarnation;
+    if (changed) {
         cancelOperations();
         m_status->clear();
     }
@@ -569,6 +568,7 @@ void CoresSetupPage::inspectTarget(const QString& id)
     renderInspection();
     renderAddresses();
     renderAdministration();
+    if (changed) { emit inspectedTargetChanged(m_inspectedId, m_incarnation); }
 }
 void CoresSetupPage::renderInspection()
 {

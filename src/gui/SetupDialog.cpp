@@ -632,7 +632,7 @@ void SetupDialog::setCoreTargets(CoreTargetStore* store)
             page->setContext(m_coreSettingsContext);
             if (!m_inspectedCoreTarget.isEmpty()) { page->inspectTarget(m_inspectedCoreTarget); }
             connect(page, &CoresSetupPage::connectionDetailsRequested,
-                    this, &SetupDialog::connectionsRequested);
+                    this, &SetupDialog::coreConnectionDetailsRequested);
             if (m_coresPageBinder) { m_coresPageBinder(page); }
             return page;
         };
@@ -1428,7 +1428,7 @@ void SetupDialog::buildTree()
         page->setContext(m_coreSettingsContext);
         if (!m_inspectedCoreTarget.isEmpty()) { page->inspectTarget(m_inspectedCoreTarget); }
         connect(page, &CoresSetupPage::connectionDetailsRequested,
-                this, &SetupDialog::connectionsRequested);
+                this, &SetupDialog::coreConnectionDetailsRequested);
         if (m_coresPageBinder) { m_coresPageBinder(page); }
         return page;
     });

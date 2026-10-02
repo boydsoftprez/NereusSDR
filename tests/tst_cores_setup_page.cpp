@@ -101,6 +101,164 @@ void capture(QWidget& widget, const QString& name) {
 class TstCoresSetupPage final : public QObject {
     Q_OBJECT
 private slots:
+    void inspectionNotificationsTrackIdentityLeaseWithoutSelectingOrProbing() {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("settings.xml")));
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        const SavedCoreTarget one = target(QStringLiteral("one"), QByteArray(32, 'a'));
+        const SavedCoreTarget two = target(QStringLiteral("two"), QByteArray(32, 'b'));
+        QVERIFY(store.upsert(one));
+        QVERIFY(store.upsert(two));
+        QVERIFY(store.select(two.id));
+        int probes = 0;
+        CoresSetupPage page(&store, nullptr, nullptr,
+            [&probes](const QUrl&) -> PathRung* { ++probes; return nullptr; });
+        QCOMPARE(page.inspectedId(), one.id);
+        QCOMPARE(page.inspectedIncarnation(), store.targetIncarnation(one.id));
+        QSignalSpy changes(&page, &CoresSetupPage::inspectedTargetChanged);
+        connect(&page, &CoresSetupPage::inspectedTargetChanged, &page,
+            [&page](const QString& id, quint64 incarnation) {
+                QCOMPARE(page.inspectedId(), id);
+                QCOMPARE(page.inspectedIncarnation(), incarnation);
+            });
+        page.inspectTarget(two.id);
+        QCOMPARE(changes.size(), 1);
+        QCOMPARE(changes.last()[0].toString(), two.id);
+        QCOMPARE(changes.last()[1].toULongLong(), store.targetIncarnation(two.id));
+        page.inspectTarget(two.id);
+        CoreSettingsContext context;
+        context.radio = QStringLiteral("Ordinary telemetry refresh");
+        page.setContext(context);
+        page.refreshTargets();
+        QCOMPARE(changes.size(), 1);
+        QCOMPARE(store.selectedId(), two.id);
+        QCOMPARE(probes, 0);
+
+        // Missing inspection loses writable authority; refreshing falls back
+        // through the same observable transition instead of preassigning its ID.
+        page.inspectTarget(QStringLiteral("missing"));
+        QCOMPARE(changes.size(), 2);
+        QCOMPARE(changes.last()[0].toString(), QStringLiteral("missing"));
+        QCOMPARE(changes.last()[1].toULongLong(), quint64(0));
+        page.refreshTargets();
+        QCOMPARE(changes.size(), 3);
+        QCOMPARE(changes.last()[0].toString(), one.id);
+        const quint64 firstLease = page.inspectedIncarnation();
+        QVERIFY(store.remove(one.id));
+        page.inspectTarget(one.id);
+        QCOMPARE(changes.size(), 4);
+        QCOMPARE(changes.last()[0].toString(), one.id);
+        QCOMPARE(changes.last()[1].toULongLong(), quint64(0));
+        QVERIFY(store.upsert(one));
+        page.inspectTarget(one.id);
+        QCOMPARE(changes.size(), 5);
+        QVERIFY(page.inspectedIncarnation() != firstLease);
+        QCOMPARE(changes.last()[1].toULongLong(), store.targetIncarnation(one.id));
+        QCOMPARE(store.selectedId(), two.id);
+        QCOMPARE(probes, 0);
+        QVERIFY(store.remove(one.id));
+        QVERIFY(store.remove(two.id));
+        page.refreshTargets();
+        QCOMPARE(changes.size(), 6);
+        QCOMPARE(changes.last()[0].toString(), QString());
+        QCOMPARE(changes.last()[1].toULongLong(), quint64(0));
+        page.refreshTargets();
+        QCOMPARE(changes.size(), 6);
+    }
+    void inspectionNotifiesAfterPendingRenameRetirementAndIgnoresTelemetry() {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("settings.xml")));
+        CoreTargetStore store(settings);
+        QVERIFY(store.load());
+        const QByteArray identity(32, 'a');
+        QVERIFY(store.upsert(target(QStringLiteral("one"), identity)));
+        QVERIFY(store.upsert(target(QStringLiteral("two"), QByteArray(32, 'b'))));
+        CoresSetupPage page(&store);
+        CoreSettingsContext context;
+        context.renameTargetId = page.inspectedId();
+        context.renamePairedIdentity = identity;
+        context.renameIncarnation = page.inspectedIncarnation();
+        context.renameEpoch = 8;
+        context.renameAvailable = true;
+        page.setContext(context);
+        page.show();
+        QSignalSpy requests(&page, &CoresSetupPage::renameRequested);
+        QStringList events;
+        connect(&page, &CoresSetupPage::renameCancelled, &page,
+                [&events](quint64) { events.append(QStringLiteral("cancel")); });
+        connect(&page, &CoresSetupPage::inspectedTargetChanged, &page,
+                [&events, &page](const QString&, quint64) {
+                    events.append(QStringLiteral("inspect"));
+                    QVERIFY(!page.findChild<QLineEdit*>(QStringLiteral("coreNameInput"))->isVisible());
+                });
+        push(page, "renameCore")->click();
+        page.findChild<QLineEdit*>(QStringLiteral("coreNameInput"))->setText(QStringLiteral("KG4VCF/shack"));
+        push(page, "saveCoreName")->click();
+        QCOMPARE(requests.size(), 1);
+        const CoreRenameRequest request = qvariant_cast<CoreRenameRequest>(requests.first()[0]);
+        context.radio = QStringLiteral("New radio status, same authority");
+        page.setContext(context);
+        page.inspectTarget(page.inspectedId());
+        QVERIFY(events.isEmpty());
+        QVERIFY(!push(page, "saveCoreName")->isEnabled());
+        page.inspectTarget(QStringLiteral("two"));
+        QCOMPARE(events, QStringList({QStringLiteral("cancel"), QStringLiteral("inspect")}));
+        page.finishRename(request, true, QStringLiteral("Late result"));
+        QVERIFY(label(page, "coreSettingsStatus")->text().isEmpty());
+        QVERIFY(!store.target(QStringLiteral("one"))->lastKnownCoreName);
+    }
+    void coreDetailsUsesDedicatedDestinationAcrossPageReplacement() {
+        QTemporaryDir dir;
+        AppSettings firstSettings(dir.filePath(QStringLiteral("first.xml")));
+        AppSettings secondSettings(dir.filePath(QStringLiteral("second.xml")));
+        CoreTargetStore first(firstSettings);
+        CoreTargetStore second(secondSettings);
+        QVERIFY(first.load());
+        QVERIFY(second.load());
+        QVERIFY(first.upsert(target(QStringLiteral("one"), QByteArray(32, 'a'))));
+        QVERIFY(second.upsert(target(QStringLiteral("two"), QByteArray(32, 'b'))));
+        SetupDialog dialog(nullptr);
+        dialog.setCoreTargets(&first);
+        CoreSettingsContext context;
+        context.connectionDetailsAvailable = true;
+        dialog.setCoreSettingsContext(context);
+        QSignalSpy details(&dialog, &SetupDialog::coreConnectionDetailsRequested);
+        QSignalSpy connections(&dialog, &SetupDialog::connectionsRequested);
+        dialog.inspectCoreTarget(QStringLiteral("one"));
+        dialog.show();
+        auto clickDetails = [](CoresSetupPage* page) {
+            QVERIFY(page);
+            for (QPushButton* button : page->findChildren<QPushButton*>()) {
+                if (button->text() == QStringLiteral("Connection details…")) {
+                    QVERIFY(button->isEnabled());
+                    button->click();
+                    return;
+                }
+            }
+            QFAIL("Connection details button is missing");
+        };
+        CoresSetupPage* initial = dialog.findChild<CoresSetupPage*>();
+        clickDetails(initial);
+        QCOMPARE(details.size(), 1);
+        QCOMPARE(connections.size(), 0);
+        dialog.setCoreTargets(&second);
+        dialog.inspectCoreTarget(QStringLiteral("two"));
+        CoresSetupPage* replacement = nullptr;
+        for (CoresSetupPage* page : dialog.findChildren<CoresSetupPage*>()) {
+            if (page != initial) { replacement = page; }
+        }
+        clickDetails(replacement);
+        QCOMPARE(details.size(), 2);
+        QCOMPARE(connections.size(), 0);
+        dialog.selectPage(QStringLiteral("Remote Access"));
+        QPushButton* general = push(dialog, "remoteStationConnections");
+        QVERIFY(general);
+        QVERIFY(general->isEnabled());
+        general->click();
+        QCOMPARE(connections.size(), 1);
+        QCOMPARE(details.size(), 2);
+    }
     void multipleUnknownCoresRemainRecognizable_data() {
         QTest::addColumn<QSize>("size");
         QTest::newRow("900x650") << QSize(900, 650);
