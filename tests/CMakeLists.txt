@@ -9735,6 +9735,13 @@ nereus_add_test(tst_display_setup_binding)
 # upstream source to cite.
 nereus_add_test(tst_display_applet)
 
+# Core Settings: signed rename admission and fresh retained listener candidates.
+nereus_add_test(tst_core_connection_candidates)
+nereus_add_test(tst_core_rename fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_core_connection_candidates PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

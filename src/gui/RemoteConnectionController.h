@@ -91,6 +91,7 @@ signals:
     // preemption, shutdown) never emit it.
     void operatorDisconnected();
 private:
+    std::optional<RemoteStationOptions> currentOptions() const;
     QPointer<StationClient> m_client;
     QPointer<RadioModel> m_model;
     RemoteStationOptions m_options;

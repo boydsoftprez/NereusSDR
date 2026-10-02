@@ -1620,6 +1620,7 @@ set(GUI_SOURCES
     src/gui/CoreTargetStore.cpp
     src/gui/CoreAddressProbe.cpp
     src/gui/CoreAddressController.cpp
+    src/gui/CoreRenameController.cpp
     src/gui/StationStartupSelection.cpp
     src/gui/StationServiceManager.cpp
     src/gui/StationLanSelection.cpp

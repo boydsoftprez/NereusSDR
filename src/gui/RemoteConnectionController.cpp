@@ -136,18 +136,26 @@ QString RemoteConnectionController::endpointText() const
     return url.port() >= 0 ? host + QLatin1Char(':') + QString::number(url.port()) : host;
 }
 
+std::optional<RemoteStationOptions> RemoteConnectionController::currentOptions() const
+{
+    if (!m_currentOptionsSource) { return m_options; }
+    const auto current = m_currentOptionsSource();
+    if (!current || QUrl(current->url) != QUrl(m_options.url) || current->token != m_options.token
+        || current->fingerprint != m_options.fingerprint || current->allowUnpinned != m_options.allowUnpinned
+        || current->identityFingerprint != m_options.identityFingerprint
+        || current->reachFromAnywhere != m_options.reachFromAnywhere) { return std::nullopt; }
+    return current;
+}
+
 bool RemoteConnectionController::canConnect() const
 {
-    if (!m_client || !m_options.isValidRemoteTarget() || m_client->isConnectionActive()) {
+    const auto options = currentOptions();
+    if (!m_client || !options || !options->isValidRemoteTarget() || m_client->isConnectionActive()) {
         return false;
     }
-    if (m_options.url.isEmpty()) {
-        return m_options.hasAuthenticatedDirectAddresses()
-            || (m_options.reachFromAnywhere
-            && m_options.serviceConnectRefusal().isEmpty()
+    return !options->url.isEmpty() || options->hasAuthenticatedDirectAddresses()
+        || (options->reachFromAnywhere && options->serviceConnectRefusal().isEmpty()
             && !configuredRemoteAccessServers().isEmpty());
-    }
-    return true;
 }
 
 bool RemoteConnectionController::canDisconnect() const
@@ -361,60 +369,49 @@ void RemoteConnectionController::takeBack()
 
 void RemoteConnectionController::connectToStation()
 {
+    // Materialize retained listeners before readiness, including manual-only Cores.
+    const auto options = currentOptions();
+    if (!options) { return; }
+    m_options = *options;
     if (!canConnect()) { return; }
     m_operatorDisconnected = false;
     m_retryAttempt = 0;
-    // iPhone app plan Task 27: where the Core was last reached, first. The
-    // store's current list (fix wave): the one this window was made with is
-    // stale once a connection here has remembered an address.
-    if (m_currentOptionsSource) {
-        if (const std::optional<RemoteStationOptions> current = m_currentOptionsSource()) {
-            m_options.cachedAddresses = current->cachedAddresses;
-            m_options.coreAddresses = current->coreAddresses;
-            m_options.rendezvousId = current->rendezvousId;
-            m_options.relayAllowed = current->relayAllowed;
-            m_options.controlChannelVersion = current->controlChannelVersion;
-            m_options.negativeControlObservedMs = current->negativeControlObservedMs;
+    const QPointer<RemoteConnectionController> self(this);
+    m_client->setCandidateSource([self]() -> std::optional<StationClient::ConnectionCandidates> {
+        if (!self) { return std::nullopt; }
+        const auto current = self->currentOptions();
+        if (!current || !current->isValidRemoteTarget()) { return std::nullopt; }
+        StationClient::ConnectionCandidates candidates;
+        QStringList addresses = current->cachedAddresses;
+        if (current->identityFingerprint.size() == 32 && !current->allowUnpinned) {
+            addresses = current->directCandidates + addresses + current->coreAddresses;
         }
-    }
-    QList<QUrl> cached;
-    for (const QString& address : std::as_const(m_options.cachedAddresses)) {
-        cached.append(QUrl(address));
-    }
-    if (!m_options.identityFingerprint.isEmpty() && !m_options.allowUnpinned) {
-        for (const QString& address : std::as_const(m_options.coreAddresses)) {
-            if (!cached.contains(QUrl(address))) { cached.append(QUrl(address)); }
-        }
-    }
-    m_client->setCachedAddresses(cached);
-    // iPhone app plan Task 29 (R-IOS-16; link section 21.1): a paired Core
-    // is raced through the internet service beside its addresses, unless
-    // the operator turned that off for it.
-    StationClient::ServiceRoute route;
-    if (!m_options.identityFingerprint.isEmpty() && m_options.reachFromAnywhere
-        && !m_options.rendezvousId.isEmpty()) {
-        route.servers = configuredRemoteAccessServers();
-        route.rendezvousId = m_options.rendezvousId;
-        route.relayAllowed = m_options.relayAllowed != 0;
-        route.controlChannelVersion = m_options.effectiveControlChannelVersion(
-            QDateTime::currentMSecsSinceEpoch());
-        const QPointer<RemoteConnectionController> self(this);
-        const RemoteStationOptions fallback = m_options;
-        route.currentControlChannelVersion = [self, fallback] {
-            if (self && self->m_currentOptionsSource) {
-                if (const auto current = self->m_currentOptionsSource()) {
-                    return current->effectiveControlChannelVersion(
-                        QDateTime::currentMSecsSinceEpoch());
-                }
+        for (const QString& address : addresses) {
+            const QUrl url(address);
+            if (RemoteStationOptions::isValidStationUrl(address) && !candidates.addresses.contains(url)) {
+                candidates.addresses.append(url);
             }
-            const RemoteStationOptions& options = self ? self->m_options : fallback;
-            return options.effectiveControlChannelVersion(QDateTime::currentMSecsSinceEpoch());
-        };
-    }
-    m_client->setServiceRoute(route);
-    m_client->connectToStation(QUrl(m_options.url), m_options.token,
-                               m_options.fingerprint, m_options.allowUnpinned,
-                               m_options.identityFingerprint);
+        }
+        if (current->identityFingerprint.size() == 32 && !current->allowUnpinned
+            && current->reachFromAnywhere && !current->rendezvousId.isEmpty()) {
+            candidates.service.servers = configuredRemoteAccessServers();
+            candidates.service.rendezvousId = current->rendezvousId;
+            candidates.service.relayAllowed = current->relayAllowed != 0;
+            candidates.service.controlChannelVersion = current->effectiveControlChannelVersion(
+                QDateTime::currentMSecsSinceEpoch());
+            candidates.service.currentControlChannelVersion = [self] {
+                const auto fresh = self ? self->currentOptions() : std::nullopt;
+                return fresh ? fresh->effectiveControlChannelVersion(QDateTime::currentMSecsSinceEpoch()) : 0;
+            };
+        }
+        return candidates;
+    });
+    // Legacy pinned/token clients retain their existing ordered address behavior.
+    QList<QUrl> cached;
+    for (const QString& address : m_options.cachedAddresses) { cached.append(QUrl(address)); }
+    m_client->setCachedAddresses(cached);
+    m_client->connectToStation(QUrl(m_options.url), m_options.token, m_options.fingerprint,
+                               m_options.allowUnpinned, m_options.identityFingerprint);
     emit changed();
 }
 

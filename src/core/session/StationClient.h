@@ -706,10 +706,16 @@ public:
     /// `supportedMajors` (iPhone app Task 4) is the link majors this client
     /// supports, oldest first. The default is the build's own
     /// (kSupportedSessionMajors); tests inject theirs.
+    enum class SessionPurpose { Ordinary, RenameOnly };
+    SessionPurpose sessionPurpose() const { return m_sessionPurpose; }
+    /// A temporary rename rechecks desktop exclusion immediately before auth.
+    void setAdmissionGuard(std::function<bool()> guard) { m_admissionGuard = std::move(guard); }
+    QByteArray deviceIdentityFingerprint() const;
     explicit StationClient(RadioModel* radioModel, SettingsProxy* settingsProxy,
                            QObject* parent = nullptr,
                            const QList<quint16>& supportedMajors =
-                               LinkVersion::supportedMajors());
+                               LinkVersion::supportedMajors(),
+                           SessionPurpose purpose = SessionPurpose::Ordinary);
     ~StationClient() override;
 
     StationClient(const StationClient&) = delete;
@@ -809,6 +815,10 @@ public:
     };
     void setServiceRoute(const ServiceRoute& route) { m_serviceRoute = route; }
     ServiceRoute serviceRoute() const { return m_serviceRoute; }
+    struct ConnectionCandidates { QList<QUrl> addresses; ServiceRoute service; };
+    /// Only ordinary initial/retry races consume this; nullopt retires the saved lease.
+    using CandidateSource = std::function<std::optional<ConnectionCandidates>()>;
+    void setCandidateSource(CandidateSource source) { m_candidateSource = std::move(source); }
     /// The paired Core's hello proves it: its identity key is the one
     /// `expectedIdentity` fingerprints and its certificate binding verifies
     /// for `certSha256`, the certificate that connection presented (link
@@ -1190,7 +1200,7 @@ public:
     /// `session.leave`, when the Core offers it: the operator is done with
     /// the Core here (Disconnect, or quitting). Sent before the link
     /// closes; nothing waits for its answer.
-    void leaveSession();
+    quint32 leaveSession();
     /// The reason a held change carries while its question is asked.
     static bool isAwaitingConfirmation(const QString& reason);
     /// session.takeover (iPhone app plan Task 78 item 7, G-53): the answer
@@ -1871,6 +1881,10 @@ private:
     void send(const SessionMessage& message);
     void watchForOutbound(const QByteArray& objectKey, QObject* object);
 
+    const SessionPurpose m_sessionPurpose;
+    std::function<bool()> m_admissionGuard;
+    CandidateSource m_candidateSource;
+    quint64 m_connectionRequestGeneration = 0;
     QPointer<RadioModel> m_radioModel;
     quint32 m_hygieneValidateId{0};
     quint32 m_hygieneValidateEpoch{0};
