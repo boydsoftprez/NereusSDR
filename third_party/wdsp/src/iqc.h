@@ -167,6 +167,22 @@ extern int SetTXAiqcStartChecked(int channel,
 	NS_Spline* s_spline, CurveEMA* s_calavg, double s_prev_y,
 	volatile LONG* cancelled);
 
+// no-port-check: Nereus CALCC installs under cs_update -> csDSP, then drops
+// cs_update before waiting for audio. A return of 1 transfers all three
+// spline pointers to IQC; cancellation after acceptance does not undo that
+// ownership. The existing Checked APIs still wait synchronously.
+extern int InstallTXAiqcStartChecked(int channel,
+	NS_Spline* m_spline, CurveEMA* m_calavg, double m_prev_y,
+	NS_Spline* c_spline, CurveEMA* c_calavg, double c_prev_y,
+	NS_Spline* s_spline, CurveEMA* s_calavg, double s_prev_y,
+	volatile LONG* cancelled);
+
+extern int InstallTXAiqcSwapChecked(int channel,
+	NS_Spline* m_spline, CurveEMA* m_calavg, double m_prev_y,
+	NS_Spline* c_spline, CurveEMA* c_calavg, double c_prev_y,
+	NS_Spline* s_spline, CurveEMA* s_calavg, double s_prev_y,
+	volatile LONG* cancelled);
+
 extern void SetTXAiqcEnd (int channel);
 
 extern void SetTXAiqcStopping (int channel, int stopping);

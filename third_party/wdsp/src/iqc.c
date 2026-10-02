@@ -101,6 +101,10 @@ warren@pratt.one
 // The "No NereusSDR-level edits" line in the historical record above
 // describes the retired May 2026 Thetis vendor only, not this file.
 
+// 2026-10-02 — NereusSDR by J.J. Boyd (KG4VCF), AI-assisted via OpenAI
+// Codex: internal install-only phases let CALCC release its update lock
+// before waiting for audio; the checked compatibility calls stay synchronous.
+
 #include "comm.h"
 
 void calc_iqc (IQC a)
@@ -313,6 +317,24 @@ int SetTXAiqcSwapChecked (int channel, NS_Spline* m_spline, CurveEMA* m_calavg, 
 	                                    volatile LONG* cancelled)
 {
 	IQC a = txa[channel].iqc.p;
+	if (!InstallTXAiqcSwapChecked(channel,
+		m_spline, m_calavg, m_prev_y,
+		c_spline, c_calavg, c_prev_y,
+		s_spline, s_calavg, s_prev_y, cancelled)) return 0;
+	while (_InterlockedAnd (&a->busy, 1) &&
+		!_InterlockedAnd (&a->stopping, 1) &&
+		(cancelled == NULL || !_InterlockedAnd(cancelled, 1))) Sleep(1);
+	return 1;
+}
+
+// no-port-check: Nereus internal installation phase; acceptance transfers
+// all three spline pointers to IQC before returning, without an audio wait.
+int InstallTXAiqcSwapChecked (int channel, NS_Spline* m_spline, CurveEMA* m_calavg, double m_prev_y,
+		                                NS_Spline* c_spline, CurveEMA* c_calavg, double c_prev_y,
+	                                    NS_Spline* s_spline, CurveEMA* s_calavg, double s_prev_y,
+	                                    volatile LONG* cancelled)
+{
+	IQC a = txa[channel].iqc.p;
 	EnterCriticalSection (&ch[channel].csDSP);
 	if (_InterlockedAnd (&a->stopping, 1) ||
 		(cancelled != NULL && _InterlockedAnd(cancelled, 1)))
@@ -342,9 +364,6 @@ int SetTXAiqcSwapChecked (int channel, NS_Spline* m_spline, CurveEMA* m_calavg, 
 	a->count = 0;
 	LeaveCriticalSection (&ch[channel].csDSP);
 
-	while (_InterlockedAnd (&a->busy, 1) &&
-		!_InterlockedAnd (&a->stopping, 1) &&
-		(cancelled == NULL || !_InterlockedAnd(cancelled, 1))) Sleep(1);
 	return 1;
 }
 
@@ -360,6 +379,24 @@ int SetTXAiqcStart (int channel, NS_Spline* m_spline, CurveEMA* m_calavg, double
 }
 
 int SetTXAiqcStartChecked (int channel, NS_Spline* m_spline, CurveEMA* m_calavg, double m_prev_y,
+	                                     NS_Spline* c_spline, CurveEMA* c_calavg, double c_prev_y,
+	                                     NS_Spline* s_spline, CurveEMA* s_calavg, double s_prev_y,
+	                                     volatile LONG* cancelled)
+{
+	IQC a = txa[channel].iqc.p;
+	if (!InstallTXAiqcStartChecked(channel,
+		m_spline, m_calavg, m_prev_y,
+		c_spline, c_calavg, c_prev_y,
+		s_spline, s_calavg, s_prev_y, cancelled)) return 0;
+	while (_InterlockedAnd (&a->busy, 1) &&
+		!_InterlockedAnd (&a->stopping, 1) &&
+		(cancelled == NULL || !_InterlockedAnd(cancelled, 1))) Sleep(1);
+	return 1;
+}
+
+// no-port-check: Nereus internal installation phase; acceptance transfers
+// all three spline pointers to IQC before returning, without an audio wait.
+int InstallTXAiqcStartChecked (int channel, NS_Spline* m_spline, CurveEMA* m_calavg, double m_prev_y,
 	                                     NS_Spline* c_spline, CurveEMA* c_calavg, double c_prev_y,
 	                                     NS_Spline* s_spline, CurveEMA* s_calavg, double s_prev_y,
 	                                     volatile LONG* cancelled)
@@ -393,9 +430,6 @@ int SetTXAiqcStartChecked (int channel, NS_Spline* m_spline, CurveEMA* m_calavg,
 	a->count = 0;
 	InterlockedBitTestAndSet (&a->run, 0);
 	LeaveCriticalSection (&ch[channel].csDSP);
-	while (_InterlockedAnd (&a->busy, 1) &&
-		!_InterlockedAnd (&a->stopping, 1) &&
-		(cancelled == NULL || !_InterlockedAnd(cancelled, 1))) Sleep(1);
 	return 1;
 }
 
