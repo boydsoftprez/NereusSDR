@@ -304,10 +304,10 @@ void TxCfcDialog::buildUi()
     outer->addWidget(m_postEqWidget, 1);
 
     auto* selectorScroll = new QScrollArea(this);
-    selectorScroll->setWidgetResizable(true);
+    selectorScroll->setWidgetResizable(false);
     selectorScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    selectorScroll->setMaximumHeight(66);
-    selectorScroll->setMinimumHeight(46);
+    // Reserve both label lines plus the horizontal scrollbar at small sizes.
+    selectorScroll->setFixedHeight(66);
     auto* selectorHost = new QWidget(selectorScroll);
     m_bandSelectors = new QHBoxLayout(selectorHost);
     m_bandSelectors->setContentsMargins(0, 0, 0, 0);
@@ -582,11 +582,31 @@ void TxCfcDialog::restoreProfile(const CfcProfile& profile)
             m_curveAvailable = false;
             m_invalidLegacyProfile = profile;
             m_invalidLegacyBlob = m_tm ? m_tm->cfcParaEqData() : QString();
-            QSignalBlocker c(m_compWidget), e(m_postEqWidget);
-            m_compWidget->setGlobalGainDb(profile.compression.globalGainDb);
-            m_postEqWidget->setGlobalGainDb(profile.postEq.globalGainDb);
-            m_compWidget->setSelectedIndex(-1);
-            m_postEqWidget->setSelectedIndex(-1);
+            const QScopedValueRollback<bool> guard(m_ignoreUpdates, true);
+            m_compUseQ = profile.compression.useQ;
+            m_eqUseQ = profile.postEq.useQ;
+            // Hidden repair placeholders use the incoming fallback metadata,
+            // never the previous configured curve. Raw legacy data stays in
+            // the unavailable-state sidecar until an explicit count repair.
+            auto placeholder = [this](ParametricEqWidget* widget, const CfcCurveState& curve) {
+                ParametricEqWidget::EqJsonState state;
+                state.bandCount = curve.frequenciesHz.size();
+                state.frequencyMinHz = curve.frequencyMinHz;
+                state.frequencyMaxHz = curve.frequencyMaxHz;
+                state.globalGainDb = curve.globalGainDb;
+                state.parametricEq = m_compUseQ && m_eqUseQ;
+                for (int i = 0; i < state.bandCount; ++i) {
+                    const double hz = state.frequencyMinHz + i *
+                        (state.frequencyMaxHz - state.frequencyMinHz) / (state.bandCount - 1);
+                    state.points.append({i + 1, QColor(), hz, 0.0, 4.0});
+                }
+                QSignalBlocker blocker(widget);
+                widget->setEditorCurveState(state);
+                widget->setSelectedIndex(-1);
+            };
+            placeholder(m_compWidget, profile.compression);
+            placeholder(m_postEqWidget, profile.postEq);
+            cancelBandCount();
             m_compWidget->hide(); m_postEqWidget->hide();
             m_invalidCurveGuidance->show();
             rebuildBandSelectors();
@@ -813,8 +833,9 @@ void TxCfcDialog::rebuildBandSelectors()
         selector->setCheckable(true);
         selector->setStyleSheet(Style::blueCheckedStyle());
         selector->setObjectName(QStringLiteral("TxCfcBand%1").arg(i + 1));
-        selector->setMinimumWidth(48);
+        selector->setMinimumWidth(86);
         m_bandSelectors->addWidget(selector);
+        selector->show();
         connect(selector, &QPushButton::clicked, this, [this, selector] {
             onSelectedBandChanged(selector->property("bandId").toInt());
         });
@@ -855,7 +876,8 @@ void TxCfcDialog::refreshControls()
     for (int i = 0; i < currentBandCount() && i < m_bandSelectors->count(); ++i) {
         auto* button = qobject_cast<QPushButton*>(m_bandSelectors->itemAt(i)->widget());
         if (!button) { continue; }
-        const double hz = m_compWidget->points()[i].frequencyHz;
+        const double hz = m_curveAvailable ? m_compWidget->points()[i].frequencyHz
+                                          : m_invalidLegacyProfile.compression.frequenciesHz[i];
         const int id = m_compWidget->points()[i].bandId;
         button->setText(tr("%1\n%2 Hz").arg(id).arg(hz, 0, 'f', 0));
         button->setObjectName(QStringLiteral("TxCfcBand%1").arg(id));
@@ -863,7 +885,16 @@ void TxCfcDialog::refreshControls()
         button->setToolTip(tr("Select band %1 at %2 Hz").arg(id).arg(hz, 0, 'f', 3));
         button->setAccessibleName(button->toolTip());
         button->setChecked(i == index);
+        const auto lines = button->text().split('\n');
+        int textWidth = 0;
+        for (const auto& line : lines) { textWidth = std::max(textWidth, button->fontMetrics().horizontalAdvance(line)); }
+        button->setMinimumWidth(std::max(86, textWidth + 22));
     }
+    // Explicit content geometry prevents compression/overlap while a new
+    // count's minimum hints propagate through the horizontal scroll area.
+    m_bandSelectors->invalidate();
+    m_bandSelectors->parentWidget()->setFixedSize(m_bandSelectors->sizeHint());
+    m_bandSelectors->activate();
     updateSelectedRowEnable();
 }
 

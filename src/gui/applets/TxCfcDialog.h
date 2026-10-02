@@ -168,8 +168,8 @@ public:
     // Bar chart timer (test inspection only).
     QTimer*         barChartTimer()    const { return m_barChartTimer; }
 
-    // Currently-selected band count (5, 10, or 18) — derived from the
-    // checked radio.  Defaults to 10 (matches Thetis radCFC_10.Checked=true
+    // Currently-loaded band count (5, 10, or 18) — derived from the
+    // authoritative widget state. Defaults to 10 (matches Thetis radCFC_10.Checked=true
     // at frmCFCConfig.Designer.cs:474 [v2.10.3.13]).
     int             currentBandCount() const;
 

@@ -56,6 +56,8 @@
 #include <QLabel>
 #include <QStyle>
 #include <QStyleOptionSlider>
+#include <QScrollArea>
+#include <QScrollBar>
 #ifdef HAVE_WDSP
 extern "C" {
 void OpenChannel(int, int, int, int, int, int, int, int, double, double, double, double, int);
@@ -157,7 +159,10 @@ private slots:
         QVERIFY(dlg.height() < 800);
         QVERIFY(dlg.minimumSizeHint().height() <= 480);
         if (qEnvironmentVariableIsSet("NEREUS_CAPTURE_CFC")) {
-            QVERIFY(rm.transmitModel().setCfcProfile(pairedProfile(5)));
+            const int count = qEnvironmentVariableIntValue("NEREUS_CAPTURE_CFC_COUNT");
+            QVERIFY(rm.transmitModel().setCfcProfile(pairedProfile(count > 0 ? count : 5)));
+            const auto size = qEnvironmentVariable("NEREUS_CAPTURE_CFC_SIZE").split('x');
+            if (size.size() == 2) { dlg.resize(size[0].toInt(), size[1].toInt()); }
             dlg.compWidget()->setSelectedIndex(2);
             QApplication::processEvents();
             QVERIFY(dlg.grab().save(qEnvironmentVariable("NEREUS_CAPTURE_CFC")));
@@ -618,6 +623,120 @@ private slots:
         QVERIFY(isValidCfcProfile(tm.effectiveCfcProfile()));
         QCOMPARE(tm.effectiveCfcProfile().compression.frequenciesHz.size(), 5);
         QCOMPARE(spy.count(), 3);
+    }
+
+    void authoritativeCollapsedReplacementRebasesRepairMetadata()
+    {
+        RadioModel rm;
+        auto& tm = rm.transmitModel();
+        CfcProfile original = pairedProfile(18);
+        original.compression.frequencyMaxHz = original.postEq.frequencyMaxHz = 12000;
+        for (int i = 0; i < 18; ++i) {
+            original.compression.frequenciesHz[i] = original.postEq.frequenciesHz[i] = i * 12000.0 / 17;
+        }
+        QVERIFY(tm.setCfcProfile(original));
+        TxCfcDialog dlg(&tm, nullptr);
+        dlg.show(); QApplication::processEvents();
+        dlg.bands5Radio()->setChecked(true);
+        auto* apply = dlg.findChild<QPushButton*>("TxCfcApplyBands");
+        QVERIFY(apply->isVisible());
+        QSignalSpy spy(&tm, &TransmitModel::cfcProfileChanged);
+        tm.beginCfcProfileUpdate();
+        for (int i = 0; i < 10; ++i) {
+            tm.setCfcEqFreq(i, 200);
+            tm.setCfcCompression(i, i + 2);
+            tm.setCfcPostEqBandGain(i, -i - 1);
+        }
+        tm.setCfcPrecompDb(7); tm.setCfcPostEqGainDb(-6);
+        tm.setCfcParaEqData("collapsed-external-opaque");
+        tm.endCfcProfileUpdate();
+        const auto checkOriginal = [&] {
+            QCOMPARE(tm.cfcParaEqData(), QString("collapsed-external-opaque"));
+            QCOMPARE(tm.cfcPrecompDb(), 7); QCOMPARE(tm.cfcPostEqGainDb(), -6);
+            for (int i = 0; i < 10; ++i) {
+                QCOMPARE(tm.cfcEqFreq(i), 200);
+                QCOMPARE(tm.cfcCompression(i), i + 2);
+                QCOMPARE(tm.cfcPostEqBandGain(i), -i - 1);
+            }
+        };
+        checkOriginal();
+        QCOMPARE(spy.count(), 1);
+        QVERIFY(!dlg.compWidget()->isVisible());
+        QVERIFY(dlg.findChild<QLabel*>("TxCfcInvalidCurve")->isVisible());
+        QCOMPARE(dlg.currentBandCount(), 10);
+        QVERIFY(dlg.bands10Radio()->isChecked());
+        QVERIFY(!apply->isVisible());
+        QVERIFY(!dlg.useQFactorsChk()->isChecked());
+        QVERIFY(!dlg.compQSpin()->isEnabled());
+        QVERIFY(!dlg.eqQSpin()->isEnabled());
+        QVERIFY(!dlg.findChild<QSlider*>("TxCfcCompQSlider")->isEnabled());
+        QVERIFY(!dlg.findChild<QSlider*>("TxCfcEqQSlider")->isEnabled());
+        const auto* lastBand = dlg.findChild<QPushButton*>("TxCfcBand10");
+        QVERIFY(lastBand); QVERIFY(!lastBand->isEnabled());
+        QCOMPARE(lastBand->text(), QString("10\n200 Hz"));
+        QVERIFY(!dlg.findChild<QPushButton*>("TxCfcBand18"));
+        QCOMPARE(dlg.lowSpin()->value(), 0);
+        QCOMPARE(dlg.highSpin()->value(), 4000);
+        dlg.bands18Radio()->setChecked(true);
+        QVERIFY(apply->isVisible());
+        apply->click();
+        const CfcProfile repaired = tm.effectiveCfcProfile();
+        QVERIFY(isValidCfcProfile(repaired));
+        QCOMPARE(repaired.compression.frequenciesHz.size(), 18);
+        QCOMPARE(repaired.compression.frequencyMinHz, 0.0);
+        QCOMPARE(repaired.compression.frequencyMaxHz, 4000.0);
+        QVERIFY(!repaired.compression.useQ); QVERIFY(!repaired.postEq.useQ);
+        QCOMPARE(spy.count(), 2);
+        dlg.findChild<QPushButton*>("TxCfcUndo")->click();
+        checkOriginal();
+        QCOMPARE(dlg.currentBandCount(), 10);
+        QVERIFY(dlg.bands10Radio()->isChecked());
+        QVERIFY(!dlg.compWidget()->isVisible());
+        QVERIFY(!apply->isVisible());
+        QCOMPARE(spy.count(), 3);
+        dlg.findChild<QPushButton*>("TxCfcRedo")->click();
+        QCOMPARE(tm.effectiveCfcProfile(), repaired);
+        QCOMPARE(dlg.currentBandCount(), 18);
+        QVERIFY(dlg.compWidget()->isVisible());
+        QCOMPARE(spy.count(), 4);
+    }
+
+    void eighteenBandSelectorsFitAndScrollAtLaptopSize()
+    {
+        RadioModel rm;
+        QVERIFY(rm.transmitModel().setCfcProfile(pairedProfile(18)));
+        TxCfcDialog dlg(&rm.transmitModel(), nullptr);
+        dlg.resize(853, 500); dlg.show(); QApplication::processEvents();
+        // Authoritative replacement rebuilds the strip while its parent is visible.
+        QVERIFY(rm.transmitModel().setCfcProfile(pairedProfile(5)));
+        QVERIFY(rm.transmitModel().setCfcProfile(pairedProfile(18)));
+        QApplication::processEvents();
+        const auto* first = dlg.findChild<QPushButton*>("TxCfcBand1");
+        QVERIFY(first);
+        auto* host = first->parentWidget();
+        auto* strip = qobject_cast<QScrollArea*>(host->parentWidget()->parentWidget());
+        QVERIFY(strip);
+        for (int id = 1; id <= 18; ++id) {
+            const auto* button = dlg.findChild<QPushButton*>(QStringLiteral("TxCfcBand%1").arg(id));
+            QVERIFY(button);
+            QVERIFY(button->isVisible());
+            QVERIFY(host->rect().contains(button->geometry()));
+            const auto lines = button->text().split('\n');
+            for (const auto& line : lines) {
+                QVERIFY2(button->width() >= button->fontMetrics().horizontalAdvance(line) + 22,
+                         qPrintable(QStringLiteral("Clipped band %1: %2 in %3px").arg(id).arg(line).arg(button->width())));
+            }
+            if (id > 1) {
+                const auto* previous = dlg.findChild<QPushButton*>(QStringLiteral("TxCfcBand%1").arg(id - 1));
+                QVERIFY(button->geometry().left() > previous->geometry().right());
+            }
+        }
+        QVERIFY(host->width() > strip->viewport()->width());
+        QVERIFY(strip->viewport()->height() >= host->height());
+        QVERIFY(strip->horizontalScrollBar()->maximum() > 0);
+        QVERIFY(dlg.compWidget()->width() <= dlg.width());
+        QVERIFY(dlg.postEqWidget()->width() <= dlg.width());
+        QCOMPARE(dlg.size(), QSize(853, 500));
     }
 
     // ── 1. Dialog constructs with documented control surface ───────────
