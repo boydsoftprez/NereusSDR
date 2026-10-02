@@ -3556,25 +3556,13 @@ RadioModel::RadioModel(Role role, QObject* parent)
                 }
             }
 
-            // Autotune gate (deck item #2): TGXL autotune cmd was held
-            // for 150 ms post-grant so the TRANSMITTING frame on :4992
-            // and the `autotune` cmd on :9010 land on TGXL in the right
-            // order without a TCP-socket race.
-            if (!m_awaitingInterlockForAutotune) { return; }
-            if (!m_tgxlAutotuneInProgress) {
-                // Cycle was cancelled before grant; clear the gate.
+            // Arm before setTune: a grant can arrive synchronously.
+            // Actual lane completion, not this interlock frame, starts
+            // the carrier settle. The RF gate tracks either signal order.
+            if (m_tgxlAutotuneInProgress) {
                 m_awaitingInterlockForAutotune = false;
-                return;
+                scheduleTgxlAutotune();
             }
-            m_awaitingInterlockForAutotune = false;
-            qCInfo(lcConnection)
-                << "TGXL autotune: interlock TRANSMITTING confirmed (source="
-                << source << "), sending autotune in 150 ms";
-            QTimer::singleShot(150, this, [this]() {
-                if (m_tgxlAutotuneInProgress) {
-                    sendTgxlAutotuneCmd();
-                }
-            });
         });
     }
 
@@ -25549,6 +25537,11 @@ void RadioModel::wireTxChannelKeying()
     if (!m_txChannel || !m_moxController) {
         return;
     }
+    const QPointer<TxChannel> channel = m_txChannel;
+    connect(m_txChannel, &TxChannel::rfGateOpened, this,
+            [this, channel](quint64 sequence) {
+                onTgxlRfGateOpened(channel.data(), sequence);
+            }, Qt::QueuedConnection);
     // F.1 — txReady → setRunning(true), GATED on interlockGranted.
     // From Thetis console.cs:29595 [v2.10.3.13] — TX-on callsite after
     // Thread.Sleep(rf_delay) in chkMOX_CheckedChanged2.
@@ -30311,6 +30304,8 @@ bool RadioModel::startTgxlAutotuneFor(const KeyerIdentity& keyer, QString* reaso
     QString refusal;
     if (!m_tgxlConnection || !m_tgxlConnection->isConnected()) {
         refusal = QStringLiteral("No Tuner Genius is connected to the Core.");
+    } else if (!m_txChannel) {
+        refusal = tunerTuneEndedReason(TunerTuneEnd::CarrierNotStarted);
     } else if (m_tgxlAutotuneInProgress || m_isTuning) {
         refusal = QStringLiteral("The tuner is already tuning.");
     } else if (tgxlRfFlowing()) {
@@ -30380,6 +30375,10 @@ void RadioModel::finishTgxlAutotuneCycle(const QString& unkeyedReason)
     if (!m_tgxlAutotuneInProgress) {
         return;
     }
+    m_tgxlCarrierChannel.clear();
+    m_tgxlCarrierSequence = 0;
+    m_tgxlCarrierReady = false;
+    m_tgxlSettlePending = false;
     setTgxlAutotuneInProgress(false);
     // TGXL tune lane fix round (M5): a take still running for this cycle
     // keys nothing when it ends.
@@ -30586,7 +30585,7 @@ void RadioModel::endAmpChangeover()
             && m_moxController && m_moxController->isMox()) {
             qCInfo(lcConnection) << "RF-flow gate: the amplifier finished switching;"
                                     " starting TxChannel";
-            m_txChannel->setRunningAsync(true);
+            openTxRfGate();
         }
     }
     retryOwedAmpRestore();
@@ -30609,7 +30608,20 @@ void RadioModel::openTxRfGate()
                                 " switches";
         return;
     }
-    m_txChannel->setRunningAsync(true);
+    const bool tuningCycle = m_tgxlAutotuneInProgress && m_isTuning;
+    const quint64 cycle = m_tgxlCycleGeneration;
+    const QPointer<TxChannel> channel = m_txChannel;
+    if (tuningCycle) {
+        m_tgxlCarrierChannel = channel;
+        m_tgxlCarrierCycle = cycle;
+        m_tgxlCarrierReady = false;
+        m_tgxlSettlePending = false;
+    }
+    const quint64 sequence = channel->setRunningAsync(true);
+    if (tuningCycle && m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
+        && channel == m_txChannel && channel == m_tgxlCarrierChannel) {
+        m_tgxlCarrierSequence = sequence;
+    }
 }
 
 void RadioModel::onAmpHoldDeadline()
@@ -30724,6 +30736,12 @@ QString RadioModel::beginTgxlAutotune(bool fromHardware)
     // Matches TunerApplet autotune's existing safe behavior that JJ
     // confirmed works correctly.
 
+    if (!m_txChannel) {
+        const QString reason = tunerTuneEndedReason(TunerTuneEnd::CarrierNotStarted);
+        emit tuneRefused(reason);
+        return reason;
+    }
+
     // Snapshot PGXL state. m_ampOperate is the radio's view of PGXL's
     // operate-family state (IDLE / OPERATE / TRANSMIT_A / TRANSMIT_B).
     // iPhone app plan Task 77 fix wave: a restore still owed from the last
@@ -30737,6 +30755,13 @@ QString RadioModel::beginTgxlAutotune(bool fromHardware)
     const quint64 generation = ++m_tgxlCycleGeneration;
     m_tgxlAutotuneFromHardware = fromHardware;
     m_tgxlAutotuneTunerPress = tunerPress;
+    m_tgxlCarrierChannel.clear();
+    m_tgxlCarrierSequence = 0;
+    m_tgxlCarrierCycle = generation;
+    m_tgxlCarrierReady = false;
+    m_tgxlSettlePending = false;
+    m_tgxlCommandSent = false;
+    m_tgxlDeviceCycleSawTuning = m_tunerModel && m_tunerModel->isTuning();
     // Need to await STANDBY confirm? Only while it is operating now.
     m_pgxlStandbyPending = m_hasAmplifier && m_ampOperate;
 
@@ -30824,9 +30849,9 @@ QString RadioModel::beginTgxlAutotune(bool fromHardware)
 // The fix is the same event-driven pattern we use for the PGXL standby
 // confirmation: set a flag, wait for the signal, then proceed. The flag
 // is m_awaitingInterlockForAutotune, the signal is interlockGranted from
-// SmartSdrApiListener (wired in the ctor). A 1.5 s failsafe sends the
-// autotune anyway if interlockGranted never fires (e.g. amps all
-// disconnected mid-cycle before they could ACK).
+// SmartSdrApiListener (wired in the ctor). Actual TX-lane completion
+// then starts the precise carrier settle. Recovery uses the same final
+// eligibility checks, and a separate bound ends an unready cycle.
 void RadioModel::continueTgxlAutotuneAfterStandby()
 {
     if (receiveOnlyTxOperationsBlocked()) {
@@ -30888,6 +30913,7 @@ void RadioModel::continueTgxlAutotuneAfterStandby()
         gateCapture = connect(m_moxController, &MoxController::moxRefused, this,
                               [&gateRefusal](const TxRefusal& refusal) { gateRefusal = refusal; });
     }
+    m_awaitingInterlockForAutotune = !m_tgxlAutotuneFromHardware;
     if (!m_tgxlAutotuneDeviceId.isEmpty()) {
         // iPhone app plan Task 77: a device's cycle keys as that device,
         // through the keying gate (its session, the holder, the watchdog).
@@ -30946,86 +30972,127 @@ void RadioModel::continueTgxlAutotuneAfterStandby()
         finishTgxlAutotuneCycle(unkeyedReason);
         return;
     }
-    if (!m_tgxlAutotuneDeviceId.isEmpty() || m_tgxlAutotuneFromHardware) {
-        // iPhone app plan Task 77: a device's cycle has no Tuner page on the
-        // Core to watch the tuner, so the Core does what the local page
-        // does (TunerApplet's short watchdog and tuningChanged(false)): the
-        // carrier drops when the tuner finishes, and after 3 s when the
-        // tuner never started its sweep.
-        // TGXL tune lane (JJ's ruling): the tuner's front-panel cycle too,
-        // since it may now take transmit from another device and key.
-        m_tgxlDeviceCycleSawTuning = m_tunerModel && m_tunerModel->isTuning();
-        const QByteArray device = m_tgxlAutotuneDeviceId;
-        const quint64 cycle = m_tgxlCycleGeneration;
-        QTimer::singleShot(kTgxlDeviceCycleStartMs, this, [this, device, cycle]() {
-            if (m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
-                && m_tgxlAutotuneDeviceId == device && !m_tgxlDeviceCycleSawTuning) {
-                qCInfo(lcConnection) << "TGXL autotune: the tuner never started its sweep"
-                                        " for the cycle; dropping the carrier";
-                if (!device.isEmpty()) {
-                    cancelTgxlAutotuneFor(device);
-                } else if (m_isTuning) {
-                    // The carrier drops; manualMoxChanged(false) finishes
-                    // the cycle.
-                    setTune(false);
-                } else {
-                    finishTgxlAutotuneCycle();
-                }
+    // A separate readiness bound covers the lane/interlock/amp wait. The
+    // no-sweep watchdog begins only once the tuner can actually act.
+    const quint64 cycle = m_tgxlCycleGeneration;
+    QTimer::singleShot(kTgxlCarrierReadyMs, Qt::PreciseTimer, this, [this, cycle]() {
+        if (m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
+            && (!m_tgxlCarrierReady || (!m_tgxlAutotuneFromHardware && !m_tgxlCommandSent))) {
+            qCWarning(lcConnection) << "TGXL autotune: carrier readiness timed out";
+            // Invalidate pending lane work before publishing the ending.
+            if (m_tgxlCarrierChannel) {
+                m_tgxlCarrierChannel->closeRfGate();
+            }
+            finishTgxlAutotuneCycle(tunerTuneEndedReason(TunerTuneEnd::CarrierNotStarted));
+            // An ending observer may start another cycle synchronously.
+            if (cycle == m_tgxlCycleGeneration && m_isTuning) {
+                setTune(false);
+            }
+        }
+    });
+    if (!m_tgxlAutotuneFromHardware) {
+        // Recovery may retry eligibility, but never clears an interlock
+        // prerequisite or starts a sweep without the actual carrier gate.
+        QTimer::singleShot(1500, this, [this, cycle]() {
+            if (m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration) {
+                scheduleTgxlAutotune();
             }
         });
     }
+}
 
-    if (m_tgxlAutotuneFromHardware) {
-        // TGXL initiated this cycle via LAN PTT (`transmit tune on`); it's
-        // already sweeping its own relays and just needed the carrier.
-        // No `autotune` command to send and no interlock wait to gate on.
+bool RadioModel::tgxlCarrierEligible(quint64 cycle, TxChannel* channel,
+                                     quint64 sequence) const
+{
+    return m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
+        && cycle == m_tgxlCarrierCycle && channel && channel == m_txChannel
+        && channel == m_tgxlCarrierChannel && sequence == m_tgxlCarrierSequence
+        && channel->isRfGateOpenForSequence(sequence) && m_isTuning
+        && m_moxController && m_moxController->isMox() && m_txReadyReceived
+        && !m_awaitingInterlockForTx
+        && !m_pgxlStandbyPending && !ampChangingOver() && !m_rfHeldForAmp
+        && !m_transmitStopHold && !receiveOnlyTxOperationsBlocked()
+        && m_tgxlConnection && m_tgxlConnection->isConnected();
+}
+
+void RadioModel::onTgxlRfGateOpened(TxChannel* channel, quint64 sequence)
+{
+    if (!tgxlCarrierEligible(m_tgxlCycleGeneration, channel, sequence)
+        || m_tgxlCarrierReady) {
         return;
     }
+    // A generic RF interlock recovery may have opened the gate before
+    // the actual grant arrives. Record the completion now; software
+    // submission still requires that grant in schedule/send below.
+    m_tgxlCarrierReady = true;
+    if (m_tgxlAutotuneFromHardware) {
+        // The hardware is already sweeping; only its carrier/watchdog is
+        // ours. Never send an additional autotune for this origin.
+        armTgxlSweepStartWatchdog();
+    } else {
+        scheduleTgxlAutotune();
+    }
+}
 
-    // Arm the gate: when interlockGranted fires (TRANSMITTING was just
-    // broadcast to all clients including TGXL), the lambda in the ctor
-    // sends the autotune command after a small 50 ms TCP socket settle.
-    m_awaitingInterlockForAutotune = true;
-
-    // Failsafe: amps usually ACK in <100 ms (and the listener's lenient
-    // 500 ms timeout grants anyway). If 1500 ms elapses without
-    // interlockGranted firing -- e.g. every amp disconnected mid-cycle
-    // before it could ACK -- send the autotune anyway so the operator's
-    // TUNE isn't stranded. Mirrors the standby failsafe in startTgxl-
-    // Autotune (same 1.5 s budget, same "proceed with warning" semantic).
-    // Task 77 fix round 4: only for this cycle.
-    const quint64 generation = m_tgxlCycleGeneration;
-    QTimer::singleShot(1500, this, [this, generation]() {
-        if (generation != m_tgxlCycleGeneration) {
+void RadioModel::scheduleTgxlAutotune()
+{
+    if (m_tgxlAutotuneFromHardware || m_tgxlCommandSent || m_tgxlSettlePending
+        || m_awaitingInterlockForAutotune || !m_tgxlCarrierReady
+        || !tgxlCarrierEligible(m_tgxlCycleGeneration, m_tgxlCarrierChannel.data(),
+                                m_tgxlCarrierSequence)) {
+        return;
+    }
+    m_tgxlSettlePending = true;
+    const quint64 cycle = m_tgxlCycleGeneration;
+    const QPointer<TxChannel> channel = m_tgxlCarrierChannel;
+    const quint64 sequence = m_tgxlCarrierSequence;
+    QTimer::singleShot(kTgxlRfSettleMs, Qt::PreciseTimer, this,
+                      [this, cycle, channel, sequence]() {
+        if (cycle != m_tgxlCycleGeneration || channel != m_tgxlCarrierChannel
+            || sequence != m_tgxlCarrierSequence) {
             return;
         }
-        if (m_awaitingInterlockForAutotune && m_tgxlAutotuneInProgress) {
-            qCWarning(lcConnection)
-                << "TGXL autotune: interlockGranted didn't fire within"
-                   " 1.5 s, sending autotune anyway (failsafe)";
-            m_awaitingInterlockForAutotune = false;
-            sendTgxlAutotuneCmd();
-        }
+        m_tgxlSettlePending = false;
+        sendTgxlAutotuneCmd(cycle, channel.data(), sequence);
     });
 }
 
-// Send the `autotune` command on the TGXL :9010 control socket. Called
-// from the interlockGranted handler (event-driven path, normal case) or
-// from the 1.5 s failsafe timer in continueTgxlAutotuneAfterStandby
-// (degraded path, no interlock confirmation arrived).
-void RadioModel::sendTgxlAutotuneCmd()
+void RadioModel::sendTgxlAutotuneCmd(quint64 cycle, TxChannel* channel, quint64 sequence)
 {
-    if (receiveOnlyTxOperationsBlocked()) {
-        setTgxlAutotuneInProgress(false);
-        m_awaitingInterlockForAutotune = false;
-        setTune(false);
+    if (m_tgxlAutotuneFromHardware || m_tgxlCommandSent
+        || m_awaitingInterlockForAutotune || !m_tgxlCarrierReady
+        || !tgxlCarrierEligible(cycle, channel, sequence)) {
         return;
     }
-    if (m_tgxlConnection && m_tgxlConnection->isConnected()
-        && m_tgxlAutotuneInProgress) {
-        m_tgxlConnection->sendCommand(QStringLiteral("autotune"));
-        qCInfo(lcConnection) << "TGXL autotune: sent autotune cmd";
+    // Mark before the socket write: reentrant tuner replies cannot submit
+    // a second command or arm a second watchdog for this cycle.
+    m_tgxlCommandSent = true;
+    armTgxlSweepStartWatchdog();
+    m_tgxlConnection->sendCommand(QStringLiteral("autotune"));
+    qCInfo(lcConnection) << "TGXL autotune: sent autotune cmd after carrier settle";
+}
+
+void RadioModel::armTgxlSweepStartWatchdog()
+{
+    if (m_tgxlAutotuneDeviceId.isEmpty() && !m_tgxlAutotuneFromHardware) {
+        return;
     }
+    const QByteArray device = m_tgxlAutotuneDeviceId;
+    const quint64 cycle = m_tgxlCycleGeneration;
+    QTimer::singleShot(kTgxlDeviceCycleStartMs, Qt::PreciseTimer, this, [this, device, cycle]() {
+        if (m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
+            && m_tgxlAutotuneDeviceId == device && !m_tgxlDeviceCycleSawTuning) {
+            qCInfo(lcConnection) << "TGXL autotune: the tuner never started its sweep;"
+                                    " dropping the carrier";
+            if (!device.isEmpty()) {
+                cancelTgxlAutotuneFor(device);
+            } else if (m_isTuning) {
+                setTune(false);
+            } else {
+                finishTgxlAutotuneCycle();
+            }
+        }
+    });
 }
 
 // Phase 3P-II Phase 4 Task 96: auto-recall TGXL tune memory on band change.

@@ -668,6 +668,12 @@ public:
     void closeRfGate() noexcept;
     // The RF gate: TX I/Q reaches the connection only while it is open.
     bool isRfGateOpen() const noexcept { return m_running.load(std::memory_order_acquire); }
+    /// True only while the actual gate belongs to this run request. A stop
+    /// or a newer request invalidates a completion queued to the main thread.
+    bool isRfGateOpenForSequence(quint64 sequence) const noexcept
+    {
+        return m_runSequence.load(std::memory_order_acquire) == sequence && isRfGateOpen();
+    }
 
     // The last TXA meter reading for `meterType` (a WDSP txaMeterType index,
     // 0..16). With a lane, the value the lane last read (-400, WDSP's idle
@@ -2848,6 +2854,10 @@ signals:
     // for has finished (or timed out in WDSP) and the RF gate is closed.
     // Emitted on the lane, or at once without one.
     void txDrained(quint64 sequence);
+    /// The latest setRunningAsync(true) has opened the actual RF gate.
+    /// Emitted on the control lane (inline without one); consumers that
+    /// store the returned sequence must receive this with QueuedConnection.
+    void rfGateOpened(quint64 sequence);
 
 private slots:
     // ── Per-profile TX filter (Plan 4 D8) — debounce fire slot ───────────────

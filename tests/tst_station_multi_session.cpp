@@ -4865,6 +4865,7 @@ private slots:
     {
         Core core;
         allowTransmit(core);
+        CoreTx txr(core.model.get());
         Device a;
         Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
         core.pair(a);
@@ -4923,6 +4924,7 @@ private slots:
         for (const Key kind : {Key::Tune, Key::TunerTune, Key::Vox}) {
             Core core;
             allowTransmit(core);
+            CoreTx txr(core.model.get());
             Device a;
             core.pair(a);
             LoopbackTransport* appA = core.signIn(a, kTransmitter);
@@ -5386,6 +5388,7 @@ private slots:
     {
         Core core;
         allowTransmit(core);
+        CoreTx txr(core.model.get());
         Device a;
         core.pair(a);
         LoopbackTransport* appA = core.signIn(a, kTransmitter);

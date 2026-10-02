@@ -8198,6 +8198,16 @@ private:
     /// Task 77: how long a device's cycle waits for the tuner to start its
     /// sweep once the carrier is up (TunerApplet's short watchdog, 3 s).
     static constexpr int kTgxlDeviceCycleStartMs = 3000;
+    static constexpr int kTgxlCarrierReadyMs = 3000;
+    static constexpr int kTgxlRfSettleMs = 150;
+    // Completion ownership: actual channel, its latest run request and
+    // the tune cycle that requested it. The completion is always queued.
+    QPointer<TxChannel> m_tgxlCarrierChannel;
+    quint64 m_tgxlCarrierSequence{0};
+    quint64 m_tgxlCarrierCycle{0};
+    bool m_tgxlCarrierReady{false};
+    bool m_tgxlSettlePending{false};
+    bool m_tgxlCommandSent{false};
     /// Task 77: the cycle ended (or never keyed): the amplifier's state
     /// restored, the flags cleared.
     /// Task 77 fix round 4: `unkeyedReason`, the words for a cycle that ends
@@ -8294,7 +8304,11 @@ private:
     QString beginTgxlAutotune(bool fromHardware);
     bool m_awaitingInterlockForAutotune{false};
     void continueTgxlAutotuneAfterStandby();
-    void sendTgxlAutotuneCmd();
+    void onTgxlRfGateOpened(TxChannel* channel, quint64 sequence);
+    bool tgxlCarrierEligible(quint64 cycle, TxChannel* channel, quint64 sequence) const;
+    void scheduleTgxlAutotune();
+    void sendTgxlAutotuneCmd(quint64 cycle, TxChannel* channel, quint64 sequence);
+    void armTgxlSweepStartWatchdog();
 
     // RF-flow gate state (NereusSDR-native, deck item #3).
     //
