@@ -146,25 +146,25 @@ Modify `ContainerWidget.h` (shared enum include), both CMake files; extend
 `commit(const WorkspaceDocument&, quint64 expectedRevision) -> CommitResult`,
 signal `committed(quint64 revision)`. Store owns the current document, not widgets.
 
-- [ ] Write round-trip/validation tests for duplicate IDs, names, context/MMIO,
+- [x] Write round-trip/validation tests for duplicate IDs, names, context/MMIO,
   extensions at every level, geometry, order, malformed JSON and future versions:
   `QCOMPARE(decode(encode(doc)).document, doc);` and reject duplicate IDs before
   changing the live snapshot. Define equality on document value types.
-- [ ] Write store tests: saved revision advances once; stale expected revision
+- [x] Write store tests: saved revision advances once; stale expected revision
   returns Conflict; force a save failure through an unwritable destination and
   assert snapshot/owned AppSettings keys unchanged. Assert new keys classify as
   `SettingsScope::OperatorLocal`; fake remote backend receives zero layout writes.
-- [ ] Build/run `tst_container_document` and `tst_container_workspace_store`;
+- [x] Build/run `tst_container_document` and `tst_container_workspace_store`;
   expect failing assertions or missing interfaces before implementation.
-- [ ] Implement codec and store. Use `ContainerWorkspace` for structured JSON and
+- [x] Implement codec and store. Use `ContainerWorkspace` for structured JSON and
   `ContainerWorkspaceBackup` for the recoverable original. Preserve unknown JSON.
   Validate before writing; save through existing atomic `AppSettings::save`;
   roll back only these owned keys on failure; publish/emit only after success.
   Do not clear legacy keys. Never replace a corrupt newer document silently.
-- [ ] Build both targets plus `tst_settings_scope`, `tst_core_has_no_gui_includes`;
+- [x] Build both targets plus `tst_settings_scope`, `tst_core_has_no_gui_includes`;
   run ctest matching `^tst_(container_document|container_workspace_store|settings_scope|core_has_no_gui_includes)$`.
   Expected: all pass with temporary settings, no remote station mutation.
-- [ ] Commit: `feat: add revisioned container presentation documents`.
+- [x] Commit: `feat: add revisioned container presentation documents`.
 
 ### Task 2: One registry and non-destructive legacy import
 
@@ -183,35 +183,40 @@ QString unavailableReason; }`;
 `ContainerContentRegistry::descriptors() const -> QVector<ContentDescriptor>`,
 `makeEntry(const QString& typeId) const -> ContentEntry` (fresh ID/default config),
 `validateEntry(const ContentEntry&) const -> QString`,
-`createMeterItem(const ContentEntry&, QObject* parent) const -> MeterItem*`.
+`createMeterItem(const ContentEntry&, QObject* parent,
+ContentRenderMode mode = ContentRenderMode::Live) const -> MeterItem*`, where
+`ContentRenderMode { Live, Preview, Validation }` suppresses actions/fetching in
+non-live hydration. Also produce `captureMeterItem(const MeterItem&,
+const ContentEntry& prior = {}) const -> ContentEntry` for live defaults/clones:
+retain prior identity/raw extensions and capture MMIO/stack/visibility context.
 QObject parenting transfers ownership; registry owns no meter widgets.
 
-- [ ] Capture non-default main/historical fixtures: calibrated bars, needles,
+- [x] Capture non-default main/historical fixtures: calibrated bars, needles,
   MMIO, names, overlapping custom objects, absent property tails, unknown records,
   malformed record between valid siblings, and retired DISCORDBTNS.
   Assert all original bytes are recoverable; idempotent second load keeps IDs,
   order and customization; unknown/retired controls never instantiate.
-- [ ] Add explicit alias tests for visibility ID → floating widget ID:
+- [x] Add explicit alias tests for visibility ID → floating widget ID:
   `Rx→rx`, `Display→Display`, `Tx→TX`, `PhoneCw→PHCW`, `Rade→RADE`, `Vax→vax`,
   `PureSignal→pure_signal`, `ModMon→mod_monitor`, `Tci→tci`,
   `ClientChain→tci_clients`, `Amp→amp`, `Tuner→tuner`, `RfKit→RfKit`.
   Assert hidden/floating/geometry combinations remain distinct. Give S-meter an
   explicit new singleton descriptor; do not invent a legacy float key for it.
-- [ ] Build/run `tst_container_legacy_import`; expect failure for destructive
+- [x] Build/run `tst_container_legacy_import`; expect failure for destructive
   parse, incorrect aliases or absent importer.
-- [ ] Implement raw-first import: legacy item lines are newline/pipe delimited,
+- [x] Implement raw-first import: legacy item lines are newline/pipe delimited,
   with no general escaping. Keep each exact record in `config.legacyRecord`,
   edited known properties in `config.overrides`, and original complete payload
   in backup. Factory applies overrides after legacy decoding. Unparseable entries
   stay named opaque unavailable objects. Retired records stay inert. Promote a
   group only on full unambiguous signature with every property representable.
   Preserve `ContainerData_*`, `ContainerItems_*`, ID list, splitter, float keys.
-- [ ] Register current built kinds only; registry becomes the single factory
+- [x] Register current built kinds only; registry becomes the single factory
   behind deserialize, clone and preset creation. Future-schema import rejects
   editing without clearing current state. Build/run new target and
   `tst_container_persistence`, `tst_meter_presets`; expected pass and byte-preserved
   source backups. Run the R1 test after introducing includes.
-- [ ] Commit: `feat: preserve legacy container content through one registry`.
+- [x] Commit: `feat: preserve legacy container content through one registry`.
 
 ### Task 3: Composite reading, replay and timing contracts
 

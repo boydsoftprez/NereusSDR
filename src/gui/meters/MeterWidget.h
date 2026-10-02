@@ -66,6 +66,7 @@ mw0lge@grange-lane.co.uk
 #include <QHash>
 #include <QImage>
 #include <QVector>
+#include <QPointer>
 
 #ifdef NEREUS_GPU_SPECTRUM
 #include <QRhiWidget>
@@ -91,6 +92,8 @@ public:
     void addItem(MeterItem* item);
     void removeItem(MeterItem* item);
     void clearItems();
+    // Replace live items while retaining inert legacy siblings and source order.
+    void replaceItems(const QVector<MeterItem*>& items);
     QVector<MeterItem*> items() const { return m_items; }
 
     void updateMeterValue(int bindingId, double value);
@@ -186,11 +189,14 @@ protected:
     bool event(QEvent* event) override;
 
 private:
+    friend class ItemGroup; // Legacy preset transfer retains inert serialized siblings.
     void drawItems(QPainter& p);
     // Task 39: dims each drawn item whose binding is unavailable.
     void drawUnavailableVeils(QPainter& p) const;
     QHash<int, QString> m_unavailableBindings;
     QVector<MeterItem*> m_items;
+    struct LegacyRecord { QString raw; QPointer<MeterItem> item; };
+    QVector<LegacyRecord> m_legacyRecords;
 
     // Visibility filter state — see setMox/setDisplayGroup doc.
     bool m_mox{false};

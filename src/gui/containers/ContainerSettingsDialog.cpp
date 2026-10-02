@@ -111,6 +111,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ContainerSettingsDialog.h"
+#include "ContainerContentRegistry.h"
 #include "ContainerManager.h"
 #include "MmioEndpointsDialog.h"
 
@@ -703,7 +704,8 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
     }
 
     for (MeterItem* src : group->items()) {
-        MeterItem* clone = createItemFromSerialized(src->serialize());
+        ContainerContentRegistry registry;
+        MeterItem* clone = registry.createMeterItem(registry.captureMeterItem(*src),nullptr,ContentRenderMode::Preview);
         if (!clone) { continue; }
         // Snapshot the preset factory's canonical within-slot 0..1
         // layout so reflow can project it back out.
@@ -1284,32 +1286,32 @@ void ContainerSettingsDialog::addNewItem(const QString& typeTag)
     MeterItem* newItem = nullptr;
 
     if (typeTag == QLatin1String("BAR")) {
-        auto* item = new BarItem();
+        auto* item = static_cast<BarItem*>(createDefaultItem(typeTag));
         item->setRect(0.0f, yPos, 1.0f, 0.15f);
         item->setRange(-140.0, 0.0);
         item->setBindingId(0);
         newItem = item;
     } else if (typeTag == QLatin1String("NEEDLE")) {
-        auto* item = new NeedleItem();
+        auto* item = static_cast<NeedleItem*>(createDefaultItem(typeTag));
         item->setRect(0.0f, yPos, 1.0f, 0.5f);
         item->setBindingId(0);
         newItem = item;
     } else if (typeTag == QLatin1String("SOLID")) {
-        auto* item = new SolidColourItem();
+        auto* item = static_cast<SolidColourItem*>(createDefaultItem(typeTag));
         item->setRect(0.0f, 0.0f, 1.0f, 1.0f);
         item->setZOrder(-10);
         newItem = item;
     } else if (typeTag == QLatin1String("TEXT")) {
-        auto* item = new TextItem();
+        auto* item = static_cast<TextItem*>(createDefaultItem(typeTag));
         item->setRect(0.0f, yPos, 1.0f, 0.1f);
         item->setBindingId(0);
         newItem = item;
     } else if (typeTag == QLatin1String("SCALE")) {
-        auto* item = new ScaleItem();
+        auto* item = static_cast<ScaleItem*>(createDefaultItem(typeTag));
         item->setRect(0.0f, yPos, 1.0f, 0.12f);
         newItem = item;
     } else if (typeTag == QLatin1String("IMAGE")) {
-        auto* item = new ImageItem();
+        auto* item = static_cast<ImageItem*>(createDefaultItem(typeTag));
         item->setRect(0.0f, 0.0f, 1.0f, 1.0f);
         item->setZOrder(-5);
         newItem = item;
@@ -1340,55 +1342,8 @@ void ContainerSettingsDialog::addNewItem(const QString& typeTag)
 
 MeterItem* ContainerSettingsDialog::createDefaultItem(const QString& typeTag)
 {
-    if (typeTag == QLatin1String("SPACER")) {
-        return new SpacerItem();
-    } else if (typeTag == QLatin1String("FADECOVER")) {
-        return new FadeCoverItem();
-    } else if (typeTag == QLatin1String("LED")) {
-        return new LEDItem();
-    } else if (typeTag == QLatin1String("HISTORY")) {
-        return new HistoryGraphItem();
-    } else if (typeTag == QLatin1String("MAGICEYE")) {
-        return new MagicEyeItem();
-    } else if (typeTag == QLatin1String("NEEDLESCALEPWR")) {
-        return new NeedleScalePwrItem();
-    } else if (typeTag == QLatin1String("SIGNALTEXT")) {
-        return new SignalTextItem();
-    } else if (typeTag == QLatin1String("DIAL")) {
-        return new DialItem();
-    } else if (typeTag == QLatin1String("TEXTOVERLAY")) {
-        return new TextOverlayItem();
-    } else if (typeTag == QLatin1String("WEBIMAGE")) {
-        return new WebImageItem();
-    } else if (typeTag == QLatin1String("FILTERDISPLAY")) {
-        return new FilterDisplayItem();
-    } else if (typeTag == QLatin1String("ROTATOR")) {
-        return new RotatorItem();
-    } else if (typeTag == QLatin1String("BANDBTNS")) {
-        return new BandButtonItem();
-    } else if (typeTag == QLatin1String("MODEBTNS")) {
-        return new ModeButtonItem();
-    } else if (typeTag == QLatin1String("FILTERBTNS")) {
-        return new FilterButtonItem();
-    } else if (typeTag == QLatin1String("ANTENNABTNS")) {
-        return new AntennaButtonItem();
-    } else if (typeTag == QLatin1String("TUNESTEPBTNS")) {
-        return new TuneStepButtonItem();
-    } else if (typeTag == QLatin1String("OTHERBTNS")) {
-        return new OtherButtonItem();
-    } else if (typeTag == QLatin1String("VOICERECPLAY")) {
-        return new VoiceRecordPlayItem();
-    } else if (typeTag == QLatin1String("VFO")) {
-        return new VfoDisplayItem();
-    } else if (typeTag == QLatin1String("CLOCK")) {
-        return new ClockItem();
-    } else if (typeTag == QLatin1String("CLICKBOX")) {
-        return new ClickBoxItem();
-    } else if (typeTag == QLatin1String("DATAOUT")) {
-        return new DataOutItem();
-    }
-
-    return nullptr;
+    ContainerContentRegistry registry;
+    return registry.createMeterItem(registry.makeEntry(typeTag),nullptr,ContentRenderMode::Preview);
 }
 
 // ---------------------------------------------------------------------------
@@ -1397,137 +1352,11 @@ MeterItem* ContainerSettingsDialog::createDefaultItem(const QString& typeTag)
 
 MeterItem* ContainerSettingsDialog::createItemFromSerialized(const QString& data)
 {
-    if (data.isEmpty()) {
-        return nullptr;
-    }
-
-    const int pipeIdx = data.indexOf(QLatin1Char('|'));
-    const QString typeTag = (pipeIdx >= 0) ? data.left(pipeIdx) : data;
-
-    // Core types (defined in MeterItem.h)
-    if (typeTag == QLatin1String("BAR")) {
-        BarItem* item = new BarItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("SOLID")) {
-        SolidColourItem* item = new SolidColourItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("IMAGE")) {
-        ImageItem* item = new ImageItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("SCALE")) {
-        ScaleItem* item = new ScaleItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("TEXT")) {
-        TextItem* item = new TextItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("NEEDLE")) {
-        NeedleItem* item = new NeedleItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    }
-    // Phase 3G-4 passive types
-    else if (typeTag == QLatin1String("SPACER")) {
-        SpacerItem* item = new SpacerItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("FADECOVER")) {
-        FadeCoverItem* item = new FadeCoverItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("LED")) {
-        LEDItem* item = new LEDItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("HISTORY")) {
-        HistoryGraphItem* item = new HistoryGraphItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("MAGICEYE")) {
-        MagicEyeItem* item = new MagicEyeItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("NEEDLESCALEPWR")) {
-        NeedleScalePwrItem* item = new NeedleScalePwrItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("SIGNALTEXT")) {
-        SignalTextItem* item = new SignalTextItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("DIAL")) {
-        DialItem* item = new DialItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("TEXTOVERLAY")) {
-        TextOverlayItem* item = new TextOverlayItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("WEBIMAGE")) {
-        WebImageItem* item = new WebImageItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("FILTERDISPLAY")) {
-        FilterDisplayItem* item = new FilterDisplayItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("ROTATOR")) {
-        RotatorItem* item = new RotatorItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    }
-    // Phase 3G-5 interactive types
-    else if (typeTag == QLatin1String("BANDBTNS")) {
-        BandButtonItem* item = new BandButtonItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("MODEBTNS")) {
-        ModeButtonItem* item = new ModeButtonItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("FILTERBTNS")) {
-        FilterButtonItem* item = new FilterButtonItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("ANTENNABTNS")) {
-        AntennaButtonItem* item = new AntennaButtonItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("TUNESTEPBTNS")) {
-        TuneStepButtonItem* item = new TuneStepButtonItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("OTHERBTNS")) {
-        OtherButtonItem* item = new OtherButtonItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("VOICERECPLAY")) {
-        VoiceRecordPlayItem* item = new VoiceRecordPlayItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("VFO")) {
-        VfoDisplayItem* item = new VfoDisplayItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("CLOCK")) {
-        ClockItem* item = new ClockItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("CLICKBOX")) {
-        ClickBoxItem* item = new ClickBoxItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    } else if (typeTag == QLatin1String("DATAOUT")) {
-        DataOutItem* item = new DataOutItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
-    }
-
-    return nullptr;
+    ContentEntry entry;
+    entry.typeId = data.section(QLatin1Char('|'),0,0);
+    entry.paintOrder = data.section(QLatin1Char('|'),6,6).toInt();
+    entry.config.insert(QStringLiteral("legacyRecord"),data);
+    return ContainerContentRegistry().createMeterItem(entry,nullptr,ContentRenderMode::Preview);
 }
 
 // ---------------------------------------------------------------------------
@@ -1642,36 +1471,10 @@ void ContainerSettingsDialog::populateItemList()
         return;
     }
 
-    const QString serialized = meter->serializeItems();
-    const QStringList lines = serialized.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-    for (const QString& line : lines) {
-        MeterItem* item = createItemFromSerialized(line);
-        if (item) {
-            m_workingItems.append(item);
-        }
-    }
-
-    // Phase 3G-7: serializeItems() above strips MMIO bindings (block 5 kept
-    // them in-memory only). Re-attach each binding from the live meter into
-    // its corresponding working item by index.
-    // Phase 3G-9 post-revert: same story for the runtime-only stack
-    // metadata (m_stackSlot/m_slotLocalY/H/m_stackBandTop). Copy it
-    // from each live item into the matching clone so the dialog's
-    // working copies retain their stack tagging through the
-    // open/edit/Apply cycle.
-    const QVector<MeterItem*> liveItems = meter->items();
-    const int n = qMin(liveItems.size(), m_workingItems.size());
-    for (int i = 0; i < n; ++i) {
-        if (!liveItems[i] || !m_workingItems[i]) { continue; }
-        if (liveItems[i]->hasMmioBinding()) {
-            m_workingItems[i]->setMmioBinding(
-                liveItems[i]->mmioGuid(),
-                liveItems[i]->mmioVariable());
-        }
-        if (liveItems[i]->stackSlot() >= 0) {
-            m_workingItems[i]->setStackSlot(liveItems[i]->stackSlot());
-            m_workingItems[i]->setSlotLocalY(liveItems[i]->slotLocalY());
-            m_workingItems[i]->setSlotLocalH(liveItems[i]->slotLocalH());
+    ContainerContentRegistry registry;
+    for (const MeterItem* live : meter->items()) {
+        if (MeterItem* clone = registry.createMeterItem(registry.captureMeterItem(*live),nullptr,ContentRenderMode::Preview)) {
+            m_workingItems.append(clone);
         }
     }
 
@@ -1957,33 +1760,17 @@ void ContainerSettingsDialog::applyToContainer()
         return;
     }
 
-    target->clearItems();
+    QVector<MeterItem*> replacements;
     for (const MeterItem* item : m_workingItems) {
-        const QString data = item->serialize();
-        MeterItem* clone = createItemFromSerialized(data);
+        ContainerContentRegistry registry;
+        MeterItem* clone = registry.createMeterItem(registry.captureMeterItem(*item),nullptr);
         if (clone) {
-            // Phase 3G-7: serialize() drops MMIO bindings; copy them
-            // directly so Apply doesn't silently break the binding the
-            // user just made via the "Variable…" picker.
-            if (item->hasMmioBinding()) {
-                clone->setMmioBinding(item->mmioGuid(), item->mmioVariable());
-            }
-            // Phase 3G-9 post-revert: serialize() also drops the
-            // runtime-only stack metadata. Copy it explicitly so the
-            // cloned item on the target MeterWidget participates in
-            // reflowStackedItems() on the next resize (and right
-            // below, when we kick a reflow so the Apply preview
-            // reflects the Thetis-style slot layout immediately).
-            if (item->stackSlot() >= 0) {
-                clone->setStackSlot(item->stackSlot());
-                clone->setSlotLocalY(item->slotLocalY());
-                clone->setSlotLocalH(item->slotLocalH());
-            }
-            target->addItem(clone);
+            replacements.append(clone);
             // Re-wire interactive item signals through the container
             m_container->wireInteractiveItem(clone);
         }
     }
+    target->replaceItems(replacements);
     target->reflowStackedItems();
     target->update();
 }
@@ -2183,7 +1970,8 @@ void ContainerSettingsDialog::loadPresetByName(const QString& name)
         // loop so the offset is constant for all items in the preset.
         const float yOffset = nextStackYPos(m_workingItems);
         for (MeterItem* src : group->items()) {
-            MeterItem* clone = createItemFromSerialized(src->serialize());
+            ContainerContentRegistry registry;
+            MeterItem* clone = registry.createMeterItem(registry.captureMeterItem(*src),nullptr,ContentRenderMode::Preview);
             if (clone) {
                 clone->setRect(clone->x(),
                                clone->y() + yOffset,

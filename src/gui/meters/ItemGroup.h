@@ -58,6 +58,8 @@ mw0lge@grange-lane.co.uk
 
 #include <QString>
 #include <QVector>
+#include <QPointer>
+#include <QStringList>
 
 namespace NereusSDR {
 
@@ -200,6 +202,9 @@ private:
     float m_w{1.0f};
     float m_h{1.0f};
     QVector<MeterItem*> m_items;
+    struct LegacyRecord { QString raw; QPointer<MeterItem> item; };
+    QVector<LegacyRecord> m_legacyRecords;
+    QStringList m_legacyTail;
 };
 
 } // namespace NereusSDR

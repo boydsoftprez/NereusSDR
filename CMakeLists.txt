@@ -1740,6 +1740,10 @@ set(GUI_SOURCES
     src/gui/containers/ContainerDocument.cpp
     src/gui/containers/ContainerDocumentCodec.h
     src/gui/containers/ContainerDocumentCodec.cpp
+    src/gui/containers/ContainerContentRegistry.h
+    src/gui/containers/ContainerContentRegistry.cpp
+    src/gui/containers/LegacyContainerImporter.h
+    src/gui/containers/LegacyContainerImporter.cpp
     src/gui/containers/ContainerWorkspaceStore.h
     src/gui/containers/ContainerWorkspaceStore.cpp
     src/gui/containers/ContainerWidget.cpp

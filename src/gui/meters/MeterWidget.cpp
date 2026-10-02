@@ -73,6 +73,8 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterWidget.h"
+#include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/LegacyContainerImporter.h"
 #include "MeterItem.h"
 #include "core/LogCategories.h"
 #include "gui/UnbuiltFeatures.h"
@@ -179,6 +181,7 @@ void MeterWidget::addItem(MeterItem* item)
 void MeterWidget::removeItem(MeterItem* item)
 {
     if (m_items.removeOne(item)) {
+        m_legacyRecords.removeIf([item](const LegacyRecord& record) { return record.item == item; });
 #ifdef NEREUS_GPU_SPECTRUM
         markOverlayDirty();
         m_bgDirty = true;
@@ -186,6 +189,25 @@ void MeterWidget::removeItem(MeterItem* item)
         update();
         emit itemRemoved(item);
     }
+}
+
+void MeterWidget::replaceItems(const QVector<MeterItem*>& items)
+{
+    ContainerContentRegistry registry;
+    QHash<QString, MeterItem*> replacements;
+    for (MeterItem* item : items) { if (item) { replacements.insert(registry.captureMeterItem(*item).id,item); } }
+    QVector<LegacyRecord> retained;
+    for (const auto& record : m_legacyRecords) {
+        if (!record.item) { retained.append(record); continue; }
+        MeterItem* replacement = replacements.value(registry.captureMeterItem(*record.item).id,nullptr);
+        if (replacement) { retained.append({record.raw,replacement}); }
+    }
+    // Reconciliation callers may reuse current objects. Detach those owned by
+    // this widget before clearing, so clearItems cannot destroy a replacement.
+    for (MeterItem* item : items) { if (item && item->parent() == this) { item->setParent(nullptr); } }
+    clearItems();
+    for (MeterItem* item : items) { addItem(item); }
+    m_legacyRecords = retained;
 }
 
 void MeterWidget::clearItems()
@@ -196,6 +218,7 @@ void MeterWidget::clearItems()
         }
     }
     m_items.clear();
+    m_legacyRecords.clear();
     emit displayVisibilityChanged();
 #ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
@@ -275,101 +298,46 @@ void MeterWidget::rescalePowerMeters(int paMaxWatts)
 QString MeterWidget::serializeItems() const
 {
     QStringList lines;
-    for (const MeterItem* item : m_items) {
-        lines << item->serialize();
+    QSet<const MeterItem*> emitted;
+    for (const auto& record : m_legacyRecords) {
+        if (!record.item) { lines.append(record.raw); continue; }
+        if (!m_items.contains(record.item)) { continue; }
+        QString current = record.item->serialize();
+        const QStringList rawFields = record.raw.split(QLatin1Char('|'));
+        const int knownCount = current.split(QLatin1Char('|')).size();
+        if (rawFields.size() > knownCount) { current += QLatin1Char('|') + rawFields.mid(knownCount).join(QLatin1Char('|')); }
+        lines.append(current); emitted.insert(record.item);
     }
+    for (const MeterItem* item : m_items) { if (!emitted.contains(item)) { lines.append(item->serialize()); } }
     return lines.join(QLatin1Char('\n'));
 }
 
 bool MeterWidget::deserializeItems(const QString& data)
 {
     if (data.isEmpty()) { return false; }
-
-    clearItems();
-    QStringList lines = data.split(QLatin1Char('\n'));
-    for (const QString& line : lines) {
-        if (line.isEmpty()) { continue; }
-
-        QString type = line.section(QLatin1Char('|'), 0, 0);
-        MeterItem* item = nullptr;
-        // Core types (MeterItem.h)
-        if (type == QStringLiteral("BAR")) {
-            item = new BarItem();
-        } else if (type == QStringLiteral("SOLID")) {
-            item = new SolidColourItem();
-        } else if (type == QStringLiteral("IMAGE")) {
-            item = new ImageItem();
-        } else if (type == QStringLiteral("SCALE")) {
-            item = new ScaleItem();
-        } else if (type == QStringLiteral("TEXT")) {
-            item = new TextItem();
-        } else if (type == QStringLiteral("NEEDLE")) {
-            item = new NeedleItem();
-        }
-        // Phase 3G-4 passive types
-        else if (type == QStringLiteral("SPACER")) {
-            item = new SpacerItem();
-        } else if (type == QStringLiteral("FADECOVER")) {
-            item = new FadeCoverItem();
-        } else if (type == QStringLiteral("LED")) {
-            item = new LEDItem();
-        } else if (type == QStringLiteral("HISTORY")) {
-            item = new HistoryGraphItem();
-        } else if (type == QStringLiteral("MAGICEYE")) {
-            item = new MagicEyeItem();
-        } else if (type == QStringLiteral("NEEDLESCALEPWR")) {
-            item = new NeedleScalePwrItem();
-        } else if (type == QStringLiteral("SIGNALTEXT")) {
-            item = new SignalTextItem();
-        } else if (type == QStringLiteral("DIAL")) {
-            item = new DialItem();
-        } else if (type == QStringLiteral("TEXTOVERLAY")) {
-            item = new TextOverlayItem();
-        } else if (type == QStringLiteral("WEBIMAGE")) {
-            item = new WebImageItem();
-        } else if (type == QStringLiteral("FILTERDISPLAY")) {
-            item = new FilterDisplayItem();
-        } else if (type == QStringLiteral("ROTATOR")) {
-            item = new RotatorItem();
-        }
-        // Phase 3G-5 interactive types
-        else if (type == QStringLiteral("BANDBTNS")) {
-            item = new BandButtonItem();
-        } else if (type == QStringLiteral("MODEBTNS")) {
-            item = new ModeButtonItem();
-        } else if (type == QStringLiteral("FILTERBTNS")) {
-            item = new FilterButtonItem();
-        } else if (type == QStringLiteral("ANTENNABTNS")) {
-            item = new AntennaButtonItem();
-        } else if (type == QStringLiteral("TUNESTEPBTNS")) {
-            item = new TuneStepButtonItem();
-        } else if (type == QStringLiteral("OTHERBTNS")) {
-            item = new OtherButtonItem();
-        } else if (type == QStringLiteral("VOICERECPLAY")) {
-            item = new VoiceRecordPlayItem();
-        } else if (type == QStringLiteral("DISCORDBTNS")) {
-            // R-R3-49: the Discord control was removed. A saved one is
-            // dropped here; the rest of the container loads normally.
-            qCInfo(lcMeter) << "Dropped a saved Discord control from a container:"
-                               " that control has been removed";
-            continue;
-        } else if (type == QStringLiteral("VFO")) {
-            item = new VfoDisplayItem();
-        } else if (type == QStringLiteral("CLOCK")) {
-            item = new ClockItem();
-        } else if (type == QStringLiteral("CLICKBOX")) {
-            item = new ClickBoxItem();
-        } else if (type == QStringLiteral("DATAOUT")) {
-            item = new DataOutItem();
-        }
-
-        if (item && item->deserialize(line)) {
-            addItem(item);
-        } else {
-            delete item;
-        }
+    const DocumentResult imported = LegacyContainerImporter::fromClipboard(data);
+    if (!imported.ok || imported.document.containers.size() != 1) { return false; }
+    const QVector<ContentEntry> entries = imported.document.containers.first().contents;
+    ContainerContentRegistry registry;
+    QVector<MeterItem*> decoded;
+    for (const auto& entry : entries) {
+        if (MeterItem* item = registry.createMeterItem(entry,nullptr,ContentRenderMode::Validation)) { decoded.append(item); }
     }
-    return !m_items.isEmpty();
+    // Validate the entire payload before touching live content or fetching URLs.
+    if (entries.isEmpty()) { return false; }
+    if (decoded.isEmpty() && !m_items.isEmpty()) {
+        bool allMalformed = true;
+        for (const auto& entry : entries) { allMalformed = allMalformed && entry.extensions.value(QStringLiteral("legacyMalformed")).toBool(); }
+        if (allMalformed) { return false; }
+    }
+    qDeleteAll(decoded);
+    clearItems();
+    for (const auto& entry : entries) {
+        MeterItem* item = registry.createMeterItem(entry,nullptr);
+        if (item) { addItem(item); }
+        m_legacyRecords.append({entry.config.value(QStringLiteral("legacyRecord")).toString(),item});
+    }
+    return true;
 }
 
 // ============================================================================

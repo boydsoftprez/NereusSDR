@@ -1,6 +1,8 @@
 // no-port-check: NereusSDR-original transactional client presentation store.
 #include "ContainerWorkspaceStore.h"
 #include "ContainerDocumentCodec.h"
+#include "LegacyContainerImporter.h"
+#include <QJsonDocument>
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"
 #include <QScopedValueRollback>
@@ -26,7 +28,7 @@ DocumentResult ContainerWorkspaceStore::load()
     const bool present = m_settings.contains(kWorkspaceKey);
     const QByteArray raw = m_settings.value(kWorkspaceKey).toString().toUtf8();
     const DocumentResult result = present ? ContainerDocumentCodec::decode(raw)
-                                          : DocumentResult{true, {}, {}};
+                                          : LegacyContainerImporter::fromSettings(m_settings);
     if (!result.ok) {
         // Keep both the previous live document and the exact source bytes. No
         // fallback may turn a corrupt/future workspace into an editable empty one.
@@ -68,6 +70,12 @@ CommitResult ContainerWorkspaceStore::commit(const WorkspaceDocument& document, 
                 current.ok ? current.document.revision : m_document.revision,
                 current.ok ? QStringLiteral("Workspace changed; reload before editing") : current.error};
     }
+    if (!present) {
+        const DocumentResult currentLegacy = LegacyContainerImporter::fromSettings(m_settings);
+        if (!currentLegacy.ok || currentLegacy.document != m_document) {
+            return {CommitStatus::Conflict,m_document.revision,QStringLiteral("Legacy workspace changed; reload before editing")};
+        }
+    }
     const QString validation = ContainerDocumentCodec::validate(document);
     if (!validation.isEmpty()) {
         return {CommitStatus::Invalid, m_document.revision, validation};
@@ -83,10 +91,12 @@ CommitResult ContainerWorkspaceStore::commit(const WorkspaceDocument& document, 
     const QVariant oldBackup = m_settings.value(kBackupKey);
     QScopedValueRollback<bool> guard(m_committing, true);
 
-    // First replacement retains the original structured payload exactly. A
-    // legacy importer can seed this key with its raw backup before committing.
-    if (present && !backupPresent) {
-        m_settings.setValue(kBackupKey, QString::fromUtf8(raw));
+    // Backups and replacement are saved in the same atomic AppSettings commit.
+    if (!backupPresent) {
+        if (present) { m_settings.setValue(kBackupKey, QString::fromUtf8(raw)); }
+        else if (m_document.extensions.contains(QStringLiteral("legacySettings"))) {
+            m_settings.setValue(kBackupKey, QString::fromUtf8(QJsonDocument(m_document.extensions.value(QStringLiteral("legacySettings")).toObject()).toJson(QJsonDocument::Compact)));
+        }
     }
     m_settings.setValue(kWorkspaceKey, QString::fromUtf8(encoded));
     QString error;

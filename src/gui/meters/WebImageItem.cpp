@@ -118,13 +118,22 @@ WebImageItem::~WebImageItem() = default;
 // setUrl()
 // From Thetis clsWebImage (MeterManager.cs:14165+)
 // ---------------------------------------------------------------------------
+// NereusSDR-original: previews and validation hydrate without external fetches.
+void WebImageItem::setFetchEnabled(bool enabled)
+{
+    if (m_fetchEnabled == enabled) { return; }
+    m_fetchEnabled = enabled;
+    if (!enabled) { m_refreshTimer.stop(); }
+    else { setUrl(m_url); }
+}
+
 void WebImageItem::setUrl(const QString& url)
 {
     m_url = url;
     if (m_url.isEmpty()) {
         m_refreshTimer.stop();
         m_image = QImage();
-    } else {
+    } else if (m_fetchEnabled) {
         fetchImage();
         m_refreshTimer.start(m_refreshInterval * 1000);
     }
@@ -147,6 +156,7 @@ void WebImageItem::setRefreshInterval(int seconds)
 // ---------------------------------------------------------------------------
 void WebImageItem::fetchImage()
 {
+    if (!m_fetchEnabled) { return; }
     if (m_url.isEmpty() || m_fetchInProgress) {
         return;
     }

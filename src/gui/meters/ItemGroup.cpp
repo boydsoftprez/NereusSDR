@@ -90,9 +90,12 @@ mw0lge@grange-lane.co.uk
 #include "DataOutItem.h"
 
 #include "core/LogCategories.h"
+#include "gui/containers/ContainerContentRegistry.h"
 
 #include <QStringList>
+#include <QSet>
 #include <QtAlgorithms>
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -140,6 +143,7 @@ void ItemGroup::addItem(MeterItem* item)
 void ItemGroup::removeItem(MeterItem* item)
 {
     m_items.removeOne(item);
+    m_legacyRecords.removeIf([item](const LegacyRecord& record) { return record.item == item; });
 }
 
 // ---------------------------------------------------------------------------
@@ -166,10 +170,21 @@ QString ItemGroup::serialize() const
     lines << QString::number(static_cast<double>(m_y));
     lines << QString::number(static_cast<double>(m_w));
     lines << QString::number(static_cast<double>(m_h));
-    lines << QString::number(m_items.size());
-    for (const MeterItem* item : m_items) {
-        lines << item->serialize();
+    QStringList records;
+    QSet<const MeterItem*> emitted;
+    for (const auto& record : m_legacyRecords) {
+        if (!record.item) { records.append(record.raw); continue; }
+        if (!m_items.contains(record.item)) { continue; }
+        QString current = record.item->serialize();
+        const QStringList fields = record.raw.split(QLatin1Char('|'));
+        const int knownCount = current.split(QLatin1Char('|')).size();
+        if (fields.size() > knownCount) { current += QLatin1Char('|')+fields.mid(knownCount).join(QLatin1Char('|')); }
+        records.append(current); emitted.insert(record.item);
     }
+    for (const MeterItem* item : m_items) { if (!emitted.contains(item)) { records.append(item->serialize()); } }
+    lines << QString::number(records.size());
+    lines.append(records);
+    lines.append(m_legacyTail);
     return lines.join(QLatin1Char('\n'));
 }
 
@@ -192,188 +207,24 @@ ItemGroup* ItemGroup::deserialize(const QString& data, QObject* parent)
     const float h = lines[5].toFloat(&ok); if (!ok) { return nullptr; }
     const int count = lines[6].toInt(&ok); if (!ok) { return nullptr; }
 
-    if (lines.size() < 7 + count) {
+    if (count < 0 || count > lines.size()-7 || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(w) || !std::isfinite(h)) {
         return nullptr;
     }
 
     ItemGroup* group = new ItemGroup(name, parent);
     group->setRect(x, y, w, h);
+    group->m_legacyTail = lines.mid(7+count);
 
     for (int i = 0; i < count; ++i) {
         const QString& itemData = lines[7 + i];
-        // Detect type from first pipe-delimited field
-        const int pipeIdx = itemData.indexOf(QLatin1Char('|'));
-        const QString typeTag = (pipeIdx >= 0) ? itemData.left(pipeIdx) : itemData;
+        ContentEntry entry;
+        entry.typeId = itemData.section(QLatin1Char('|'),0,0);
+        entry.config.insert(QStringLiteral("legacyRecord"),itemData);
+        entry.paintOrder = itemData.section(QLatin1Char('|'),6,6).toInt();
+        MeterItem* item = ContainerContentRegistry().createMeterItem(entry,group);
+        if (item) { group->addItem(item); }
+        group->m_legacyRecords.append({itemData,item});
 
-        MeterItem* item = nullptr;
-        if (typeTag == QLatin1String("BAR")) {
-            BarItem* bar = new BarItem();
-            if (bar->deserialize(itemData)) {
-                item = bar;
-            } else {
-                delete bar;
-            }
-        } else if (typeTag == QLatin1String("SOLID")) {
-            SolidColourItem* solid = new SolidColourItem();
-            if (solid->deserialize(itemData)) {
-                item = solid;
-            } else {
-                delete solid;
-            }
-        } else if (typeTag == QLatin1String("IMAGE")) {
-            ImageItem* img = new ImageItem();
-            if (img->deserialize(itemData)) {
-                item = img;
-            } else {
-                delete img;
-            }
-        } else if (typeTag == QLatin1String("SCALE")) {
-            ScaleItem* scale = new ScaleItem();
-            if (scale->deserialize(itemData)) {
-                item = scale;
-            } else {
-                delete scale;
-            }
-        } else if (typeTag == QLatin1String("TEXT")) {
-            TextItem* text = new TextItem();
-            if (text->deserialize(itemData)) {
-                item = text;
-            } else {
-                delete text;
-            }
-        } else if (typeTag == QLatin1String("NEEDLE")) {
-            NeedleItem* needle = new NeedleItem();
-            if (needle->deserialize(itemData)) {
-                item = needle;
-            } else {
-                delete needle;
-            }
-        } else if (typeTag == QLatin1String("SPACER")) {
-            SpacerItem* spacer = new SpacerItem();
-            if (spacer->deserialize(itemData)) {
-                item = spacer;
-            } else {
-                delete spacer;
-            }
-        } else if (typeTag == QLatin1String("FADECOVER")) {
-            FadeCoverItem* fadecover = new FadeCoverItem();
-            if (fadecover->deserialize(itemData)) {
-                item = fadecover;
-            } else {
-                delete fadecover;
-            }
-        } else if (typeTag == QLatin1String("LED")) {
-            LEDItem* led = new LEDItem();
-            if (led->deserialize(itemData)) {
-                item = led;
-            } else {
-                delete led;
-            }
-        } else if (typeTag == QLatin1String("HISTORY")) {
-            HistoryGraphItem* history = new HistoryGraphItem();
-            if (history->deserialize(itemData)) {
-                item = history;
-            } else {
-                delete history;
-            }
-        } else if (typeTag == QLatin1String("MAGICEYE")) {
-            MagicEyeItem* magiceye = new MagicEyeItem();
-            if (magiceye->deserialize(itemData)) {
-                item = magiceye;
-            } else {
-                delete magiceye;
-            }
-        } else if (typeTag == QLatin1String("NEEDLESCALEPWR")) {
-            NeedleScalePwrItem* needlescalepwr = new NeedleScalePwrItem();
-            if (needlescalepwr->deserialize(itemData)) {
-                item = needlescalepwr;
-            } else {
-                delete needlescalepwr;
-            }
-        } else if (typeTag == QLatin1String("SIGNALTEXT")) {
-            SignalTextItem* signaltext = new SignalTextItem();
-            if (signaltext->deserialize(itemData)) {
-                item = signaltext;
-            } else {
-                delete signaltext;
-            }
-        } else if (typeTag == QLatin1String("DIAL")) {
-            DialItem* dial = new DialItem();
-            if (dial->deserialize(itemData)) {
-                item = dial;
-            } else {
-                delete dial;
-            }
-        } else if (typeTag == QLatin1String("TEXTOVERLAY")) {
-            TextOverlayItem* textoverlay = new TextOverlayItem();
-            if (textoverlay->deserialize(itemData)) {
-                item = textoverlay;
-            } else {
-                delete textoverlay;
-            }
-        } else if (typeTag == QLatin1String("WEBIMAGE")) {
-            WebImageItem* webimage = new WebImageItem();
-            if (webimage->deserialize(itemData)) {
-                item = webimage;
-            } else {
-                delete webimage;
-            }
-        } else if (typeTag == QLatin1String("FILTERDISPLAY")) {
-            FilterDisplayItem* filterdisplay = new FilterDisplayItem();
-            if (filterdisplay->deserialize(itemData)) {
-                item = filterdisplay;
-            } else {
-                delete filterdisplay;
-            }
-        } else if (typeTag == QLatin1String("ROTATOR")) {
-            RotatorItem* rotator = new RotatorItem();
-            if (rotator->deserialize(itemData)) {
-                item = rotator;
-            } else {
-                delete rotator;
-            }
-        } else if (typeTag == QLatin1String("BANDBTNS")) {
-            auto* item = new BandButtonItem(group);
-            if (item->deserialize(itemData)) { group->addItem(item); } else { delete item; }
-        } else if (typeTag == QLatin1String("MODEBTNS")) {
-            auto* item = new ModeButtonItem(group);
-            if (item->deserialize(itemData)) { group->addItem(item); } else { delete item; }
-        } else if (typeTag == QLatin1String("FILTERBTNS")) {
-            auto* item = new FilterButtonItem(group);
-            if (item->deserialize(itemData)) { group->addItem(item); } else { delete item; }
-        } else if (typeTag == QLatin1String("ANTENNABTNS")) {
-            auto* item = new AntennaButtonItem(group);
-            if (item->deserialize(itemData)) { group->addItem(item); } else { delete item; }
-        } else if (typeTag == QLatin1String("TUNESTEPBTNS")) {
-            auto* item = new TuneStepButtonItem(group);
-            if (item->deserialize(itemData)) { group->addItem(item); } else { delete item; }
-        } else if (typeTag == QLatin1String("OTHERBTNS")) {
-            auto* item = new OtherButtonItem(group);
-            if (item->deserialize(itemData)) { group->addItem(item); } else { delete item; }
-        } else if (typeTag == QLatin1String("VOICERECPLAY")) {
-            auto* item = new VoiceRecordPlayItem(group);
-            if (item->deserialize(itemData)) { group->addItem(item); } else { delete item; }
-        } else if (typeTag == QLatin1String("DISCORDBTNS")) {
-            // R-R3-49: the Discord control was removed; a saved one is dropped.
-            qCInfo(lcMeter) << "Dropped a saved Discord control from a meter group:"
-                               " that control has been removed";
-        } else if (typeTag == QLatin1String("VFO")) {
-            auto* item = new VfoDisplayItem(group);
-            if (item->deserialize(itemData)) { group->addItem(item); } else { delete item; }
-        } else if (typeTag == QLatin1String("CLOCK")) {
-            auto* item = new ClockItem(group);
-            if (item->deserialize(itemData)) { group->addItem(item); } else { delete item; }
-        } else if (typeTag == QLatin1String("CLICKBOX")) {
-            auto* item = new ClickBoxItem(group);
-            if (item->deserialize(itemData)) { group->addItem(item); } else { delete item; }
-        } else if (typeTag == QLatin1String("DATAOUT")) {
-            auto* item = new DataOutItem(group);
-            if (item->deserialize(itemData)) { group->addItem(item); } else { delete item; }
-        }
-
-        if (item) {
-            group->addItem(item);
-        }
     }
 
     return group;
@@ -530,6 +381,9 @@ void ItemGroup::installInto(MeterWidget* widget, float gx, float gy, float gw, f
         item->setParent(widget);
         widget->addItem(item);
     }
+    widget->m_legacyRecords.reserve(widget->m_legacyRecords.size()+m_legacyRecords.size());
+    for (const auto& record : m_legacyRecords) { widget->m_legacyRecords.append({record.raw,record.item}); }
+    m_legacyRecords.clear();
     m_items.clear();
 }
 
