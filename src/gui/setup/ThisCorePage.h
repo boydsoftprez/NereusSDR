@@ -37,6 +37,7 @@
 
 #include "gui/SetupPage.h"
 
+class QGroupBox;
 class QComboBox;
 class QLabel;
 class QPushButton;
@@ -59,6 +60,11 @@ public:
     /// Selects the Core's radio in the list (the menus' Edit radio and
     /// Forget radio open the page on it).
     void selectCoreRadio();
+
+    /// Reuse these exact sections in the identity-fenced Cores hub. The page
+    /// remains the command/gate owner; the hub reparents section widgets.
+    QWidget* radioSection() const { return m_radioSection; }
+    QList<QWidget*> devicesSections() const { return m_devicesSections; }
 
     /// Why the controls are disabled now, empty when they are not.
     QString unavailableReason() const;
@@ -98,6 +104,8 @@ private:
     void rebuildDevices();
     void sendDeviceAdmin(const QByteArray& verb, const QString& id = QString());
 
+    QWidget* m_radioSection = nullptr;
+    QList<QWidget*> m_devicesSections;
     RadioModel* m_radioModel = nullptr;
     QTreeWidget* m_list = nullptr;
     QPushButton* m_useButton = nullptr;

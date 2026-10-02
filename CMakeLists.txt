@@ -1865,6 +1865,7 @@ set(GUI_SOURCES
     src/gui/setup/FourO3APage.cpp
     # Parity Task 21 (R-IOS-18): Setup > This Core in a remote window.
     src/gui/setup/ThisCorePage.cpp
+    src/gui/setup/CoresSetupPage.cpp
     src/gui/setup/RfKitPage.cpp
     src/gui/setup/TciLogWindow.cpp
     src/gui/setup/KeyboardSetupPages.cpp

@@ -124,6 +124,7 @@ ConnectionSelector::ConnectionSelector(QWidget* parent)
                                    QStringLiteral("connectionSelectorAddByCode"));
     m_addRadioButton = makeButton(tr("Add Radio…"), QStringLiteral("connectionSelectorAddRadio"));
     m_scanButton = makeButton(tr("Scan"), QStringLiteral("connectionSelectorScan"));
+    m_manageCoreButton = makeButton(tr("Manage…"), QStringLiteral("connectionSelectorManageCore"));
     m_editButton = makeButton(tr("Edit…"), QStringLiteral("connectionSelectorEdit"));
     m_forgetButton = makeButton(tr("Forget…"), QStringLiteral("connectionSelectorForget"));
     m_detailsButton = makeButton(tr("Details"), QStringLiteral("connectionSelectorDetails"));
@@ -135,6 +136,7 @@ ConnectionSelector::ConnectionSelector(QWidget* parent)
     actionLayout->addWidget(m_addCoreButton);
     actionLayout->addWidget(m_addRadioButton);
     actionLayout->addWidget(m_scanButton);
+    actionLayout->addWidget(m_manageCoreButton);
     actionLayout->addWidget(m_editButton);
     actionLayout->addWidget(m_forgetButton);
     actionLayout->addStretch();
@@ -165,6 +167,12 @@ ConnectionSelector::ConnectionSelector(QWidget* parent)
             &ConnectionSelector::addByCodeRequested);
     connect(m_addRadioButton, &QPushButton::clicked, this, &ConnectionSelector::addRadioRequested);
     connect(m_scanButton, &QPushButton::clicked, this, &ConnectionSelector::scanRequested);
+    connect(m_manageCoreButton, &QPushButton::clicked, this, [this] {
+        if (const ConnectionTargetRow* target = selectedTarget(); target != nullptr
+            && m_coreManagementAvailable && target->kind == ConnectionTargetKind::SavedCore) {
+            emit manageCoreRequested(target->key);
+        }
+    });
     connect(m_editButton, &QPushButton::clicked, this, [this] {
         if (const ConnectionTargetRow* target = selectedTarget(); target != nullptr) {
             emit editRequested(target->key);
@@ -424,6 +432,12 @@ const ConnectionTargetRow* ConnectionSelector::selectedTarget() const
     return nullptr;
 }
 
+void ConnectionSelector::setCoreManagementAvailable(bool available)
+{
+    m_coreManagementAvailable = available;
+    updateActions();
+}
+
 void ConnectionSelector::updateActions()
 {
     const ConnectionTargetRow* target = selectedTarget();
@@ -432,6 +446,10 @@ void ConnectionSelector::updateActions()
     const bool canConnect = hasTarget && (target->connectable || canPair);
     const bool canEdit = hasTarget && target->editable;
     const bool canForget = hasTarget && target->forgettable;
+    const bool canManage = hasTarget && m_coreManagementAvailable
+        && target->kind == ConnectionTargetKind::SavedCore;
+    m_manageCoreButton->setVisible(canManage);
+    m_manageCoreButton->setEnabled(canManage);
     m_connectButton->setText(canPair ? tr("Pair") : tr("Connect"));
     m_connectButton->setVisible(canConnect);
     m_connectButton->setEnabled(canConnect);
