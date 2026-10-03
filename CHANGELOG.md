@@ -81,8 +81,9 @@ perform the DSP on every path.
 The station link, LAN discovery and connection selection support **IPv4
 and IPv6**. Clients try usable IPv6 addresses alongside IPv4 alternatives,
 and the RV installation offers relay hosts for both address families. This
-lets a phone on an IPv6 mobile network reach a compatible station without
-forcing the whole connection through an IPv4-only path.
+lets a phone on an IPv6 mobile network reach a compatible station using
+IPv6. This applies to Core/client and RV networking; the Core continues to
+use the radio's existing OpenHPSDR connection.
 
 This matters on **carrier-grade NAT (CGNAT)** and mobile broadband networks.
 CGNAT shares an IPv4 address at the provider, so a forwarding rule on the
@@ -107,6 +108,15 @@ Receiver and transmit transfers use explicit Core decisions and confirmations.
 Link loss blocks new keying, and old-session replies cannot grant authority
 to a replacement session. The same station authority and
 session contracts serve desktop and native mobile consoles.
+
+### Fresh Raspberry Pi OS Lite and Armbian installation
+
+A dedicated Debian 13/Trixie ARM64 Core package accompanies the Ubuntu
+packages. It reuses the native ARMv8-A builder and locked DFNR source build,
+with a fresh-runtime package/CLI check and recorded source/package provenance.
+The [short SBC install guide](docs/guides/install-core-sbc.md) covers flashing
+a 64-bit Raspberry Pi OS Lite or compatible Armbian Trixie image, installing
+the package with `apt`, starting the service and pairing a desktop or phone.
 
 ## Independent receivers and richer displays
 

@@ -55,7 +55,7 @@ x64) are published as GitHub Releases:
 All artifacts are GPG-signed (`KG4VCF`) via `SHA256SUMS.txt.asc`. To verify:
 
 ```bash
-gpg --keyserver keyserver.ubuntu.com --recv-keys KG4VCF
+gpg --keyserver keyserver.ubuntu.com --recv-keys 4A95F4D22AEE9271D8A3C01B20C284473F97D2B3
 gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
 sha256sum -c SHA256SUMS.txt
 ```
@@ -102,6 +102,12 @@ configuration. A display and a locally running GUI are not required at the
 radio. The radio and Core can remain at the station while the operator uses
 a separate console.
 
+For a fresh board, follow the [short Raspberry Pi OS Lite/Armbian install
+guide](docs/guides/install-core-sbc.md). It uses the release's Debian Trixie
+ARM64 package, enables `nereusd` at boot and walks through pairing a desktop
+or phone. A matching package and normal `apt` dependencies keep this separate
+from the Ubuntu package and the optional station-card image build.
+
 ### A native iPhone and iPad console
 
 The **native iPhone and iPad app** is another full operator console for the
@@ -147,8 +153,9 @@ perform the DSP on every path.
 The station link, LAN discovery and connection selection support **IPv4
 and IPv6**. Clients try usable IPv6 addresses alongside IPv4 alternatives,
 and the RV installation offers relay hosts for both address families. This
-lets a phone on an IPv6 mobile network reach a compatible station without
-forcing the whole connection through an IPv4-only path.
+lets a phone on an IPv6 mobile network reach a compatible station using
+IPv6. This applies to Core/client and RV networking; the Core continues to
+use the radio's existing OpenHPSDR connection.
 
 This matters on **carrier-grade NAT (CGNAT)** and mobile broadband networks.
 CGNAT shares an IPv4 address at the provider, so a forwarding rule on the
@@ -302,10 +309,12 @@ cmake --install build --component nereusd
 ```
 
 A plain `cmake --install` deliberately installs neither `nereusd` nor its
-systemd unit. Note that `release.yml` is the only workflow that runs
-`cmake --install` and it triggers only on `v*` tags, so **the daemon's install
-path has no PR-CI coverage**. Always pass `--profile <name>` when running
+systemd unit. Release packaging installs the daemon component separately;
+the Trixie job also checks installation and CLI startup in a fresh runtime
+container. Package verification can run from a branch with the release
+workflow's `verify_only` dispatch. Always pass `--profile <name>` when running
 `nereusd` by hand, or it writes the same settings the GUI reads.
+For a board installation, use the [short SBC guide](docs/guides/install-core-sbc.md).
 
 On first run, NereusSDR generates FFTW wisdom (optimized FFT plans). This takes ~15 minutes and shows a progress dialog. The wisdom file is cached for subsequent launches.
 
