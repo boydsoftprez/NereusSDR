@@ -4,16 +4,19 @@
 Run with python3 -B -m unittest discover -s scripts/radxa
     -p test_prune_core_artifacts.py -v
 """
+import errno
 import importlib.util
 import json
 import os
 import pathlib
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.dont_write_bytecode = True
 SCRIPT = pathlib.Path(__file__).with_name("prune-core-artifacts.py")
@@ -30,6 +33,86 @@ E = "eeeeeeee"
 AB = "rollback-aaaaaaaa-before-bbbbbbbb"
 BC = "rollback-bbbbbbbb-before-cccccccc"
 CD = "rollback-cccccccc-before-dddddddd"
+
+
+def require_unix_diag():
+    """Skip identity-positive tests only when Linux explicitly lacks support."""
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        retention.live_unix_vfs_identities()
+    except retention.RetentionError as error:
+        cause = error.__cause__
+        # SOCK_DIAG_BY_FAMILY returns ENOENT when no handler is registered;
+        # protocol/family absence can also prevent creation of the netlink FD.
+        # Permission errors, malformed replies and timeouts remain failures.
+        if isinstance(cause, OSError) and cause.errno in (
+                errno.ENOENT, errno.EPROTONOSUPPORT, errno.EAFNOSUPPORT):
+            raise unittest.SkipTest("kernel Unix diagnostic capability unavailable: " + str(cause)) from error
+        raise
+
+
+class DiagnosticReply:
+    """Controlled kernel-transport replies exercise the real protocol parser."""
+    def __init__(self, body):
+        self.packet = struct.pack("=IHHII", 16 + len(body), 2, 0, 1, 0) + body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *arguments):
+        pass
+
+    def bind(self, address):
+        pass
+
+    def getsockname(self):
+        return (123, 0)
+
+    def sendto(self, packet, address):
+        return len(packet)
+
+    def settimeout(self, duration):
+        pass
+
+    def recvmsg(self, limit):
+        return (self.packet, [], 0, (0, 0))
+
+
+class DiagnosticErrors(unittest.TestCase):
+    def query_error(self, body):
+        with mock.patch.object(socket, "AF_NETLINK", 16, create=True), \
+                mock.patch.object(retention.socket, "socket", return_value=DiagnosticReply(body)):
+            with self.assertRaises(retention.RetentionError) as result:
+                retention.live_unix_vfs_identities()
+        return result.exception
+
+    def test_missing_kernel_handler_retains_unsupported_errno(self):
+        error = self.query_error(struct.pack("=i", -errno.ENOENT))
+        self.assertIsInstance(error.__cause__, OSError, "kernel diagnostic errno must remain distinguishable")
+        self.assertEqual(error.__cause__.errno, errno.ENOENT)
+
+    def test_capability_probe_skips_only_explicit_unsupported_errors(self):
+        missing = self.query_error(struct.pack("=i", -errno.ENOENT))
+        denied = self.query_error(struct.pack("=i", -errno.EPERM))
+        malformed = self.query_error(b"x")
+        with mock.patch.object(retention.sys, "platform", "linux"):
+            with mock.patch.object(retention, "live_unix_vfs_identities", side_effect=missing):
+                with self.assertRaises(unittest.SkipTest):
+                    require_unix_diag()
+            for error in (denied, malformed, retention.RetentionError("unknown diagnostic failure")):
+                with self.subTest(error=str(error)):
+                    with mock.patch.object(retention, "live_unix_vfs_identities", side_effect=error):
+                        with self.assertRaises(retention.RetentionError):
+                            require_unix_diag()
+
+    def test_permission_error_remains_an_error(self):
+        error = self.query_error(struct.pack("=i", -errno.EPERM))
+        self.assertIsInstance(error, retention.RetentionError)
+
+    def test_truncated_error_remains_an_error(self):
+        error = self.query_error(b"x")
+        self.assertIn("truncated", str(error))
 
 
 class RetentionContracts(unittest.TestCase):
@@ -101,6 +184,31 @@ class RetentionContracts(unittest.TestCase):
         self.assertEqual(value["deleted"], [])
         self.assertTrue((self.backups / AB / "payload").is_file())
         self.assertTrue((self.stages / A / "payload").is_file())
+
+    def test_shared_root_prunes_both_kinds_once_and_rechecks_cross_kind_deletions(self):
+        for name, epoch in ((A, 10), (B, 20), (C, 30), (AB, 5), (BC, 15)):
+            self.artifact(self.stages, name, epoch)
+        (self.stages / "notes").write_text("operator metadata")
+        code, value = self.call(backup_root=self.stages, apply=True)
+        self.assertEqual(code, 0, value)
+        self.assertEqual(value["deleted"], [str(self.stages / AB), str(self.stages / A)])
+        self.assertEqual(sorted(p.name for p in self.stages.iterdir()), sorted([B, C, "notes", BC]))
+
+    def test_shared_root_new_upload_after_plan_fails_before_deleting(self):
+        for name, epoch in ((A, 10), (B, 20), (C, 30), (AB, 5), (BC, 15)):
+            self.artifact(self.stages, name, epoch)
+        plan = retention.plan_retention(self.stages, self.stages, C, B, BC)
+        self.artifact(self.stages, D, 40)
+        with self.assertRaises(retention.RetentionError):
+            retention.apply_plan(plan)
+        self.assertTrue((self.stages / A).is_dir())
+        self.assertTrue((self.stages / AB).is_dir())
+
+    def test_nested_roots_remain_rejected(self):
+        self.fixture()
+        nested = self.stages / "nested"
+        nested.mkdir()
+        self.assert_rejected(backup_root=nested)
 
     def test_normal_apply_keeps_current_previous_and_authoritative_backup(self):
         self.fixture()
@@ -287,6 +395,7 @@ class RetentionContracts(unittest.TestCase):
         self.assertTrue((outside / "payload").is_file())
 
     def test_closed_unix_socket_in_old_stage_is_unlinked_as_leaf(self):
+        require_unix_diag()
         self.fixture()
         self.closed_socket(self.stages / A / "ipc")
         self.closed_socket(self.root / "outside-ipc")
@@ -298,6 +407,22 @@ class RetentionContracts(unittest.TestCase):
         self.assertFalse((self.stages / A).exists())
         self.assertEqual((self.root / "outside-ipc").stat().st_ino, outside.st_ino)
         self.assertTrue((self.stages / C / "payload").is_file())
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and pathlib.Path("/proc").is_dir(),
+                         "Linux /proc guard")
+    def test_unsupported_kernel_socket_candidate_fails_closed_before_any_deletion(self):
+        self.fixture()
+        self.closed_socket(self.stages / A / "ipc")
+        os.utime(self.stages / A, (10, 10))
+        plan = retention.plan_retention(self.stages, self.backups, C, B, BC)
+        with mock.patch.object(retention.socket, "socket", return_value=DiagnosticReply(struct.pack("=i", -errno.ENOENT))):
+            with self.assertRaises(retention.RetentionError) as error:
+                retention.apply_plan(plan)
+        self.assertEqual(error.exception.deleted, [])
+        self.assertIn("Errno " + str(errno.ENOENT), str(error.exception))
+        self.assertTrue((self.stages / A / "ipc").exists())
+        self.assertTrue((self.stages / A / "payload").is_file())
+        self.assertTrue((self.backups / AB).is_dir())
 
     def test_closed_unix_socket_in_protected_backup_does_not_block_pruning(self):
         self.fixture()
@@ -446,6 +571,7 @@ class RetentionContracts(unittest.TestCase):
     @unittest.skipUnless(sys.platform.startswith("linux") and pathlib.Path("/proc").is_dir(),
                          "Linux Unix VFS identity guard")
     def test_renamed_external_live_socket_does_not_block_closed_candidate(self):
+        require_unix_diag()
         self.fixture()
         self.closed_socket(self.stages / A / "ipc")
         process = subprocess.Popen([sys.executable, "-B", "-c",
@@ -471,6 +597,7 @@ class RetentionContracts(unittest.TestCase):
     @unittest.skipUnless(sys.platform.startswith("linux") and pathlib.Path("/proc").is_dir(),
                          "Linux Unix VFS identity guard")
     def test_renamed_candidate_live_socket_is_identified_before_deletion(self):
+        require_unix_diag()
         self.fixture()
         process = subprocess.Popen([sys.executable, "-B", "-c",
                                     'import os,socket,sys,time; '

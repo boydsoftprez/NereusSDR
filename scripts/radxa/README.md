@@ -51,6 +51,9 @@ Run its temporary-filesystem tests without a radio or device:
 python3 scripts/radxa/test_prune_core_artifacts.py
 ```
 
-This policy bounds deployment artifacts. It does not rotate the Core's live
-file log. The current Core holds a non-append file handle, so external
-`copytruncate` is unsuitable; live log rotation needs a separate logger change.
+The daemon stage now carries the shared maintenance helper, which the installer
+publishes automatically. Native Core logging also rotates while the Core runs:
+five files per profile, each at most 32 MiB, with the newest diagnostics retained.
+The background log writer performs rotation; logging producers never do disk I/O.
+Existing oversized closed logs are reduced to recent text at startup. External
+`copytruncate` is neither required nor configured.

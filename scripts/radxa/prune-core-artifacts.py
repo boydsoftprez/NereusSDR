@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dry-run by default; prune only allowlisted top-level Radxa artifacts.
+"""Dry-run by default; prune only allowlisted top-level Core artifacts.
 
 The caller MUST hold the common deployment flock throughout planning/applying.
 It validates that --backup is a successful recovery; this helper never infers
@@ -183,8 +183,8 @@ def plan_retention(stage_root, backup_root, current, previous, backup=None, befo
         raise RetentionError("before epoch must be a nonnegative integer")
     roots = {"stage": pathlib.Path(stage_root), "backup": pathlib.Path(backup_root)}
     stage_path, backup_path = roots.values()
-    if stage_path == backup_path or stage_path in backup_path.parents or backup_path in stage_path.parents:
-        raise RetentionError("stage and backup roots must be disjoint")
+    if stage_path in backup_path.parents or backup_path in stage_path.parents:
+        raise RetentionError("stage and backup roots must not be nested")
     entries, trees, root_identities = {}, {}, {}
     mounts, budget = linux_mounts(), [MAX_NODES]
     for kind, root in roots.items():
@@ -261,8 +261,15 @@ def live_unix_vfs_identities():
                     if kind in (2, 3):  # NLMSG_ERROR / NLMSG_DONE
                         if kind == 2 and len(body) < 4:
                             raise RetentionError("truncated Unix diagnostic error")
-                        if body and (len(body) < 4 or struct.unpack_from("=i", body)[0] != 0):
-                            raise RetentionError("Unix kernel identity query returned an error")
+                        if body:
+                            if len(body) < 4:
+                                raise RetentionError("truncated Unix diagnostic error")
+                            kernel_error = struct.unpack_from("=i", body)[0]
+                            if kernel_error != 0:
+                                if kernel_error > 0:
+                                    raise RetentionError("invalid Unix diagnostic errno")
+                                cause = OSError(-kernel_error, os.strerror(-kernel_error))
+                                raise RetentionError("Unix kernel identity query returned an error: " + str(cause)) from cause
                         if kind == 3:
                             return live
                         continue
@@ -391,8 +398,13 @@ def verify_plan(plan, deleted_keys):
             if identity(os.fstat(descriptor)) != plan.root_identities[kind]:
                 raise RetentionError("root replaced since planning")
             entries, trees = inventory(descriptor, root, kind, mounts, budget)
+            # Pi stores disjoint hex-stage and rollback namespaces in one
+            # physical directory. Each inventory sees both kinds, so a known
+            # deletion must disappear from both top-level snapshots.
+            removed_names = {name for deleted_kind, name in deleted_keys
+                             if plan.root_identities[deleted_kind] == plan.root_identities[kind]}
             expected_entries = {name: proof for name, proof in plan.entries[kind].items()
-                                if (kind, name) not in deleted_keys}
+                                if name not in removed_names}
             expected_trees = {name: proof for name, proof in plan.trees[kind].items()
                               if (kind, name) not in deleted_keys}
             if entries != expected_entries or trees != expected_trees:

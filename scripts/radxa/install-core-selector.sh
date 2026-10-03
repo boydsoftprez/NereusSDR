@@ -4,7 +4,6 @@ set -euo pipefail
 exec 9>/run/lock/nereus-core-deploy.lock
 flock -x 9
 retention=/var/lib/nereus-build/prune-core-artifacts.py
-test -f "$retention"
 checkpoint=${1:?signed checkpoint is required}
 if [[ ! "$checkpoint" =~ ^[0-9a-f]{8,40}$ ]]; then exit 2; fi
 stage=/home/yonder/nereus-core/$checkpoint/stage
@@ -28,6 +27,15 @@ for f in LICENSE LICENSE-APACHE LICENSE-MIT COMMIT; do
     test -s "$stage/usr/local/share/doc/nereussdr/deepfilter/$f"
 done
 systemd-analyze verify "$stage/usr/lib/systemd/system/nereusd.service"
+# Every new daemon stage ships maintenance with its native bounded logger.
+# Older stages can still use the already installed maintenance helper.
+shipped_retention="$stage/usr/local/libexec/nereusd/prune-core-artifacts.py"
+if test -f "$shipped_retention"; then
+    install -D -m 700 "$shipped_retention" /usr/local/libexec/nereusd/prune-core-artifacts.py
+    install -m 700 "$shipped_retention" "$retention.incomplete"
+    mv "$retention.incomplete" "$retention"
+fi
+test -f "$retention"
 test ! -e "$backup"
 mkdir -m 700 "$backup"
 tar -C / -cpf "$backup/files.tar" usr/local/bin/nereusd usr/local/lib/librade.so usr/local/lib/librade.so.0.1 usr/lib/systemd/system/nereusd.service etc/nereusd.conf
