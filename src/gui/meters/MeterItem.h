@@ -241,6 +241,11 @@ public:
     // useful siblings visible. Empty reason restores availability.
     virtual void setBindingUnavailable(int binding, const QString& reason) { m_unavailableBindings[binding] = reason; }
     QString bindingUnavailableReason(int binding) const { return m_unavailableBindings.value(binding); }
+    // Provider support is runtime state, independent of a missing sample.
+    enum class BindingSupport { Unknown, Supported, Unsupported };
+    Q_ENUM(BindingSupport)
+    virtual void setBindingSupport(int binding, BindingSupport support) { m_bindingSupport[binding] = support; }
+    BindingSupport bindingSupport(int binding) const { return m_bindingSupport.value(binding, BindingSupport::Unknown); }
     // Explicit unavailability applies to any channel. Available legacy TX
     // primitives preserve true-zero -400; sentinel-capable bindings also
     // recognize the no-reading value without an availability reason.
@@ -375,6 +380,7 @@ protected:
     }
 
     QHash<int, QString> m_unavailableBindings;
+    QHash<int, BindingSupport> m_bindingSupport;
     float m_x{0.0f};
     float m_y{0.0f};
     float m_w{1.0f};

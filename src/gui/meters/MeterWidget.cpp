@@ -182,6 +182,7 @@ void MeterWidget::addItem(MeterItem* item)
     if (m_powerScale > 0) { item->setPowerScale(m_powerScale); }
     item->resetForTxTransition(m_mox);
     for (int binding : item->readingBindings()) {
+        if (!item->hasMmioBinding()) { item->setBindingSupport(binding, bindingSupport(binding)); }
         if (!item->hasMmioBinding()) { item->setBindingUnavailable(binding, item->property("unsupportedSourceReason").toString().isEmpty()?m_unavailableBindings.value(binding):item->property("unsupportedSourceReason").toString()); }
         const auto cached = m_lastBindingValue.constFind(binding);
         if (!item->property("containerUnsupportedSource").toBool() && !item->hasMmioBinding() && cached != m_lastBindingValue.constEnd()) { item->pushBindingValue(binding, cached.value()); }
@@ -193,7 +194,7 @@ void MeterWidget::addItem(MeterItem* item)
     update();
     if (item->hasMmioBinding()) {
         const auto cached = m_lastMmioReading.constFind(item->mmioSourceKey());
-        if (cached != m_lastMmioReading.constEnd()) { updateMmioValue(item, cached->value, cached->reason); }
+        if (cached != m_lastMmioReading.constEnd()) { updateMmioValue(item, cached->value, cached->reason, cached->support); }
     }
     emit itemAdded(item);
 }
@@ -270,7 +271,8 @@ void MeterWidget::updateMeterValue(int bindingId, double value)
     }
 }
 
-void MeterWidget::updateMmioValue(MeterItem* item, double value, const QString& unavailableReason)
+void MeterWidget::updateMmioValue(MeterItem* item, double value, const QString& unavailableReason,
+                                  MeterItem::BindingSupport support)
 {
     if (!item || !m_items.contains(item)) { return; }
     const BarItem* bar = qobject_cast<BarItem*>(item);
@@ -278,11 +280,13 @@ void MeterWidget::updateMmioValue(MeterItem* item, double value, const QString& 
     const double before = bar ? bar->smoothedValue() : (needle ? needle->smoothedValue() : item->value());
     const double oldPeak = bar ? bar->peakValue() : 0.0;
     const bool availabilityChanged = item->bindingUnavailableReason(item->bindingId()) != unavailableReason;
-    m_lastMmioReading[item->mmioSourceKey()] = {value, unavailableReason};
+    const bool supportChanged = item->bindingSupport(item->bindingId()) != support;
+    m_lastMmioReading[item->mmioSourceKey()] = {value, unavailableReason, support};
     QSet<int> bindings = item->readingBindings(); bindings.insert(item->bindingId());
-    for (int binding : bindings) { item->setBindingUnavailable(binding, unavailableReason); }
+    for (int binding : bindings) { item->setBindingSupport(binding, support); item->setBindingUnavailable(binding, unavailableReason); }
     const bool inputChanged = item->value() != value;
     item->setValue(value);
+    if (supportChanged) { invalidateReadingLayers(true); }
     const double after = bar ? bar->smoothedValue() : (needle ? needle->smoothedValue() : item->value());
     if (availabilityChanged || inputChanged || before != after || (bar && oldPeak != bar->peakValue())
         || (bar && bar->showHistory()) || (needle && needle->historyEnabled())) {
@@ -695,6 +699,17 @@ void MeterWidget::setBindingUnavailable(int bindingId, const QString& reason)
 #else
     update();
 #endif
+}
+
+void MeterWidget::setBindingSupport(int bindingId, MeterItem::BindingSupport support)
+{
+    const bool changed = bindingSupport(bindingId) != support;
+    m_bindingSupport[bindingId] = support;
+    if (changed) { m_lastBindingValue.remove(bindingId); }
+    for (MeterItem* item : m_items) {
+        if (!item->hasMmioBinding() && item->readingBindings().contains(bindingId)) { item->setBindingSupport(bindingId, support); }
+    }
+    if (changed) { invalidateReadingLayers(true); }
 }
 
 QString MeterWidget::unavailableReasonAt(const QPointF& pos) const

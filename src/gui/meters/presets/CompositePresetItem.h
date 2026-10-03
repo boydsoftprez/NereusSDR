@@ -70,6 +70,7 @@ public:
     void pushBindingValue(int,double) override;
     void setValue(double v) override { pushBindingValue(bindingId(),v); }
     void setBindingUnavailable(int,const QString&) override;
+    void setBindingSupport(int,BindingSupport) override;
     bool advanceMeter(qint64) override;
     void resetForTxTransition(bool) override;
     void setPowerScale(int) override;
@@ -93,8 +94,12 @@ public:
     double channelPeak(int) const;
     bool channelHasReading(int) const;
     QPointF calibratedPoint(int,double) const;
+    // ANAN takes its fitted 1855×848 skin rect; points are actual widget coordinates.
+    // Other faces retain their original needle-rectangle contract.
     QPointF needlePivot(int,const QRectF&) const;
     QPointF needleTip(int,double,const QRectF&) const;
+    QRectF ananNeedleRect(int width,int height) const;
+    QRectF ananGroupControlRect(int width,int height) const;
     bool channelVisible(int) const;
     QString channelUnits(int) const;
     QString signalReadout(double) const;
@@ -116,6 +121,7 @@ private:
     void layoutChildren(int,int);
     void paintBar(QPainter&,const QRectF&,int);
     void paintNeedles(QPainter&,const QRectF&,bool);
+    void paintAnan(QPainter&,const QRectF&,bool);
     void paintEye(QPainter&,const QRectF&);
     void paintHistory(QPainter&,const QRectF&);
     Face m_face;
