@@ -972,6 +972,34 @@ jobs:
           codesign --verify --verbose=2 build/NereusSDR.app
           codesign --verify --strict --verbose=2 "$STATION"
 
+      - name: Check signed app startup with packaged Cocoa runtime
+        shell: bash
+        env:
+          EXPECTED_PRODUCT_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          python3 - <<'PYCODE'
+          import os
+          from pathlib import Path
+          import subprocess
+
+          executable = Path("build/NereusSDR.app/Contents/MacOS/NereusSDR").resolve()
+          environment = dict(os.environ)
+          # The shipped bundle must supply its own Qt frameworks and plugin.
+          for name in ("QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH",
+                       "DYLD_FRAMEWORK_PATH", "DYLD_LIBRARY_PATH"):
+              environment.pop(name, None)
+          environment["QT_QPA_PLATFORM"] = "cocoa"
+          result = subprocess.run([str(executable), "--version"], env=environment,
+                                  text=True, capture_output=True, timeout=30)
+          if result.returncode:
+              print(result.stderr, end="")
+              raise SystemExit(f"Packaged Cocoa startup failed: exit {result.returncode}")
+          print(result.stdout, end="")
+          base_version = os.environ["EXPECTED_PRODUCT_VERSION"].split("-", 1)[0]
+          if result.stdout.strip() != f"NereusSDR {base_version}":
+              raise SystemExit("Packaged Cocoa app reports an unexpected product version")
+          PYCODE
+
       - name: Build HAL plugin
         run: |
           # Thread the matrix arch + deployment target through so the HAL
