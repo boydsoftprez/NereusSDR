@@ -5,7 +5,8 @@
 > [!IMPORTANT]
 > **Release candidate: 2026.10.0, the first calendar-versioned release.**
 > This brings together the work since 0.5.2: independent receivers, remote
-> Core operation, WDSP 2.10 with NNR and PureSignal 3, 3D display history,
+> Core operation with desktop and native iPhone/iPad consoles, IPv6-aware
+> remote access, WDSP 2.10 with NNR and PureSignal 3, 3D display history,
 > TX EQ/CFC graph editors, and movable applets with configurable meters.
 >
 > **Alpha testers, start here:**
@@ -87,7 +88,8 @@ operator moves between consoles.
 
 There are two ways to run it. A local desktop runs the Core and GUI together.
 For a remote station, headless **`nereusd`** runs beside the radio while the
-GUI runs on a Mac, Windows or Linux computer elsewhere. Several authenticated
+GUI runs on a Mac, Windows or Linux computer, iPhone or iPad elsewhere.
+Several authenticated
 devices can use one Core, within station capacity, with receiver ownership
 and a single transmit holder enforced by that Core.
 
@@ -99,6 +101,22 @@ receiver count, DSP features and display load depend on the board and its
 configuration. A display and a locally running GUI are not required at the
 radio. The radio and Core can remain at the station while the operator uses
 a separate console.
+
+### A native iPhone and iPad console
+
+The **native iPhone and iPad app** is another full operator console for the
+same Core. Its Swift/SwiftUI interface has live spectrum/waterfall and VFO
+flags, touch tuning and receiver controls, received audio, microphone uplink
+and PTT, transmit readings, station Setup, spots and accessory pages. It uses
+the same station identity, pairing, receiver ownership and transmit-holder
+rules as a desktop GUI. The phone or tablet renders station data while the
+Core runs the radio and DSP, including the transmit processing chain.
+
+This is a major part of the Core/GUI split: the operator can use a desktop,
+iPhone or iPad with the radio and its processing remaining at the station.
+The mobile app is native to those devices, with its own release counter,
+validation and TestFlight/App Store delivery process. Its delivery status is
+tracked separately from the desktop/Core release artifacts.
 
 ### How the RV server connects a remote console
 
@@ -124,14 +142,39 @@ so the operator can see which Core is in use and how the session is connected.
 The RV server provides reachability; the Core continues to own the radio and
 perform the DSP on every path.
 
+### IPv6 and CGNAT/mobile networks
+
+The station link, LAN discovery and connection selection support **IPv4
+and IPv6**. Clients try usable IPv6 addresses alongside IPv4 alternatives,
+and the RV installation offers relay hosts for both address families. This
+lets a phone on an IPv6 mobile network reach a compatible station without
+forcing the whole connection through an IPv4-only path.
+
+This matters on **carrier-grade NAT (CGNAT)** and mobile broadband networks.
+CGNAT shares an IPv4 address at the provider, so a forwarding rule on the
+home router alone does not provide an incoming route through that provider.
+A usable global IPv6 path can provide direct connectivity when both ends and
+their firewalls permit it. When that path is unavailable, RV-assisted
+connection setup and the TURN/WebSocket relays provide alternatives.
+
+For example, [T-Mobile's Home Internet documentation](https://www.t-mobile.com/support/home-internet/connect)
+states that its gateways do not offer configurable NAT/port forwarding.
+IPv6-aware connection selection and outbound relay paths are therefore
+important for stations and mobile consoles on networks with those limits.
+The actual selected route and its audio status remain visible in Core Settings;
+carrier, router and firewall conditions still determine which route succeeds.
+
 ```mermaid
 flowchart LR
     Radio["OpenHPSDR radio"] <-->|"Radio I/Q and control"| Core["Core: local desktop or headless SBC"]
     Core <-->|"Session: controls, audio, spectra and meters"| GUI["GUI: operator's computer"]
     Core <-->|"Registration and introduction"| RV["RV signalling service"]
     GUI <-->|"Introduction and pairing mailbox"| RV
+    Core <-->|"Controls, audio, spectra and meters"| Phone["Native iPhone/iPad app"]
+    Phone <-->|"Introduction and pairing mailbox"| RV
     Core <-->|"Optional session path"| Relay["TURN or WebSocket relay"]
     Relay <-->|"Optional session path"| GUI
+    Relay <-->|"Optional session path"| Phone
 ```
 
 See the [Core architecture](docs/architecture/2026-07-28-remote-daemon-architecture-design.md),
