@@ -351,30 +351,30 @@ Produce `ContainerContentHost::reconcile(const ContainerDocument&) -> void`,
 and registry and exposes `reconcileWorkspace(const WorkspaceDocument&) -> void`.
 Views are owned by Qt hosts; live singleton construction stays in MainWindow.
 
-- [ ] Test mixed ordering, hidden sibling positions, delayed widget attachment,
+- [x] Test mixed ordering, hidden sibling positions, delayed widget attachment,
   unavailable capability, singleton ownership and source/model pointer identity.
   S-meter keeps the same MeterPoller pointer when moved; applets create no second
   model or subscription. Applet-panel menus find moved objects in every host.
-- [ ] Build/run `tst_container_content_host`; expect absent host/registry behavior
+- [x] Build/run `tst_container_content_host`; expect absent host/registry behavior
   to fail. Extend existing float/dock regressions before replacing their routes.
-- [ ] Register catalog descriptors before restore, attach live views as current
+- [x] Register catalog descriptors before restore, attach live views as current
   MainWindow construction completes. Use the explicit alias map from Task 2;
   expose only active main applets and separately registered S-meter. Keep legacy
   canvas as one MeterWidget; mixed stacks use QWidget rows and one MeterWidget
   per contiguous meter run with matching source context, keeping face
   boundaries/IDs for arrangement.
-- [ ] Reconcile from committed state only. Generalize main's GPU recreation
+- [x] Reconcile from committed state only. Generalize main's GPU recreation
   workaround to every meter run; serialize through documents, remove old poll
   targets, create/seed/register replacements once. Reparent live applets while
   preserving connections; defer missing hosts/sessions without deleting entries.
   Pass each meter run's context to the poller/source adapter. Route manager save,
   geometry, splitter and visibility mutations through the store; disable the old
   destructive legacy-key writer after successful document adoption.
-- [ ] Build/run new target plus `tst_applet_float_dock`, `tst_applet_panel_gutter`,
+- [x] Build/run new target plus `tst_applet_float_dock`, `tst_applet_panel_gutter`,
   `tst_applet_panel_set_visible`, `tst_applet_visibility_controller`,
   `tst_applet_visibility_menu_wiring`, `tst_container_persistence`.
   Expected: no duplicate/live orphan views, correct stable order and gates.
-- [ ] Commit: `feat: host applets and meter objects in shared containers`.
+- [x] Commit: `feat: host applets and meter objects in shared containers`.
 
 ### Task 7: Dotted-grip arrangement, return semantics and chrome
 

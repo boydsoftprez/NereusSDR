@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via OpenAI Codex.
 //   2026-09-30 - the geometry buffer is written only in a frame that binds
@@ -140,6 +142,9 @@ MeterWidget::MeterWidget(QWidget* parent)
     // Mirrors SpectrumWidget.cpp:97-110 exactly.
 #ifdef Q_OS_MAC
     setApi(QRhiWidget::Api::Metal);
+    // Keep each native meter leaf isolated, like SpectrumWidget. Ancestor
+    // promotion creates sibling RasterSurface windows before Qt sees their RHI.
+    setAttribute(Qt::WA_DontCreateNativeAncestors);
     setAttribute(Qt::WA_NativeWindow);
 #elif defined(Q_OS_WIN)
     setApi(QRhiWidget::Api::Direct3D11);
@@ -177,9 +182,9 @@ void MeterWidget::addItem(MeterItem* item)
     if (m_powerScale > 0) { item->setPowerScale(m_powerScale); }
     item->resetForTxTransition(m_mox);
     for (int binding : item->readingBindings()) {
-        if (!item->hasMmioBinding()) { item->setBindingUnavailable(binding, m_unavailableBindings.value(binding)); }
+        if (!item->hasMmioBinding()) { item->setBindingUnavailable(binding, item->property("unsupportedSourceReason").toString().isEmpty()?m_unavailableBindings.value(binding):item->property("unsupportedSourceReason").toString()); }
         const auto cached = m_lastBindingValue.constFind(binding);
-        if (!item->hasMmioBinding() && cached != m_lastBindingValue.constEnd()) { item->pushBindingValue(binding, cached.value()); }
+        if (!item->property("containerUnsupportedSource").toBool() && !item->hasMmioBinding() && cached != m_lastBindingValue.constEnd()) { item->pushBindingValue(binding, cached.value()); }
     }
 #ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
@@ -250,7 +255,7 @@ void MeterWidget::updateMeterValue(int bindingId, double value)
     // Delivery precedes repaint shortcuts: repeated primitive samples keep
     // smoothing, and composites retain input for the shared frame clock.
     for (MeterItem* item : m_items) {
-        if (item->hasMmioBinding() || !item->readingBindings().contains(bindingId)) { continue; }
+        if (item->property("containerUnsupportedSource").toBool() || item->hasMmioBinding() || !item->readingBindings().contains(bindingId)) { continue; }
         const BarItem* bar = qobject_cast<BarItem*>(item);
         const NeedleItem* needle = qobject_cast<NeedleItem*>(item);
         const double before = bar ? bar->smoothedValue() : (needle ? needle->smoothedValue() : item->value());
@@ -283,6 +288,13 @@ void MeterWidget::updateMmioValue(MeterItem* item, double value, const QString& 
         || (bar && bar->showHistory()) || (needle && needle->historyEnabled())) {
         invalidateItemLayers(item);
     }
+}
+
+void MeterWidget::invalidatePresentation(const MeterItem* item)
+{
+    if (!item || !m_items.contains(const_cast<MeterItem*>(item))) { return; }
+    invalidateItemLayers(item);
+    update();
 }
 
 void MeterWidget::invalidateItemLayers(const MeterItem* item)
@@ -666,7 +678,7 @@ void MeterWidget::drawUnavailableVeils(QPainter& p) const
 void MeterWidget::setBindingUnavailable(int bindingId, const QString& reason)
 {
     for (MeterItem* item : m_items) {
-        if (!item->hasMmioBinding() && item->readingBindings().contains(bindingId)) { item->setBindingUnavailable(bindingId, reason); }
+        if (!item->hasMmioBinding() && item->readingBindings().contains(bindingId)) { item->setBindingUnavailable(bindingId, item->property("unsupportedSourceReason").toString().isEmpty()?reason:item->property("unsupportedSourceReason").toString()); }
     }
     const auto it = m_unavailableBindings.constFind(bindingId);
     const bool unavailable = it != m_unavailableBindings.constEnd();

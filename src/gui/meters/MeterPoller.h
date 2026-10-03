@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -301,6 +303,8 @@ public:
     // otherwise the JSON source identity is resolved only by the GUI adapter.
     // A changed context clears old input/history before same-context replay.
     void setTargetContext(MeterWidget* widget, const QJsonObject& context);
+    void setSMeterContext(const QJsonObject& context) { m_sMeterContext = context; }
+    SMeterWidget* smeterForTest() const;
     // One cached-source lookup per context/binding per existing timer frame.
     // No new channel/subscription/WDSP read belongs in this callback. Return
     // kNoMeterReadingDbm for absent slices; setter changes invalidate RX replay.
@@ -441,6 +445,8 @@ private:
     //   SignalAverage        -> GetRXAMeter(ch, RXA_S_AV)  (enum 1)
     //   MaxBin               -> GetDetectMaxBin(disp=0)
     void pollSMeter();
+    void pollAdaptedSMeter();
+    QJsonObject m_sMeterContext;
     void pollRemoteRxMeters();
     // Task 39: the ALC and MIC readings from the Core's transmit state.
     void pollRemoteTxMeters();

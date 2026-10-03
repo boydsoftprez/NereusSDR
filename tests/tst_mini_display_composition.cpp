@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original offscreen container composition test.
+// Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest/QtTest>
 #include <QLoggingCategory>
 #include <QScopeGuard>
@@ -16,6 +19,9 @@
 #include "gui/applets/AppletPanelWidget.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWidget.h"
+#include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContainerContentHost.h"
+#include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/meters/FilterDisplayItem.h"
 #include "gui/meters/MeterWidget.h"
 #include "models/RadioModel.h"
@@ -68,40 +74,44 @@ private slots:
 
         auto* manager = window.findChild<ContainerManager*>();
         QVERIFY(manager);
+        // Production content is projected only after a structured commit.
         const auto addMini = [manager](int rxSource) {
             ContainerWidget* container = manager->createContainer(rxSource, DockMode::Floating);
-            auto* meter = new MeterWidget();
-            container->setContent(meter);
-            auto* item = new FilterDisplayItem();
-            meter->addItem(item);
-            manager->setContainerVisible(container->id(), true);
-            meter->show();
-            return std::tuple{container, meter, item};
+            auto document=manager->workspaceStore()->snapshot();
+            for(auto& c:document.containers) { if(c.id==container->id()) { c.contents={manager->contentRegistry()->makeEntry("FILTERDISPLAY")}; } }
+            const auto result=manager->commitWorkspace(document,document.revision); Q_ASSERT(result.status==CommitStatus::Saved);
+            auto* meter=manager->contentHost(container->id())->meterSurfaces().first();
+            auto* item=qobject_cast<FilterDisplayItem*>(meter->items().first()); Q_ASSERT(item);
+            return std::tuple{container,meter,item};
         };
         const auto [aContainer, aMeter, aItem] = addMini(1);
         const auto [aDuplicate, duplicateMeter, duplicateItem] = addMini(1);
-        const auto [bContainer, bMeter, bItem] = addMini(2);
+        const auto [bContainer, bMeter, initialBItem] = addMini(2);
+        QPointer<FilterDisplayItem> bItem=initialBItem;
         ContainerWidget* headerContainer = manager->createContainer(1, DockMode::Floating);
-        auto* panel = new AppletPanelWidget();
-        headerContainer->setContent(panel);
-        manager->setContainerVisible(headerContainer->id(), true);
-        auto* headerMeter = new MeterWidget();
-        auto* headerItem = new FilterDisplayItem();
-        headerMeter->addItem(headerItem);
+        // An existing applet may itself contain header/body meter descendants.
+        // Explicitly detach the borrowed TCI view for this fixture; attaching
+        // another widget while the live singleton exists is correctly refused.
+        auto* panel=new AppletPanelWidget(&window);
+        auto document=manager->workspaceStore()->snapshot();
+        for(auto& c:document.containers) { for(int i=c.contents.size()-1;i>=0;--i) { if(c.contents[i].typeId=="applet:tci") { c.contents.removeAt(i); } } }
+        for(auto& c:document.containers) { if(c.id==headerContainer->id()) { c.contents={manager->contentRegistry()->makeEntry("applet:tci")}; } }
+        QCOMPARE(manager->commitWorkspace(document,document.revision).status,CommitStatus::Saved);
+        manager->contentRegistry()->attachSingleton("applet:tci",nullptr);
+        manager->contentRegistry()->attachSingleton("applet:tci",panel); manager->contentRegistry()->setAvailable("applet:tci",true);
+        auto* headerMeter = new MeterWidget(); auto* headerItem = new FilterDisplayItem(); headerMeter->addItem(headerItem);
         panel->setHeaderWidget(headerMeter, QStringLiteral("Filter"));
-        auto* bodyMeter = new MeterWidget();
-        auto* bodyItem = new FilterDisplayItem();
-        bodyMeter->addItem(bodyItem);
+        auto* bodyMeter = new MeterWidget(); auto* bodyItem = new FilterDisplayItem(); bodyMeter->addItem(bodyItem);
         panel->addWidget(bodyMeter, QStringLiteral("Second filter"));
         QVERIFY(aMeter->shouldRender(aItem));
         QVERIFY(bMeter->shouldRender(bItem));
         QVERIFY(!aContainer->isHidden());
-        QVERIFY(!aMeter->isHidden());
+        QTRY_VERIFY(!aMeter->isHidden());
         QCoreApplication::processEvents();
         QTRY_COMPARE(window.miniProducerCountForTest(), 2);
         QVERIFY(headerContainer->isVisible());
-        QVERIFY(headerMeter->isVisible());
-        QVERIFY(bodyMeter->isVisible());
+        QTRY_VERIFY(headerMeter->isVisible());
+        QTRY_VERIFY(bodyMeter->isVisible());
 
         QVector<float> bins(4096, 1.0e-9f);
         const double binHz = 192'000.0 / bins.size();
@@ -145,8 +155,12 @@ private slots:
         duplicateMeter->removeItem(duplicateItem);
         QTRY_COMPARE(window.miniProducerCountForTest(), 1);
         QCOMPARE(window.miniProducerCountForTest(), 1); // B only
-        bContainer->setRxSource(1);
-        QTRY_COMPARE(window.miniProducerCountForTest(), 1);
+        document=manager->workspaceStore()->snapshot();
+        for(auto& c:document.containers) { if(c.id==bContainer->id()) { c.config["rxSource"]=1; } }
+        QCOMPARE(manager->commitWorkspace(document,document.revision).status,CommitStatus::Saved);
+        QVERIFY(bItem.isNull()); // source replacement synchronously retires the old consumer
+        bItem=qobject_cast<FilterDisplayItem*>(manager->contentHost(bContainer->id())->meterSurfaces().first()->items().first());
+        QVERIFY(bItem); QTRY_COMPARE(window.miniProducerCountForTest(), 1);
         QTRY_VERIFY(!bItem->frameAvailable());
         QTest::qWait(35); // only the 30 fps local cadence, not a test deadline
         feed();

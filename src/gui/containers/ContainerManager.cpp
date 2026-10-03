@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -63,6 +65,14 @@ mw0lge@grange-lane.co.uk
 #include "gui/meters/MeterWidget.h"
 
 #include <QSplitter>
+#include <QScopedValueRollback>
+#include <QJsonArray>
+#include <QEvent>
+#include <QUuid>
+#include "ContainerContentHost.h"
+#include "ContainerContentRegistry.h"
+#include "ContainerWorkspaceStore.h"
+#include "ContainerDocumentCodec.h"
 #include <algorithm>
 
 namespace NereusSDR {
@@ -92,16 +102,174 @@ ContainerManager::ContainerManager(QWidget* dockParent, QSplitter* splitter,
     , m_dockParent(dockParent)
     , m_splitter(splitter)
 {
+    m_geometryCommit.setSingleShot(true);
+    m_geometryCommit.setInterval(200);
+    connect(&m_geometryCommit, &QTimer::timeout, this, &ContainerManager::saveState);
     qCDebug(lcContainer) << "ContainerManager created";
 }
 
 ContainerManager::~ContainerManager()
 {
+    m_geometryCommit.stop();
+    if (m_store) { disconnect(m_store, nullptr, this, nullptr); }
+    if (m_registry) { disconnect(m_registry, nullptr, this, nullptr); }
+    for (auto* c : m_containers) { if (auto* host = contentHost(c->id())) { host->releaseViews(); } }
+    const auto forms=m_floatingForms.values();
+    for (auto* form : forms) { delete form; }
     qCDebug(lcContainer) << "ContainerManager destroyed —" << m_containers.size() << "containers";
+}
+
+// Nereus-origin structured route: commit first, project only committed snapshots.
+ContainerWorkspaceStore* ContainerManager::workspaceStore() const { return m_store; }
+ContainerContentRegistry* ContainerManager::contentRegistry() const { return m_registry; }
+void ContainerManager::setWorkspaceAdapter(ContainerWorkspaceStore* store, ContainerContentRegistry* registry)
+{
+    if (m_store) { disconnect(m_store, nullptr, this, nullptr); }
+    if (m_registry) { disconnect(m_registry, nullptr, this, nullptr); }
+    m_store = store; m_registry = registry;
+    if (!store || !registry) { return; }
+    m_storageError = store->loadError();
+    connect(store, &ContainerWorkspaceStore::committed, this, [this] { reconcileWorkspace(m_store->snapshot()); });
+    connect(registry, &ContainerContentRegistry::runtimeChanged, this, [this] {
+        if (!m_reconciling && m_store) { reconcileWorkspace(m_store->snapshot()); }
+    });
+    if (m_splitter) {
+        m_splitter->installEventFilter(this);
+        connect(m_splitter, &QSplitter::splitterMoved, this, [this] {
+            if (!m_reconciling) { m_geometryCommit.start(); }
+        });
+    }
+}
+ContainerContentHost* ContainerManager::contentHost(const QString& id) const
+{
+    auto* c = container(id);
+    return c ? qobject_cast<ContainerContentHost*>(c->content()) : nullptr;
+}
+CommitResult ContainerManager::commitWorkspace(const WorkspaceDocument& document, quint64 expectedRevision)
+{
+    if (!m_store || !m_registry) { return {CommitStatus::Invalid, 0, QStringLiteral("No workspace adapter")}; }
+    // Existing duplicate singleton records remain recoverable; transactions may
+    // repair them, but cannot create another supported singleton placement.
+    QHash<QString, int> oldCounts, counts;
+    for (const auto& c : m_store->snapshot().containers) { for (const auto& e : c.contents) { ++oldCounts[e.typeId]; } }
+    for (const auto& c : document.containers) { for (const auto& e : c.contents) { ++counts[e.typeId]; } }
+    for (const auto& d : m_registry->descriptors()) {
+        if (d.singleton && counts.value(d.typeId) > 1 && counts.value(d.typeId) > oldCounts.value(d.typeId)) {
+            return {CommitStatus::Invalid, expectedRevision, QStringLiteral("%1 already has a placement").arg(d.title)};
+        }
+    }
+    const CommitResult result = m_store->commit(document, expectedRevision);
+    if (result.status != CommitStatus::Saved) { m_storageError = result.error; emit workspaceError(result.error); }
+    else { m_storageError.clear(); }
+    return result;
+}
+bool ContainerManager::eventFilter(QObject* watched, QEvent* event)
+{
+    if (m_store && !m_reconciling && m_storageError.isEmpty()
+        && (event->type() == QEvent::Move || event->type() == QEvent::Resize)) {
+        if (qobject_cast<ContainerWidget*>(watched) || qobject_cast<FloatingContainer*>(watched)) {
+            m_geometryCommit.start();
+        }
+    }
+    return QObject::eventFilter(watched, event);
+}
+void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
+{
+    if (!m_store || !m_registry || m_reconciling) { return; }
+    // Refuse draft/preview state. Dependent controllers commit through the store.
+    if (document != m_store->snapshot()) { return; }
+    QScopedValueRollback<bool> guard(m_reconciling, true);
+    m_geometryCommit.stop();
+    QHash<QString, QString> placements;
+    QSet<QString> ids;
+    for (const auto& d : document.containers) {
+        ids.insert(d.id);
+        for (const auto& e : d.contents) {
+            if (e.typeId.startsWith("applet:") && !placements.contains(e.typeId)) { placements[e.typeId] = e.id; }
+        }
+    }
+    m_registry->setSingletonPlacements(placements);
+    QSet<QString> changed;
+    for (const auto& d : document.containers) {
+        if (!contentHost(d.id) || contentHost(d.id)->needsReconcile(d) || (container(d.id) && container(d.id)->dockMode()!=d.dockMode)) { changed.insert(d.id); }
+    }
+    // Release all singleton trees before removing a host or moving between hosts.
+    for (auto* c : m_containers) {
+        if (auto* host = contentHost(c->id())) {
+            if (changed.contains(c->id()) || !ids.contains(c->id())) { host->releaseViews(); }
+        }
+    }
+    for (const QString& id : m_containers.keys()) {
+        if (!ids.contains(id)) { destroyContainer(id); }
+    }
+    m_panelContainerId = document.mainContainerId;
+    for (const auto& d : document.containers) {
+        auto* c = container(d.id);
+        const bool fresh = !c;
+        if (!c) {
+            c = new ContainerWidget(); c->setId(d.id);
+            c->setRxSource(d.config.value("rxSource").toInt(1));
+            auto* form = new FloatingContainer(c->rxSource());
+            form->setProperty("structuredWorkspace", true); form->setId(d.id);
+            form->installEventFilter(this); c->installEventFilter(this);
+            m_containers[d.id] = c; m_floatingForms[d.id] = form;
+            wireContainer(c);
+            connect(form, &FloatingContainer::aboutToClose, this, [this, id = d.id] { setContainerVisible(id, false); });
+        }
+        auto* host = contentHost(d.id);
+        const bool reparent = fresh || c->dockMode() != d.dockMode;
+        if (host && reparent) { host->releaseViews(); }
+        auto* form = m_floatingForms.value(d.id);
+        if (reparent) {
+            c->hide(); form->hide(); form->setContainerFloating(d.dockMode == DockMode::Floating);
+            if (d.dockMode == DockMode::Floating) { form->takeOwner(c); }
+            else if (d.dockMode == DockMode::PanelDocked) { c->setParent(m_splitter); m_splitter->addWidget(c); }
+            else { c->setParent(m_dockParent); }
+        }
+        c->setDockMode(d.dockMode); c->setNotes(d.name); c->setRxSource(d.config.value("rxSource").toInt(1));
+        c->setAxisLock(d.anchor); c->setLocked(d.locked); c->setAutoHeight(d.autoHeight);
+        c->setTitleBarVisible(d.header != HeaderMode::Hidden);
+        c->setContainerEnabled(d.config.value("enabled").toBool(true));
+        c->setShowOnRx(d.config.value("showOnRx").toBool(true)); c->setShowOnTx(d.config.value("showOnTx").toBool(true));
+        c->setContainerMinimises(d.config.value("containerMinimises").toBool(false));
+        c->setContainerHidesWhenRxNotUsed(d.config.value("hidesWhenRxNotUsed").toBool(false));
+        c->setBorder(d.config.value("border").toBool(true)); c->setNoControls(d.config.value("noControls").toBool(false));
+        c->setPinOnTop(d.config.value("pinOnTop").toBool(false));
+        if (fresh && d.dockMode==DockMode::Floating && !d.geometry.isValid()) {
+            const QByteArray geometry=QByteArray::fromHex(d.config.value("legacyAppletFloatGeometry").toString().toLatin1());
+            if (!geometry.isEmpty()) { form->QWidget::restoreGeometry(geometry); }
+        }
+        if (d.geometry.isValid()) { (d.dockMode == DockMode::Floating ? static_cast<QWidget*>(form) : c)->setGeometry(d.geometry); }
+        if (!host) {
+            host = new ContainerContentHost(*m_registry, c);
+            connect(host, &ContainerContentHost::meterSurfaceReady, this, [this, c](MeterWidget* meter, const QJsonObject& context) {
+                // Structured items route through Main's per-entry wiring; never
+                // also install the legacy container-source forwarding signals.
+                Q_UNUSED(c);
+                emit meterContextReady(meter, context);
+                emit meterReadyForPolling(meter);
+            });
+            connect(host, &ContainerContentHost::reconciled, this, &ContainerManager::workspaceReconciled);
+            c->setContent(host);
+        }
+        host->reconcile(d);
+        if (d.dockMode == DockMode::Floating) { c->show(); form->setVisible(d.visible); }
+        else { c->setVisible(d.visible); }
+        if (fresh) { emit containerAdded(d.id); }
+    }
+    emit workspaceReconciled();
+}
+bool ContainerManager::commitDockMode(const QString& id, DockMode mode)
+{
+    if (!m_store || m_reconciling) { return false; }
+    WorkspaceDocument document = m_store->snapshot();
+    for (auto& d : document.containers) { if (d.id == id) { d.dockMode = mode; commitWorkspace(document, document.revision); return true; } }
+    return true;
 }
 
 void ContainerManager::wireContainer(ContainerWidget* container)
 {
+    connect(container, &QObject::destroyed, this, [this, id=container->id()] { m_containers.remove(id); });
     connect(container, &ContainerWidget::floatRequested, this, [this, container]() {
         floatContainer(container->id());
     });
@@ -188,6 +356,21 @@ void ContainerManager::installFreshMeter(ContainerWidget* container, const QStri
 
 ContainerWidget* ContainerManager::duplicateContainer(const QString& sourceId)
 {
+    if (m_store && !m_reconciling) {
+        WorkspaceDocument document=m_store->snapshot();
+        for (const auto& source : document.containers) {
+            if (source.id!=sourceId) { continue; }
+            for (const auto& entry : source.contents) { if(entry.typeId.startsWith("applet:")) {
+                m_storageError=QStringLiteral("A singleton applet already has a placement; move it instead of duplicating it"); emit workspaceError(m_storageError); return nullptr;
+            } }
+            auto copy=source; copy.id=QUuid::createUuid().toString(QUuid::WithoutBraces); copy.dockMode=DockMode::Floating;
+            for (auto& entry : copy.contents) { entry.id=QUuid::createUuid().toString(QUuid::WithoutBraces); entry.returnLocation.reset(); }
+            document.containers.append(copy);
+            if(commitWorkspace(document,document.revision).status!=CommitStatus::Saved) { return nullptr; }
+            return container(copy.id);
+        }
+        return nullptr;
+    }
     ContainerWidget* src = container(sourceId);
     if (!src) {
         qCWarning(lcContainer) << "duplicateContainer: unknown id:" << sourceId;
@@ -220,6 +403,15 @@ ContainerWidget* ContainerManager::duplicateContainer(const QString& sourceId)
 
 ContainerWidget* ContainerManager::createContainer(int rxSource, DockMode mode)
 {
+    if (m_store && !m_reconciling) {
+        WorkspaceDocument document = m_store->snapshot();
+        ContainerDocument d; d.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        d.name = QStringLiteral("Container"); d.layout = ContentLayout::VerticalStack; d.dockMode = mode; d.config["rxSource"] = rxSource;
+        document.containers.append(d);
+        if (document.mainContainerId.isEmpty()) { document.mainContainerId = d.id; }
+        if (commitWorkspace(document, document.revision).status != CommitStatus::Saved) { return nullptr; }
+        return container(d.id);
+    }
     // From Thetis MeterManager.cs:5613-5673
     auto* container = new ContainerWidget(nullptr);
     container->setRxSource(rxSource);
@@ -259,6 +451,15 @@ ContainerWidget* ContainerManager::createContainer(int rxSource, DockMode mode)
 
 void ContainerManager::destroyContainer(const QString& id)
 {
+    if (m_store && !m_reconciling) {
+        WorkspaceDocument document = m_store->snapshot();
+        if (document.mainContainerId == id) { return; }
+        QVector<ContentEntry> singletons;
+        for (const auto& d : document.containers) { if (d.id == id) { for (const auto& e : d.contents) { if (e.typeId.startsWith("applet:")) { singletons.append(e); } } } }
+        document.containers.removeIf([&](const auto& d) { return d.id == id; });
+        for (auto& d : document.containers) { if (d.id == document.mainContainerId) { d.contents += singletons; } }
+        commitWorkspace(document, document.revision); return;
+    }
     // From Thetis MeterManager.cs:6533-6579
     // Upstream inline attribution preserved verbatim (MeterManager.cs:6563):
     //   f.Dispose();//[2.10.3.7]MW0LGE // we have to dispose it because close() prevent this being freed up
@@ -288,6 +489,7 @@ void ContainerManager::destroyContainer(const QString& id)
 
 void ContainerManager::floatContainer(const QString& id)
 {
+    if (commitDockMode(id, DockMode::Floating)) { return; }
     if (!m_containers.contains(id) || !m_floatingForms.contains(id)) {
         return;
     }
@@ -309,6 +511,7 @@ void ContainerManager::dockContainer(const QString& id)
 
 void ContainerManager::panelDockContainer(const QString& id)
 {
+    if (commitDockMode(id, DockMode::PanelDocked)) { return; }
     if (!m_containers.contains(id) || !m_floatingForms.contains(id)) {
         return;
     }
@@ -331,6 +534,7 @@ void ContainerManager::panelDockContainer(const QString& id)
 
 void ContainerManager::overlayDockContainer(const QString& id)
 {
+    if (commitDockMode(id, DockMode::OverlayDocked)) { return; }
     if (!m_containers.contains(id) || !m_floatingForms.contains(id)) {
         return;
     }
@@ -385,6 +589,16 @@ void ContainerManager::returnMeterFromFloating(ContainerWidget* container, Float
 
 void ContainerManager::recoverContainer(const QString& id)
 {
+    if (m_store && !m_reconciling) {
+        WorkspaceDocument document=m_store->snapshot();
+        for (auto& d : document.containers) { if(d.id==id) {
+            d.visible=true; d.config["enabled"]=true;
+            if(d.dockMode==DockMode::Floating) { d.dockMode=DockMode::OverlayDocked; }
+            if(m_dockParent) { const QSize size=d.geometry.isValid()?d.geometry.size():QSize(360,300); d.geometry=QRect(QPoint(qMax(0,(m_dockParent->width()-size.width())/2),qMax(0,(m_dockParent->height()-size.height())/2)),size); }
+            commitWorkspace(document,document.revision); return;
+        } }
+        return;
+    }
     // From Thetis MeterManager.cs:6514-6531
     if (!m_containers.contains(id)) {
         return;
@@ -459,6 +673,7 @@ void ContainerManager::updateDockedPositions(int hDelta, int vDelta)
 
 void ContainerManager::saveSplitterState()
 {
+    if (m_store) { saveState(); return; }
     if (!m_splitter) {
         return;
     }
@@ -473,6 +688,13 @@ void ContainerManager::saveSplitterState()
 
 void ContainerManager::restoreSplitterState()
 {
+    if (m_store) {
+        if (!m_splitter) { return; }
+        const QJsonArray saved = m_store->snapshot().extensions.value("splitterSizes").toArray();
+        QList<int> sizes; for (const auto& value : saved) { sizes.append(value.toInt()); }
+        if (sizes.size() == m_splitter->count()) { QScopedValueRollback<bool> guard(m_reconciling, true); m_splitter->setSizes(sizes); }
+        return;
+    }
     if (!m_splitter) {
         return;
     }
@@ -516,6 +738,11 @@ int ContainerManager::containerCount() const
 
 void ContainerManager::setContainerVisible(const QString& id, bool visible)
 {
+    if (m_store && !m_reconciling) {
+        WorkspaceDocument document = m_store->snapshot();
+        for (auto& d : document.containers) { if (d.id == id) { d.visible = visible; } }
+        commitWorkspace(document, document.revision); return;
+    }
     if (!m_containers.contains(id)) {
         return;
     }
@@ -538,12 +765,16 @@ void ContainerManager::setContainerVisible(const QString& id, bool visible)
 void ContainerManager::forEachMeterItem(std::function<void(MeterItem*)> fn)
 {
     for (ContainerWidget* container : m_containers) {
-        MeterWidget* meter = innerMeterWidget(container->content());
+        QList<MeterWidget*> meters;
+        if (auto* direct = qobject_cast<MeterWidget*>(container->content())) { meters.append(direct); }
+        meters += container->content()->findChildren<MeterWidget*>();
+        for (MeterWidget* meter : meters) {
         if (!meter) {
             continue;
         }
         for (MeterItem* item : meter->items()) {
             fn(item);
+        }
         }
     }
 }
@@ -555,6 +786,25 @@ void ContainerManager::setContentFactory(ContainerContentFactory factory)
 
 void ContainerManager::saveState()
 {
+    if (m_store) {
+        if (m_reconciling || !m_store->loadError().isEmpty()) { return; }
+        WorkspaceDocument document = m_store->snapshot();
+        for (auto& d : document.containers) {
+            auto* c = container(d.id); if (!c) { continue; }
+            // Geometry commits retain the committed content verbatim; live readings
+            // and stack projection are presentation state, not document edits.
+            d.name = c->notes(); d.dockMode = c->dockMode(); d.locked = c->isLocked(); d.autoHeight = c->autoHeight(); d.anchor = c->axisLock();
+            d.geometry = c->isFloating() && m_floatingForms.value(d.id) ? m_floatingForms[d.id]->geometry() : c->geometry();
+            if (c->rxSource() != d.config.value("rxSource").toInt(1)) { d.config["rxSource"] = c->rxSource(); }
+            d.config["enabled"] = c->isContainerEnabled();
+            d.config["showOnRx"] = c->showOnRx(); d.config["showOnTx"] = c->showOnTx();
+            d.config["border"] = c->hasBorder(); d.config["pinOnTop"] = c->isPinOnTop();
+        }
+        if (m_splitter) { QJsonArray sizes; for (int size : m_splitter->sizes()) { sizes.append(size); } document.extensions["splitterSizes"] = sizes; }
+        if (document == m_store->snapshot()) { return; }
+        if (commitWorkspace(document, document.revision).status != CommitStatus::Saved) { reconcileWorkspace(m_store->snapshot()); }
+        return;
+    }
     // From Thetis MeterManager.cs:6391-6447
     // Upstream inline attribution preserved verbatim (MeterManager.cs:6433):
     //   //a.Add("meterIGSettings_" + ig.Value.ID, igs.ToString()); //[2.10.3.6]MW0LGE not used
@@ -604,6 +854,7 @@ void ContainerManager::saveState()
 
 void ContainerManager::restoreState()
 {
+    if (m_store) { reconcileWorkspace(m_store->snapshot()); restoreSplitterState(); return; }
     // From Thetis MeterManager.cs:6012-6105
     auto& s = AppSettings::instance();
 

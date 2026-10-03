@@ -9772,6 +9772,9 @@ target_compile_definitions(tst_core_connection_candidates PRIVATE
 # The GLOBAL property NEREUS_ALL_TESTS is appended to by every
 # nereus_add_test() call above.  add_custom_target then bundles them
 # into a single buildable target.
+nereus_add_test(tst_container_content_host)
+nereus_add_test(tst_container_content_host_native NATIVE_WINDOW)
+
 get_property(_all_tests GLOBAL PROPERTY NEREUS_ALL_TESTS)
 add_custom_target(all_tests DEPENDS ${_all_tests})
 

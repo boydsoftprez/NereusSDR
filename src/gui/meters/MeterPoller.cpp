@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -222,6 +224,8 @@ void MeterPoller::setTxChannel(TxChannel* channel)
 
 // Task 41 (Phase 3P-II): store non-owning pointer to the analog SMeterWidget.
 // Call with nullptr on panel destruction (QPointer auto-clears on widget delete).
+SMeterWidget* MeterPoller::smeterForTest() const { return m_sMeter; }
+
 void MeterPoller::setSMeter(SMeterWidget* widget)
 {
     m_sMeter = widget;
@@ -847,6 +851,8 @@ void MeterPoller::poll()
         return;  // don't poll RX meters while transmitting
     }
 
+    if (m_rxReadingSource) { pollAdaptedSMeter(); return; }
+
     // NereusSDR (R-R3-13): with no RX channel (never created, or destroyed:
     // the QPointer clears) there is no reading, and with the radio link not
     // up (LinkLost keeps the channels alive, but their meters stop and an
@@ -1016,7 +1022,8 @@ void MeterPoller::pollRemoteRxMeters()
         level = maxBin;
         break;
     }
-    m_sMeter->setLevel(static_cast<float>(level));
+    if (m_rxReadingSource) { pollAdaptedSMeter(); }
+    else { m_sMeter->setLevel(static_cast<float>(level)); }
 
     // Keep each flag on the same selected meter source as the applet,
     // resolving stable slice IDs on every tick rather than caching channels.
@@ -1041,6 +1048,16 @@ void MeterPoller::pollRemoteRxMeters()
         emit remoteSliceLevelUpdated(flagSlice->sliceIndex(),
                                      ready ? finiteOr(flagLevel, -140.0) : kNoReadingDbm);
     }
+}
+
+void MeterPoller::pollAdaptedSMeter()
+{
+    if (!m_sMeter || !m_rxReadingSource || m_inTx) { return; }
+    int binding = MeterBinding::SignalPeak;
+    if (m_sMeter->rxMode()==SMeterWidget::RxMode::SignalAverage) { binding=MeterBinding::SignalAvg; }
+    else if (m_sMeter->rxMode()==SMeterWidget::RxMode::MaxBin) { binding=MeterBinding::SignalMaxBin; }
+    const double value = m_localRxReadingAvailable ? m_rxReadingSource(m_sMeterContext,binding) : kNoMeterReadingDbm;
+    m_sMeter->setLevel(static_cast<float>(std::isfinite(value)?value:kNoMeterReadingDbm));
 }
 
 void MeterPoller::pollSMeter()

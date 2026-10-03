@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -113,6 +115,8 @@ mw0lge@grange-lane.co.uk
 #include "ContainerSettingsDialog.h"
 #include "ContainerContentRegistry.h"
 #include "ContainerManager.h"
+#include "ContainerContentHost.h"
+#include "ContainerWorkspaceStore.h"
 #include "MmioEndpointsDialog.h"
 
 // Phase 3G-6 block 4 — per-item property editors
@@ -1701,6 +1705,7 @@ void ContainerSettingsDialog::takeSnapshot()
 
 void ContainerSettingsDialog::revertFromSnapshot()
 {
+    if (m_manager && m_manager->workspaceStore()) { return; }
     if (!m_snapshotTaken || !m_container) { return; }
     m_container->deserialize(m_containerSnapshot);
     if (MeterWidget* meter = findMeterWidget()) {
@@ -1723,6 +1728,52 @@ void ContainerSettingsDialog::revertFromSnapshot()
 void ContainerSettingsDialog::applyToContainer()
 {
     if (!m_container) {
+        return;
+    }
+
+    if (m_manager && m_manager->workspaceStore()) {
+        WorkspaceDocument document=m_manager->workspaceStore()->snapshot();
+        auto* host=m_manager->contentHost(m_container->id());
+        MeterWidget* target=findMeterWidget();
+        for (auto& d : document.containers) {
+            if (d.id != m_container->id()) { continue; }
+            d.name=m_titleEdit->text(); d.config["border"]=m_borderCheck->isChecked();
+            if (m_rxSourceCombo->currentData().toInt()!=d.config.value("rxSource").toInt(1)) { d.config["rxSource"]=m_rxSourceCombo->currentData().toInt(); }
+            d.config["showOnRx"]=m_showOnRxCheck->isChecked(); d.config["showOnTx"]=m_showOnTxCheck->isChecked();
+            if (m_lockCheck) { d.locked=m_lockCheck->isChecked(); }
+            if (m_hideTitleCheck) { d.header=m_hideTitleCheck->isChecked()?HeaderMode::Hidden:HeaderMode::Always; }
+            if (m_minimisesCheck) { d.config["containerMinimises"]=m_minimisesCheck->isChecked(); }
+            if (m_autoHeightCheck) { d.autoHeight=m_autoHeightCheck->isChecked(); }
+            if (m_hidesWhenRxNotUsedCheck) { d.config["hidesWhenRxNotUsed"]=m_hidesWhenRxNotUsedCheck->isChecked(); }
+            QSet<QString> editedIds;
+            if (host) { for (const auto& row : host->entryRows()) { if (row.item && row.widget==target) { editedIds.insert(row.entryId); } } }
+            QVector<ContentEntry> replacements;
+            for (const MeterItem* item : m_workingItems) {
+                ContentEntry prior=item->property("containerContentEntry").value<ContentEntry>();
+                for (const auto& entry : d.contents) { if (entry.id==prior.id) { prior=entry; break; } }
+                auto entry=m_manager->contentRegistry()->captureMeterItem(*item,prior);
+                if (d.layout==ContentLayout::VerticalStack && !prior.id.isEmpty()) {
+                    entry.canvasRect=prior.canvasRect;
+                    for(const QString& key:{QStringLiteral("stackSlot"),QStringLiteral("slotLocalY"),QStringLiteral("slotLocalH")}) { if(prior.context.contains(key)) { entry.context[key]=prior.context[key]; } else { entry.context.remove(key); } }
+                    auto overrides=entry.config.value("overrides").toObject(); const auto oldOverrides=prior.config.value("overrides").toObject();
+                    for(const QString& key:{QStringLiteral("1"),QStringLiteral("2"),QStringLiteral("3"),QStringLiteral("4")}) { if(oldOverrides.contains(key)) { overrides[key]=oldOverrides[key]; } else { overrides.remove(key); } }
+                    if(overrides.isEmpty()) { entry.config.remove("overrides"); } else { entry.config["overrides"]=overrides; }
+                    auto properties=entry.config.value("properties").toObject(); const auto previous=prior.config.value("properties").toObject();
+                    for (const QString& key : {QStringLiteral("x"),QStringLiteral("y"),QStringLiteral("w"),QStringLiteral("h")}) { if(previous.contains(key)) { properties[key]=previous[key]; } else { properties.remove(key); } }
+                    if (!properties.isEmpty()) { entry.config["properties"]=properties; }
+                }
+                replacements.append(entry);
+            }
+            QVector<ContentEntry> contents; bool inserted=false;
+            for (const auto& entry : d.contents) {
+                if (editedIds.contains(entry.id)) { if (!inserted) { contents+=replacements; inserted=true; } }
+                else { contents.append(entry); }
+            }
+            if (!inserted) { contents+=replacements; }
+            d.contents=contents;
+            break;
+        }
+        m_manager->commitWorkspace(document,document.revision);
         return;
     }
 

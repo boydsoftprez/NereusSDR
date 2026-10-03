@@ -16,6 +16,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -162,8 +164,16 @@ void AppletPanelWidget::setHeaderWidget(QWidget* widget, const QString& title,
     emit headerWidgetChanged(widget);
 }
 
+SMeterWidget* AppletPanelWidget::smeterWidget() const { return m_sMeter; }
+
 void AppletPanelWidget::clearHeaderWidget()
 {
+    if (m_bannerMenuButton && m_headerWrapper) {
+        m_bannerMenuButton->setParent(this); m_bannerMenuButton->hide();
+    }
+    if (m_sMeter && m_sMeter->parentWidget() == m_headerWrapper) {
+        m_sMeter->hide(); m_sMeter->setParent(this);
+    }
     if (m_headerWrapper) {
         m_headerLayout->removeWidget(m_headerWrapper);
         // Detach from the widget tree SYNCHRONOUSLY before deleteLater.
@@ -201,6 +211,7 @@ void AppletPanelWidget::addApplet(AppletWidget* applet)
     if (!applet) { return; }
     if (m_applets.contains(applet)) { return; }  // already present
     m_applets.append(applet);
+    if (m_managedWorkspace) { applet->setParent(this); applet->hide(); return; }
 
     applet->setParent(this);
     applet->show();
@@ -217,6 +228,7 @@ void AppletPanelWidget::addApplet(AppletWidget* applet)
 
 void AppletPanelWidget::insertApplet(int index, AppletWidget* applet)
 {
+    if (m_managedWorkspace) { addApplet(applet); return; }
     if (!applet) { return; }
     if (m_applets.contains(applet)) { return; }  // already present
     // m_stackLayout keeps a trailing stretch item; applet wrappers occupy
@@ -258,6 +270,7 @@ QWidget* AppletPanelWidget::makeFloatButton(AppletWidget* applet)
 
 void AppletPanelWidget::restoreFloatState(AppletWidget* applet)
 {
+    if (m_managedWorkspace) { return; }
     if (!applet || !applet->canFloat()) { return; }
     const bool wasFloating = AppSettings::instance()
         .value(floatKey(applet), QStringLiteral("False")).toString() == QLatin1String("True");
@@ -276,6 +289,7 @@ bool AppletPanelWidget::isAppletFloating(AppletWidget* applet) const
 
 void AppletPanelWidget::floatApplet(AppletWidget* applet)
 {
+    if (m_managedWorkspace) { return; }
     if (!applet || !m_applets.contains(applet) || m_floating.contains(applet)) { return; }
     QWidget* wrapper = m_wrappers.value(applet, nullptr);
     if (!wrapper) { return; }
@@ -307,6 +321,7 @@ void AppletPanelWidget::floatApplet(AppletWidget* applet)
 
 void AppletPanelWidget::dockApplet(AppletWidget* applet)
 {
+    if (m_managedWorkspace) { return; }
     if (!applet) { return; }
     AppletFloatingWindow* win = m_floating.take(applet);
     if (!win) { return; }

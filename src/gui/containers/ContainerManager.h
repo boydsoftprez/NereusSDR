@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -58,6 +60,9 @@ mw0lge@grange-lane.co.uk
 #include <QList>
 #include <QMap>
 #include <QSize>
+#include <QPointer>
+#include <QTimer>
+#include "ContainerDocument.h"
 
 #include <functional>
 
@@ -66,6 +71,9 @@ class QWidget;
 
 namespace NereusSDR {
 
+class ContainerWorkspaceStore;
+class ContainerContentRegistry;
+class ContainerContentHost;
 class ContainerWidget;
 class FloatingContainer;
 class MeterItem;
@@ -87,6 +95,15 @@ public:
     explicit ContainerManager(QWidget* dockParent, QSplitter* splitter,
                               QObject* parent = nullptr);
     ~ContainerManager() override;
+
+    void setWorkspaceAdapter(ContainerWorkspaceStore* store, ContainerContentRegistry* registry);
+    ContainerWorkspaceStore* workspaceStore() const;
+    ContainerContentRegistry* contentRegistry() const;
+    ContainerContentHost* contentHost(const QString& id) const;
+    void reconcileWorkspace(const WorkspaceDocument& document);
+    CommitResult commitWorkspace(const WorkspaceDocument& document, quint64 expectedRevision);
+    QString storageError() const { return m_storageError; }
+    bool isReconciling() const { return m_reconciling; }
 
     // --- Container lifecycle ---
     ContainerWidget* createContainer(int rxSource, DockMode mode);
@@ -153,8 +170,19 @@ signals:
     // values forever — symptom: bars frozen at frac=0, needles never
     // moving.
     void meterReadyForPolling(MeterWidget* meter);
+    void meterContextReady(MeterWidget* meter, const QJsonObject& context);
+    void workspaceReconciled();
+    void workspaceError(const QString& error);
 
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 private:
+    bool commitDockMode(const QString& id, DockMode mode);
+    QPointer<ContainerWorkspaceStore> m_store;
+    QPointer<ContainerContentRegistry> m_registry;
+    bool m_reconciling = false;
+    QString m_storageError;
+    QTimer m_geometryCommit;
     void setMeterFloating(ContainerWidget* container, FloatingContainer* form);
     void returnMeterFromFloating(ContainerWidget* container, FloatingContainer* form);
     void wireContainer(ContainerWidget* container);

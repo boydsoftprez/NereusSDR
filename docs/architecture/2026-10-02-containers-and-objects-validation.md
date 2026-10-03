@@ -333,3 +333,103 @@ an independent DPR-painted reference (channel tolerance2, under1% mismatches).
 `task-5-tests-{cpu,gpu}-dpr-final.log`: exit0, directly affected composite+bar2/2.
 Full raw native output is saved as `task-5-native-{cpu,gpu}-dpr-final.log`.
 Earlier other8 focused targets remain passing; no broader rerun was needed.
+
+## Task 6 — 2026-10-02
+
+Integration base `b37b57d2abdf995ab2f0a3b67f10992b6270eee3`: the original
+five container commits plus the controller's accepted, signed fourteen-component
+CoreSettings carry. Mutable Settings work in the primary checkout was excluded.
+Only the assigned worktree was edited; no Core/model/DSP/protocol implementation,
+operator profile, radio connection, hardware command or dependency installation
+belongs to this task.
+
+Reference choice: study current MainWindow construction, Qt ownership, existing
+ContainerButtonDispatcher policy and SliceModel calibrated caches. Implement a
+NereusSDR-original committed projection rather than translate a second upstream
+container or polling engine. Existing upstream notices and inline tags remain;
+changed files record J.J. Boyd / KG4VCF and OpenAI Codex modification history.
+The new host/registry/source glue is explicitly original. No new upstream
+provenance derivation is introduced. Current SpectrumWidget native-island policy
+and [Qt 6.11 QWidget source](https://github.com/qt/qtbase/blob/v6.11.0/src/widgets/kernel/qwidget.cpp)
+were studied to diagnose native sibling promotion; public Qt attributes and
+construction order are used, with no copied private Qt implementation.
+
+A VerticalStack partitions contiguous meter entries by effective source identity.
+Face height and maximum required minimum width determine each run; hidden and
+unavailable records retain ordered IDs. A legacy canvas remains one surface and
+retains exact canvas rectangles. If entries request different sources in that
+canvas, mismatched entries explain their unavailability, accept no wrong-source
+readings or control actions, and retain original data for later arrangement.
+No runtime row projection or live readout is written by geometry persistence.
+
+The registry is QApplication-free for metadata/import use. It borrows each actual
+Main-constructed singleton, parks it only when necessary, and preserves its
+construction owner. S-meter attachment detaches the old header before wrapper
+teardown; AppletPanelWidget lookup and MeterPoller's pointer survive moves.
+Qt connections and dispatcher ownership/listening/held/desktop-hosting gates are
+retained. First document placement claims a singleton deterministically; duplicate
+records remain inert and ordinary visibility toggles change only the claimed
+record. Late attach, destroyed-view replacement, preference/capability changes,
+and metadata-only updates preserve unaffected meter pointers and populated
+history. Changed/native-reparented hosts synchronously unregister/delete every old
+meter before creating replacements in the final host; targets are seeded once.
+
+Main starts the existing shared MeterPoller cadence offline and keeps it running
+across disconnects; no additional face timer or DSP subscription is created.
+Clock frames advance while radio readings remain unavailable. Source contexts
+resolve stable sliceById IDs, legacy rxSource-1 or inherited windowRxSlice.
+Explicit absent/foreign sources never fall back. A nonempty sessionId matches the
+current local radio MAC or remote station identity fingerprint (hex); unknown
+identities remain deferred. The adapter uses only calibrated SliceModel caches,
+handshake/version gates and the existing per-pan MaxBin resolver; PBSNR remains
+truthfully unavailable where no sanctioned producer exists. All runs and composite
+children participate in Main readout/control/mini refresh and GPU invalidation.
+
+Production adoption is one committed document operation. Old floating applet
+flags/geometry become document-owned shells with return metadata; later startups
+respect moved/hidden entries and leave legacy keys untouched. Structured visibility
+saves before live mutations. A real atomic-save StorageError, separately from
+future-schema rejection, leaves controller/menu/widget/document/raw settings and
+last saved bytes unchanged. Future/malformed workspaces stay read-only without a
+default overwrite. A small transitional dialog Apply adapter commits its edited
+run and container fields while retaining other mixed rows; full draft/exchange and
+settings UI remain Tasks 8–9.
+
+Native diagnosis preserved failing logs: initial sibling meters were RasterSurface
+while the first was MetalSurface, causing Qt Metal beginOffscreenFrame failure.
+Configure each meter before attaching it to the final parent and prevent ancestor
+promotion; every native leaf then has MetalSurface and renders. A subsequent
+shutdown failure came from returning parked native applets during QWidget child
+teardown. Main now stops cadence, clears only its own model adapter pointers and
+retires manager/registry while the window and construction owners are still alive.
+The surviving-model regression verifies no dangling MeterPoller/ContainerManager.
+
+GPU focused build and thirteen test owners pass, exit 0, in
+`.crew/2026-10-02-containers-and-objects-plan/task-6-build-gpu-verified.log`,
+`task-6-build-editor-preservation.log` and `task-6-tests-gpu-verified.log`.
+The final added borrowed stack-widget lifetime test also passes in
+`task-6-build-stack-lifetime.log` / `task-6-tests-stack-lifetime.log`.
+Native Cocoa/Metal frameSubmitted plus grabFramebuffer captures are in
+`task-6-captures/gpu/{offline-clock,slice-b-contest,move-0-clock,move-1-clock,move-2-clock}.png`.
+Contest capture inspection confirms Slice B frequency/mode/band, functioning
+buttons and shared local/UTC clock. Functional evidence covers source B actions,
+missing/unsupported refusal, all four targets through float/panel/overlay, no
+layout-induced frequency/mode change, shutdown, floating adoption/reopen and
+read-only future store. Offscreen GUI tests make no GPU-rendering claim.
+
+Final CPU eleven-owner checks pass, exit 0, in `task-6-build-cpu-final.log`
+and `task-6-tests-cpu-final.log`. Final GPU five-owner affected checks pass,
+exit 0, in `task-6-build-gpu-final.log` and `task-6-tests-gpu-final.log`; the
+other previously passing owners retain the thirteen-owner evidence above.
+The final repairs dispose failed hydration before emitting an empty run and
+adopt legacy floating-container top-level geometry once, after which structured
+forms never consult the legacy geometry key. The malformed known-entry test
+first failed with two surfaces instead of one (`task-6-tests-malformed-before.log`),
+then passed with raw entry preservation and the correct following source run.
+Latest GPU Contest and CPU offline-clock captures were visually inspected.
+Normal-hook signed commit evidence is recorded in the Task 6 report. Windows GPU, Linux native drag and attached
+hardware remain unobserved. Controller reports inherited carry omissions in the
+empty-primary-pan-key MaxBin resolver and remote/TX frame-stamped DSS path;
+mutable corrections have not been imported. Adapter routing is tested, and a
+missing source result remains unavailable; final carry acceptance and broad gates
+belong to Task 10 after the controller integrates a signed correction packet.

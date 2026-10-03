@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -162,6 +164,7 @@ void FloatingContainer::onConsoleWindowStateChanged(Qt::WindowStates state, bool
 
 void FloatingContainer::closeEvent(QCloseEvent* event)
 {
+    if (property("structuredWorkspace").toBool()) { emit aboutToClose(); event->ignore(); return; }
     // From Thetis frmMeterDisplay.cs:158-166 — hide instead of close
     if (event->spontaneous()) {
         hide();
@@ -174,6 +177,7 @@ void FloatingContainer::closeEvent(QCloseEvent* event)
 
 void FloatingContainer::saveGeometry()
 {
+    if (property("structuredWorkspace").toBool()) { return; }
     auto& s = AppSettings::instance();
     QRect r = geometry();
     s.setValue(QStringLiteral("MeterDisplay_%1_Geometry").arg(m_id),
@@ -182,6 +186,7 @@ void FloatingContainer::saveGeometry()
 
 void FloatingContainer::restoreGeometry()
 {
+    if (property("structuredWorkspace").toBool()) { return; }
     auto& s = AppSettings::instance();
     QString val = s.value(QStringLiteral("MeterDisplay_%1_Geometry").arg(m_id)).toString();
     if (val.isEmpty()) {

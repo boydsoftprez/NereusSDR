@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -759,6 +761,17 @@ void ContainerWidget::doResize(int w, int h)
 
 void ContainerWidget::wireInteractiveItem(MeterItem* item)
 {
+    if (item->property("interactiveContainerWired").toBool()) { return; }
+    item->setProperty("interactiveContainerWired",true);
+    const auto forward = [this,item](const std::function<void()>& action) {
+        if (item->property("containerUnsupportedSource").toBool()) {
+            emit unavailableButtonClicked(item->property("unsupportedSourceReason").toString()); return;
+        }
+        const QVariant previous = property("containerDispatchContext");
+        const QVariant context = item->property("containerSourceContext");
+        if (context.isValid()) { setProperty("containerDispatchContext",context); }
+        action(); setProperty("containerDispatchContext",previous);
+    };
     if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
         connect(box, &ButtonBoxItem::unavailableButtonClicked, this,
                 [this](int, const QString& reason) {
@@ -767,42 +780,42 @@ void ContainerWidget::wireInteractiveItem(MeterItem* item)
     }
     if (auto* band = qobject_cast<BandButtonItem*>(item)) {
         connect(band, &BandButtonItem::bandClicked,
-                this, &ContainerWidget::bandClicked);
+                this, [this,forward](int value) { forward([&] { emit bandClicked(value); }); });
         connect(band, &BandButtonItem::bandStackRequested,
-                this, &ContainerWidget::bandStackRequested);
+                this, [this,forward](int value) { forward([&] { emit bandStackRequested(value); }); });
     } else if (auto* mode = qobject_cast<ModeButtonItem*>(item)) {
         connect(mode, &ModeButtonItem::modeClicked,
-                this, &ContainerWidget::modeClicked);
+                this, [this,forward](int value) { forward([&] { emit modeClicked(value); }); });
     } else if (auto* filter = qobject_cast<FilterButtonItem*>(item)) {
         connect(filter, &FilterButtonItem::filterClicked,
-                this, &ContainerWidget::filterClicked);
+                this, [this,forward](int value) { forward([&] { emit filterClicked(value); }); });
         connect(filter, &FilterButtonItem::filterContextRequested,
-                this, &ContainerWidget::filterContextRequested);
+                this, [this,forward](int value) { forward([&] { emit filterContextRequested(value); }); });
     } else if (auto* ant = qobject_cast<AntennaButtonItem*>(item)) {
         connect(ant, &AntennaButtonItem::antennaSelected,
-                this, &ContainerWidget::antennaSelected);
+                this, [this,forward](int value) { forward([&] { emit antennaSelected(value); }); });
         // Phase 3P-I-a T17 — late-added antenna items inherit the
         // container's current hasAlex state (set by MainWindow on
         // connect / currentRadioChanged via setBoardCapabilities).
         ant->setHasAlex(m_hasAlex);
     } else if (auto* step = qobject_cast<TuneStepButtonItem*>(item)) {
         connect(step, &TuneStepButtonItem::tuneStepSelected,
-                this, &ContainerWidget::tuneStepSelected);
+                this, [this,forward](int value) { forward([&] { emit tuneStepSelected(value); }); });
     } else if (auto* other = qobject_cast<OtherButtonItem*>(item)) {
         connect(other, &OtherButtonItem::otherButtonClicked,
-                this, &ContainerWidget::otherButtonClicked);
+                this, [this,forward](int value) { forward([&] { emit otherButtonClicked(value); }); });
         connect(other, &OtherButtonItem::macroTriggered,
-                this, &ContainerWidget::macroTriggered);
+                this, [this,forward](int value) { forward([&] { emit macroTriggered(value); }); });
     } else if (auto* voice = qobject_cast<VoiceRecordPlayItem*>(item)) {
         connect(voice, &VoiceRecordPlayItem::voiceAction,
-                this, &ContainerWidget::voiceAction);
+                this, [this,forward](int value) { forward([&] { emit voiceAction(value); }); });
     } else if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
         connect(vfo, &VfoDisplayItem::frequencyChangeRequested,
-                this, &ContainerWidget::frequencyChangeRequested);
+                this, [this,forward](int64_t value) { forward([&] { emit frequencyChangeRequested(value); }); });
         connect(vfo, &VfoDisplayItem::bandStackRequested,
-                this, &ContainerWidget::bandStackRequested);
+                this, [this,forward](int value) { forward([&] { emit bandStackRequested(value); }); });
         connect(vfo, &VfoDisplayItem::filterContextRequested,
-                this, [this](int) { emit vfoFilterContextRequested(); });
+                this, [this,forward](int) { forward([&] { emit vfoFilterContextRequested(); }); });
     }
 }
 

@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
+// Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include "ContainerContentRegistry.h"
 #include "gui/meters/MeterItem.h"
 #include "core/UnbuiltFeatureList.h"
@@ -106,6 +109,92 @@ bool validBaseFields(const QString& raw) {
 }
 const char* kEntryProperty = "containerContentEntry";
 }
+ContainerContentRegistry::ContainerContentRegistry(QObject* parent) : QObject(parent)
+{
+    // Metadata/import/validation callers need no QApplication.
+}
+ContainerContentRegistry::~ContainerContentRegistry()
+{
+    // Parked views are Qt children; hosted views belong to their final host.
+    blockSignals(true);
+    for (auto it=m_singletons.cbegin();it!=m_singletons.cend();++it) {
+        if (!it.value()) { continue; }
+        disconnect(it.value(), nullptr, this, nullptr);
+        // Registry borrows the constructed view. Return parked/hosted views to
+        // their original construction owner before removing the parking widget.
+        it.value()->hide(); it.value()->setParent(m_originalParents.value(it.value()));
+    }
+    delete m_parking;
+}
+QString ContainerContentRegistry::appletTypeForVisibilityId(const QString& id)
+{
+    static const QHash<QString, QString> aliases = {
+        {"Rx","rx"},{"Display","Display"},{"Tx","TX"},{"PhoneCw","PHCW"},
+        {"Rade","RADE"},{"Vax","vax"},{"PureSignal","pure_signal"},
+        {"ModMon","mod_monitor"},{"Tci","tci"},{"ClientChain","tci_clients"},
+        {"Amp","amp"},{"Tuner","tuner"},{"RfKit","RfKit"},{"SMeter","s_meter"}};
+    return aliases.contains(id) ? QStringLiteral("applet:") + aliases.value(id) : QString();
+}
+void ContainerContentRegistry::attachSingleton(const QString& typeId, QWidget* widget)
+{
+    bool known = false;
+    for (const auto& d : descriptors()) { if (d.typeId == typeId && d.singleton) { known = true; } }
+    if (!known || m_singletons.value(typeId) == widget) { return; }
+    // A second factory cannot replace a live singleton and invalidate connections.
+    if (m_singletons.value(typeId) && widget) { return; }
+    QWidget* previous = m_singletons.value(typeId);
+    disconnect(m_destroyConnections.take(typeId));
+    if (previous) { returnBorrowedView(previous); m_originalParents.remove(previous); }
+    m_singletons[typeId] = widget; m_attachedIdentities[typeId] = widget;
+    if (widget) {
+        if (!m_originalParents.contains(widget)) { m_originalParents[widget] = widget->parentWidget(); }
+        m_destroyConnections[typeId] = connect(widget, &QObject::destroyed, this, [this, typeId, widget] {
+            m_originalParents.remove(widget);
+            if (m_attachedIdentities.value(typeId) != widget) { return; }
+            m_singletons.remove(typeId); m_attachedIdentities.remove(typeId);
+            ++m_generation; emit runtimeChanged();
+        });
+    }
+    ++m_generation; emit runtimeChanged();
+}
+QWidget* ContainerContentRegistry::singletonView(const QString& typeId) const { return m_singletons.value(typeId); }
+void ContainerContentRegistry::returnBorrowedView(QWidget* widget)
+{
+    if (widget && m_originalParents.contains(widget)) { widget->hide(); widget->setParent(m_originalParents.value(widget)); }
+}
+void ContainerContentRegistry::parkSingleton(QWidget* widget)
+{
+    if (widget) {
+        if (!m_parking) { m_parking = new QWidget(); m_parking->hide(); }
+        widget->hide(); widget->setParent(m_parking);
+    }
+}
+void ContainerContentRegistry::setSingletonPlacements(const QHash<QString, QString>& placements)
+{
+    if (m_placements != placements) { m_placements = placements; ++m_generation; }
+}
+bool ContainerContentRegistry::claimSingleton(const QString& typeId, const QString& entryId)
+{
+    if (!m_placements.contains(typeId)) { m_placements.insert(typeId, entryId); }
+    return m_placements.value(typeId) == entryId;
+}
+void ContainerContentRegistry::setAvailable(const QString& typeId, bool available, const QString& reason)
+{
+    const QString value = available ? QString() : (reason.isEmpty() ? QStringLiteral("This capability is unavailable") : reason);
+    if (m_unavailable.value(typeId) == value) { return; }
+    if (available) { m_unavailable.remove(typeId); } else { m_unavailable[typeId] = value; }
+    ++m_generation; emit runtimeChanged();
+}
+bool ContainerContentRegistry::isAvailable(const QString& typeId) const
+{
+    for (const auto& d : descriptors()) { if (d.typeId == typeId) { return d.available; } }
+    return false;
+}
+QString ContainerContentRegistry::unavailableReason(const QString& typeId) const
+{
+    for (const auto& d : descriptors()) { if (d.typeId == typeId) { return d.unavailableReason; } }
+    return QStringLiteral("Unknown content type; original data retained");
+}
 QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     QVector<ContentDescriptor> result;
     result.append({QStringLiteral("meter.powerSwr"),QStringLiteral("Power / SWR"),false,true,{}});
@@ -174,6 +263,9 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
         if (feature && !UnbuiltFeatures::isBuilt(*feature)) {
             descriptor.available = false; descriptor.unavailableReason = QStringLiteral("This capability is not built yet");
         }
+    }
+    for (auto& d : result) {
+        if (m_unavailable.contains(d.typeId)) { d.available = false; d.unavailableReason = m_unavailable.value(d.typeId); }
     }
     result.append({QStringLiteral("DISCORDBTNS"), QStringLiteral("Discord control (removed)"), false, false, QStringLiteral("This control was retired")});
     return result;

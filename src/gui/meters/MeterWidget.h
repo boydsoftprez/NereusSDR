@@ -10,6 +10,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -117,6 +119,8 @@ public:
     // Source changes discard old samples before the new source is replayed.
     void clearReadingCache();
     int powerScale() const { return m_powerScale; }
+    // GUI model adapters notify the actual owning face after child state changes.
+    void invalidatePresentation(const MeterItem* item);
     void setUnitMode(MeterItem::MeterUnit unit);
     MeterItem::MeterUnit unitMode() const;
 
