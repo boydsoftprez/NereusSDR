@@ -327,6 +327,8 @@ public:
     void copyCachedReadings(MeterWidget* widget, const QJsonObject& context) const;
     bool inTx() const { return m_inTx; }
     QString bindingUnavailableReason(int binding) const { return m_availability.value(binding); }
+    MeterItem::BindingSupport bindingSupport(int binding) const
+    { return m_bindingSupport.value(binding, MeterItem::BindingSupport::Unknown); }
     // Explicit shared presentation settings for hosts/previews. Legacy hosts
     // that set these on MeterWidget are also sampled at replacement.
     // Shared settings are retained even with no live target. Task6 hosts
@@ -389,6 +391,7 @@ public:
 signals:
     void frameAdvanced(qint64 monotonicMs);
     void bindingAvailabilityChanged(int bindingId, const QString& reason);
+    void bindingSupportChanged(int bindingId, MeterItem::BindingSupport support);
     void readingUpdated(const QJsonObject& context, int bindingId, double value);
     // MMIO identities never share the radio-binding cache/feed.
     void mmioReadingUpdated(const QUuid& guid, const QString& variable, double value, const QString& reason);
@@ -475,7 +478,7 @@ private:
     // From Thetis udDisplayMeterAvg (display.cs) [v2.10.3.13].
     int    m_avgWindow{1};
 
-    struct MmioReading { double value; QString reason; };
+    struct MmioReading { double value; QString reason; MeterItem::BindingSupport support; };
     QHash<QString, MmioReading> m_mmioReadings;
     MmioReading mmioReading(const MeterItem* item) const;
     void replayMmioReading(MeterWidget* widget, MeterItem* item) const;
@@ -485,6 +488,8 @@ private:
     void publishContextReading(const QJsonObject& context, int binding, double value);
     void publishGlobalReading(int binding, double value);
     void publishAvailability(int binding, const QString& reason);
+    void publishSupport(int binding, MeterItem::BindingSupport support);
+    void refreshBindingSupport();
     void refreshGlobalSession();
     bool acceptsGlobalReading(const QJsonObject& context) const;
     QString globalAvailability(const QJsonObject& context, int binding) const;
@@ -497,6 +502,9 @@ private:
     QHash<QByteArray, QJsonObject> m_knownContexts;
     QHash<int, double> m_globalReadings;
     QHash<int, QString> m_availability;
+    QHash<int, MeterItem::BindingSupport> m_bindingSupport;
+    QString m_supportIdentity;
+    QVector<QMetaObject::Connection> m_supportConnections;
     std::function<double(const QJsonObject&, int)> m_rxReadingSource;
     std::function<QString()> m_sessionIdSource;
     QString m_cachedSessionId;

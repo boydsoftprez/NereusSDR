@@ -104,7 +104,8 @@ public:
 
     void updateMeterValue(int bindingId, double value);
     // MMIO remains an individual item's cached endpoint source.
-    void updateMmioValue(MeterItem* item, double value, const QString& unavailableReason = {});
+    void updateMmioValue(MeterItem* item, double value, const QString& unavailableReason = {},
+                         MeterItem::BindingSupport support = MeterItem::BindingSupport::Supported);
     void advanceMeters(qint64 monotonicMs);
 #ifdef NEREUS_BUILD_TESTS
     quint64 readingInvalidationsForTest() const { return m_readingInvalidations; }
@@ -131,6 +132,9 @@ public:
     // one shows `reason`. An empty reason makes the binding available
     // again.
     void setBindingUnavailable(int bindingId, const QString& reason);
+    void setBindingSupport(int bindingId, MeterItem::BindingSupport support);
+    MeterItem::BindingSupport bindingSupport(int bindingId) const
+    { return m_bindingSupport.value(bindingId, MeterItem::BindingSupport::Unknown); }
     QString bindingUnavailableReason(int bindingId) const
     {
         return m_unavailableBindings.value(bindingId);
@@ -224,6 +228,7 @@ private:
     // Task 39: dims each drawn item whose binding is unavailable.
     void drawUnavailableVeils(QPainter& p) const;
     QHash<int, QString> m_unavailableBindings;
+    QHash<int, MeterItem::BindingSupport> m_bindingSupport;
     QVector<MeterItem*> m_items;
     struct LegacyRecord { QString raw; QPointer<MeterItem> item; };
     QVector<LegacyRecord> m_legacyRecords;
@@ -234,7 +239,7 @@ private:
 
     // Raw latest values seed new items; delivery still occurs on each poll.
     QHash<int, double> m_lastBindingValue;
-    struct MmioReading { double value; QString reason; };
+    struct MmioReading { double value; QString reason; MeterItem::BindingSupport support; };
     QHash<QString, MmioReading> m_lastMmioReading;
     quint64 m_readingInvalidations{0};
     void invalidateItemLayers(const MeterItem* item);

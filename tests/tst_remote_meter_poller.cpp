@@ -17,6 +17,7 @@
 #include <QSignalSpy>
 
 #include "core/RadioStatus.h"
+#include "core/HardwareProfile.h"
 #include "core/RxChannel.h"
 #include "gui/SMeterWidget.h"
 #include "gui/meters/MeterPoller.h"
@@ -27,6 +28,8 @@
 #include "gui/HGauge.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "gui/meters/presets/AnanMultiMeterItem.h"
+#include "core/session/StationCapabilities.h"
 
 #include <memory>
 
@@ -35,6 +38,46 @@ using namespace NereusSDR;
 class TestRemoteMeterPoller : public QObject {
     Q_OBJECT
 private slots:
+    void ananSupportFollowsResolvedRemoteProvider() {
+        using Support=MeterItem::BindingSupport;
+        RadioModel model(RadioModel::Role::Remote); MeterPoller poller; bool ready=false;
+        poller.setRemoteRadioModel(&model,[&]{return ready;}); poller.setPaReadingsModel(&model);
+        poller.setRemoteTxStageReadingsAvailable([&]{return model.stationTxReadingsVersion()>=3;});
+        MeterWidget live; auto* face=new AnanMultiMeterItem(&live); live.addItem(face); poller.addTarget(&live);
+        QCOMPARE(face->bindingSupport(201),Support::Unknown);
+        StationCapabilities caps; caps.radioConnected=true; caps.board=HPSDRHW::Saturn; caps.hpsdrModel=HPSDRModel::ANAN_G2;
+        caps.macAddress="AA:BB:CC:DD:EE:01"; caps.txReadingsVersion=1; ready=true; model.applyStationCapabilities(caps);
+        QVERIFY(model.addSliceWithStationId(7)>=0); model.activeSlice()->setSignalAverageDbm(-85);
+        poller.setRadioStatus(&model.radioStatus());
+        QMetaObject::invokeMethod(&poller,"poll",Qt::DirectConnection);
+        QCOMPARE(face->bindingSupport(201),Support::Supported); QCOMPARE(face->bindingSupport(109),Support::Unsupported);
+        QCOMPARE(face->bindingSupport(110),Support::Unsupported); QVERIFY(!face->channelHasReading(2));
+        RadioModel::PaReadings readings; readings.paCurrentAmps=0; readings.paVolts=13.8; model.applyCorePaReadings(readings);
+        QMetaObject::invokeMethod(&poller,"poll",Qt::DirectConnection); live.advanceMeters(100); QVERIFY(face->channelHasReading(2));
+        QCOMPARE(face->bindingSupport(1),Support::Supported); QCOMPARE(face->bindingSupport(200),Support::Supported);
+        QVERIFY(face->channelHasReading(0)); QVERIFY(face->channelHasReading(1)); QVERIFY(face->channelVisible(0));
+        live.resetForTxTransition(true); model.radioStatus().setPowerReadings(70,1,1.6); live.advanceMeters(200);
+        QCOMPARE(face->bindingSupport(100),Support::Supported); QCOMPARE(face->bindingSupport(102),Support::Supported);
+        QVERIFY(face->channelHasReading(3)); QVERIFY(face->channelHasReading(4)); QVERIFY(face->channelVisible(3)); QVERIFY(!face->channelVisible(0));
+        const QString saved=face->serialize(); MeterWidget preview; auto* copy=new AnanMultiMeterItem(&preview); preview.addItem(copy);
+        poller.replayReadings(&preview,{}); preview.advanceMeters(100); QCOMPARE(copy->bindingSupport(201),Support::Supported);
+        caps.txReadingsVersion=3; model.applyStationCapabilities(caps); QMetaObject::invokeMethod(&poller,"poll",Qt::DirectConnection);
+        QCOMPARE(face->bindingSupport(109),Support::Supported); QVERIFY(!face->channelHasReading(5));
+        // Missing samples on this same known sensor are not hardware incapability.
+        readings.paCurrentAmps.reset(); model.applyCorePaReadings(readings); ready=false;
+        QMetaObject::invokeMethod(&poller,"poll",Qt::DirectConnection); QVERIFY(!face->channelHasReading(2)); QCOMPARE(face->bindingSupport(201),Support::Supported);
+        // A different, explicitly unsupported board must not inherit old support or samples.
+        caps.board=HPSDRHW::Hermes; caps.hpsdrModel=HPSDRModel::HERMES; caps.macAddress="AA:BB:CC:DD:EE:02"; ready=true;
+        const HardwareProfile unsupported=profileForStation(caps.board,caps.hpsdrModel);
+        QCOMPARE(unsupported.effectiveBoard,HPSDRHW::Hermes); QCOMPARE(unsupported.model,HPSDRModel::HERMES);
+        QVERIFY(unsupported.caps); QVERIFY(!unsupported.caps->hasPaAmpsTelemetry); QVERIFY(!unsupported.caps->hasPaVoltsTelemetry);
+        model.applyStationCapabilities(caps); QMetaObject::invokeMethod(&poller,"poll",Qt::DirectConnection);
+        QCOMPARE(face->bindingSupport(201),Support::Unsupported); QVERIFY(!face->channelHasReading(2));
+        poller.copyCachedReadings(&preview,{}); QCOMPARE(copy->bindingSupport(201),Support::Unsupported); QVERIFY(!copy->channelHasReading(2));
+        QCOMPARE(face->serialize(),saved);
+        caps.board=HPSDRHW::Unknown; caps.macAddress.clear(); model.applyStationCapabilities(caps);
+        QMetaObject::invokeMethod(&poller,"poll",Qt::DirectConnection); QCOMPARE(face->bindingSupport(201),Support::Unknown);
+    }
     // R-R3-46 fix wave: the Core adds its own calibration (its attenuator,
     // preamp and meter offset) to the S-meter readings and the spectrum
     // frames it sends. A remote window's model adds none on top, so the

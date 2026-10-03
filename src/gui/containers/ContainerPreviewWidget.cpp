@@ -28,6 +28,12 @@ ContainerPreviewWidget::ContainerPreviewWidget(ContainerContentRegistry& registr
             if(surface.widget) { m_poller->copyCachedReadings(surface.widget,surface.context); }
         }
     });
+    connect(&poller,&MeterPoller::bindingSupportChanged,this,[this]{
+        if(!m_poller) { return; }
+        for(const auto& surface:m_surfaces) {
+            if(surface.widget) { m_poller->copyCachedReadings(surface.widget,surface.context); }
+        }
+    });
     connect(&registry,&ContainerContentRegistry::runtimeChanged,this,[this]{ m_materialized=false; setDocument(m_document); });
 }
 void ContainerPreviewWidget::setDocument(const ContainerDocument& document)

@@ -197,6 +197,7 @@ void MeterPoller::setRxChannel(RxChannel* channel)
     m_rxChannel = channel;
     invalidateReadings(true, false, false);
     if (channel) { m_rxDestroyed = connect(channel, &QObject::destroyed, this, [this] { invalidateReadings(true, false, false); }); }
+    refreshBindingSupport();
     qCDebug(lcMeter) << "MeterPoller: RxChannel set, channelId:"
                       << (channel ? channel->channelId() : -1);
 }
@@ -222,6 +223,7 @@ void MeterPoller::setTxChannel(TxChannel* channel)
     for (int binding = MeterBinding::TxMic; binding <= MeterBinding::TxCfcPeak; ++binding) {
         publishAvailability(binding, channel ? QString() : tr("No transmit source."));
     }
+    refreshBindingSupport();
     qCDebug(lcMeter) << "MeterPoller: TxChannel set, channelId:"
                       << (channel ? channel->channelId() : -1);
 }
@@ -259,6 +261,8 @@ void MeterPoller::setRemoteRadioModel(RadioModel* model,
     m_remoteModel = m_remoteRole ? model : nullptr;
     m_remoteSnapshotReady = std::move(snapshotReady);
     m_remoteMaxBinSource = std::move(maxBinSource);
+    m_supportIdentity.clear();
+    for(int binding:{MeterBinding::HwVolts,MeterBinding::HwAmps,MeterBinding::TxAlcGain,MeterBinding::TxAlcGroup}) { publishSupport(binding,MeterItem::BindingSupport::Unknown); }
     if (m_remoteModel) {
         m_remoteConnections.append(connect(model, &QObject::destroyed, this, [this] { invalidateReadings(true, true, true); }));
         m_remoteConnections.append(connect(model, &RadioModel::activeSliceChanged, this, [this] { invalidateReadings(true, false, false); }));
@@ -271,6 +275,7 @@ void MeterPoller::setRemoteRadioModel(RadioModel* model,
     refreshRemoteMeterReadingsAvailability(true);
     // Task 39: whichever of the two setters runs last marks the meters.
     refreshRemoteTxAvailability(/*force=*/true);
+    refreshBindingSupport();
 }
 
 void MeterPoller::setRemoteTransmitState(TransmitState* state,
@@ -347,6 +352,7 @@ void MeterPoller::setRemoteTxStageReadingsAvailable(std::function<bool()> availa
     for (int binding : remoteTxBindingsNotSent()) { publishGlobalReading(binding, kNoMeterReadingDbm); }
     m_remoteTxStageReadingsAvailable = std::move(available);
     refreshRemoteTxAvailability(/*force=*/true);
+    refreshBindingSupport();
 }
 
 bool MeterPoller::remoteTxStageReadingsAvailable() const
@@ -595,6 +601,7 @@ void MeterPoller::setRxReadingSource(std::function<double(const QJsonObject&, in
 {
     m_rxReadingSource = std::move(source);
     invalidateReadings(true, false, false);
+    refreshBindingSupport();
 }
 void MeterPoller::setSessionIdSource(std::function<QString()> source)
 {
@@ -642,11 +649,11 @@ MeterPoller::MmioReading MeterPoller::mmioReading(const MeterItem* item) const
     else
 #endif
     { endpoint = ExternalVariableEngine::instance().endpoint(item->mmioGuid()); }
-    if (!endpoint) { return {kNoMeterReadingDbm, tr("External meter source is unavailable.")}; }
+    if (!endpoint) { return {kNoMeterReadingDbm, tr("External meter source is unavailable."),MeterItem::BindingSupport::Unknown}; }
     bool ok = false;
     const double value = endpoint->valueForName(item->mmioVariable()).toDouble(&ok);
-    if (!ok || !std::isfinite(value)) { return {kNoMeterReadingDbm, tr("External meter variable has no numeric reading.")}; }
-    return {value, {}};
+    if (!ok || !std::isfinite(value)) { return {kNoMeterReadingDbm, tr("External meter variable has no numeric reading."),MeterItem::BindingSupport::Supported}; }
+    return {value, {},MeterItem::BindingSupport::Supported};
 }
 void MeterPoller::replayMmioReading(MeterWidget* widget, MeterItem* item) const
 {
@@ -654,7 +661,7 @@ void MeterPoller::replayMmioReading(MeterWidget* widget, MeterItem* item) const
     // Validate at reconstruction so removal/new non-numeric data between
     // shared ticks cannot revive a stale same-identity sample.
     const MmioReading reading = mmioReading(item);
-    widget->updateMmioValue(item, reading.value, reading.reason);
+    widget->updateMmioValue(item, reading.value, reading.reason,reading.support);
 }
 void MeterPoller::replayReadings(MeterWidget* widget, const QJsonObject& context) const
 {
@@ -670,6 +677,10 @@ void MeterPoller::copyCachedReadings(MeterWidget* widget, const QJsonObject& con
     if (!widget) { return; }
     if (widget->unitMode()!=m_unitMode) { widget->setUnitMode(m_unitMode); }
     if (m_powerScale>0 && widget->powerScale()!=m_powerScale) { widget->rescalePowerMeters(m_powerScale); }
+    for(auto it=m_bindingSupport.cbegin();it!=m_bindingSupport.cend();++it) {
+        const bool global=it.key()>=MeterBinding::TxPower;
+        widget->setBindingSupport(it.key(),global && !acceptsGlobalReading(context)?MeterItem::BindingSupport::Unknown:it.value());
+    }
     for (auto it = m_availability.cbegin(); it != m_availability.cend(); ++it) { widget->setBindingUnavailable(it.key(), globalAvailability(context,it.key())); }
     const auto readings = m_contextReadings.value(contextKey(context));
     const bool remoteReady = !m_remoteRole || (m_remoteModel && m_remoteModel->isConnected() && m_remoteSnapshotReady && m_remoteSnapshotReady());
@@ -728,6 +739,52 @@ void MeterPoller::publishAvailability(int binding, const QString& reason)
     m_availability[binding] = reason;
     if (changed) { emit bindingAvailabilityChanged(binding, reason); }
     for (const auto& target : m_targets) { if (target) { target->setBindingUnavailable(binding, globalAvailability(m_targetContexts.value(target),binding)); } }
+}
+void MeterPoller::publishSupport(int binding,MeterItem::BindingSupport support)
+{
+    if(m_bindingSupport.contains(binding) && bindingSupport(binding)==support) { return; }
+    const bool changed=bindingSupport(binding)!=support;
+    m_bindingSupport[binding]=support;
+    if(changed) { m_globalReadings.remove(binding); }
+    for(const auto& target:m_targets) {
+        if(target) {
+            const bool foreign=binding>=MeterBinding::TxPower && !acceptsGlobalReading(m_targetContexts.value(target));
+            target->setBindingSupport(binding,foreign?MeterItem::BindingSupport::Unknown:support);
+        }
+    }
+    if(changed) { emit bindingSupportChanged(binding,support); }
+}
+void MeterPoller::refreshBindingSupport()
+{
+    using Support=MeterItem::BindingSupport;
+    RadioModel* model=m_remoteRole?m_remoteModel.data():m_paReadingsModel.data();
+    const bool known=model && model->currentRadioInfo().boardType!=HPSDRHW::Unknown && model->hardwareProfile().caps;
+    const QString identity=known?QStringLiteral("%1/%2/%3").arg(model->currentRadioInfo().macAddress).arg(int(model->hardwareProfile().effectiveBoard)).arg(int(model->hardwareProfile().model)):QString();
+    if(identity!=m_supportIdentity) {
+        m_supportIdentity=identity;
+        for(int binding:{MeterBinding::HwVolts,MeterBinding::HwAmps,MeterBinding::TxAlcGain,MeterBinding::TxAlcGroup}) { publishSupport(binding,Support::Unknown); }
+        invalidateReadings(true,true,true);
+    }
+    publishSupport(MeterBinding::HwAmps,known?(model->boardCapabilities().hasPaAmpsTelemetry?Support::Supported:Support::Unsupported):Support::Unknown);
+    publishSupport(MeterBinding::HwVolts,known?(model->boardCapabilities().hasPaVoltsTelemetry?Support::Supported:Support::Unsupported):Support::Unknown);
+    if(m_remoteRole) {
+        const bool ready=known && model->isConnected() && m_remoteSnapshotReady && m_remoteSnapshotReady();
+        if(ready) {
+            const bool stages=m_remoteTxStageReadingsAvailable?remoteTxStageReadingsAvailable():model->stationTxReadingsVersion()>=3;
+            for(int binding:{MeterBinding::TxAlcGain,MeterBinding::TxAlcGroup}) { publishSupport(binding,stages?Support::Supported:Support::Unsupported); }
+        }
+    } else {
+#ifdef HAVE_WDSP
+        for(int binding:{MeterBinding::TxAlcGain,MeterBinding::TxAlcGroup}) { publishSupport(binding,Support::Supported); }
+#else
+        for(int binding:{MeterBinding::TxAlcGain,MeterBinding::TxAlcGroup}) {
+            publishSupport(binding,Support::Unsupported); publishAvailability(binding,tr("This build has no WDSP transmit stage readings."));
+        }
+#endif
+    }
+    const Support rxSupport=(m_rxReadingSource || m_rxChannel || (m_remoteRole && model && model->isConnected() && m_remoteSnapshotReady && m_remoteSnapshotReady()))?Support::Supported:Support::Unknown;
+    for(int binding=MeterBinding::SignalPeak;binding<=MeterBinding::PbSnr;++binding) { publishSupport(binding,rxSupport); }
+    for(int binding:{MeterBinding::TxPower,MeterBinding::TxSwr}) { publishSupport(binding,m_radioStatus?Support::Supported:Support::Unknown); }
 }
 void MeterPoller::invalidateReadings(bool rx, bool tx, bool hardware)
 {
@@ -843,6 +900,7 @@ void MeterPoller::stop()
 void MeterPoller::poll()
 {
     refreshGlobalSession();
+    refreshBindingSupport();
     const qint64 timestamp = m_monotonicSource ? m_monotonicSource() : m_clock.elapsed();
     const auto frame = qScopeGuard([this, timestamp] {
         for (const auto& target : m_targets) { if (target) { target->advanceMeters(timestamp); } }
@@ -869,7 +927,7 @@ void MeterPoller::poll()
                 emit mmioReadingUpdated(item->mmioGuid(), item->mmioVariable(), reading.value, reading.reason);
             }
             const MmioReading reading = m_mmioReadings.value(key);
-            target->updateMmioValue(item, reading.value, reading.reason);
+            target->updateMmioValue(item, reading.value, reading.reason,reading.support);
         }
     }
 
@@ -972,10 +1030,20 @@ void MeterPoller::poll()
 
 void MeterPoller::setPaReadingsModel(RadioModel* model)
 {
+    for(const auto& connection:m_supportConnections) { disconnect(connection); }
+    m_supportConnections.clear();
     disconnect(m_paDestroyed);
     m_paReadingsModel = model;
+    m_supportIdentity.clear();
+    for(int binding:{MeterBinding::HwVolts,MeterBinding::HwAmps}) { publishSupport(binding,MeterItem::BindingSupport::Unknown); }
     invalidateReadings(false, false, true);
-    if (model) { m_paDestroyed = connect(model, &QObject::destroyed, this, [this] { invalidateReadings(false, false, true); }); }
+    if (model) {
+        m_paDestroyed = connect(model, &QObject::destroyed, this, [this] { m_paReadingsModel=nullptr; invalidateReadings(false,false,true); refreshBindingSupport(); });
+        m_supportConnections.append(connect(model,&RadioModel::currentRadioChanged,this,[this]{refreshBindingSupport();}));
+        m_supportConnections.append(connect(model,&RadioModel::connectionStateChanged,this,[this]{refreshBindingSupport();}));
+        m_supportConnections.append(connect(model,&RadioModel::stationTxReadingsVersionChanged,this,[this]{refreshBindingSupport();}));
+    }
+    refreshBindingSupport();
 }
 
 void MeterPoller::pollHardwareTelemetry()
@@ -1247,7 +1315,8 @@ void MeterPoller::pollTxMeters()
 #endif
     };
     for (const TxReadingEntry& entry : kTxReadings) {
-        handOutTxReading(entry.bindingId, thetisTxReading(entry.reading, readRaw));
+        const bool unsupported=(entry.bindingId==MeterBinding::TxAlcGain || entry.bindingId==MeterBinding::TxAlcGroup) && bindingSupport(entry.bindingId)==MeterItem::BindingSupport::Unsupported;
+        handOutTxReading(entry.bindingId, unsupported?kNoMeterReadingDbm:thetisTxReading(entry.reading, readRaw));
     }
 }
 
@@ -1324,6 +1393,7 @@ void MeterPoller::setRadioStatus(RadioStatus* status)
     disconnect(m_statusDestroyed);
     for (int binding = MeterBinding::TxPower; binding <= MeterBinding::TxSwr; ++binding) { publishGlobalReading(binding, kNoMeterReadingDbm); }
     m_radioStatus = status;
+    refreshBindingSupport();
     if (m_radioStatus) {
         m_statusDestroyed = connect(status, &QObject::destroyed, this, [this] { for (int binding = MeterBinding::TxPower; binding <= MeterBinding::TxSwr; ++binding) { publishGlobalReading(binding, kNoMeterReadingDbm); } });
         publishGlobalReading(MeterBinding::TxPower, status->forwardPowerWatts());
