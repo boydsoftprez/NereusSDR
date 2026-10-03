@@ -649,6 +649,7 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   // Phone wire batch: each slice's
                                   // diversityPattern.
                                   {"diversityPattern", 1},
+                                  {"diversityControl", 1},
                                   // Phone wire batch: radio's
                                   // logCategoryList.
                                   {"logCategoryList", 1},
@@ -746,6 +747,7 @@ QJsonArray captureCapabilities()
     caps.band2mVersion = 1;
     // Phone wire batch: sent to a peer that declared diversityPattern.
     caps.diversityPatternVersion = 1;
+    caps.diversityControlVersion = 1;
     // Phone wire batch: sent to a peer that declared logCategoryList.
     caps.logCategoryListVersion = 1;
     // Phone wire batch: sent to a peer that declared radioModels.

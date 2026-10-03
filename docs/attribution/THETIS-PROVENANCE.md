@@ -188,10 +188,11 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | src/gui/applets/TxCfcDialog.h | Project Files/Source/Console/frmCFCConfig.cs; Project Files/Source/Console/frmCFCConfig.Designer.cs | 108-118; 217-583; 333-392; 477-555 [v2.10.3.13] | port | thetis-samphire | dialog declaration for full CFC config port; pairs with TxCfcDialog.cpp |
 | src/gui/ConnectionPanel.cpp | Project Files/Source/Console/ucRadioList.cs; Project Files/Source/Console/clsDiscoveredRadioPicker.cs | full | port | thetis-samphire | Thetis ucRadioList port — radio list UI; both sources are Samphire-maintained |
 | src/gui/ConnectionPanel.h | Project Files/Source/Console/ucRadioList.cs | full | port | thetis-samphire | |
-| src/gui/containers/ContainerManager.cpp | Project Files/Source/Console/MeterManager.cs | 5613-5673; 5812-5918; 6012-6105; 6391-6447; 6514-6579 | port | thetis-samphire | container lifecycle |
+| src/gui/containers/ContainerManager.cpp | Project Files/Source/Console/MeterManager.cs | 5613-5673; 5812-5918; 6012-6105; 6391-6447; 6514-6579 | port | thetis-samphire | container lifecycle; Nereus-original Task 7 transaction controller integration, committed visibility and geometry recovery preserve original notices/inline tags |
 | src/gui/containers/ContainerManager.h | Project Files/Source/Console/MeterManager.cs | full | port | thetis-samphire | duplicate-container path |
-| src/gui/containers/ContainerSettingsDialog.cpp | Project Files/Source/Console/setup.cs; Project Files/Source/Console/MeterManager.cs | 24522-24566; 24443; 24447; 21266; 22472 | port | thetis-samphire | |
+| src/gui/containers/ContainerSettingsDialog.cpp | Project Files/Source/Console/setup.cs; Project Files/Source/Console/MeterManager.cs | 24522-24566; 24443; 24447; 21266; 22472 | port | thetis-samphire | Nereus-original Task 8 draft transaction and inert preview plumbing; upstream layout/preset notices and inline tags preserved |
 | src/gui/containers/ContainerSettingsDialog.h | Project Files/Source/Console/MeterManager.cs | full | port | thetis-samphire | .h orphan pair; .cpp was already in outbound audit; 3-column Available/In-use/Properties layout |
+| src/gui/containers/ContainerTypes.h | Project Files/Source/Console/ucMeter.cs | 49-59 | port | thetis-samphire | AxisLock extracted from existing ContainerWidget.h with saved numeric values unchanged; verified v2.10.3.15. Other enums are NereusSDR-original. |
 | src/gui/containers/ContainerWidget.cpp | Project Files/Source/Console/ucMeter.cs | 49-59; 281-294; 319-374; 400-407; 489-518; 520-572; 574-593; 912-935; 974-993; 1198-1229 | port | thetis-samphire | |
 | src/gui/containers/ContainerWidget.h | Project Files/Source/Console/ucMeter.cs; Project Files/Source/Console/setup.cs; Project Files/Source/Console/MeterManager.cs | full | port | thetis-samphire | axis enum, container highlight, ContainerMinimised flag |
 | src/gui/containers/FloatingContainer.cpp | Project Files/Source/Console/frmMeterDisplay.cs | 114-179 | port | thetis-samphire | lifecycle, close, console state |
@@ -246,6 +247,13 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | src/gui/meters/MagicEyeItem.h | Project Files/Source/Console/MeterManager.cs | 15855+ | port | thetis-samphire | clsMagicEyeItem |
 | src/gui/meters/MeterItem.cpp | Project Files/Source/Console/MeterManager.cs; Project Files/Source/Console/console.cs | 2258-2318; 19917-20278; 14827+; 32338+; 21499-21616; 35950-36140; 12612-12678 | port | multi-source | verbatim ReadingName switch; edge meter colors from console.cs |
 | src/gui/meters/MeterItem.h | Project Files/Source/Console/MeterManager.cs; Project Files/Source/Console/console.cs | 2258-2318; 19917-21616; 14827+; 32338+; 12612-12678 | port | multi-source | |
+| src/gui/meters/presets/BarPresetItem.h | Project Files/Source/Console/MeterManager.cs | 22846-23465; 24327-25090; 33393-33958; 37388-37674; 41048-41118 | port | thetis-samphire | Full bar palette including independent TX peak channels; Mic/ALC complete-face composition/calibration; shared MeterDynamics; v2.10.3.15 |
+| src/gui/meters/presets/BarPresetItem.cpp | Project Files/Source/Console/MeterManager.cs | 22846-23465; 24327-25090; 33393-33958; 37388-37674; 41048-41118 | port | thetis-samphire | Full bar palette, own calibration/units/dynamics; source-based line/history/peak indicators; Nereus approved geometry, JSON/config adapters and channel availability; v2.10.3.15 |
+| src/gui/meters/presets/CompositePresetItem.h | Project Files/Source/Console/MeterManager.cs | 22846-25814; 40754-41118 | port | thetis-samphire | GUI-only source-calibrated family channel and configuration contract; v2.10.3.15 |
+| src/gui/meters/presets/CompositePresetItem.cpp | Project Files/Source/Console/MeterManager.cs | 23018-23031; 23572-23618; 23797-24326; 25198-25338; 33977-34010; 37249-37368; 40754-40928; 41048-41118 | port | thetis-samphire | Per-family calibration, needle angular geometry, source dynamics/defaults, normalization and Magic Eye; code-native scales and Nereus local History/VFO/Clock/Contest composition adaptations; v2.10.3.15 |
+| src/gui/meters/presets/CompositePresetItem.cpp | Project Files/Source/Console/Common.cs | 888-934 | port | flex-samphire | Frequency-sensitive SignalText S/above-S9 bucket conversion; v2.10.3.15 |
+| src/gui/meters/MeterDynamics.h | Project Files/Source/Console/MeterManager.cs | 21323-21458 | port | thetis-samphire | Shared timestamp-driven presentation smoothing/history, explicit channel availability |
+| src/gui/meters/MeterDynamics.cpp | Project Files/Source/Console/MeterManager.cs | 21323-21458 | port | thetis-samphire | Per-update recurrence and bounded history; timestamp expiry adapts missed GUI frames; v2.10.3.15 |
 | src/gui/meters/MeterPoller.cpp | Project Files/Source/Console/MeterManager.cs | full | port | thetis-samphire | 100ms UpdateInterval poll cadence; .h was in outbound audit; .cpp orphan pair |
 | src/gui/meters/MeterPoller.h | Project Files/Source/Console/MeterManager.cs | full | port | thetis-samphire | Reading enum / TX meters |
 | src/core/meters/SliceMeterPump.cpp | Project Files/Source/Console/MeterManager.cs | full | port | thetis-samphire | Remote Daemon R2 Task 12: per-slice S-meter reading, extracted from MeterPoller.cpp's pollSliceSMeters()/pollSMeter() into a core-side (no-GUI) QTimer owned by RadioModel, so a headless nereusd also produces SliceModel::signalStrengthDbm. Meter-type selection + RXOffset application carried forward from the same dsp.cs/console.cs cites MeterPoller.cpp already verifies (dsp.cs:954/957 [@501e3f5] CalculateRXMeter; console.cs:46821-46881 [v2.10.3.13] RXOffset) |
@@ -499,3 +507,25 @@ column 2 (not column 1) so the header-verifier script does not scan them.
 
 | src/core/CfcEditProfile.h | Project Files/Source/Console/frmCFCConfig.cs; Project Files/Source/Console/ucParametricEq.cs | 333-392; 492-575; 1460-1486 | port | thetis-samphire | Typed CFC two-curve state and codec; validated 5/10/18 bands; Thetis PascalCase JSON and gzip envelope, legacy Nereus snake_case reads [v2.10.3.15] |
 | src/core/CfcEditProfile.cpp | Project Files/Source/Console/frmCFCConfig.cs; Project Files/Source/Console/ucParametricEq.cs | 333-392; 492-575; 1460-1486 | port | thetis-samphire | Two complete graphs; saved Hz3/dB1/Q2 precision; preserve opaque unknown blobs in model; stacked verbatim headers [v2.10.3.15] |
+### 2026-10-02 Containers and Objects Task 9
+
+The container settings and existing BaseItemEditor/CompositePresetItem adapters
+retain their verbatim upstream licence blocks and citations. Task 9 adds
+NereusSDR-original draft-only contextual controls, calibrated validation floors,
+portable document envelopes and collision-safe recovery; it copies no new
+upstream implementation. ContentPropertyEditor and the SignalTextItemEditor
+Qt adapter are original GUI plumbing, marked `no-port-check`. Global signal
+units remain the existing multimeter preference rather than a per-item override.
+
+Task 10 native integration (2026-10-03): `CompositePresetItem.cpp` draws the
+Nereus ANAN group selector only in its static background layer. This prevents
+duplicate label painting in the dynamic layer; upstream source geometry,
+channels, calibration, notices and inline comments remain unchanged.
+
+Integrated-review correction (2026-10-03): CompositePresetItem keeps history sample
+cadence separate from shared presentation frames and drops future trace points on
+clock rollback without changing MeterDynamics. ContainerSettingsDialog gives new
+object/container copies fresh return homes and disables unsupported container
+preferences while retaining their raw values. NereusSDR-original GUI adaptation
+by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; existing upstream notices,
+calibration and inline cites remain unchanged.

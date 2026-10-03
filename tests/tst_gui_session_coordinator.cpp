@@ -17,6 +17,7 @@
 
 #include "OperatorWording.h"
 #include "core/AppSettings.h"
+#include "core/SliceOwnership.h"
 #include "core/RadioDiscovery.h"
 #include "core/WdspEngine.h"
 #include "core/MoxController.h"
@@ -99,6 +100,38 @@ private slots:
         const QString path = AppSettings::instance().filePath();
         QFile::remove(path);
         QFile::remove(path + QStringLiteral(".bak"));
+    }
+
+    // 2026-10-02 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+    void configuredDeferredLocalBootstrapOwnsSlicesWithRunOff()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        auto& settings = AppSettings::instance();
+        settings.setValue("DesktopCore/Run", false);
+        StationServiceOptions service;
+        service.profileDirectory = QFileInfo(settings.filePath()).absolutePath();
+        service.homeDirectory = temp.filePath("home");
+        service.inheritActiveProfile = false;
+        service.runner = [](const QString&, const QStringList&) {
+            return StationServiceCommandResult{0, {}};
+        };
+        GuiSessionCoordinator sessions;
+        QVERIFY(sessions.configureDesktopStation(AppSettings::profileOverride(), true, service));
+        QString error;
+        QVERIFY2(sessions.replace({}, false, &error), qPrintable(error));
+        auto* model = sessions.window()->radioModel();
+        QVERIFY(!model->isConnected());
+        QVERIFY(!sessions.desktopRuntime()->controller()->server());
+        const auto generation = sessions.generation();
+        for (int i = 0; i < 3; ++i) {
+            const int id = model->addSlice("pan-0");
+            QVERIFY(id >= 0);
+            QCOMPARE(model->sliceOwnership()->mark(id).owner, SliceOwnership::stationDevice());
+        }
+        QCOMPARE(sessions.generation(), generation);
+        QVERIFY(!model->isConnected());
+        QVERIFY(!QFileInfo::exists(service.profileDirectory + "/station-identity.pem"));
     }
 
     void desktopReclaimKeepsCoreRadioChoice_data()

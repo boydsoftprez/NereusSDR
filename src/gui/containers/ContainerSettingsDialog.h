@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Effective contextual draft properties and portable settings by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -58,6 +62,10 @@ mw0lge@grange-lane.co.uk
 #include <QPair>
 #include <QUuid>
 #include <QVector>
+#include <QPointer>
+#include <QSet>
+#include <memory>
+#include "ContainerDocument.h"
 
 class QListWidget;
 class QStackedWidget;
@@ -84,6 +92,9 @@ class TextItem;
 class ScaleItem;
 class SolidColourItem;
 class LEDItem;
+class ContainerEditSession;
+class ContainerPreviewWidget;
+class ContentPropertyEditor;
 
 class ContainerSettingsDialog : public QDialog {
     Q_OBJECT
@@ -98,6 +109,16 @@ public:
                                      QWidget* parent = nullptr,
                                      ContainerManager* manager = nullptr);
     ~ContainerSettingsDialog() override;
+    ContainerEditSession* editSession() const { return m_editSession.get(); }
+    CommitResult applyDraft();
+    void selectDraftContainer(const QString& id);
+    void refreshDraftView();
+    void reject() override;
+    bool importPortableContainer(const QByteArray& bytes);
+    bool importPortableEntries(const QString& text);
+    QByteArray exportPortableContainer();
+    QString exportPortableEntries();
+    static QWidget* buildTypeSpecificEditor(MeterItem* item, QWidget* parent);
 
     // Compute the next y-position for an item being appended to a
     // vertically-stacked layout. Items spanning more than 70% of the
@@ -160,10 +181,23 @@ private:
 
     // Phase 3G-6 block 4 dispatch — instantiates the per-item
     // BaseItemEditor subclass for the selected item's type tag.
-    QWidget* buildTypeSpecificEditor(MeterItem* item);
 
-    ContainerWidget* m_container{nullptr};
-    ContainerManager* m_manager{nullptr};
+
+    QPointer<ContainerWidget> m_container;
+    QPointer<ContainerManager> m_manager;
+    std::unique_ptr<ContainerEditSession> m_editSession;
+    ContainerPreviewWidget* m_preview=nullptr;
+    QLabel* m_transactionStatus=nullptr;
+    QLabel* m_draftStatus=nullptr;
+    void updateDraftStatus();
+    QString m_selectedId;
+    ContentPropertyEditor* m_contentEditor=nullptr;
+    QComboBox *m_headerCombo=nullptr, *m_layoutCombo=nullptr, *m_placementCombo=nullptr, *m_anchorCombo=nullptr;
+    bool insertImported(const DocumentResult& result, bool replaceContainer);
+    bool m_loadingDraft=false;
+    void saveCurrentDraft();
+    void loadCurrentDraft();
+    void refreshDraftDropdown();
     QVector<MeterItem*> m_workingItems;
 
     // Snapshot/revert (commit 14). Captured on dialog open and on

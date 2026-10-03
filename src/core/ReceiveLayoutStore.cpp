@@ -24,6 +24,7 @@
 #include "core/session/MirrorEnumDomain.h"
 #include "models/SliceModel.h"
 
+#include <algorithm>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -223,7 +224,8 @@ bool ReceiveLayoutStore::validate(const QList<ReceiveSliceState>& slices,
 bool ReceiveLayoutStore::stage(AppSettings& settings, const QString& mac,
                                const QList<ReceiveSliceState>& slices,
                                QString* error,
-                               std::optional<int> radeRxOwnerId)
+                               std::optional<int> radeRxOwnerId,
+                               std::optional<int> diversityOwnerId)
 {
     if (error) {
         error->clear();
@@ -272,6 +274,13 @@ bool ReceiveLayoutStore::stage(AppSettings& settings, const QString& mac,
                 resolvedOwnerId.has_value()
                     ? QJsonValue(*resolvedOwnerId)
                     : QJsonValue(QJsonValue::Null));
+    if (diversityOwnerId) {
+        const bool present = std::any_of(normalizedSlices.begin(), normalizedSlices.end(),
+            [diversityOwnerId](const ReceiveSliceState& slice) { return slice.id == *diversityOwnerId; });
+        if (!present) { diversityOwnerId.reset(); }
+        root.insert(QStringLiteral("diversityOwnerId"), diversityOwnerId
+            ? QJsonValue(*diversityOwnerId) : QJsonValue(QJsonValue::Null));
+    }
     const QString raw = QString::fromUtf8(
         QJsonDocument(root).toJson(QJsonDocument::Compact));
     if (raw.toUtf8().size() > kMaximumRawJsonBytes) {
@@ -325,7 +334,9 @@ ReceiveLayoutStore::LoadResult ReceiveLayoutStore::load(const AppSettings& setti
     const QJsonObject root = document.object();
     const bool hasOwnerField = root.contains(QStringLiteral("radeRxOwnerId"));
     if (!(exactKeys(root, {"version", "slices"})
-          || exactKeys(root, {"version", "slices", "radeRxOwnerId"}))) {
+          || exactKeys(root, {"version", "slices", "radeRxOwnerId"})
+          || exactKeys(root, {"version", "slices", "diversityOwnerId"})
+          || exactKeys(root, {"version", "slices", "radeRxOwnerId", "diversityOwnerId"}))) {
         return invalidData(QStringLiteral("Stored receive layout has an unsupported schema."));
     }
 
@@ -402,7 +413,20 @@ ReceiveLayoutStore::LoadResult ReceiveLayoutStore::load(const AppSettings& setti
     if (!validateAndResolveOwner(slices, requestedOwnerId, &resolvedOwnerId, &error)) {
         return invalidData(error);
     }
-    return {LoadState::Loaded, slices, {}, resolvedOwnerId};
+    std::optional<int> diversityOwner;
+    if (root.contains(QStringLiteral("diversityOwnerId"))
+        && !root.value(QStringLiteral("diversityOwnerId")).isNull()) {
+        int id = -1;
+        if (!jsonInteger(root.value(QStringLiteral("diversityOwnerId")), 0,
+                         WdspEngine::kMaxSliceChannels - 1, &id)) {
+            return invalidData(QStringLiteral("Stored receive layout has an invalid Diversity owner."));
+        }
+        // Same restored slice only. An absent owner is off, never promoted.
+        if (std::any_of(slices.begin(), slices.end(), [id](const ReceiveSliceState& slice) { return slice.id == id; })) {
+            diversityOwner = id;
+        }
+    }
+    return {LoadState::Loaded, slices, {}, resolvedOwnerId, diversityOwner};
 }
 
 } // namespace NereusSDR

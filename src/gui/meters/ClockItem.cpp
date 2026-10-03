@@ -58,10 +58,17 @@ mw0lge@grange-lane.co.uk
 
 namespace NereusSDR {
 
-ClockItem::ClockItem(QObject* parent) : MeterItem(parent)
+ClockItem::ClockItem(QObject* parent, bool ownTimer) : MeterItem(parent)
 {
-    m_updateTimer.setInterval(1000);
-    m_updateTimer.start();
+    Q_UNUSED(ownTimer); // Compatibility argument; all clocks use the shared presentation cadence.
+}
+
+bool ClockItem::advanceMeter(qint64 monotonicMs)
+{
+    const qint64 second=monotonicMs/1000;
+    const bool changed=second!=m_lastClockSecond;
+    m_lastClockSecond=second;
+    return changed;
 }
 
 void ClockItem::paint(QPainter& p, int widgetW, int widgetH)

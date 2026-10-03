@@ -1003,7 +1003,11 @@ const QList<ReasonSource>& reasonSources()
           // Antenna admission forwards the server helper, whose own words
           // and the dispatcher's returned words are scanned in these entries.
           QStringLiteral("radioAntennaRowRefusal(transport, message)"),
-          QStringLiteral("antennaRefusal")}},
+          QStringLiteral("antennaRefusal"),
+          // Canonical producer's plain words scanned below.
+          QStringLiteral("m_radioModel->legacyDiversityRefusal(id, update.value.toBool())"),
+          QStringLiteral("m_radioModel->diversityEligibility(id)"),
+          QStringLiteral("stationFreezeRefusal(id).text")}},
         // iPhone app Task 74 (R-IOS-30): the confirm step's answers and
         // refusals, confirm.request and notice reasons, and the chooser's
         // `why`. Device names inserted are the operator's own words (ruling
@@ -1126,7 +1130,11 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("result.reason"),
           // Confirmed antenna changes forward the same scanned server helper.
           QStringLiteral("radioAntennaRowRefusal(transport, question.original)"),
-          QStringLiteral("antennaRefusal")}},
+          QStringLiteral("antennaRefusal"),
+          // Canonical producer's plain words scanned below.
+          QStringLiteral("m_radioModel->legacyDiversityRefusal(id, update.value.toBool())"),
+          QStringLiteral("m_radioModel->diversityEligibility(id)"),
+          QStringLiteral("stationFreezeRefusal(id).text")}},
         // command.result for every verb.
         // The device's name ("Power Genius", "Tuner Genius") and what the
         // request asked, both this file's own literals
@@ -1488,6 +1496,13 @@ const QList<ReasonSource>& reasonSources()
           // Slice control plan Task 17: the controller's kind word.
           QStringLiteral("kind")}},
         {"src/models/TunerModel.cpp", {QStringLiteral("applyMirroredValue")}, {}, 2},
+        // This exact body constructs the authoritative Diversity summary.
+        // Its reasonCode values are wire codes; only reason assignments carry
+        // operator words. The two eligibility calls forward that separately
+        // scanned producer's words, with no general expression exemption.
+        {"src/models/RadioModel.cpp", {QStringLiteral("diversityStateForPeer")}, {}, 4, {},
+         {QStringLiteral("diversityEligibility(slice->sliceIndex(), &code)"),
+          QStringLiteral("diversityEligibility(live->sliceIndex(), &code)")}},
         {"src/models/RadioModel.cpp",
          {QStringLiteral("applyMirroredValue"), QStringLiteral("setFourO3AEnabledForStation"),
           QStringLiteral("setStationTciForStation"),
@@ -1560,6 +1575,11 @@ const QList<ReasonSource>& reasonSources()
           // read.
           QStringLiteral("mnrCannotRunReason"), QStringLiteral("bnrCannotRunReason"),
           QStringLiteral("nrCannotRunReason"), QStringLiteral("nrCannotRunInThisBuildReason"),
+          QStringLiteral("legacyDiversityRefusal"), QStringLiteral("diversityEligibility"),
+          QStringLiteral("invokeAdmittedDiversityControl"), QStringLiteral("invokeDiversityAsStationDevice"),
+          QStringLiteral("setDiversityTarget"), QStringLiteral("diversityControlRefusal"),
+          QStringLiteral("diversityState"),
+          QStringLiteral("publishDiversityState"),
           // The slice cap reason, relayed by the addSlice and addSliceOnPan
           // verbs' results.
           QStringLiteral("sliceCapReason"),
@@ -1605,7 +1625,10 @@ const QList<ReasonSource>& reasonSources()
           // onBandButtonClicked: the band's own label ("40m").
           QStringLiteral("bandLabel(band)"),
           // ioBoardFaultReason: the board's fault code, a number.
-          QStringLiteral("code")},
+          QStringLiteral("code"), QStringLiteral("holder"),
+          QStringLiteral("QString(QChar('A' + sliceId))"),
+          QStringLiteral("QString(QChar('A' + sliceId)), holder"),
+          QStringLiteral("QString(QChar('A' + source)), QString(QChar('A' + target))")},
          {// The refuse lambdas' parameter (literals of these functions),
           // the facades' and allocators' results (scanned), and the notch
           // refusals, constants of this file checked in
@@ -1653,7 +1676,13 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("rangeRefusal"),
           // Slice control plan Task 5: a held NNR diagnostics request says
           // the words SliceAccessMirror::listenerReason made (scanned).
-          QStringLiteral("slice->readOnlyListenerReason()")}},
+          QStringLiteral("slice->readOnlyListenerReason()"),
+          QStringLiteral("diversityControlRefusal(requester, id, server)"),
+          QStringLiteral("server->stationFreezeRefusal(id)"),
+          QStringLiteral("frozen.text"), QStringLiteral("this->diversityEligibility(target, &code)"),
+          QStringLiteral("diversityEligibility(sliceId)"),
+          QStringLiteral("diversityEligibility(slice->sliceIndex(), &code)"),
+          QStringLiteral("diversityEligibility(live->sliceIndex(), &code)")}},
         // iPhone app plan Task 25 (R-IOS-18): a `vax` level outside 0 to 1,
         // in property.result.
         {"src/core/session/StationVaxFacade.cpp", {QStringLiteral("levelRefusal")}, {}, 1},
@@ -2139,8 +2168,18 @@ QStringList unplacedReasonSites(const QString& file, const QString& code, int* f
                             + (named ? QString() : QStringLiteral(" (writes a reason it is given)")));
         }
     }
-    if (sender.match(code).hasMatch() && !scanned(file, QString()) && !appSide(file, QString())) {
-        unplaced.append(file + QStringLiteral(": sends a reason"));
+    if (!scanned(file, QString()) && !appSide(file, QString())) {
+        // A new canonical sender in a large model is registered by exact
+        // function, not by exempting all future send sites in the file.
+        QString unscannedCode = code;
+        for (const auto& function : functionsIn(code, anyName)) {
+            if (scanned(file, function.name) || appSide(file, function.name)) {
+                unscannedCode.replace(function.body, QString(function.body.size(), QLatin1Char(' ')));
+            }
+        }
+        if (sender.match(unscannedCode).hasMatch()) {
+            unplaced.append(file + QStringLiteral(": sends a reason"));
+        }
     }
     return unplaced;
 }
@@ -2301,6 +2340,61 @@ private slots:
             QStringLiteral("fail(sliceId, stream, QStringLiteral(\"unavailable\"));"), {});
         QVERIFY(!mediaProblems.join(QLatin1Char('|')).contains(QStringLiteral("sliceId")));
         QVERIFY(mediaProblems.join(QLatin1Char('|')).contains(QStringLiteral("unavailable")));
+    }
+
+    void diversitySummaryChecksItsOwnReasonsAndExactForwards()
+    {
+        const QString file = QStringLiteral("src/models/RadioModel.cpp");
+        const auto source = std::find_if(reasonSources().cbegin(), reasonSources().cend(),
+            [&file](const ReasonSource& entry) {
+                return QLatin1String(entry.file) == file
+                    && entry.functions == QStringList{QStringLiteral("diversityStateForPeer")};
+            });
+        QVERIFY(source != reasonSources().cend());
+        QVERIFY(source->notReasons.isEmpty());
+        const auto bodies = functionsIn(codeOf(sourcePath(file)),
+            QRegularExpression(QStringLiteral("^diversityStateForPeer$")));
+        QCOMPARE(bodies.size(), 1);
+        const auto problems = [&source](const QString& body) {
+            QStringList result;
+            for (const ReasonText& reason : reasonsIn(body)) {
+                result.append(problemsOf(reason, source->plainInserts, source->forwards));
+            }
+            return result;
+        };
+        const QString body = bodies.first().body;
+        const auto reasons = reasonsIn(body);
+        QCOMPARE(reasons.size(), 4);
+        QCOMPARE(std::count_if(reasons.cbegin(), reasons.cend(),
+            [](const ReasonText& reason) { return reason.forwarded; }), 2);
+        for (const ReasonText& reason : reasons) {
+            QVERIFY(reason.positioned);
+            QVERIFY(reason.text != QStringLiteral("pureSignalResources"));
+            QVERIFY(reason.text != QStringLiteral("resourcesUnavailable"));
+        }
+        QVERIFY2(problems(body).isEmpty(), qPrintable(problems(body).join(QLatin1Char('|'))));
+
+        // Mutate the actual producer's literal, not a wrapper or a made-up
+        // sender: a malformed summary reason must fail while codes remain
+        // outside the wording scan.
+        const QString plain = QStringLiteral("Diversity is waiting for the receiver pair.");
+        QCOMPARE(body.count(plain), 1);
+        QString malformed = body;
+        malformed.replace(plain, QStringLiteral("The session epoch expired."));
+        const QStringList malformedProblems = problems(malformed);
+        QCOMPARE(malformedProblems.size(), 1);
+        QVERIFY(malformedProblems.first().contains(QStringLiteral("The session epoch expired.")));
+        QVERIFY(!malformedProblems.first().contains(QStringLiteral("resourcesUnavailable")));
+
+        // An unlisted eligibility expression cannot borrow the existing
+        // forwards allowance merely because it calls the same helper.
+        QString unknownForward = body;
+        const QString known = QStringLiteral("diversityEligibility(live->sliceIndex(), &code)");
+        QCOMPARE(unknownForward.count(known), 1);
+        unknownForward.replace(known, QStringLiteral("diversityEligibility(otherId, &code)"));
+        const QStringList forwardProblems = problems(unknownForward);
+        QCOMPARE(forwardProblems.size(), 1);
+        QVERIFY(forwardProblems.first().contains(QStringLiteral("diversityEligibility(otherId, &code)")));
     }
 
     // TX diagnostics lane: the unkey event lines' literals are exempt as
@@ -2465,6 +2559,9 @@ private slots:
             unplacedReasonSites(QStringLiteral("src/core/PlantedModel.cpp"), planted);
         QVERIFY2(unplaced.join(QLatin1Char('|')).contains(QStringLiteral("applyThing")),
                  qPrintable(unplaced.join(QLatin1Char('|'))));
+        QVERIFY(unplacedReasonSites(QStringLiteral("src/models/RadioModel.cpp"),
+            QStringLiteral("void futureSender() { commandResult(v, id, false, why, {}); }"))
+            .contains(QStringLiteral("src/models/RadioModel.cpp: sends a reason")));
         // Named on the app side, it is placed.
         QVERIFY(unplacedReasonSites(QStringLiteral("src/core/session/StationClient.cpp"), planted)
                     .isEmpty());

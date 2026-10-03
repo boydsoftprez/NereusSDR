@@ -22,7 +22,7 @@
 // R3 unfinished controls, Task 2 (R-R3-49, R-R3-21): the controls the
 // operator removed are built in no window, local or remote; the values
 // users saved for them stay in the settings file; a saved Discord control
-// is dropped on load with one log line; and no Setup page or category with
+// is retained without a live control; and no Setup page or category with
 // nothing to show is offered or found (Logging & Performance, once its
 // Performance checkboxes went).
 //
@@ -43,6 +43,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03  J.J. Boyd / KG4VCF. Assert lossless inert unavailable records.
+//                                    AI-assisted via OpenAI Codex.
 //   2026-09-24  J.J. Boyd / KG4VCF  R3 unfinished controls, Task 1.
 //                                    AI-assisted transformation via
 //                                    Anthropic Claude Code.
@@ -1128,7 +1130,7 @@ private slots:
 
     // A saved container holding a Voice Rec/Play control loads, keeps it
     // without drawing or listing it, offers no new one, and saves it back.
-    void savedVoiceControlLoadsHiddenAndSavesBack()
+    void savedVoiceControlLoadsInertAndSavesBack()
     {
         const auto clearContainers = [] {
             auto& s = AppSettings::instance();
@@ -1150,6 +1152,7 @@ private slots:
         QWidget dockParent;
         QSplitter splitter;
         QString savedId;
+        QString voiceRecord;
         {
             ContainerManager mgr(&dockParent, &splitter);
             ContainerWidget* c = mgr.createContainer(1, DockMode::Floating);
@@ -1158,7 +1161,9 @@ private slots:
             auto* meter = new MeterWidget();
             c->setContent(meter);
             meter->addItem(new TextItem());
-            meter->addItem(new VoiceRecordPlayItem());
+            auto* voice = new VoiceRecordPlayItem();
+            voiceRecord = voice->serialize();
+            meter->addItem(voice);
             mgr.saveState();
         }
 
@@ -1169,8 +1174,9 @@ private slots:
             QVERIFY(c != nullptr);
             auto* meter = qobject_cast<MeterWidget*>(c->content());
             QVERIFY(meter != nullptr);
-            QCOMPARE(meter->items().size(), 2);
-            QCOMPARE(voiceCount(meter), 1);
+            QCOMPARE(meter->items().size(), 1);
+            QCOMPARE(voiceCount(meter), 0);
+            QCOMPARE(meter->serializeItems().split(QLatin1Char('\n')).last(), voiceRecord);
             for (MeterItem* item : meter->items()) {
                 QCOMPARE(meter->shouldRender(item), !qobject_cast<VoiceRecordPlayItem*>(item));
             }
@@ -1188,7 +1194,7 @@ private slots:
                         }
                     }
                 }
-                QCOMPARE(listed, 1);
+                QCOMPARE(listed, 0);
                 for (QPushButton* button : dialog.findChildren<QPushButton*>()) {
                     if (button->text() == QStringLiteral("+")) { button->click(); }
                 }
@@ -1199,8 +1205,8 @@ private slots:
             }
             meter = qobject_cast<MeterWidget*>(c->content());
             QVERIFY(meter != nullptr);
-            QCOMPARE(voiceCount(meter), 1);
-            QVERIFY(meter->serializeItems().contains(QStringLiteral("VOICERECPLAY")));
+            QCOMPARE(voiceCount(meter), 0);
+            QCOMPARE(meter->serializeItems().split(QLatin1Char('\n')).last(), voiceRecord);
             mgr.saveState();
         }
     }
@@ -1341,8 +1347,8 @@ private slots:
     }
 
     // A saved container holding a Discord control loads without error and
-    // without it, logs one line, and the rest of it loads and saves.
-    void savedDiscordControlIsDroppedOnLoad()
+    // without a live control; its exact ordered record and other items save.
+    void savedDiscordControlIsRetainedWithoutLiveControls()
     {
         const auto clearContainers = [] {
             auto& s = AppSettings::instance();
@@ -1392,20 +1398,17 @@ private slots:
             auto* meter = qobject_cast<MeterWidget*>(c->content());
             QVERIFY(meter != nullptr);
             QCOMPARE(meter->items().size(), 2);
-            QVERIFY(!meter->serializeItems().contains(QStringLiteral("DISCORDBTNS")));
+            QCOMPARE(meter->serializeItems().split(QLatin1Char('\n')).value(1), discordLine);
             mgr.saveState();
         }
         qInstallMessageHandler(previous);
-        const QStringList discordLines = capturedLog().filter(QStringLiteral("Discord"));
-        QCOMPARE(discordLines.size(), 1);
-        QVERIFY2(discordLines.first().startsWith(QStringLiteral("%1 ").arg(int(QtInfoMsg))),
-                 qPrintable(discordLines.first()));
         QVERIFY2(capturedLog().filter(QStringLiteral("%1 ").arg(int(QtCriticalMsg))).isEmpty(),
                  qPrintable(capturedLog().join(QStringLiteral(" | "))));
         const QStringList saved = s.value(key).toString().split(QLatin1Char('\n'));
-        QCOMPARE(saved.size(), 2);
+        QCOMPARE(saved.size(), 3);
+        QCOMPARE(saved.at(1), discordLine);
 
-        // A meter group holding one drops it the same way.
+        // A group retains the same ordered opaque record without a live control.
         capturedLog().clear();
         TextItem groupText;
         const QString group = QStringList{QStringLiteral("GROUP"), QStringLiteral("g"),
@@ -1419,7 +1422,7 @@ private slots:
         qInstallMessageHandler(previous);
         QVERIFY(loaded != nullptr);
         QCOMPARE(loaded->items().size(), 1);
-        QCOMPARE(capturedLog().filter(QStringLiteral("Discord")).size(), 1);
+        QCOMPARE(loaded->serialize(), group);
     }
 
     // An emptied Setup page is not offered: Logging & Performance, once its

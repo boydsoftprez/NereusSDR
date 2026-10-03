@@ -1,0 +1,67 @@
+libjuice 3c40a354: keep the poll worker while finished agents retain its registry
+
+MPL-2.0, like src/conn_poll.c; original file notice preserved unchanged.
+2026-10-03: J.J. Boyd (KG4VCF), with AI-assisted implementation via OpenAI Codex.
+
+Eligible sockets and retained registry ownership are distinct. After a socket
+error finishes the only agent, keep polling the existing interrupt descriptor
+until the registry is empty. A later agent wakes the same worker. Preparation
+errors and fatal poll errors still stop it; failed agents remain failed.
+No extra worker, spin loop, timeout change or interrupt policy is introduced.
+
+diff --git a/src/conn_poll.c b/src/conn_poll.c
+--- a/src/conn_poll.c
++++ b/src/conn_poll.c
+@@ -5,6 +5,10 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+  */
++
++// Modification history (NereusSDR):
++// 2026-10-03: retain the poll worker until its registry is empty.
++// J.J. Boyd (KG4VCF), with AI-assisted implementation via OpenAI Codex.
+ 
+ #include "conn_poll.h"
+ #include "agent.h"
+@@ -50,7 +54,8 @@
+ 	nfds_t size;
+ } pfds_record_t;
+ 
+-int conn_poll_prepare(conn_registry_t *registry, pfds_record_t *pfds, timestamp_t *next_timestamp);
++int conn_poll_prepare(conn_registry_t *registry, pfds_record_t *pfds, timestamp_t *next_timestamp,
++                      bool *retained);
+ int conn_poll_process(conn_registry_t *registry, pfds_record_t *pfds);
+ void conn_poll_process_udp(juice_agent_t *agent, struct pollfd *pfd);
+ int conn_poll_recv_udp(socket_t sock, char *buffer, size_t size, addr_record_t *src);
+@@ -135,7 +140,8 @@
+ 	registry->impl = NULL;
+ }
+ 
+-int conn_poll_prepare(conn_registry_t *registry, pfds_record_t *pfds, timestamp_t *next_timestamp) {
++int conn_poll_prepare(conn_registry_t *registry, pfds_record_t *pfds, timestamp_t *next_timestamp,
++                      bool *retained) {
+ 	timestamp_t now = current_timestamp();
+ 	*next_timestamp = now + 60000;
+ 
+@@ -218,6 +224,10 @@
+ 		}
+ 	}
+ 
++	// A FINISHED agent still owns this registry until conn_destroy removes it.
++	// Keep its worker waiting on the interrupt descriptor even with no eligible
++	// sockets, so a later agent can wake it without starting a second worker.
++	*retained = registry->agents_count > 0;
+ 	mutex_unlock(&registry->mutex);
+ 	return size - 1;
+ 
+@@ -499,7 +509,9 @@
+ 	pfds.size = 0;
+ 	timestamp_t next_timestamp = 0;
+ 	int count;
+-	while ((count = conn_poll_prepare(registry, &pfds, &next_timestamp)) > 0) {
++	bool retained;
++	while ((count = conn_poll_prepare(registry, &pfds, &next_timestamp, &retained)) >= 0 &&
++	       retained) {
+ 		timediff_t timediff = next_timestamp - current_timestamp();
+ 		if (timediff < 0)
+ 			timediff = 0;

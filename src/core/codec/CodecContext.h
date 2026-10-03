@@ -43,11 +43,14 @@ struct SliceConfig {
     int    sampleRateHz {192000};      ///< per-slice DDC rate (SampleRateCatalog::kDefaultSampleRate default)
     int    antennaIndex {1};           ///< ANT1=1, ANT2=2, ANT3=3, EXT1=4, EXT2=5, BYPS=6
     bool   txBound {false};            ///< only one slice is txBound at any moment
-    bool   diversityRequested {false}; ///< slice-A-only on hasDiversityReceiver SKUs
+    bool   diversityRequested {false}; ///< this stream hosts the requested Diversity owner
     bool   live {false};               ///< false = dormant placeholder, codec skips
 };
 
 struct CodecContext {
+    // NereusSDR-original: logical target stream, independent of physical pair
+    // DDC0/1 and of the one process-wide WDSP External Diversity id.
+    int diversityStream{0};
     // ADC supply voltage in volts (33 or 50).
     // From Thetis cmaster.SetADCSupply(0, N) — clsHardwareSpecific.cs:85-191 [v2.10.3.15].
     //

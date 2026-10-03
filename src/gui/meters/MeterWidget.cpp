@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via OpenAI Codex.
 //   2026-09-30 - the geometry buffer is written only in a frame that binds
 //                 it (drawsGeometryLayer); with no geometry pipeline (a
 //                 shader failed to load) every frame's write stayed pending
@@ -73,6 +77,8 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterWidget.h"
+#include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/LegacyContainerImporter.h"
 #include "MeterItem.h"
 #include "core/LogCategories.h"
 #include "gui/UnbuiltFeatures.h"
@@ -136,6 +142,9 @@ MeterWidget::MeterWidget(QWidget* parent)
     // Mirrors SpectrumWidget.cpp:97-110 exactly.
 #ifdef Q_OS_MAC
     setApi(QRhiWidget::Api::Metal);
+    // Keep each native meter leaf isolated, like SpectrumWidget. Ancestor
+    // promotion creates sibling RasterSurface windows before Qt sees their RHI.
+    setAttribute(Qt::WA_DontCreateNativeAncestors);
     setAttribute(Qt::WA_NativeWindow);
 #elif defined(Q_OS_WIN)
     setApi(QRhiWidget::Api::Direct3D11);
@@ -154,6 +163,7 @@ MeterWidget::MeterWidget(QWidget* parent)
 
 MeterWidget::~MeterWidget()
 {
+    emit aboutToDestroy();
     qCDebug(lcMeter) << "MeterWidget destroyed";
 }
 
@@ -168,17 +178,30 @@ void MeterWidget::addItem(MeterItem* item)
         item->setParent(this);
     }
     m_items.append(item);
+    if (m_unitMode) { item->setUnitMode(*m_unitMode); }
+    if (m_powerScale > 0) { item->setPowerScale(m_powerScale); }
+    item->resetForTxTransition(m_mox);
+    for (int binding : item->readingBindings()) {
+        if (!item->hasMmioBinding()) { item->setBindingUnavailable(binding, item->property("unsupportedSourceReason").toString().isEmpty()?m_unavailableBindings.value(binding):item->property("unsupportedSourceReason").toString()); }
+        const auto cached = m_lastBindingValue.constFind(binding);
+        if (!item->property("containerUnsupportedSource").toBool() && !item->hasMmioBinding() && cached != m_lastBindingValue.constEnd()) { item->pushBindingValue(binding, cached.value()); }
+    }
 #ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
     m_bgDirty = true;
 #endif
     update();
+    if (item->hasMmioBinding()) {
+        const auto cached = m_lastMmioReading.constFind(item->mmioSourceKey());
+        if (cached != m_lastMmioReading.constEnd()) { updateMmioValue(item, cached->value, cached->reason); }
+    }
     emit itemAdded(item);
 }
 
 void MeterWidget::removeItem(MeterItem* item)
 {
     if (m_items.removeOne(item)) {
+        m_legacyRecords.removeIf([item](const LegacyRecord& record) { return record.item == item; });
 #ifdef NEREUS_GPU_SPECTRUM
         markOverlayDirty();
         m_bgDirty = true;
@@ -186,6 +209,25 @@ void MeterWidget::removeItem(MeterItem* item)
         update();
         emit itemRemoved(item);
     }
+}
+
+void MeterWidget::replaceItems(const QVector<MeterItem*>& items)
+{
+    ContainerContentRegistry registry;
+    QHash<QString, MeterItem*> replacements;
+    for (MeterItem* item : items) { if (item) { replacements.insert(registry.captureMeterItem(*item).id,item); } }
+    QVector<LegacyRecord> retained;
+    for (const auto& record : m_legacyRecords) {
+        if (!record.item) { retained.append(record); continue; }
+        MeterItem* replacement = replacements.value(registry.captureMeterItem(*record.item).id,nullptr);
+        if (replacement) { retained.append({record.raw,replacement}); }
+    }
+    // Reconciliation callers may reuse current objects. Detach those owned by
+    // this widget before clearing, so clearItems cannot destroy a replacement.
+    for (MeterItem* item : items) { if (item && item->parent() == this) { item->setParent(nullptr); } }
+    clearItems();
+    for (MeterItem* item : items) { addItem(item); }
+    m_legacyRecords = retained;
 }
 
 void MeterWidget::clearItems()
@@ -196,6 +238,7 @@ void MeterWidget::clearItems()
         }
     }
     m_items.clear();
+    m_legacyRecords.clear();
     emit displayVisibilityChanged();
 #ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
@@ -206,66 +249,127 @@ void MeterWidget::clearItems()
 
 void MeterWidget::updateMeterValue(int bindingId, double value)
 {
-    // Fuzzy guard: MeterPoller cascades a value push for every binding
-    // every 100 ms whether or not the WDSP reading actually moved.  On
-    // a quiet RX signal (typical between QSOs) the same -120 dBm /
-    // 0 dB ALC / 0 W power values walk through the loop 10x per second
-    // per binding × per target widget, each triggering a full meter
-    // repaint into IOSurface.  qFuzzyCompare against the last pushed
-    // value drops the redundant work without affecting any meter that
-    // actually moved.  Note: item-side attack/decay smoothing already
-    // converges on its own once value is settled, so suppressing the
-    // unchanged-input update() is safe.
-    auto it = m_lastBindingValue.find(bindingId);
-    if (it != m_lastBindingValue.end()
-        && qFuzzyCompare(1.0 + it.value(), 1.0 + value)) {
-        return;
-    }
+    const auto old = m_lastBindingValue.constFind(bindingId);
+    const bool inputChanged = old == m_lastBindingValue.constEnd() || old.value() != value;
     m_lastBindingValue[bindingId] = value;
-
+    // Delivery precedes repaint shortcuts: repeated primitive samples keep
+    // smoothing, and composites retain input for the shared frame clock.
     for (MeterItem* item : m_items) {
-        if (item->bindingId() == bindingId) {
-            item->setValue(value);
-        }
+        if (item->property("containerUnsupportedSource").toBool() || item->hasMmioBinding() || !item->readingBindings().contains(bindingId)) { continue; }
+        const BarItem* bar = qobject_cast<BarItem*>(item);
+        const NeedleItem* needle = qobject_cast<NeedleItem*>(item);
+        const double before = bar ? bar->smoothedValue() : (needle ? needle->smoothedValue() : item->value());
+        const double peakBefore = bar ? bar->peakValue() : 0.0;
+        item->pushBindingValue(bindingId, value);
+        const double after = bar ? bar->smoothedValue() : (needle ? needle->smoothedValue() : item->value());
+        // Legacy history polylines shift as samples arrive even after the
+        // live marker settles; composite history reports changes on advance.
+        const bool changed = inputChanged || before != after || (bar && peakBefore != bar->peakValue())
+            || (bar && bar->showHistory()) || (needle && needle->historyEnabled());
+        if (changed) { invalidateItemLayers(item); }
     }
+}
+
+void MeterWidget::updateMmioValue(MeterItem* item, double value, const QString& unavailableReason)
+{
+    if (!item || !m_items.contains(item)) { return; }
+    const BarItem* bar = qobject_cast<BarItem*>(item);
+    const NeedleItem* needle = qobject_cast<NeedleItem*>(item);
+    const double before = bar ? bar->smoothedValue() : (needle ? needle->smoothedValue() : item->value());
+    const double oldPeak = bar ? bar->peakValue() : 0.0;
+    const bool availabilityChanged = item->bindingUnavailableReason(item->bindingId()) != unavailableReason;
+    m_lastMmioReading[item->mmioSourceKey()] = {value, unavailableReason};
+    QSet<int> bindings = item->readingBindings(); bindings.insert(item->bindingId());
+    for (int binding : bindings) { item->setBindingUnavailable(binding, unavailableReason); }
+    const bool inputChanged = item->value() != value;
+    item->setValue(value);
+    const double after = bar ? bar->smoothedValue() : (needle ? needle->smoothedValue() : item->value());
+    if (availabilityChanged || inputChanged || before != after || (bar && oldPeak != bar->peakValue())
+        || (bar && bar->showHistory()) || (needle && needle->historyEnabled())) {
+        invalidateItemLayers(item);
+    }
+}
+
+void MeterWidget::invalidatePresentation(const MeterItem* item)
+{
+    if (!item || !m_items.contains(const_cast<MeterItem*>(item))) { return; }
+    invalidateItemLayers(item);
+    update();
+}
+
+void MeterWidget::invalidateItemLayers(const MeterItem* item)
+{
+    ++m_readingInvalidations;
 #ifdef NEREUS_GPU_SPECTRUM
+    // Legacy Background-only dynamic items need their cached texture rebuilt.
+    // A complete face keeps its backdrop static and paints moving parts in
+    // OverlayDynamic/Geometry, so normal readings preserve its static caches.
+    const bool hasDynamicLayer = item->participatesIn(MeterItem::Layer::OverlayDynamic)
+        || item->participatesIn(MeterItem::Layer::Geometry);
+    if (!hasDynamicLayer && item->participatesIn(MeterItem::Layer::Background)) { m_bgDirty = true; }
+    if (!hasDynamicLayer && item->participatesIn(MeterItem::Layer::OverlayStatic)) { m_overlayStaticDirty = true; }
     markDynamicDirty();
 #else
+    Q_UNUSED(item);
     update();
 #endif
+}
+
+void MeterWidget::invalidateReadingLayers(bool staticLayers)
+{
+#ifdef NEREUS_GPU_SPECTRUM
+    if (staticLayers) { m_bgDirty = true; markOverlayDirty(); }
+    else { markDynamicDirty(); }
+#else
+    Q_UNUSED(staticLayers);
+    update();
+#endif
+}
+
+void MeterWidget::advanceMeters(qint64 monotonicMs)
+{
+    for (MeterItem* item : m_items) {
+        if (item->advanceMeter(monotonicMs)) { invalidateItemLayers(item); }
+        if (item->takeStaticPresentationChange()) { invalidateReadingLayers(true); }
+    }
+}
+
+void MeterWidget::resetForTxTransition(bool inTx)
+{
+    setMox(inTx);
+    for (auto it = m_lastBindingValue.begin(); it != m_lastBindingValue.end();) {
+        if (it.key() >= MeterBinding::TxPower && it.key() < MeterBinding::HwVolts) { it = m_lastBindingValue.erase(it); }
+        else { ++it; }
+    }
+    for (MeterItem* item : m_items) { item->resetForTxTransition(inTx); }
+    invalidateReadingLayers(true);
+}
+
+void MeterWidget::clearReadingCache()
+{
+    m_lastBindingValue.clear();
+}
+
+void MeterWidget::setUnitMode(MeterItem::MeterUnit unit)
+{
+    m_unitMode = unit;
+    for (MeterItem* item : m_items) { item->setUnitMode(unit); }
+    invalidateReadingLayers(true);
+}
+
+MeterItem::MeterUnit MeterWidget::unitMode() const
+{
+    // Legacy MultimeterPage still applies units directly to items.
+    if (!m_items.isEmpty()) { return m_items.first()->unitMode(); }
+    return m_unitMode.value_or(MeterItem::MeterUnit::dBm);
 }
 
 void MeterWidget::rescalePowerMeters(int paMaxWatts)
 {
     if (paMaxWatts <= 0) { return; }
-
-    const double red = static_cast<double>(paMaxWatts);
-    const double top = red * 1.2;   // 20% headroom past the red zone
-
-    for (MeterItem* item : m_items) {
-        if (item->objectName() == QStringLiteral("PowerBar")) {
-            // BarItem: update range + redThreshold.  setRange/setRedThreshold
-            // are public on BarItem.  Cast through QObject::qobject_cast so
-            // a future swap (NeedleItem etc.) doesn't crash.
-            if (BarItem* bar = qobject_cast<BarItem*>(item)) {
-                bar->setRange(0.0, top);
-                bar->setRedThreshold(red);
-            }
-        } else if (item->objectName() == QStringLiteral("PowerScale")) {
-            if (ScaleItem* scale = qobject_cast<ScaleItem*>(item)) {
-                scale->setRange(0.0, top);
-                // QRP radios benefit from finer ticks: 7 ticks works for
-                // 100/200/1000 W scales but a 0-6 W scale wants 4-6
-                // labels max so the numbers don't overlap.
-                scale->setMajorTicks(paMaxWatts <= 10 ? 5 : 7);
-            }
-        }
-    }
-#ifdef NEREUS_GPU_SPECTRUM
-    markDynamicDirty();
-#else
-    update();
-#endif
+    m_powerScale = paMaxWatts;
+    for (MeterItem* item : m_items) { item->setPowerScale(paMaxWatts); }
+    invalidateReadingLayers(true);
 }
 
 // ============================================================================
@@ -275,101 +379,46 @@ void MeterWidget::rescalePowerMeters(int paMaxWatts)
 QString MeterWidget::serializeItems() const
 {
     QStringList lines;
-    for (const MeterItem* item : m_items) {
-        lines << item->serialize();
+    QSet<const MeterItem*> emitted;
+    for (const auto& record : m_legacyRecords) {
+        if (!record.item) { lines.append(record.raw); continue; }
+        if (!m_items.contains(record.item)) { continue; }
+        QString current = record.item->serialize();
+        const QStringList rawFields = record.raw.split(QLatin1Char('|'));
+        const int knownCount = current.split(QLatin1Char('|')).size();
+        if (!record.raw.trimmed().startsWith(QLatin1Char('{')) && rawFields.size() > knownCount) { current += QLatin1Char('|') + rawFields.mid(knownCount).join(QLatin1Char('|')); }
+        lines.append(current); emitted.insert(record.item);
     }
+    for (const MeterItem* item : m_items) { if (!emitted.contains(item)) { lines.append(item->serialize()); } }
     return lines.join(QLatin1Char('\n'));
 }
 
 bool MeterWidget::deserializeItems(const QString& data)
 {
     if (data.isEmpty()) { return false; }
-
-    clearItems();
-    QStringList lines = data.split(QLatin1Char('\n'));
-    for (const QString& line : lines) {
-        if (line.isEmpty()) { continue; }
-
-        QString type = line.section(QLatin1Char('|'), 0, 0);
-        MeterItem* item = nullptr;
-        // Core types (MeterItem.h)
-        if (type == QStringLiteral("BAR")) {
-            item = new BarItem();
-        } else if (type == QStringLiteral("SOLID")) {
-            item = new SolidColourItem();
-        } else if (type == QStringLiteral("IMAGE")) {
-            item = new ImageItem();
-        } else if (type == QStringLiteral("SCALE")) {
-            item = new ScaleItem();
-        } else if (type == QStringLiteral("TEXT")) {
-            item = new TextItem();
-        } else if (type == QStringLiteral("NEEDLE")) {
-            item = new NeedleItem();
-        }
-        // Phase 3G-4 passive types
-        else if (type == QStringLiteral("SPACER")) {
-            item = new SpacerItem();
-        } else if (type == QStringLiteral("FADECOVER")) {
-            item = new FadeCoverItem();
-        } else if (type == QStringLiteral("LED")) {
-            item = new LEDItem();
-        } else if (type == QStringLiteral("HISTORY")) {
-            item = new HistoryGraphItem();
-        } else if (type == QStringLiteral("MAGICEYE")) {
-            item = new MagicEyeItem();
-        } else if (type == QStringLiteral("NEEDLESCALEPWR")) {
-            item = new NeedleScalePwrItem();
-        } else if (type == QStringLiteral("SIGNALTEXT")) {
-            item = new SignalTextItem();
-        } else if (type == QStringLiteral("DIAL")) {
-            item = new DialItem();
-        } else if (type == QStringLiteral("TEXTOVERLAY")) {
-            item = new TextOverlayItem();
-        } else if (type == QStringLiteral("WEBIMAGE")) {
-            item = new WebImageItem();
-        } else if (type == QStringLiteral("FILTERDISPLAY")) {
-            item = new FilterDisplayItem();
-        } else if (type == QStringLiteral("ROTATOR")) {
-            item = new RotatorItem();
-        }
-        // Phase 3G-5 interactive types
-        else if (type == QStringLiteral("BANDBTNS")) {
-            item = new BandButtonItem();
-        } else if (type == QStringLiteral("MODEBTNS")) {
-            item = new ModeButtonItem();
-        } else if (type == QStringLiteral("FILTERBTNS")) {
-            item = new FilterButtonItem();
-        } else if (type == QStringLiteral("ANTENNABTNS")) {
-            item = new AntennaButtonItem();
-        } else if (type == QStringLiteral("TUNESTEPBTNS")) {
-            item = new TuneStepButtonItem();
-        } else if (type == QStringLiteral("OTHERBTNS")) {
-            item = new OtherButtonItem();
-        } else if (type == QStringLiteral("VOICERECPLAY")) {
-            item = new VoiceRecordPlayItem();
-        } else if (type == QStringLiteral("DISCORDBTNS")) {
-            // R-R3-49: the Discord control was removed. A saved one is
-            // dropped here; the rest of the container loads normally.
-            qCInfo(lcMeter) << "Dropped a saved Discord control from a container:"
-                               " that control has been removed";
-            continue;
-        } else if (type == QStringLiteral("VFO")) {
-            item = new VfoDisplayItem();
-        } else if (type == QStringLiteral("CLOCK")) {
-            item = new ClockItem();
-        } else if (type == QStringLiteral("CLICKBOX")) {
-            item = new ClickBoxItem();
-        } else if (type == QStringLiteral("DATAOUT")) {
-            item = new DataOutItem();
-        }
-
-        if (item && item->deserialize(line)) {
-            addItem(item);
-        } else {
-            delete item;
-        }
+    const DocumentResult imported = LegacyContainerImporter::fromClipboard(data);
+    if (!imported.ok || imported.document.containers.size() != 1) { return false; }
+    const QVector<ContentEntry> entries = imported.document.containers.first().contents;
+    ContainerContentRegistry registry;
+    QVector<MeterItem*> decoded;
+    for (const auto& entry : entries) {
+        if (MeterItem* item = registry.createMeterItem(entry,nullptr,ContentRenderMode::Validation)) { decoded.append(item); }
     }
-    return !m_items.isEmpty();
+    // Validate the entire payload before touching live content or fetching URLs.
+    if (entries.isEmpty()) { return false; }
+    if (decoded.isEmpty() && !m_items.isEmpty()) {
+        bool allMalformed = true;
+        for (const auto& entry : entries) { allMalformed = allMalformed && entry.extensions.value(QStringLiteral("legacyMalformed")).toBool(); }
+        if (allMalformed) { return false; }
+    }
+    qDeleteAll(decoded);
+    clearItems();
+    for (const auto& entry : entries) {
+        MeterItem* item = registry.createMeterItem(entry,nullptr);
+        if (item) { addItem(item); }
+        m_legacyRecords.append({entry.config.value(QStringLiteral("legacyRecord")).toString(),item});
+    }
+    return true;
 }
 
 // ============================================================================
@@ -609,15 +658,15 @@ void MeterWidget::drawItems(QPainter& p)
 // widget's own background colour over them.
 void MeterWidget::drawUnavailableVeils(QPainter& p) const
 {
-    if (m_unavailableBindings.isEmpty()) {
-        return;
-    }
     const int w = width();
     const int h = height();
     for (const MeterItem* item : m_items) {
-        if (!shouldRender(item) || !m_unavailableBindings.contains(item->bindingId())) {
-            continue;
-        }
+        if (!shouldRender(item)) { continue; }
+        QSet<int> bindings = item->readingBindings();
+        if (item->hasMmioBinding()) { bindings.insert(item->bindingId()); }
+        bool allUnavailable = !bindings.isEmpty();
+        for (int binding : bindings) { allUnavailable = allUnavailable && !item->bindingUnavailableReason(binding).isEmpty(); }
+        if (!allUnavailable) { continue; }
         // The item's own rectangle (MeterItem::pixelRect's arithmetic).
         const QRect rect(static_cast<int>(item->x() * w), static_cast<int>(item->y() * h),
                          static_cast<int>(item->itemWidth() * w),
@@ -628,6 +677,9 @@ void MeterWidget::drawUnavailableVeils(QPainter& p) const
 
 void MeterWidget::setBindingUnavailable(int bindingId, const QString& reason)
 {
+    for (MeterItem* item : m_items) {
+        if (!item->hasMmioBinding() && item->readingBindings().contains(bindingId)) { item->setBindingUnavailable(bindingId, item->property("unsupportedSourceReason").toString().isEmpty()?reason:item->property("unsupportedSourceReason").toString()); }
+    }
     const auto it = m_unavailableBindings.constFind(bindingId);
     const bool unavailable = it != m_unavailableBindings.constEnd();
     if ((!unavailable && reason.isEmpty()) || (unavailable && it.value() == reason)) {
@@ -654,10 +706,14 @@ QString MeterWidget::unavailableReasonAt(const QPointF& pos) const
         if (!shouldRender(item) || !item->hitTest(pos, w, h)) {
             continue;
         }
-        const auto it = m_unavailableBindings.constFind(item->bindingId());
-        if (it != m_unavailableBindings.constEnd()) {
-            return it.value();
+        QStringList reasons;
+        QSet<int> bindings = item->readingBindings();
+        if (item->hasMmioBinding()) { bindings.insert(item->bindingId()); }
+        for (int binding : bindings) {
+            const QString reason = item->bindingUnavailableReason(binding);
+            if (!reason.isEmpty() && !reasons.contains(reason)) { reasons.append(reason); }
         }
+        if (!reasons.isEmpty()) { return reasons.join(QLatin1Char('\n')); }
     }
     return {};
 }
@@ -771,8 +827,9 @@ void MeterWidget::initBackgroundPipeline()
     m_bgVbo = r->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, sizeof(kMeterQuadData));
     m_bgVbo->create();
 
-    const int w = qMax(width(), 64);
-    const int h = qMax(height(), 64);
+    const qreal dpr = devicePixelRatioF();
+    const int w = qMax(qRound(width() * dpr), 64);
+    const int h = qMax(qRound(height() * dpr), 64);
     m_bgGpuTex = r->newTexture(QRhiTexture::RGBA8, QSize(w, h));
     m_bgGpuTex->create();
 
@@ -811,6 +868,7 @@ void MeterWidget::initBackgroundPipeline()
 
     // Initialize backing QImage
     m_bgImage = QImage(w, h, QImage::Format_RGBA8888);
+    m_bgImage.setDevicePixelRatio(dpr);
     m_bgDirty = true;
 }
 
@@ -908,7 +966,9 @@ void MeterWidget::initOverlayPipeline()
     // Alpha blending for overlay compositing
     QRhiGraphicsPipeline::TargetBlend blend;
     blend.enable = true;
-    blend.srcColor = QRhiGraphicsPipeline::SrcAlpha;
+    // QPainter overlay images already contain premultiplied RGB.
+    // Multiply only the destination by remaining alpha, matching CPU composition.
+    blend.srcColor = QRhiGraphicsPipeline::One;
     blend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
     blend.srcAlpha = QRhiGraphicsPipeline::One;
     blend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
@@ -958,9 +1018,11 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     // ---- Pipeline 1: Background ----
     // Repaint if dirty (size change or items changed)
     {
-        const QSize bgSize(qMax(w, 64), qMax(h, 64));
-        if (m_bgImage.size() != bgSize) {
+        const qreal dpr = devicePixelRatioF();
+        const QSize bgSize(qMax(qRound(w * dpr), 64), qMax(qRound(h * dpr), 64));
+        if (m_bgImage.size() != bgSize || !qFuzzyCompare(m_bgImage.devicePixelRatio(), dpr)) {
             m_bgImage = QImage(bgSize, QImage::Format_RGBA8888);
+            m_bgImage.setDevicePixelRatio(dpr);
             m_bgGpuTex->setPixelSize(bgSize);
             m_bgGpuTex->create();
             m_bgSrb->setBindings({

@@ -58,6 +58,8 @@ mw0lge@grange-lane.co.uk
 
 #include <QString>
 #include <QVector>
+#include <QPointer>
+#include <QStringList>
 
 namespace NereusSDR {
 
@@ -85,6 +87,8 @@ public:
 
     QString serialize() const;
     static ItemGroup* deserialize(const QString& data, QObject* parent = nullptr);
+
+    static ItemGroup* createCompletePreset(const QString& typeId, QObject* parent=nullptr);
 
     // Preset factory: creates a horizontal bar meter with scale + readout.
     // Layout within group: top 20% label+readout, mid 28% bar, bottom 46% scale.
@@ -200,6 +204,9 @@ private:
     float m_w{1.0f};
     float m_h{1.0f};
     QVector<MeterItem*> m_items;
+    struct LegacyRecord { QString raw; QPointer<MeterItem> item; };
+    QVector<LegacyRecord> m_legacyRecords;
+    QStringList m_legacyTail;
 };
 
 } // namespace NereusSDR

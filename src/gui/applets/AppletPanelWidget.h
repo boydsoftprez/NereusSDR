@@ -16,6 +16,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -28,6 +32,7 @@
 #include <QWidget>
 #include <QList>
 #include <QMap>
+#include <QPointer>
 
 class QVBoxLayout;
 class QScrollArea;
@@ -39,6 +44,7 @@ namespace NereusSDR {
 class AppletWidget;
 class AppletFloatingWindow;
 class SMeterWidget;
+class ContainerArrangeController;
 
 // Scrollable vertical stack of applets with AetherSDR AppletPanel styling.
 // This is a SINGLE widget that goes into ContainerWidget::setContent().
@@ -53,6 +59,8 @@ class AppletPanelWidget : public QWidget {
     Q_OBJECT
 public:
     explicit AppletPanelWidget(QWidget* parent = nullptr);
+    void setArrangeController(ContainerArrangeController* controller);
+    void setManagedWorkspace(bool managed) { m_managedWorkspace = managed; }
 
     // Set a header widget (e.g., MeterWidget) that stays visible above
     // the scroll area. Height scales dynamically with width using the
@@ -72,7 +80,7 @@ public:
     // Access the SMeterWidget installed as the fixed header.
     // Returns nullptr before the panel is built (should never happen after
     // buildUI is called from the constructor chain, but callers must guard).
-    SMeterWidget* smeterWidget() const { return m_sMeter; }
+    SMeterWidget* smeterWidget() const;
 
     // Add an applet — wraps it with a title bar and adds to the scroll stack
     void addApplet(AppletWidget* applet);
@@ -141,7 +149,9 @@ private:
     // SMeterWidget installed as the fixed header (Task 40, Phase 3P-II).
     // Non-owning after setHeaderWidget(); the title-bar wrapper owns the tree.
     // Accessed by MainWindow via smeterWidget() for Task 41/43 wiring.
-    SMeterWidget* m_sMeter        = nullptr;
+    QPointer<SMeterWidget> m_sMeter;
+    QPointer<ContainerArrangeController> m_arrange;
+    bool m_managedWorkspace = false;
 
     // ☰ menu button. Created in the constructor (hidden, parented to
     // `this` for memory management). When setHeaderWidget runs it gets

@@ -9,6 +9,12 @@
 // Modification history (NereusSDR):
 //   2026-10-01  J.J. Boyd / KG4VCF. Resolve remote Max Bin by the slice
 //                 hosted in this window. AI-assisted via OpenAI Codex.
+//   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -161,6 +167,8 @@ mw0lge@grange-lane.co.uk
 #include "models/SliceModel.h"
 
 #include <cmath>
+#include <QJsonDocument>
+#include <QScopeGuard>
 
 // WDSP GetTXAMeter — lock-free TX meter read.
 // From Thetis dsp.cs:390-391 [v2.10.3.13]:
@@ -175,6 +183,7 @@ namespace NereusSDR {
 MeterPoller::MeterPoller(QObject* parent)
     : QObject(parent)
 {
+    m_clock.start();
     m_timer.setInterval(100);  // 10 fps default (from Thetis UpdateInterval=100ms)
     connect(&m_timer, &QTimer::timeout, this, &MeterPoller::poll);
 }
@@ -183,27 +192,44 @@ MeterPoller::~MeterPoller() = default;
 
 void MeterPoller::setRxChannel(RxChannel* channel)
 {
+    if (m_rxChannel == channel) { return; }
+    disconnect(m_rxDestroyed);
     m_rxChannel = channel;
+    invalidateReadings(true, false, false);
+    if (channel) { m_rxDestroyed = connect(channel, &QObject::destroyed, this, [this] { invalidateReadings(true, false, false); }); }
     qCDebug(lcMeter) << "MeterPoller: RxChannel set, channelId:"
                       << (channel ? channel->channelId() : -1);
 }
 
 void MeterPoller::setLocalRxReadingAvailable(bool available)
 {
+    if (m_localRxReadingAvailable == available) { return; }
     m_localRxReadingAvailable = available;
+    invalidateReadings(true, false, false);
 }
 
 // H.2 (Phase 3M-1a): store non-owning pointer to the TX channel.
 // WdspEngine owns the object; call setTxChannel(nullptr) on radio disconnect.
 void MeterPoller::setTxChannel(TxChannel* channel)
 {
+    disconnect(m_txDestroyed);
     m_txChannel = channel;
+    invalidateTxAudioReadings();
+    if (channel) { m_txDestroyed = connect(channel, &QObject::destroyed, this, [this] {
+        invalidateTxAudioReadings();
+        for (int binding = MeterBinding::TxMic; binding <= MeterBinding::TxCfcPeak; ++binding) { publishAvailability(binding, tr("No transmit source.")); }
+    }); }
+    for (int binding = MeterBinding::TxMic; binding <= MeterBinding::TxCfcPeak; ++binding) {
+        publishAvailability(binding, channel ? QString() : tr("No transmit source."));
+    }
     qCDebug(lcMeter) << "MeterPoller: TxChannel set, channelId:"
                       << (channel ? channel->channelId() : -1);
 }
 
 // Task 41 (Phase 3P-II): store non-owning pointer to the analog SMeterWidget.
 // Call with nullptr on panel destruction (QPointer auto-clears on widget delete).
+SMeterWidget* MeterPoller::smeterForTest() const { return m_sMeter; }
+
 void MeterPoller::setSMeter(SMeterWidget* widget)
 {
     m_sMeter = widget;
@@ -218,6 +244,7 @@ void MeterPoller::setSMeter(SMeterWidget* widget)
 void MeterPoller::setWdspEngine(WdspEngine* engine)
 {
     m_wdspEngine = engine;
+    invalidateReadings(true, false, false);
     qCDebug(lcMeter) << "MeterPoller: WdspEngine set:" << (engine ? "yes" : "nullptr");
 }
 
@@ -225,10 +252,23 @@ void MeterPoller::setRemoteRadioModel(RadioModel* model,
                                      std::function<bool()> snapshotReady,
                                      std::function<double(const SliceModel*)> maxBinSource)
 {
+    for (const auto& connection : m_remoteConnections) { disconnect(connection); }
+    m_remoteConnections.clear();
+    invalidateReadings(true, true, true);
     m_remoteRole = model && model->role() == RadioModel::Role::Remote;
     m_remoteModel = m_remoteRole ? model : nullptr;
     m_remoteSnapshotReady = std::move(snapshotReady);
     m_remoteMaxBinSource = std::move(maxBinSource);
+    if (m_remoteModel) {
+        m_remoteConnections.append(connect(model, &QObject::destroyed, this, [this] { invalidateReadings(true, true, true); }));
+        m_remoteConnections.append(connect(model, &RadioModel::activeSliceChanged, this, [this] { invalidateReadings(true, false, false); }));
+        m_remoteConnections.append(connect(model, &RadioModel::connectionStateChanged, this, [this] { invalidateReadings(true, true, true); }));
+    }
+    if (!m_remoteRole) {
+        const QList<int> previouslyUnavailable = m_availability.keys();
+        for (int binding : previouslyUnavailable) { publishAvailability(binding, {}); }
+    }
+    refreshRemoteMeterReadingsAvailability(true);
     // Task 39: whichever of the two setters runs last marks the meters.
     refreshRemoteTxAvailability(/*force=*/true);
 }
@@ -239,9 +279,21 @@ void MeterPoller::setRemoteTransmitState(TransmitState* state,
     if (m_remoteTransmitState) {
         disconnect(m_remoteTransmitState, nullptr, this, nullptr);
     }
+    invalidateReadings(false, true, false);
     m_remoteTransmitState = state;
     m_remoteTransmitUnavailable = std::move(unavailableText);
     if (state != nullptr) {
+        connect(state, &QObject::destroyed, this, [this] {
+            invalidateReadings(false, true, false);
+            for (int b = MeterBinding::TxPower; b <= MeterBinding::TxCfcPeak; ++b) { publishAvailability(b, tr("No transmit source.")); }
+        });
+        setInTx(state->keyed());
+        if (m_remoteModel) {
+            m_remoteModel->radioStatus().setPowerReadings(state->forwardPowerWatts(), state->reflectedPowerWatts(), state->swr());
+            publishGlobalReading(MeterBinding::TxPower, state->forwardPowerWatts());
+            publishGlobalReading(MeterBinding::TxReversePower, state->reflectedPowerWatts());
+            publishGlobalReading(MeterBinding::TxSwr, state->swr());
+        }
         // Power, reflected power and SWR go into this window's RadioStatus,
         // which the S-meter's TX needle, the TX applet's power gauge and the
         // container meters already follow (setRadioStatus). The local
@@ -265,6 +317,8 @@ void MeterPoller::setRemoteTransmitState(TransmitState* state,
                 setInTx(s->keyed());
             }
         });
+    } else {
+        for (int b = MeterBinding::TxPower; b <= MeterBinding::TxCfcPeak; ++b) { publishAvailability(b, tr("No transmit source.")); }
     }
     refreshRemoteTxAvailability(/*force=*/true);
 }
@@ -290,6 +344,7 @@ QString MeterPoller::remoteTxMeterNotSentText()
 
 void MeterPoller::setRemoteTxStageReadingsAvailable(std::function<bool()> available)
 {
+    for (int binding : remoteTxBindingsNotSent()) { publishGlobalReading(binding, kNoMeterReadingDbm); }
     m_remoteTxStageReadingsAvailable = std::move(available);
     refreshRemoteTxAvailability(/*force=*/true);
 }
@@ -324,20 +379,13 @@ void MeterPoller::refreshRemoteTxAvailability(bool force)
     // transmit readings (txReadingsVersion 1).
     const QString compReason = readings ? QString() : TransmitState::txReadingNotSentText();
     const QList<int>& notSent = remoteTxBindingsNotSent();
-    for (const auto& guarded : m_targets) {
-        MeterWidget* target = guarded.data();
-        if (!target) { continue; }
-        for (int bindingId = MeterBinding::TxPower; bindingId <= MeterBinding::TxCfcGain;
-             ++bindingId) {
-            QString reason = unavailable;
-            if (reason.isEmpty() && !stages && notSent.contains(bindingId)) {
-                reason = remoteTxMeterNotSentText();
-            }
-            if (reason.isEmpty() && bindingId == MeterBinding::TxComp) {
-                reason = compReason;
-            }
-            target->setBindingUnavailable(bindingId, reason);
-        }
+    for (int bindingId = MeterBinding::TxPower; bindingId <= MeterBinding::TxCfcPeak; ++bindingId) {
+        QString reason = unavailable;
+        if (reason.isEmpty() && !stages && notSent.contains(bindingId)) { reason = remoteTxMeterNotSentText(); }
+        if (reason.isEmpty() && remoteTxPeakBindingsNotSent().contains(bindingId)) { reason = remoteTxMeterNotSentText(); }
+        if (reason.isEmpty() && bindingId == MeterBinding::TxComp) { reason = compReason; }
+        publishAvailability(bindingId, reason);
+        if (!reason.isEmpty()) { publishGlobalReading(bindingId, kNoMeterReadingDbm); }
     }
     // R-R3-49 (parity Task 33): the S-meter's TX modes from the same
     // readings a local window's read: Power and SWR txState's
@@ -361,9 +409,13 @@ void MeterPoller::refreshRemoteTxAvailability(bool force)
 void MeterPoller::pollRemoteTxMeters()
 {
     TransmitState* state = m_remoteTransmitState.data();
-    if (!state || !m_inTx || !remoteTransmitUnavailableText().isEmpty()) {
+    const bool ready = m_remoteModel && m_remoteModel->isConnected()
+        && m_remoteSnapshotReady && m_remoteSnapshotReady();
+    if (!state || !ready || !remoteTransmitUnavailableText().isEmpty()) {
+        invalidateReadings(false, true, false);
         return;
     }
+    if (!m_inTx) { return; }
     // The Core's readings, already worked as Thetis shows them
     // (TxMeterPump: thetisTxReading ALC and MIC).
     handOutTxReading(MeterBinding::TxAlc, state->alcDb());
@@ -388,6 +440,7 @@ void MeterPoller::pollRemoteTxMeters()
 
 void MeterPoller::setRemoteTxReadingsAvailable(std::function<bool()> available)
 {
+    publishGlobalReading(MeterBinding::TxComp, kNoMeterReadingDbm);
     m_remoteTxReadingsAvailable = std::move(available);
     refreshRemoteTxAvailability(/*force=*/true);
 }
@@ -399,6 +452,7 @@ bool MeterPoller::remoteTxReadingsAvailable() const
 
 void MeterPoller::setRemoteMeterReadingsAvailable(std::function<bool()> available)
 {
+    invalidateReadings(true, false, false);
     m_remoteMeterReadingsAvailable = std::move(available);
     refreshRemoteMeterReadingsAvailability(/*force=*/true);
 }
@@ -433,13 +487,7 @@ void MeterPoller::refreshRemoteMeterReadingsAvailability(bool force)
     }
     m_remoteReadingsAvailabilityShown = true;
     m_remoteReadingsUnavailableShown = reason;
-    for (const auto& guarded : m_targets) {
-        MeterWidget* target = guarded.data();
-        if (!target) { continue; }
-        for (int bindingId : remoteMeterReadingBindings()) {
-            target->setBindingUnavailable(bindingId, reason);
-        }
-    }
+    for (int bindingId : remoteMeterReadingBindings()) { publishAvailability(bindingId, reason); }
 }
 
 // RX meter cal offset source (Thetis-faithful port).
@@ -456,6 +504,7 @@ void MeterPoller::refreshRemoteMeterReadingsAvailability(bool force)
 // tick (the callable is cheap; see RadioModel::rxMeterOffsetDb).
 void MeterPoller::setRxOffsetSource(std::function<double()> source)
 {
+    invalidateReadings(true, false, false);
     m_rxOffsetSource = std::move(source);
     qCDebug(lcMeter) << "MeterPoller: rxOffsetSource set:"
                       << (m_rxOffsetSource ? "yes" : "nullptr");
@@ -473,58 +522,269 @@ void MeterPoller::setInTx(bool isTx)
     m_inTx = isTx;
     qCDebug(lcMeter) << "MeterPoller: TX mode" << (isTx ? "on" : "off");
 
-    // Bench-reported #167 follow-up: on MOX falling edge, snap all TX-meter
-    // BarItems to 0 to bypass the per-bar attack/decay smoothing.  Without
-    // this, a single zero update from RadioStatus::powerChanged after MOX-off
-    // only walks the smoothed value down by one decay tick (e.g. 60 → 54 at
-    // decayRatio=0.1), so Power / SWR / ALC bars appear stuck at the last
-    // sample for several seconds.  TextItem readouts already update via
-    // their own (non-smoothed) path so the numeric "0 W" / "1.0:1" labels
-    // were already correct; this fixes the visual-bar half of the meter
-    // ensemble.
-    if (!m_inTx) {
-        for (auto& guarded : m_targets) {
-            MeterWidget* target = guarded.data();
-            if (!target) { continue; }
-            for (MeterItem* item : target->items()) {
-                if (!item) { continue; }
-                BarItem* bar = qobject_cast<BarItem*>(item);
-                if (!bar) { continue; }
-                const int bid = bar->bindingId();
-                // Snap every TX-domain binding (100..199 range) — the
-                // 200+ hardware-telemetry bindings (HwVolts / HwAmps /
-                // HwTemperature) are NOT TX-gated; their last reading is
-                // still meaningful post-key.
-                if (bid >= MeterBinding::TxPower && bid < MeterBinding::HwVolts) {
-                    bar->clearSmoothing(0.0);
-                }
-            }
-            target->update();   // schedule repaint
-        }
+    for (const auto& guarded : m_targets) {
+        if (MeterWidget* target = guarded.data()) { target->resetForTxTransition(isTx); }
+    }
+    // TX values from the preceding keying must never seed a recreated face.
+    for (auto it = m_globalReadings.begin(); it != m_globalReadings.end();) {
+        if (it.key() >= MeterBinding::TxPower && it.key() <= MeterBinding::TxCfcPeak) { it = m_globalReadings.erase(it); }
+        else { ++it; }
     }
 }
 
+namespace {
+QByteArray contextKey(const QJsonObject& context) { return QJsonDocument(context).toJson(QJsonDocument::Compact); }
+}
+void MeterPoller::rememberPresentation(const MeterWidget* widget)
+{
+    if (!widget) { return; }
+    m_unitMode = widget->unitMode();
+    if (widget->powerScale() > 0) { m_powerScale = widget->powerScale(); }
+}
 void MeterPoller::addTarget(MeterWidget* widget)
 {
     if (!widget) { return; }
-    // Drop any stale entries whose widgets have been destroyed, then add
-    // only if not already present.
     m_targets.removeAll(QPointer<MeterWidget>(nullptr));
-    for (const auto& p : m_targets) {
-        if (p.data() == widget) { return; }
+    for (const auto& target : m_targets) {
+        if (target == widget) { return; }
+        if (target) { rememberPresentation(target); }
     }
-    m_targets.append(QPointer<MeterWidget>(widget));
-    // Task 39: a new container on a remote window learns at once which
-    // transmit meters the Core cannot feed.
-    refreshRemoteTxAvailability(/*force=*/true);
-    // Trunk merge: and which of the ADC and AGC meters it cannot feed.
-    refreshRemoteMeterReadingsAvailability(/*force=*/true);
+    m_targets.append(widget);
+    connect(widget, &MeterWidget::itemAdded, this, [this, widget](MeterItem* item) {
+        if (item && item->hasMmioBinding()) { replayMmioReading(widget, item); }
+    });
+    connect(widget, &MeterWidget::aboutToDestroy, this, [this, widget] { removeTarget(widget); });
+    connect(widget, &QObject::destroyed, this, [this, widget] {
+        m_targetContexts.remove(widget);
+        m_targets.removeAll(QPointer<MeterWidget>(nullptr));
+    });
+    refreshRemoteTxAvailability(true);
+    refreshRemoteMeterReadingsAvailability(true);
+    replayReadings(widget, m_targetContexts.value(widget));
 }
-
 void MeterPoller::removeTarget(MeterWidget* widget)
 {
-    m_targets.removeAll(QPointer<MeterWidget>(widget));
+    // aboutToDestroy removes registered widgets before their members die.
+    // Later QObject::destroyed callers supply raw identity only; it is safe
+    // even when Qt has not cleared a QWidget QPointer yet.
+    bool registered = false;
+    for (const auto& target : m_targets) {
+        if (target && target.data() == widget) { rememberPresentation(target); registered = true; break; }
+    }
+    m_targets.removeIf([widget](const QPointer<MeterWidget>& target) { return !target || target.data() == widget; });
     m_targets.removeAll(QPointer<MeterWidget>(nullptr));
+    m_targetContexts.remove(widget);
+    if (registered) { disconnect(widget, nullptr, this, nullptr); }
+}
+void MeterPoller::setTargetContext(MeterWidget* widget, const QJsonObject& context)
+{
+    if (!widget) { return; }
+    const bool existing = m_targets.contains(widget);
+    const bool changed = m_targetContexts.value(widget) != context;
+    m_targetContexts.insert(widget, context);
+    if (changed) {
+        widget->clearReadingCache();
+        // Reset source-specific dynamics/history before seeding another slice.
+        widget->resetForTxTransition(m_inTx);
+        for (int b = MeterBinding::SignalPeak; b <= MeterBinding::PbSnr; ++b) { widget->updateMeterValue(b, kNoMeterReadingDbm); }
+    }
+    addTarget(widget);
+    if (existing && changed) { replayReadings(widget, context); }
+}
+void MeterPoller::setRxReadingSource(std::function<double(const QJsonObject&, int)> source)
+{
+    m_rxReadingSource = std::move(source);
+    invalidateReadings(true, false, false);
+}
+void MeterPoller::setSessionIdSource(std::function<QString()> source)
+{
+    m_sessionIdSource = std::move(source);
+    m_cachedSessionId = m_sessionIdSource ? m_sessionIdSource() : QString();
+    invalidateReadings(false, true, true);
+}
+void MeterPoller::refreshGlobalSession()
+{
+    const QString sessionId = m_sessionIdSource ? m_sessionIdSource() : QString();
+    if (sessionId == m_cachedSessionId) { return; }
+    m_cachedSessionId = sessionId;
+    // Publish callbacks can arrive before the next shared poll. Clear the
+    // preceding station's samples before accepting the first new sample.
+    invalidateReadings(false, true, true);
+}
+bool MeterPoller::acceptsGlobalReading(const QJsonObject& context) const
+{
+    const QString requested = context.value("sessionId").toString();
+    return requested.isEmpty() || requested == (m_sessionIdSource ? m_sessionIdSource() : QString());
+}
+QString MeterPoller::globalAvailability(const QJsonObject& context, int binding) const
+{
+    const bool windowGlobal = (binding >= MeterBinding::TxPower && binding <= MeterBinding::TxCfcPeak)
+        || (binding >= MeterBinding::HwVolts && binding <= MeterBinding::HwTemperature);
+    return windowGlobal && !acceptsGlobalReading(context)
+        ? tr("This meter belongs to another radio session.") : m_availability.value(binding);
+}
+void MeterPoller::setUnitMode(MeterItem::MeterUnit unit)
+{
+    m_unitMode = unit;
+    for (const auto& target : m_targets) { if (target) { target->setUnitMode(unit); } }
+}
+void MeterPoller::rescalePowerMeters(int watts)
+{
+    if (watts <= 0) { return; }
+    m_powerScale = watts;
+    for (const auto& target : m_targets) { if (target) { target->rescalePowerMeters(watts); } }
+}
+MeterPoller::MmioReading MeterPoller::mmioReading(const MeterItem* item) const
+{
+    MmioEndpoint* endpoint = nullptr;
+#ifdef NEREUS_BUILD_TESTS
+    if (m_mmioEndpointLookup) { endpoint = m_mmioEndpointLookup(item->mmioGuid()); }
+    else
+#endif
+    { endpoint = ExternalVariableEngine::instance().endpoint(item->mmioGuid()); }
+    if (!endpoint) { return {kNoMeterReadingDbm, tr("External meter source is unavailable.")}; }
+    bool ok = false;
+    const double value = endpoint->valueForName(item->mmioVariable()).toDouble(&ok);
+    if (!ok || !std::isfinite(value)) { return {kNoMeterReadingDbm, tr("External meter variable has no numeric reading.")}; }
+    return {value, {}};
+}
+void MeterPoller::replayMmioReading(MeterWidget* widget, MeterItem* item) const
+{
+    // Existing endpoint cache only: no endpoint factory, transport or timer.
+    // Validate at reconstruction so removal/new non-numeric data between
+    // shared ticks cannot revive a stale same-identity sample.
+    const MmioReading reading = mmioReading(item);
+    widget->updateMmioValue(item, reading.value, reading.reason);
+}
+void MeterPoller::replayReadings(MeterWidget* widget, const QJsonObject& context) const
+{
+    if (!widget) { return; }
+    widget->clearReadingCache();
+    widget->resetForTxTransition(m_inTx);
+    widget->setUnitMode(m_unitMode);
+    widget->rescalePowerMeters(m_powerScale);
+    copyCachedReadings(widget, context);
+}
+void MeterPoller::copyCachedReadings(MeterWidget* widget, const QJsonObject& context) const
+{
+    if (!widget) { return; }
+    if (widget->unitMode()!=m_unitMode) { widget->setUnitMode(m_unitMode); }
+    if (m_powerScale>0 && widget->powerScale()!=m_powerScale) { widget->rescalePowerMeters(m_powerScale); }
+    for (auto it = m_availability.cbegin(); it != m_availability.cend(); ++it) { widget->setBindingUnavailable(it.key(), globalAvailability(context,it.key())); }
+    const auto readings = m_contextReadings.value(contextKey(context));
+    const bool remoteReady = !m_remoteRole || (m_remoteModel && m_remoteModel->isConnected() && m_remoteSnapshotReady && m_remoteSnapshotReady());
+    for (int b = MeterBinding::SignalPeak; b <= MeterBinding::PbSnr; ++b) {
+        const double value = remoteReady && m_localRxReadingAvailable && !m_inTx
+            ? (m_rxReadingSource ? m_rxReadingSource(context,b) : readings.value(b,kNoMeterReadingDbm)) : kNoMeterReadingDbm;
+        widget->updateMeterValue(b, std::isfinite(value) ? value : kNoMeterReadingDbm);
+    }
+    const bool sameCachedSession = m_cachedSessionId == (m_sessionIdSource ? m_sessionIdSource() : QString());
+    for (auto it = m_globalReadings.cbegin(); it != m_globalReadings.cend(); ++it) { widget->updateMeterValue(it.key(), remoteReady && sameCachedSession && acceptsGlobalReading(context) ? it.value() : kNoMeterReadingDbm); }
+    for (int b = MeterBinding::TxPower; b <= MeterBinding::TxCfcPeak; ++b) {
+        widget->setBindingUnavailable(b,globalAvailability(context,b));
+        if (!m_globalReadings.contains(b)) { widget->updateMeterValue(b, kNoMeterReadingDbm); }
+    }
+    for (int b = MeterBinding::HwVolts; b <= MeterBinding::HwTemperature; ++b) {
+        widget->setBindingUnavailable(b,globalAvailability(context,b));
+        if (!m_globalReadings.contains(b)) { widget->updateMeterValue(b, kNoMeterReadingDbm); }
+    }
+    for (MeterItem* item : widget->items()) { if (item->hasMmioBinding()) { replayMmioReading(widget, item); } }
+}
+void MeterPoller::publishContextReading(const QJsonObject& context, int binding, double value)
+{
+    // A configured adapter owns even the default context. Legacy active-source
+    // producers must not overwrite it after this context pass.
+    if (m_rxReadingSource && context.isEmpty()) { return; }
+    m_knownContexts[contextKey(context)] = context;
+    m_contextReadings[contextKey(context)][binding] = value;
+    for (const auto& target : m_targets) {
+        if (target && m_targetContexts.value(target) == context) { target->updateMeterValue(binding, value); }
+    }
+    emit readingUpdated(context, binding, value);
+}
+void MeterPoller::publishGlobalReading(int binding, double value)
+{
+    refreshGlobalSession();
+    m_globalReadings[binding] = value;
+    QSet<QByteArray> contexts;
+    for (const auto& target : m_targets) {
+        if (!target) { continue; }
+        const QJsonObject context = m_targetContexts.value(target);
+        const double delivered = acceptsGlobalReading(context) ? value : kNoMeterReadingDbm;
+        target->setBindingUnavailable(binding,globalAvailability(context,binding));
+        target->updateMeterValue(binding, delivered);
+        if (!contexts.contains(contextKey(context))) { contexts.insert(contextKey(context)); emit readingUpdated(context, binding, delivered); }
+    }
+    for (auto it = m_knownContexts.cbegin(); it != m_knownContexts.cend(); ++it) {
+        if (!contexts.contains(it.key())) {
+            contexts.insert(it.key()); emit readingUpdated(it.value(), binding, acceptsGlobalReading(it.value()) ? value : kNoMeterReadingDbm);
+        }
+    }
+    if (!contexts.contains(contextKey({}))) { emit readingUpdated({}, binding, value); }
+}
+void MeterPoller::publishAvailability(int binding, const QString& reason)
+{
+    const bool changed = !m_availability.contains(binding) || m_availability.value(binding) != reason;
+    m_availability[binding] = reason;
+    if (changed) { emit bindingAvailabilityChanged(binding, reason); }
+    for (const auto& target : m_targets) { if (target) { target->setBindingUnavailable(binding, globalAvailability(m_targetContexts.value(target),binding)); } }
+}
+void MeterPoller::invalidateReadings(bool rx, bool tx, bool hardware)
+{
+    if (rx) {
+        QSet<QByteArray> contexts;
+        for (auto it = m_contextReadings.cbegin(); it != m_contextReadings.cend(); ++it) { contexts.insert(it.key()); }
+        m_contextReadings.clear();
+        for (const auto& target : m_targets) {
+            if (!target) { continue; }
+            const QJsonObject context = m_targetContexts.value(target);
+            for (int b = MeterBinding::SignalPeak; b <= MeterBinding::PbSnr; ++b) { target->updateMeterValue(b, kNoMeterReadingDbm); }
+            contexts.insert(contextKey(context));
+        }
+        contexts.insert(contextKey({}));
+        for (const QByteArray& key : contexts) {
+            const QJsonObject context = QJsonDocument::fromJson(key).object();
+            for (int b = MeterBinding::SignalPeak; b <= MeterBinding::PbSnr; ++b) { emit readingUpdated(context, b, kNoMeterReadingDbm); }
+        }
+    }
+    if (tx) { for (int b = MeterBinding::TxPower; b <= MeterBinding::TxCfcPeak; ++b) { publishGlobalReading(b, kNoMeterReadingDbm); } }
+    if (hardware) { for (int b = MeterBinding::HwVolts; b <= MeterBinding::HwTemperature; ++b) { publishGlobalReading(b, kNoMeterReadingDbm); } }
+}
+void MeterPoller::invalidateTxAudioReadings()
+{
+    for (int binding = MeterBinding::TxMic; binding <= MeterBinding::TxCfcPeak; ++binding) {
+        publishGlobalReading(binding, kNoMeterReadingDbm);
+    }
+}
+void MeterPoller::pollContextReadings()
+{
+    if (!m_rxReadingSource || m_inTx) { return; }
+    const bool sourceReady = m_localRxReadingAvailable && (!m_remoteRole
+        || (m_remoteModel && m_remoteModel->isConnected() && m_remoteSnapshotReady && m_remoteSnapshotReady()));
+    QSet<QByteArray> visited;
+    for (const auto& target : m_targets) {
+        if (!target) { continue; }
+        const QJsonObject context = m_targetContexts.value(target);
+        const QByteArray key = contextKey(context);
+        m_knownContexts[key] = context;
+        if (visited.contains(key)) { continue; }
+        visited.insert(key);
+        for (int b = MeterBinding::SignalPeak; b <= MeterBinding::PbSnr; ++b) {
+            const double v = sourceReady ? m_rxReadingSource(context, b) : kNoMeterReadingDbm;
+            const double value = std::isfinite(v) ? v : kNoMeterReadingDbm;
+            m_contextReadings[key][b] = value;
+            for (const auto& recipient : m_targets) {
+                if (recipient && m_targetContexts.value(recipient) == context) { recipient->updateMeterValue(b, value); }
+            }
+            emit readingUpdated(context, b, value);
+        }
+    }
+}
+const QList<int>& MeterPoller::remoteTxPeakBindingsNotSent()
+{
+    static const QList<int> bindings{MeterBinding::TxMicPeak, MeterBinding::TxAlcPeak,
+        MeterBinding::TxCompPeak, MeterBinding::TxEqPeak, MeterBinding::TxLevelerPeak, MeterBinding::TxCfcPeak};
+    return bindings;
 }
 
 // ── Task 3.1: MultimeterPage-facing interval API ─────────────────────────────
@@ -582,28 +842,35 @@ void MeterPoller::stop()
 
 void MeterPoller::poll()
 {
+    refreshGlobalSession();
+    const qint64 timestamp = m_monotonicSource ? m_monotonicSource() : m_clock.elapsed();
+    const auto frame = qScopeGuard([this, timestamp] {
+        for (const auto& target : m_targets) { if (target) { target->advanceMeters(timestamp); } }
+        emit frameAdvanced(timestamp);
+    });
+    pollContextReadings();
     // Phase 3G-6 block 5: MMIO item polling is independent of the
     // RX channel, so this branch runs even when m_rxChannel is
     // unset (e.g. no radio connected). For every target widget,
     // walk its items and push the latest value from the bound
     // endpoint's variable cache into each item with an MMIO
     // binding.
-    auto& engine = ExternalVariableEngine::instance();
-    for (auto& guarded : m_targets) {
+    QSet<QString> sampled;
+    for (const auto& guarded : m_targets) {
         MeterWidget* target = guarded.data();
         if (!target) { continue; }
         for (MeterItem* item : target->items()) {
             if (!item || !item->hasMmioBinding()) { continue; }
-            MmioEndpoint* ep = engine.endpoint(item->mmioGuid());
-            if (!ep) { continue; }
-            const QVariant v = ep->valueForName(item->mmioVariable());
-            if (!v.isValid()) { continue; }
-            bool ok = false;
-            const double d = v.toDouble(&ok);
-            if (!ok) { continue; }
-            item->setValue(d);
+            const QString key = item->mmioSourceKey();
+            if (!sampled.contains(key)) {
+                sampled.insert(key);
+                const MmioReading reading = mmioReading(item);
+                m_mmioReadings[key] = reading;
+                emit mmioReadingUpdated(item->mmioGuid(), item->mmioVariable(), reading.value, reading.reason);
+            }
+            const MmioReading reading = m_mmioReadings.value(key);
+            target->updateMmioValue(item, reading.value, reading.reason);
         }
-        target->update();
     }
 
     // R-R3-32 (parity Task 6): the PA readings reach their meters in every
@@ -631,6 +898,8 @@ void MeterPoller::poll()
         return;  // don't poll RX meters while transmitting
     }
 
+    if (m_rxReadingSource) { pollAdaptedSMeter(); return; }
+
     // NereusSDR (R-R3-13): with no RX channel (never created, or destroyed:
     // the QPointer clears) there is no reading, and with the radio link not
     // up (LinkLost keeps the channels alive, but their meters stop and an
@@ -641,11 +910,7 @@ void MeterPoller::poll()
     if (!m_rxChannel || !m_localRxReadingAvailable) {
         for (int bindingId = MeterBinding::SignalPeak;
              bindingId <= MeterBinding::AgcAvg; ++bindingId) {
-            for (auto& guarded : m_targets) {
-                MeterWidget* target = guarded.data();
-                if (!target) { continue; }
-                target->updateMeterValue(bindingId, kNoMeterReadingDbm);
-            }
+            publishContextReading({}, bindingId, kNoMeterReadingDbm);
         }
         if (SMeterWidget* sm = m_sMeter.data()) {
             sm->setLevel(static_cast<float>(kNoMeterReadingDbm));
@@ -684,11 +949,7 @@ void MeterPoller::poll()
         if (bindingId == MeterBinding::SignalAvg) {
             smeterDbm = value;   // post-offset; matches VfoWidget expectation
         }
-        for (auto& guarded : m_targets) {
-            MeterWidget* target = guarded.data();
-            if (!target) { continue; }
-            target->updateMeterValue(bindingId, value);
-        }
+        publishContextReading({}, bindingId, value);
     }
 
     // Task 41 (Phase 3P-II): drive the analog SMeterWidget header.
@@ -711,13 +972,21 @@ void MeterPoller::poll()
 
 void MeterPoller::setPaReadingsModel(RadioModel* model)
 {
+    disconnect(m_paDestroyed);
     m_paReadingsModel = model;
+    invalidateReadings(false, false, true);
+    if (model) { m_paDestroyed = connect(model, &QObject::destroyed, this, [this] { invalidateReadings(false, false, true); }); }
 }
 
 void MeterPoller::pollHardwareTelemetry()
 {
     RadioModel* const model = m_paReadingsModel.data();
-    if (!model) { return; }
+    const bool remoteReady = !m_remoteRole || (m_remoteModel && m_remoteModel->isConnected()
+        && m_remoteSnapshotReady && m_remoteSnapshotReady());
+    if (!model || !remoteReady) {
+        for (int b = MeterBinding::HwVolts; b <= MeterBinding::HwTemperature; ++b) { publishGlobalReading(b, kNoMeterReadingDbm); }
+        return;
+    }
     // From Thetis console.cs:47061-47068 [v2.10.3.15]: the VOLTS and AMPS
     // meter readings are _MKIIPAVolts and _MKIIPAAmps, the same PA volts and
     // amps the status bar shows (console.cs:26216-26239):
@@ -735,13 +1004,9 @@ void MeterPoller::pollHardwareTelemetry()
     const double volts = valueOf(row.volts);
     const double amps = valueOf(readings.paCurrentAmps);
     const double temperature = valueOf(readings.paTemperatureCelsius);
-    for (const auto& guarded : m_targets) {
-        MeterWidget* target = guarded.data();
-        if (!target) { continue; }
-        target->updateMeterValue(MeterBinding::HwVolts, volts);
-        target->updateMeterValue(MeterBinding::HwAmps, amps);
-        target->updateMeterValue(MeterBinding::HwTemperature, temperature);
-    }
+    publishGlobalReading(MeterBinding::HwVolts, volts);
+    publishGlobalReading(MeterBinding::HwAmps, amps);
+    publishGlobalReading(MeterBinding::HwTemperature, temperature);
 }
 
 void MeterPoller::pollRemoteRxMeters()
@@ -783,18 +1048,14 @@ void MeterPoller::pollRemoteRxMeters()
     const double agcGain = coreReading(&SliceModel::agcGainDb);
     const double agcPeak = coreReading(&SliceModel::agcPeakDb);
     const double agcAverage = coreReading(&SliceModel::agcAverageDb);
-    for (const auto& guarded : m_targets) {
-        MeterWidget* target = guarded.data();
-        if (!target) { continue; }
-        target->updateMeterValue(MeterBinding::SignalPeak, peak);
-        target->updateMeterValue(MeterBinding::SignalAvg, average);
-        target->updateMeterValue(MeterBinding::SignalMaxBin, maxBin);
-        target->updateMeterValue(MeterBinding::AdcPeak, adcPeak);
-        target->updateMeterValue(MeterBinding::AdcAvg, adcAverage);
-        target->updateMeterValue(MeterBinding::AgcGain, agcGain);
-        target->updateMeterValue(MeterBinding::AgcPeak, agcPeak);
-        target->updateMeterValue(MeterBinding::AgcAvg, agcAverage);
-    }
+    publishContextReading({}, MeterBinding::SignalPeak, peak);
+    publishContextReading({}, MeterBinding::SignalAvg, average);
+    publishContextReading({}, MeterBinding::SignalMaxBin, maxBin);
+    publishContextReading({}, MeterBinding::AdcPeak, adcPeak);
+    publishContextReading({}, MeterBinding::AdcAvg, adcAverage);
+    publishContextReading({}, MeterBinding::AgcGain, agcGain);
+    publishContextReading({}, MeterBinding::AgcPeak, agcPeak);
+    publishContextReading({}, MeterBinding::AgcAvg, agcAverage);
     if (!m_sMeter) { return; }
     double level = slice ? peak : kNoReadingDbm;
     switch (m_sMeter->rxMode()) {
@@ -808,7 +1069,8 @@ void MeterPoller::pollRemoteRxMeters()
         level = maxBin;
         break;
     }
-    m_sMeter->setLevel(static_cast<float>(level));
+    if (m_rxReadingSource) { pollAdaptedSMeter(); }
+    else { m_sMeter->setLevel(static_cast<float>(level)); }
 
     // Keep each flag on the same selected meter source as the applet,
     // resolving stable slice IDs on every tick rather than caching channels.
@@ -833,6 +1095,16 @@ void MeterPoller::pollRemoteRxMeters()
         emit remoteSliceLevelUpdated(flagSlice->sliceIndex(),
                                      ready ? finiteOr(flagLevel, -140.0) : kNoReadingDbm);
     }
+}
+
+void MeterPoller::pollAdaptedSMeter()
+{
+    if (!m_sMeter || !m_rxReadingSource || m_inTx) { return; }
+    int binding = MeterBinding::SignalPeak;
+    if (m_sMeter->rxMode()==SMeterWidget::RxMode::SignalAverage) { binding=MeterBinding::SignalAvg; }
+    else if (m_sMeter->rxMode()==SMeterWidget::RxMode::MaxBin) { binding=MeterBinding::SignalMaxBin; }
+    const double value = m_localRxReadingAvailable ? m_rxReadingSource(m_sMeterContext,binding) : kNoMeterReadingDbm;
+    m_sMeter->setLevel(static_cast<float>(std::isfinite(value)?value:kNoMeterReadingDbm));
 }
 
 void MeterPoller::pollSMeter()
@@ -924,6 +1196,12 @@ struct TxReadingEntry { int bindingId; ThetisTxReading reading; };
 // Which of Thetis's readings each NereusSDR binding shows (MeterPoller.h
 // names each binding's WDSP meter; MeterItem.cpp its label).
 constexpr TxReadingEntry kTxReadings[] = {
+    { MeterBinding::TxMicPeak,     ThetisTxReading::MicPk },
+    { MeterBinding::TxAlcPeak,     ThetisTxReading::AlcPk },
+    { MeterBinding::TxCompPeak,    ThetisTxReading::CompPk },
+    { MeterBinding::TxEqPeak,      ThetisTxReading::EqPk },
+    { MeterBinding::TxLevelerPeak, ThetisTxReading::LevelerPk },
+    { MeterBinding::TxCfcPeak,     ThetisTxReading::CfcPk },
     { MeterBinding::TxMic,         ThetisTxReading::Mic      },   // TXA_MIC_AV
     { MeterBinding::TxEq,          ThetisTxReading::Eq       },   // TXA_EQ_AV
     { MeterBinding::TxLeveler,     ThetisTxReading::Leveler  },   // TXA_LVLR_AV
@@ -951,6 +1229,7 @@ double MeterPoller::txReadingForBinding(int bindingId,
 void MeterPoller::pollTxMeters()
 {
     if (!m_txChannel) {
+        for (const TxReadingEntry& entry : kTxReadings) { publishGlobalReading(entry.bindingId, kNoMeterReadingDbm); }
         return;  // no TX channel yet (WDSP not initialized or disconnected)
     }
 
@@ -975,11 +1254,7 @@ void MeterPoller::pollTxMeters()
 // Hands one transmit reading to the meters and to txMeterReading.
 void MeterPoller::handOutTxReading(int bindingId, double value)
 {
-    for (auto& guarded : m_targets) {
-        MeterWidget* target = guarded.data();
-        if (!target) { continue; }
-        target->updateMeterValue(bindingId, value);
-    }
+    publishGlobalReading(bindingId, value);
     // R-R3-49 (parity Task 33): the S-meter's Level and Compression TX
     // modes. AetherSDR feeds them from its meter model's mic and
     // compression peaks:
@@ -1046,8 +1321,14 @@ void MeterPoller::setRadioStatus(RadioStatus* status)
         QObject::disconnect(m_powerConn);
         m_powerConn = QMetaObject::Connection{};
     }
+    disconnect(m_statusDestroyed);
+    for (int binding = MeterBinding::TxPower; binding <= MeterBinding::TxSwr; ++binding) { publishGlobalReading(binding, kNoMeterReadingDbm); }
     m_radioStatus = status;
     if (m_radioStatus) {
+        m_statusDestroyed = connect(status, &QObject::destroyed, this, [this] { for (int binding = MeterBinding::TxPower; binding <= MeterBinding::TxSwr; ++binding) { publishGlobalReading(binding, kNoMeterReadingDbm); } });
+        publishGlobalReading(MeterBinding::TxPower, status->forwardPowerWatts());
+        publishGlobalReading(MeterBinding::TxReversePower, status->reflectedPowerWatts());
+        publishGlobalReading(MeterBinding::TxSwr, status->swrRatio());
         // From Thetis console.cs PollPAPWR loop [v2.10.3.13]:
         // RadioStatus::powerChanged aggregates forward/reflected/swr from
         // PollPAPWR's alex_fwd / alex_rev / swr locals and emits them
@@ -1056,13 +1337,9 @@ void MeterPoller::setRadioStatus(RadioStatus* status)
         m_powerConn = connect(
             m_radioStatus, &RadioStatus::powerChanged,
             this, [this](double fwd, double rev, double swr) {
-                for (auto& guarded : m_targets) {
-                    MeterWidget* target = guarded.data();
-                    if (!target) { continue; }
-                    target->updateMeterValue(MeterBinding::TxPower,        fwd);
-                    target->updateMeterValue(MeterBinding::TxReversePower, rev);
-                    target->updateMeterValue(MeterBinding::TxSwr,          swr);
-                }
+                publishGlobalReading(MeterBinding::TxPower, fwd);
+                publishGlobalReading(MeterBinding::TxReversePower, rev);
+                publishGlobalReading(MeterBinding::TxSwr, swr);
             });
     }
 }

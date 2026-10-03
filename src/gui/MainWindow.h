@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
 //                Take and select action, with current access and target
 //                lifetime checks. AI-assisted via OpenAI Codex.
@@ -971,6 +973,9 @@ private slots:
     // `only`: just that item (one added while the window runs).
     void refreshContainerControls(MeterItem* only = nullptr);
     void refreshContainer(class ContainerWidget* container, MeterItem* only = nullptr);
+    void refreshContainerMeter(class ContainerWidget* container, MeterWidget* meter, MeterItem* only, const QJsonObject& context, bool frequencyOnly = false);
+    QString containerSessionId() const;
+    int containerControlRxSource(const ContainerWidget* container) const;
     // Tuning: only the VFO display and band items of the containers on
     // `slice` (frequency and band).
     void refreshContainerFrequency(SliceModel* slice);
@@ -1687,7 +1692,7 @@ private:
     void resetDefaultLayout();
 
     // Meter system (Phase 3G-2)
-    MeterWidget* m_meterWidget{nullptr};
+    QPointer<MeterWidget> m_meterWidget;
     MeterPoller* m_meterPoller{nullptr};
     void populateDefaultMeter();
 

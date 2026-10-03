@@ -807,8 +807,24 @@ private slots:
                 missing.append(QStringLiteral("%1: %2 not found").arg(file, QLatin1String(site.function)));
                 continue;
             }
-            const bool named = std::any_of(site.names.cbegin(), site.names.cend(),
+            bool named = std::any_of(site.names.cbegin(), site.names.cend(),
                                            [&body](const QString& name) { return body.contains(name); });
+            if (!named && QLatin1String(site.function) == QStringLiteral("TxSliceArbiter::requestHandoff")) {
+                // The synchronous permission callback is copied before invoking
+                // it so it survives disposal. Require its exact source and
+                // arguments, weak fence, and denial before the actual handoff.
+                const QString compact = QString(body).remove(QRegularExpression(QStringLiteral("\\s+")));
+                const QString copy = QStringLiteral("constTransmitAccessmayTransmit=m_mayTransmit;");
+                const QString call = QStringLiteral("constboolallowed=!mayTransmit||mayTransmit(requester,sliceId);");
+                const QString guard = QStringLiteral("if(!self){returnfalse;}");
+                const QString deny = QStringLiteral("if(!allowed){");
+                const QString move = QStringLiteral("returnrequestHandoffFrom(sliceId,requester);");
+                named = compact.contains(copy) && compact.contains(call) && compact.contains(guard)
+                    && compact.indexOf(copy) < compact.indexOf(call)
+                    && compact.indexOf(call) < compact.indexOf(guard)
+                    && compact.indexOf(guard) < compact.indexOf(deny)
+                    && compact.indexOf(deny) < compact.indexOf(move);
+            }
             if (!named) {
                 missing.append(QStringLiteral("%1: %2 does not name %3")
                                    .arg(file, QLatin1String(site.function), site.names.join(QStringLiteral(" or "))));

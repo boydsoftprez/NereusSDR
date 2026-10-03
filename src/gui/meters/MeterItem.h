@@ -10,6 +10,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -122,6 +124,8 @@ mw0lge@grange-lane.co.uk
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 #include <QObject>
+#include <QSet>
+#include <QHash>
 #include <QVector>
 #include <QRect>
 #include <QColor>
@@ -159,7 +163,8 @@ inline bool isNoMeterReading(double dbm)
 
 // Receive-signal bindings (SignalPeak..AgcAvg and SignalMaxBin): exactly the
 // bindings MeterPoller feeds the sentinel to (local poll() and remote
-// pollRemoteRxMeters()).  Only these treat -400 as no reading.  A transmit
+// pollRemoteRxMeters()). Existing primitive transmit bindings retain their
+// raw -400 semantics when available. A transmit
 // meter at true zero reads exactly -400 from WDSP (meter.c floors with
 // 10 * log10(x + 1.0e-40)), which is a real reading and keeps its number.
 bool isReceiveSignalBinding(int bindingId);
@@ -169,11 +174,13 @@ bool isReceiveSignalBinding(int bindingId);
 // while RadioModel::paReadings() has no such reading. No volts, amps or
 // temperature reading can be at or below -400.
 bool isHardwareTelemetryBinding(int bindingId);
-// The bindings whose items treat the sentinel as no reading: receive signal
-// and hardware telemetry.
+// Added stage-peak sources are clamped above -400 by the existing model
+// transform, so the sentinel can safely represent absence on those GUI IDs.
+bool isSourceClampedPeakBinding(int bindingId);
 inline bool isNoReadingBinding(int bindingId)
 {
-    return isReceiveSignalBinding(bindingId) || isHardwareTelemetryBinding(bindingId);
+    return isReceiveSignalBinding(bindingId) || isHardwareTelemetryBinding(bindingId)
+        || isSourceClampedPeakBinding(bindingId);
 }
 
 
@@ -224,11 +231,23 @@ public:
     void setBindingId(int id) { m_bindingId = id; }
     double value() const { return m_value; }
     virtual void setValue(double v) { m_value = v; }
-    // NereusSDR (R-R3-13): v is no reading for this item: its binding is a
-    // receive-signal binding and v is the sentinel (isNoMeterReading).
+    virtual QSet<int> readingBindings() const { return m_bindingId >= 0 ? QSet<int>{m_bindingId} : QSet<int>{}; }
+    virtual void pushBindingValue(int binding, double value) { if (binding == m_bindingId) { setValue(value); } }
+    virtual bool takeStaticPresentationChange() { return false; }
+    virtual bool advanceMeter(qint64 monotonicMs) { Q_UNUSED(monotonicMs); return false; }
+    virtual void resetForTxTransition(bool inTx);
+    virtual void setPowerScale(int watts);
+    // Composites can render individual unavailable channels while keeping
+    // useful siblings visible. Empty reason restores availability.
+    virtual void setBindingUnavailable(int binding, const QString& reason) { m_unavailableBindings[binding] = reason; }
+    QString bindingUnavailableReason(int binding) const { return m_unavailableBindings.value(binding); }
+    // Explicit unavailability applies to any channel. Available legacy TX
+    // primitives preserve true-zero -400; sentinel-capable bindings also
+    // recognize the no-reading value without an availability reason.
     bool isNoReading(double v) const
     {
-        return isNoReadingBinding(m_bindingId) && isNoMeterReading(v);
+        return !bindingUnavailableReason(m_bindingId).isEmpty()
+            || (!hasMmioBinding() && isNoReadingBinding(m_bindingId) && isNoMeterReading(v));
     }
 
     int zOrder() const { return m_zOrder; }
@@ -265,6 +284,8 @@ public:
         m_mmioGuid = QUuid();
         m_mmioVariable.clear();
     }
+
+    QString mmioSourceKey() const { return m_mmioGuid.toString(QUuid::WithoutBraces) + QChar(0) + m_mmioVariable; }
 
     virtual Layer renderLayer() const = 0;
     virtual void paint(QPainter& p, int widgetW, int widgetH) = 0;
@@ -353,6 +374,7 @@ protected:
         );
     }
 
+    QHash<int, QString> m_unavailableBindings;
     float m_x{0.0f};
     float m_y{0.0f};
     float m_w{1.0f};
@@ -371,8 +393,9 @@ protected:
     bool m_onlyWhenTx{false};
     int  m_displayGroup{0};
 
-    // Phase 3G-6 block 5 — MMIO binding (in-memory only, not
-    // serialized yet). When hasMmioBinding() is true, MeterPoller
+    // MMIO identity is captured by ContainerContentRegistry (Task2);
+    // the old pipe primitive record still has no MMIO fields.
+    // When hasMmioBinding() is true, MeterPoller
     // reads the value from the bound endpoint's variable cache
     // instead of the WDSP-backed bindingId() path.
     QUuid   m_mmioGuid;

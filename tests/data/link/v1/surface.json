@@ -442,6 +442,11 @@
         },
         {
             "kind": "i64",
+            "name": "diversityControlVersion",
+            "value": 1
+        },
+        {
+            "kind": "i64",
             "name": "logCategoryListVersion",
             "value": 1
         },
@@ -2734,6 +2739,54 @@
             "capabilityVersion": 1,
             "minMinor": 11,
             "verb": "session.pathTicket"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "bool",
+                    "name": "enabled",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "stateRevision",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "sourceSliceId",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "sourceIncarnation",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "sourceControlRevision",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "targetSliceId",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "targetIncarnation",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "targetControlRevision",
+                    "optional": false
+                }
+            ],
+            "capability": "diversityControlVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "diversity.setTarget"
         },
         {
             "arguments": [
@@ -5355,6 +5408,12 @@
                     "kind": "i64",
                     "name": "rxFilter0LowPassSlice",
                     "ordinal": 36
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "diversityState",
+                    "ordinal": 37
                 }
             ]
         },

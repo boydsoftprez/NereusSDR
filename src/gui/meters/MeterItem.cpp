@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -168,6 +170,12 @@ QString readingName(int bindingId)
         case MeterBinding::TxAlcGain:      return QStringLiteral("ALC Gain");
         case MeterBinding::TxAlcGroup:     return QStringLiteral("ALC Group");
         case MeterBinding::TxCfc:          return QStringLiteral("CFC Compression Average");
+        case MeterBinding::TxMicPeak:      return QStringLiteral("Mic Peak");
+        case MeterBinding::TxAlcPeak:      return QStringLiteral("ALC Peak");
+        case MeterBinding::TxCompPeak:     return QStringLiteral("COMP Peak");
+        case MeterBinding::TxEqPeak:       return QStringLiteral("EQ Peak");
+        case MeterBinding::TxLevelerPeak:  return QStringLiteral("Leveler Peak");
+        case MeterBinding::TxCfcPeak:      return QStringLiteral("CFC Peak");
         case MeterBinding::TxCfcGain:      return QStringLiteral("CFC Compression");
         // Hardware
         case MeterBinding::HwVolts:       return QStringLiteral("Volts");
@@ -185,6 +193,11 @@ bool isReceiveSignalBinding(int bindingId)
 {
     return (bindingId >= MeterBinding::SignalPeak && bindingId <= MeterBinding::AgcAvg)
         || bindingId == MeterBinding::SignalMaxBin;
+}
+
+bool isSourceClampedPeakBinding(int bindingId)
+{
+    return bindingId >= MeterBinding::TxMicPeak && bindingId <= MeterBinding::TxCfcPeak;
 }
 
 bool isHardwareTelemetryBinding(int bindingId)
@@ -251,6 +264,25 @@ QString MeterItem::formatValue(float dBm, MeterUnit unit, bool decimal)
 // MeterItem base — serialize / deserialize
 // Format: x|y|w|h|bindingId|zOrder
 // ---------------------------------------------------------------------------
+
+void MeterItem::resetForTxTransition(bool inTx)
+{
+    if (!inTx && bindingId() >= MeterBinding::TxPower && bindingId() < MeterBinding::HwVolts) {
+        if (BarItem* bar = qobject_cast<BarItem*>(this)) { bar->clearSmoothing(0.0); }
+    }
+}
+
+void MeterItem::setPowerScale(int watts)
+{
+    if (watts <= 0) { return; }
+    const double red = watts;
+    const double top = red * 1.2;
+    if (objectName() == QStringLiteral("PowerBar")) {
+        if (BarItem* bar = qobject_cast<BarItem*>(this)) { bar->setRange(0.0, top); bar->setRedThreshold(red); }
+    } else if (objectName() == QStringLiteral("PowerScale")) {
+        if (ScaleItem* scale = qobject_cast<ScaleItem*>(this)) { scale->setRange(0.0, top); scale->setMajorTicks(watts <= 10 ? 5 : 7); }
+    }
+}
 
 QString MeterItem::serialize() const
 {

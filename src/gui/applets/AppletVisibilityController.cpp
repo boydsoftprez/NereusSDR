@@ -8,6 +8,8 @@
 
 #include "AppletVisibilityController.h"
 #include "core/AppSettings.h"
+#include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/ContainerContentRegistry.h"
 
 namespace NereusSDR {
 
@@ -16,6 +18,35 @@ AppletVisibilityController::AppletVisibilityController(QObject* parent)
 {
 }
 
+void AppletVisibilityController::setWorkspaceAdapter(ContainerWorkspaceStore* store, ContainerContentRegistry* registry)
+{
+    if (m_store) { disconnect(m_store, nullptr, this, nullptr); }
+    m_store = store; m_registry = registry;
+    if (store) { connect(store, &ContainerWorkspaceStore::committed, this, &AppletVisibilityController::syncWorkspace); syncWorkspace(); }
+}
+void AppletVisibilityController::syncWorkspace()
+{
+    if (!m_store) { return; }
+    const WorkspaceDocument document = m_store->snapshot();
+    for (const QString& id : m_order) {
+        const QString type = ContainerContentRegistry::appletTypeForVisibilityId(id);
+        bool found = false;
+        for (const auto& c : document.containers) {
+            for (const auto& content : c.contents) {
+                if (content.typeId != type) { continue; }
+                found = true; Entry& entry = m_entries[id];
+                if (entry.visible != content.visible) {
+                    const bool wasEffective = entry.visible && entry.available;
+                    entry.visible = content.visible;
+                    emit visibilityChanged(id, entry.visible);
+                    if (wasEffective != (entry.visible && entry.available)) { emit effectiveVisibilityChanged(id, entry.visible && entry.available); }
+                }
+                break;
+            }
+            if (found) { break; }
+        }
+    }
+}
 QString AppletVisibilityController::settingsKey(const QString& id)
 {
     return QStringLiteral("Applet") + id + QStringLiteral("Visible");
@@ -34,6 +65,7 @@ void AppletVisibilityController::registerApplet(const QString& id,
     Entry& e = m_entries[id];
     e.displayName = displayName;
 
+    if (m_store) { e.visible = defaultVisible; syncWorkspace(); return; }
     const QString stored = AppSettings::instance()
         .value(settingsKey(id), QString{}).toString();
     if (stored == QStringLiteral("True")) {
@@ -81,6 +113,25 @@ void AppletVisibilityController::setVisible(const QString& id, bool visible)
     if (it == m_entries.end()) { return; }
     if (it->visible == visible) { return; }
 
+    if (m_store) {
+        WorkspaceDocument document = m_store->snapshot();
+        bool found = false;
+        const QString type = ContainerContentRegistry::appletTypeForVisibilityId(id);
+        for (auto& c : document.containers) {
+            for (auto& content : c.contents) {
+                if (content.typeId == type) { content.visible = visible; found = true; break; }
+            }
+            if (found) { break; }
+        }
+        if (!found) { return; }
+        const CommitResult result = m_store->commit(document, document.revision);
+        if (result.status != CommitStatus::Saved) {
+            m_storageError = result.error; emit persistenceFailed(result.error);
+            // Restore toggled menu UI too: the committed preference still wins.
+            emit visibilityChanged(id, it->visible);
+        } else { m_storageError.clear(); }
+        return;
+    }
     const bool wasEffective = it->visible && it->available;
     it->visible = visible;
     const bool nowEffective = it->visible && it->available;
@@ -102,6 +153,7 @@ void AppletVisibilityController::setAvailable(const QString& id, bool available)
 
     const bool wasEffective = it->visible && it->available;
     it->available = available;
+    if (m_registry) { m_registry->setAvailable(ContainerContentRegistry::appletTypeForVisibilityId(id), available); }
     const bool nowEffective = it->visible && it->available;
 
     emit availabilityChanged(id, available);

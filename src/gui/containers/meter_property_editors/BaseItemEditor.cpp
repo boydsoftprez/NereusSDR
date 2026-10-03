@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Effective contextual draft properties and portable settings by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -248,6 +250,15 @@ void BaseItemEditor::buildBaseForm()
         m_item->setDisplayGroup(v);
         notifyChanged();
     });
+}
+
+void BaseItemEditor::setGeometryEditable(bool editable)
+{
+    m_spinZ->setEnabled(editable);m_spinZ->setToolTip(editable?QString():tr("Each stack entry has its own meter surface; paint order applies to a canvas."));
+    for(auto* field:{m_spinX,m_spinY,m_spinW,m_spinH}) {
+        field->setEnabled(editable);
+        field->setToolTip(editable ? QString() : tr("The vertical stack owns this object's position and size."));
+    }
 }
 
 void BaseItemEditor::populateBindingCombo()

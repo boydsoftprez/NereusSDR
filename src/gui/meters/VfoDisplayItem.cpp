@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Fit VFO text to its actual row width by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -59,8 +61,24 @@ mw0lge@grange-lane.co.uk
 #include <QPainter>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QFontMetrics>
 
 namespace NereusSDR {
+namespace {
+// NereusSDR correction: height-derived fonts must also fit the face width.
+void fitTextWidth(QFont& font, const QStringList& texts, int width)
+{
+    int low=1, high=font.pixelSize();
+    while(low<high) {
+        const int candidate=(low+high+1)/2; font.setPixelSize(candidate);
+        const QFontMetrics metrics(font); bool fits=true;
+        for(const QString& text:texts) { fits=fits && metrics.horizontalAdvance(text)<=width; }
+        if(fits) { low=candidate; } else { high=candidate-1; }
+    }
+    font.setPixelSize(low);
+}
+}
+
 
 VfoDisplayItem::VfoDisplayItem(QObject* parent) : MeterItem(parent) {}
 
@@ -118,6 +136,7 @@ void VfoDisplayItem::paint(QPainter& p, int widgetW, int widgetH)
     QFont freqFont = p.font();
     freqFont.setPixelSize(qMax(12, freqRect.height() - 4));
     freqFont.setBold(true);
+    fitTextWidth(freqFont,{formatFrequency(m_frequencyHz)},freqRect.width());
     p.setFont(freqFont);
     p.setPen(m_freqColour);
     p.drawText(freqRect, Qt::AlignVCenter | Qt::AlignLeft, formatFrequency(m_frequencyHz));
@@ -137,6 +156,7 @@ void VfoDisplayItem::paint(QPainter& p, int widgetW, int widgetH)
     QFont labelFont = p.font();
     labelFont.setPixelSize(qMax(9, labelRect.height() - 4));
     labelFont.setBold(false);
+    fitTextWidth(labelFont,{m_modeLabel,m_filterLabel,m_bandLabel},labelRect.width()/3);
     p.setFont(labelFont);
 
     const int thirdW = labelRect.width() / 3;
