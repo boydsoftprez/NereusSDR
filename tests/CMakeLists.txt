@@ -4976,6 +4976,8 @@ nereus_add_test(tst_psk_reporter_protocol)
 #   rejectsEmptyOrInvalidCallsign. Source: AetherSDR
 # src/core/CtyDatParser.{h,cpp} [@0cd4559].
 nereus_add_test(tst_cty_dat_parser)
+target_compile_definitions(tst_cty_dat_parser PRIVATE
+    NEREUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
 # ── Phase 3J-2 Task C2: AdifParser (.adi / .adif log parser) ───────────────
 # Pins the contract that AdifParser parses ADIF (Amateur Data
@@ -4991,6 +4993,8 @@ nereus_add_test(tst_cty_dat_parser)
 #   rejectsMalformedAdif (garbage bytes -> empty vector).
 # Source: AetherSDR src/core/AdifParser.{h,cpp} [@0cd4559].
 nereus_add_test(tst_adif_parser)
+target_compile_definitions(tst_adif_parser PRIVATE
+    NEREUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
 # ── Phase 3J-2 Task C3: DxccWorkedStatus (worked-status tracker) ───────────
 # Pins the contract that DxccWorkedStatus tracks per-entity /
@@ -5022,6 +5026,8 @@ nereus_add_test(tst_dxcc_worked_status)
 #   (W1AW on 20m PHONE -> colorWorked dim grey). Source:
 #   AetherSDR src/core/DxccColorProvider.{h,cpp} [@0cd4559].
 nereus_add_test(tst_dxcc_color_provider)
+target_compile_definitions(tst_dxcc_color_provider PRIVATE
+    NEREUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
 # ── Phase 3J-2 Task D1: SpotModel (TCI-keyed spot sink) ────────────────────
 # Pins the contract that SpotModel is a QMap<int, SpotData> sink

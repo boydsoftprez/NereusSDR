@@ -31,17 +31,11 @@
 
 using namespace NereusSDR;
 
-// Path resolver: the cty.dat lives at the worktree root. The test
-// binary runs from build/tests/, so we hop up from __FILE__ (which
-// is tests/tst_cty_dat_parser.cpp) to find the file. Mirrors the
-// resolution hint in the C1 task plan.
+// Use the configured source root: __FILE__ can be relative to the build
+// directory, while CTest runs this executable from build/tests/.
 static QString resolveCtyDatPath()
 {
-    const QString file = QString::fromUtf8(__FILE__);
-    // __FILE__ = .../<worktree>/tests/tst_cty_dat_parser.cpp
-    // strip the last two components -> .../<worktree>/
-    const QString root = QFileInfo(QFileInfo(file).dir().path()).path();
-    return root + "/cty.dat";
+    return QString::fromUtf8(NEREUS_SOURCE_ROOT) + "/cty.dat";
 }
 
 class TestCtyDatParser : public QObject {
