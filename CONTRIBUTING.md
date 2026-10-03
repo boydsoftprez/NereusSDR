@@ -54,6 +54,38 @@ that matches our conventions.
 
 ---
 
+## Versioning
+
+Releases use year.month.counter, with the full year, an unpadded month and a
+counter starting at 0 each month. `2026.10.0` is the first October 2026 release,
+`2026.10.1` is the second, and `2026.11.0` is the first November release. The
+number records the month the release ships, using the tag's own date and recorded
+timezone; it does not set a release schedule. Desktop tags prefix the number
+with `v`, for example `v2026.10.0`.
+
+Run `python3 scripts/release-version.py next` to get the next desktop version,
+or `python3 scripts/release-version.py next --rc` for a release candidate.
+Candidates append `-rc1`, `-rc2`, and so on to the number a final release would
+get that month. Candidates and other suffixes such as `-test` never use up a
+final counter. A candidate that ships in a later month takes that month's
+number. The release workflow refuses malformed tags, tags whose year and month
+do not match the month they were made, and tags whose base version differs from
+`CMakeLists.txt` at the tag.
+
+The iPhone app uses the same format with an independent counter and `ios-v`
+tags, for example `ios-v2026.10.0`. Phone releases are tags only, never GitHub
+Releases, so the website and desktop out-of-date check only see desktop
+releases. The desktop release workflow does not match `ios-v` tags.
+
+The settings schema version, VAX driver's bundle version, Flex
+`discovery_protocol_version`, and all wire protocol versions stay separate
+from the product version, including the remote session protocol.
+The Power Genius discovery beacon permanently reports `version=0.5.2` because
+the amplifier utility parses that field as a Flex radio firmware version,
+not the NereusSDR release version.
+
+---
+
 ## Project Architecture
 
 The full architecture is documented in [CLAUDE.md](CLAUDE.md) including

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to (re-)build, e.g. v0.2.0'
+        description: 'Tag to (re-)build, e.g. v2026.10.0'
         required: false
       verify_only:
         description: 'Build and inspect packages from the selected branch commit without publishing'
@@ -65,16 +65,12 @@ jobs:
           fi
           TAG="${INPUT_TAG:-$REF_NAME}"
           echo "Tag: $TAG"
-          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
-            echo "::error::Tag '$TAG' does not match vMAJOR.MINOR.PATCH[-suffix]"
+          if [[ ! -f scripts/release-version.py ]]; then
+            echo "::error::Tag '$TAG' predates calendar versioning; this workflow builds calendar tags only"
             exit 1
           fi
+          python3 scripts/release-version.py check "$TAG"
           VERSION="${TAG#v}"
-          BASE_VER="${VERSION%%-*}"
-          if [[ "$CMAKE_VER" != "$BASE_VER" ]]; then
-            echo "::error::CMakeLists.txt version ($CMAKE_VER) != tag version ($BASE_VER)"
-            exit 1
-          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           if [[ "$TAG" =~ -(alpha|beta|rc) ]]; then
