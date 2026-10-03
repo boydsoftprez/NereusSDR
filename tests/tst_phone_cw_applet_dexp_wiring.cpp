@@ -137,6 +137,26 @@ private slots:
         QCOMPARE(rm.transmitModel().dexpEnabled(),   dexpOnBefore);
     }
 
+    // Issue #289: recreating the applet must retain the operator's marker.
+    // Removing the settings write or the construction-time restore breaks this.
+    void dexpThresholdMarker_survivesSettingsReload()
+    {
+        RadioModel rm;
+        {
+            PhoneCwApplet applet(&rm);
+            auto* slider = applet.findChild<QSlider*>(QStringLiteral("PhoneCwDexpThresholdSlider"));
+            QVERIFY(slider != nullptr);
+            slider->setValue(-83);
+        }
+        QVERIFY(AppSettings::instance().save());
+        AppSettings::instance().clear();
+        AppSettings::instance().load();
+        PhoneCwApplet restored(&rm);
+        auto* slider = restored.findChild<QSlider*>(QStringLiteral("PhoneCwDexpThresholdSlider"));
+        QVERIFY(slider != nullptr);
+        QCOMPARE(slider->value(), -83);
+    }
+
     // ── 3. Right-click on DEXP [ON] emits openSetupRequested("Transmit",
     //      "DEXP/VOX") ─────────────────────────────────────────────────────
     void dexpButton_rightClickEmitsOpenSetupRequested()

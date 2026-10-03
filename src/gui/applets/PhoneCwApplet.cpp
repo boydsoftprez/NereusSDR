@@ -60,6 +60,9 @@
 //   2026-09-30: Fix wave GUI-M3: the DEXP right-click opens Setup
 //               without the transmit check. J.J. Boyd (KG4VCF), AI-
 //               assisted via Anthropic Claude Code.
+//   2026-10-01: Issue #289: persist the local DEXP threshold marker.
+//                 J.J. Boyd (KG4VCF), AI-assisted implementation via
+//                 OpenAI Codex.
 // =================================================================
 
 //=================================================================
@@ -112,6 +115,7 @@
 #include "gui/meters/MeterPoller.h"
 #include "gui/ComboStyle.h"
 #include "gui/widgets/DexpPeakMeter.h"
+#include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
 #include "core/ControlRanges.h"
 #include "core/HpsdrModel.h"
@@ -148,6 +152,8 @@ namespace NereusSDR {
 // Column widths shared across Phone / FM pages (from AetherSDR PhoneCwApplet.cpp)
 static constexpr int kLeftColW = 70;
 static constexpr int kValueW   = 36;
+// Issue #289: the visual DEXP marker is an operator-local UI preference.
+static constexpr auto kDexpMarkerKey = "PhoneCw/DexpThresholdMarkerDb";
 // kGap (4) removed — only used by the CW page, now a placeholder (Phase 3M-2).
 
 
@@ -536,7 +542,8 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         // Range -160..0 dB matches Thetis ptbNoiseGate scale per
         // console.cs:28974-28980 [v2.10.3.13] picNoiseGate_Paint.
         m_dexpSlider->setRange(-160, 0);
-        m_dexpSlider->setValue(-50);
+        m_dexpSlider->setValue(AppSettings::instance().value(
+            QLatin1String(kDexpMarkerKey), -50).toInt());
         m_dexpSlider->setFixedHeight(14);
         m_dexpSlider->setStyleSheet(NereusSDR::Style::sliderHStyle());
         m_dexpSlider->setAccessibleName(QStringLiteral("DEXP threshold marker (dB)"));
@@ -1125,6 +1132,7 @@ void PhoneCwApplet::wireControls()
         }
         connect(m_dexpSlider, &QSlider::valueChanged, this, [this](int dB) {
             m_dexpThresholdMarkerDb = static_cast<double>(dB);
+            AppSettings::instance().setValue(QLatin1String(kDexpMarkerKey), dB);
             if (m_dexpPeakMeter) {
                 // Map -160..0 dB → 0..1 (Thetis console.cs:28974 scaling).
                 m_dexpPeakMeter->setThresholdMarker((dB + 160.0) / 160.0);
