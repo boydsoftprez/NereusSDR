@@ -38,6 +38,7 @@ public:
     QString validateEntry(const ContentEntry& entry) const;
     MeterItem* createMeterItem(const ContentEntry& entry, QObject* parent,
                               ContentRenderMode mode = ContentRenderMode::Live) const;
+    QWidget* createPreview(const ContentEntry& entry, QWidget* parent) const;
     ContentEntry captureMeterItem(const MeterItem& item, const ContentEntry& prior = {}) const;
 signals:
     void runtimeChanged();

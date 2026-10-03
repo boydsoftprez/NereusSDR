@@ -62,6 +62,10 @@
 #include "gui/applets/TxApplet.h"
 #include "core/TxSliceArbiter.h"
 #include "gui/meters/MeterPoller.h"
+#include "gui/meters/MeterWidget.h"
+#include "gui/meters/presets/BarPresetItem.h"
+#include "gui/containers/ContainerPreviewWidget.h"
+#include "gui/containers/ContainerContentRegistry.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -183,6 +187,13 @@ private slots:
         QCOMPARE(vfo.last().at(0).toInt(), slice->sliceIndex());
         QCOMPARE(vfo.last().at(1).toDouble(), -71.0);
 
+        ContainerContentRegistry registry;
+        ContainerPreviewWidget preview(registry,*poller);
+        ContainerDocument draft; draft.id="preview"; draft.layout=ContentLayout::VerticalStack;
+        auto entry=registry.makeEntry("meter.signalMaxBin"); entry.context["sliceId"]=slice->sliceIndex(); entry.context["bindingId"]=MeterBinding::SignalMaxBin;
+        draft.contents={entry}; const int targetCount=poller->targetCountForTest(); preview.setDocument(draft);
+        auto* previewMeter=preview.findChild<MeterWidget*>(); auto* previewFace=qobject_cast<BarPresetItem*>(previewMeter->items()[0]); QVERIFY(previewFace);
+        QVERIFY(previewFace->hasPrimaryReading()); QCOMPARE(previewFace->value(),-71.0); QCOMPARE(poller->targetCountForTest(),targetCount);
         const auto noReading = [&]() {
             vfo.clear();
             QVERIFY(QMetaObject::invokeMethod(poller, "poll", Qt::DirectConnection));
@@ -193,6 +204,7 @@ private slots:
         // An unbound slice cannot borrow a retained display frame.
         const int stream = slice->streamIndex();
         slice->setStreamIndex(-1);
+        poller->copyCachedReadings(previewMeter,{{"sliceId",slice->sliceIndex()}}); QVERIFY(!previewFace->hasPrimaryReading());
         noReading();
         slice->setStreamIndex(stream);
         // A marker association with another receiver does not lend its peak.
@@ -206,6 +218,7 @@ private slots:
         // Focus the slice again but explicitly leave the test pan displaying
         // the other receiver, without processing a subscription renewal.
         pan->setActiveSliceIndex(99);
+        poller->copyCachedReadings(previewMeter,{{"sliceId",slice->sliceIndex()}}); QVERIFY(!previewFace->hasPrimaryReading());
         vfo.clear();
         QVERIFY(QMetaObject::invokeMethod(poller, "poll", Qt::DirectConnection));
         bool foundPrimary = false;
@@ -230,6 +243,11 @@ private slots:
             }
         }
         QVERIFY(foundPrimary);
+        foreign->setStreamEpoch(slice->streamEpoch()+1);
+        poller->copyCachedReadings(previewMeter,{{"sliceId",slice->sliceIndex()}}); QVERIFY(!previewFace->hasPrimaryReading());
+        foreign->setStreamEpoch(slice->streamEpoch()); foreign->setFrequency(slice->frequency()); foreign->setFilter(slice->filterLow(),slice->filterHigh());
+        poller->copyCachedReadings(previewMeter,{{"sliceId",99}}); QVERIFY(previewFace->hasPrimaryReading()); QCOMPARE(previewFace->value(),-71.0);
+        poller->copyCachedReadings(previewMeter,{{"sliceId",slice->sliceIndex()},{"sessionId","foreign session"}}); QVERIFY(!previewFace->hasPrimaryReading());
         pan->removeSlice(99);
         pan->setActiveSliceIndex(slice->sliceIndex());
         h.remoteModel()->setActiveSlice(slice->sliceIndex());

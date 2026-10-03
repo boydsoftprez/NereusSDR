@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -186,6 +188,11 @@ mw0lge@grange-lane.co.uk
 #include "../meters/ClickBoxItem.h"
 #include "../meters/DataOutItem.h"
 
+#include "ContainerEditSession.h"
+#include "ContainerPreviewWidget.h"
+#include "LegacyContainerImporter.h"
+#include <QSignalBlocker>
+#include <QScrollArea>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSplitter>
@@ -299,7 +306,12 @@ ContainerSettingsDialog::ContainerSettingsDialog(ContainerWidget* container,
     resize(1100, 750);
     setSizeGripEnabled(true);
 
+    if (m_manager && m_manager->workspaceStore()) {
+        m_editSession=std::make_unique<ContainerEditSession>(*m_manager->workspaceStore());
+        m_selectedId=m_container ? m_container->id() : m_editSession->draft().mainContainerId;
+    }
     buildLayout();
+    if (m_editSession) { loadCurrentDraft(); }
 
     // Phase 3G-6 block 3 commit 14: snapshot the current container
     // state so Cancel can fully revert the in-progress edits. Must
@@ -358,9 +370,31 @@ void ContainerSettingsDialog::buildLayout()
     m_splitter->setSizes({200, 200, 700});
 
     root->addWidget(m_splitter, 1);
+    if (m_editSession && m_manager->previewPoller()) {
+        auto* label=new QLabel(tr("Live preview — edits remain in the draft until Apply"),this);
+        label->setStyleSheet(kSectionHeaderStyle); root->addWidget(label);
+        auto* scroll=new QScrollArea(this); scroll->setWidgetResizable(true); scroll->setMinimumHeight(200);
+        m_preview=new ContainerPreviewWidget(*m_manager->contentRegistry(),*m_manager->previewPoller());
+        connect(m_preview,&ContainerPreviewWidget::presentationRequested,m_manager,&ContainerManager::previewPresentationRequested);
+        scroll->setWidget(m_preview); root->addWidget(scroll,1);
+    }
+    if (m_editSession) {
+        m_transactionStatus=new QLabel(this); m_transactionStatus->setWordWrap(true); root->addWidget(m_transactionStatus);
+        auto* reload=makeBtn(tr("Reload conflicting containers"),this); root->addWidget(reload);
+        connect(reload,&QPushButton::clicked,this,[this]{
+            saveCurrentDraft(); m_editSession->reloadContainers(m_editSession->conflictingContainers());
+            refreshDraftDropdown(); loadCurrentDraft(); m_transactionStatus->setText(tr("Conflicting drafts reloaded; other edits retained."));
+        });
+    }
 
     // --- Button bar (bottom) ---
     buildButtonBar();
+    if (m_editSession) {
+        m_btnMmio->setEnabled(false); m_btnMmio->setToolTip(tr("Edit external endpoints in application settings."));
+        for (auto* edit : findChildren<QLineEdit*>()) { connect(edit,&QLineEdit::textChanged,this,[this]{ updatePreview(); }); }
+        for (auto* check : findChildren<QCheckBox*>()) { connect(check,&QCheckBox::toggled,this,[this]{ updatePreview(); }); }
+        connect(m_rxSourceCombo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this]{ updatePreview(); });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -381,6 +415,7 @@ void ContainerSettingsDialog::buildAvailablePanel(QWidget* parent)
     layout->addWidget(header);
 
     m_availableList = new QListWidget(parent);
+    m_availableList->setObjectName("containerAvailableContents");
     m_availableList->setStyleSheet(kListStyle);
     layout->addWidget(m_availableList, 1);
 
@@ -412,6 +447,7 @@ void ContainerSettingsDialog::buildInUsePanel(QWidget* parent)
     layout->addWidget(header);
 
     m_itemList = new QListWidget(parent);
+    m_itemList->setObjectName("containerDraftContents");
     m_itemList->setStyleSheet(kListStyle);
     layout->addWidget(m_itemList, 1);
 
@@ -771,6 +807,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     QLabel* contLabel = new QLabel(QStringLiteral("Container:"), bar);
     contLabel->setStyleSheet(kLabelStyle);
     m_containerDropdown = new QComboBox(bar);
+    m_containerDropdown->setObjectName("containerDraftSelection");
     m_containerDropdown->setStyleSheet(
         "QComboBox { background: #0a0a18; color: #c8d8e8;"
         "  border: 1px solid #1e2e3e; border-radius: 3px; padding: 2px 4px;"
@@ -817,6 +854,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     QLabel* titleLabel = new QLabel(QStringLiteral("Title:"), bar);
     titleLabel->setStyleSheet(kLabelStyle);
     m_titleEdit = new QLineEdit(bar);
+    m_titleEdit->setObjectName("containerDraftTitle");
     m_titleEdit->setStyleSheet(kEditStyle);
     m_titleEdit->setPlaceholderText(QStringLiteral("Container title..."));
     m_titleEdit->setFixedWidth(140);
@@ -953,14 +991,28 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     // is being edited. The others latch into the container on Apply
     // / OK via applyToContainer (live-edit push machinery is block
     // 4 territory).
-    if (m_container) {
+    if (m_container && !m_editSession) {
         m_container->setHighlighted(m_highlightCheck->isChecked());
     }
     connect(m_highlightCheck, &QCheckBox::toggled, this, [this](bool on) {
-        if (m_container) { m_container->setHighlighted(on); }
+        if (m_container && !m_editSession) { m_container->setHighlighted(on); }
+        updatePreview();
     });
 
     connect(m_btnDuplicate, &QPushButton::clicked, this, [this]() {
+        if (m_editSession) {
+            saveCurrentDraft(); auto draft=m_editSession->draft();
+            for (const auto& original : draft.containers) {
+                if (original.id!=m_selectedId) { continue; }
+                for (const auto& entry : original.contents) {
+                    if (entry.typeId.startsWith("applet:")) { m_transactionStatus->setText(tr("Singleton applets cannot be duplicated.")); return; }
+                }
+                auto copy=original; copy.id=QUuid::createUuid().toString(QUuid::WithoutBraces); copy.name+=tr(" copy");
+                for (auto& entry : copy.contents) { entry.id=QUuid::createUuid().toString(QUuid::WithoutBraces); }
+                draft.containers.append(copy); m_editSession->setDraft(draft); refreshDraftDropdown(); selectDraftContainer(copy.id); return;
+            }
+            return;
+        }
         if (m_manager && m_container) {
             ContainerWidget* dup = m_manager->duplicateContainer(m_container->id());
             if (dup && m_containerDropdown) {
@@ -970,6 +1022,15 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
         }
     });
     connect(m_btnDelete, &QPushButton::clicked, this, [this]() {
+        if (m_editSession) {
+            saveCurrentDraft(); auto draft=m_editSession->draft();
+            if (m_selectedId==draft.mainContainerId) { m_transactionStatus->setText(tr("The main container cannot be deleted.")); return; }
+            QVector<ContentEntry> entries;
+            for (const auto& c : draft.containers) { if(c.id==m_selectedId) { entries=c.contents; } }
+            draft.containers.removeIf([this](const ContainerDocument& c){ return c.id==m_selectedId; });
+            for (auto& c : draft.containers) { if(c.id==draft.mainContainerId) { c.contents+=entries; } }
+            m_editSession->setDraft(draft); m_selectedId=draft.mainContainerId; refreshDraftDropdown(); loadCurrentDraft(); return;
+        }
         if (!m_manager || !m_container) { return; }
         const QString id = m_container->id();
         // Leaving the dialog open pointing at a freed container is a
@@ -1036,8 +1097,8 @@ void ContainerSettingsDialog::buildButtonBar()
         reject();
     });
     connect(m_btnOk,     &QPushButton::clicked, this, [this]() {
-        applyToContainer();
-        accept();
+        if (m_editSession) { if (applyDraft().status==CommitStatus::Saved) { accept(); } }
+        else { applyToContainer(); accept(); }
     });
 
     // Add bar to the root layout
@@ -1110,14 +1171,10 @@ void ContainerSettingsDialog::onItemSelectionChanged()
     m_propertyStack->addWidget(scroll);
     m_propertyStack->setCurrentWidget(scroll);
 
-    // Live-edit push: every property change on the working item
-    // flushes m_workingItems back to the real container. Block 4
-    // can refine this to only redraw the affected item, but for
-    // now a full applyToContainer on every edit is correct and
-    // cheap enough for interactive use.
+    // Item editors update the local draft and its inert presentation.
     if (auto* base = qobject_cast<BaseItemEditor*>(editor)) {
         connect(base, &BaseItemEditor::propertyChanged,
-                this, &ContainerSettingsDialog::applyToContainer);
+                this, &ContainerSettingsDialog::updatePreview);
     }
 }
 
@@ -1469,6 +1526,7 @@ MeterWidget* ContainerSettingsDialog::findMeterWidget() const
 
 void ContainerSettingsDialog::populateItemList()
 {
+    if (m_editSession) { if (m_lockCheck) { loadCurrentDraft(); } return; }
     qDeleteAll(m_workingItems);
     m_workingItems.clear();
 
@@ -1490,6 +1548,11 @@ void ContainerSettingsDialog::populateItemList()
 
 void ContainerSettingsDialog::updatePreview()
 {
+    if (m_editSession && !m_loadingDraft) {
+        saveCurrentDraft();
+        if(m_preview) { for(const auto& c:m_editSession->draft().containers) { if(c.id==m_selectedId) { m_preview->setDocument(c); break; } } }
+        return;
+    }
     // Phase 3G-6 block 3 commit 11: live preview removed. In-place
     // editing with snapshot/revert (commit 14) will push working-item
     // changes directly to the target container's MeterWidget; until
@@ -1527,7 +1590,7 @@ void ContainerSettingsDialog::onSaveToFile()
 
 void ContainerSettingsDialog::onLoadFromFile()
 {
-    if (!m_container) { return; }
+    if (!m_container && !m_editSession) { return; }
     const QString path = QFileDialog::getOpenFileName(this,
         QStringLiteral("Load Container"),
         QString(),
@@ -1539,6 +1602,18 @@ void ContainerSettingsDialog::onLoadFromFile()
         QMessageBox::warning(this, QStringLiteral("Load Failed"),
             QStringLiteral("Could not open %1 for reading.").arg(path));
         return;
+    }
+    if (m_editSession) {
+        const auto parsed=LegacyContainerImporter::fromContainerFile(f.readAll());
+        if (!parsed.ok || parsed.document.containers.isEmpty()) { m_transactionStatus->setText(parsed.error); return; }
+        saveCurrentDraft(); auto draft=m_editSession->draft();
+        for (auto& c : draft.containers) {
+            if(c.id!=m_selectedId) { continue; }
+            auto imported=parsed.document.containers.first(); imported.id=c.id;
+            for(auto& e:imported.contents) { e.id=QUuid::createUuid().toString(QUuid::WithoutBraces); }
+            c=imported; break;
+        }
+        m_editSession->setDraft(draft); loadCurrentDraft(); return;
     }
     QTextStream in(&f);
     const QString containerLine = in.readLine();
@@ -1558,6 +1633,7 @@ void ContainerSettingsDialog::onLoadFromFile()
 
 void ContainerSettingsDialog::onOpenMmioDialog()
 {
+    if (m_editSession) { return; }
     // Phase 3G-6 block 5 phase 3: real MMIO endpoints dialog. The
     // block 3 commit 18 stub is gone — this now opens the endpoint
     // manager with live add/edit/remove backed by
@@ -1572,6 +1648,7 @@ void ContainerSettingsDialog::onOpenMmioDialog()
 
 void ContainerSettingsDialog::onContainerDropdownChanged(int index)
 {
+    if (m_editSession) { if(index>=0) { selectDraftContainer(m_containerDropdown->itemData(index).toString()); } return; }
     if (!m_manager || index < 0) { return; }
     if (!m_containerDropdown) { return; }
 
@@ -1652,7 +1729,7 @@ void ContainerSettingsDialog::onPasteItemSettings()
     if (curTag != m_clipboardTypeTag) { return; }
 
     item->deserialize(m_clipboardSerialized);
-    applyToContainer();
+    if (m_editSession) { updatePreview(); } else { applyToContainer(); }
 
     // Force the editor stack to rebuild so the property fields
     // reload from the freshly-pasted item state.
@@ -1727,36 +1804,98 @@ void ContainerSettingsDialog::revertFromSnapshot()
     m_container->update();
 }
 
-void ContainerSettingsDialog::applyToContainer()
+void ContainerSettingsDialog::reject()
 {
-    if (!m_container) {
-        return;
+    if (m_editSession) { m_editSession->cancel(); } else { revertFromSnapshot(); }
+    QDialog::reject();
+}
+void ContainerSettingsDialog::refreshDraftDropdown()
+{
+    if (!m_editSession || !m_containerDropdown) { return; }
+    const QSignalBlocker blocker(m_containerDropdown); m_containerDropdown->clear();
+    for (const auto& c : m_editSession->draft().containers) { m_containerDropdown->addItem(c.name.isEmpty()?c.id.left(8):c.name,c.id); }
+    m_containerDropdown->setCurrentIndex(m_containerDropdown->findData(m_selectedId));
+    m_containerDropdown->setEnabled(m_containerDropdown->count()>1);
+}
+void ContainerSettingsDialog::selectDraftContainer(const QString& id)
+{
+    if (!m_editSession || id.isEmpty() || id==m_selectedId) { return; }
+    saveCurrentDraft(); m_selectedId=id; m_container=m_manager ? m_manager->container(id) : nullptr;
+    loadCurrentDraft(); refreshDraftDropdown();
+}
+void ContainerSettingsDialog::refreshDraftView() { loadCurrentDraft(); refreshDraftDropdown(); }
+void ContainerSettingsDialog::loadCurrentDraft()
+{
+    if (!m_editSession || !m_titleEdit || !m_manager) { return; }
+    bool selected=false;
+    for(const auto& c:m_editSession->draft().containers) { if(c.id==m_selectedId) { selected=true; break; } }
+    if(!selected) { m_selectedId=m_editSession->draft().mainContainerId; }
+    m_container=m_manager->container(m_selectedId);
+    m_loadingDraft=true; qDeleteAll(m_workingItems); m_workingItems.clear(); m_editedIds.clear(); m_hydratedEntries.clear(); m_originalEntries.clear();
+    for (const auto& c : m_editSession->draft().containers) {
+        if (c.id!=m_selectedId) { continue; }
+        m_titleEdit->setText(c.name); m_borderCheck->setChecked(c.config.value("border").toBool(true));
+        m_rxSourceCombo->setCurrentIndex(m_rxSourceCombo->findData(c.config.contains("sliceId") ? c.config.value("sliceId").toInt()+1 : c.config.value("rxSource").toInt(1)));
+        m_showOnRxCheck->setChecked(c.config.value("showOnRx").toBool(true));
+        m_showOnTxCheck->setChecked(c.config.value("showOnTx").toBool(true));
+        if(m_lockCheck) { m_lockCheck->setChecked(c.locked); }
+        if(m_hideTitleCheck) { m_hideTitleCheck->setChecked(c.header==HeaderMode::Hidden); }
+        if(m_minimisesCheck) { m_minimisesCheck->setChecked(c.config.value("containerMinimises").toBool()); }
+        if(m_autoHeightCheck) { m_autoHeightCheck->setChecked(c.autoHeight); }
+        if(m_hidesWhenRxNotUsedCheck) { m_hidesWhenRxNotUsedCheck->setChecked(c.config.value("hidesWhenRxNotUsed").toBool()); }
+        if(m_highlightCheck) { m_highlightCheck->setChecked(c.config.value("highlight").toBool()); }
+        for(const auto& entry:c.contents) {
+            if(auto* item=m_manager->contentRegistry()->createMeterItem(entry,nullptr,ContentRenderMode::Preview)) { m_workingItems.append(item); m_editedIds.insert(entry.id); m_hydratedEntries[entry.id]=m_manager->contentRegistry()->captureMeterItem(*item,entry); m_originalEntries[entry.id]=entry; }
+        }
+        if(m_preview) { m_preview->setDocument(c); }
+        break;
     }
-
-    if (m_manager && m_manager->workspaceStore()) {
-        WorkspaceDocument document=m_manager->workspaceStore()->snapshot();
-        auto* host=m_manager->contentHost(m_container->id());
-        MeterWidget* target=findMeterWidget();
+    refreshItemList(); m_loadingDraft=false;
+}
+CommitResult ContainerSettingsDialog::applyDraft()
+{
+    if (!m_editSession || !m_manager || !m_manager->workspaceStore()) { return {CommitStatus::Invalid,0,tr("Workspace is unavailable")}; }
+    saveCurrentDraft(); const auto result=m_editSession->apply();
+    if (result.status==CommitStatus::Saved) {
+        // Manager projects the one Saved committed signal from this store.
+        m_container=m_manager->container(m_selectedId); loadCurrentDraft(); refreshDraftDropdown();
+    }
+    if(m_transactionStatus) { m_transactionStatus->setText(result.status==CommitStatus::Saved ? tr("All drafts saved.") : result.error); }
+    return result;
+}
+void ContainerSettingsDialog::saveCurrentDraft()
+{
+    if (m_loadingDraft || !m_editSession || !m_manager) { return; }
+    if (m_editSession) {
+        WorkspaceDocument document=m_editSession->draft();
         for (auto& d : document.containers) {
-            if (d.id != m_container->id()) { continue; }
-            d.name=m_titleEdit->text(); d.config["border"]=m_borderCheck->isChecked();
-            if (m_rxSourceCombo->currentData().toInt()!=d.config.value("rxSource").toInt(1)) { d.config["rxSource"]=m_rxSourceCombo->currentData().toInt(); }
-            d.config["showOnRx"]=m_showOnRxCheck->isChecked(); d.config["showOnTx"]=m_showOnTxCheck->isChecked();
+            if (d.id != m_selectedId) { continue; }
+            const auto setBool=[&](const QString& key,bool value,bool defaultValue=false) {
+                if(d.config.value(key).toBool(defaultValue)!=value) { d.config[key]=value; }
+            };
+            d.name=m_titleEdit->text(); setBool("border",m_borderCheck->isChecked(),true);
+            const int source=d.config.contains("sliceId") ? d.config.value("sliceId").toInt()+1 : d.config.value("rxSource").toInt(1);
+            if (m_rxSourceCombo->currentData().toInt()!=source) {
+                if(d.config.contains("sliceId")) { d.config["sliceId"]=m_rxSourceCombo->currentData().toInt()-1; }
+                else { d.config["rxSource"]=m_rxSourceCombo->currentData().toInt(); }
+            }
+            setBool("highlight",m_highlightCheck->isChecked());
+            setBool("showOnRx",m_showOnRxCheck->isChecked(),true); setBool("showOnTx",m_showOnTxCheck->isChecked(),true);
             if (m_lockCheck) { d.locked=m_lockCheck->isChecked(); }
             if (m_hideTitleCheck) {
                 if(m_hideTitleCheck->isChecked()) {d.header=HeaderMode::Hidden;}
                 else if(d.header==HeaderMode::Hidden) {d.header=HeaderMode::Always;}
             }
-            if (m_minimisesCheck) { d.config["containerMinimises"]=m_minimisesCheck->isChecked(); }
+            if (m_minimisesCheck) { setBool("containerMinimises",m_minimisesCheck->isChecked()); }
             if (m_autoHeightCheck) { d.autoHeight=m_autoHeightCheck->isChecked(); }
-            if (m_hidesWhenRxNotUsedCheck) { d.config["hidesWhenRxNotUsed"]=m_hidesWhenRxNotUsedCheck->isChecked(); }
-            QSet<QString> editedIds;
-            if (host) { for (const auto& row : host->entryRows()) { if (row.item && row.widget==target) { editedIds.insert(row.entryId); } } }
+            if (m_hidesWhenRxNotUsedCheck) { setBool("hidesWhenRxNotUsed",m_hidesWhenRxNotUsedCheck->isChecked()); }
+            const auto editedIds=m_editedIds;
             QVector<ContentEntry> replacements;
             for (const MeterItem* item : m_workingItems) {
                 ContentEntry prior=item->property("containerContentEntry").value<ContentEntry>();
                 for (const auto& entry : d.contents) { if (entry.id==prior.id) { prior=entry; break; } }
                 auto entry=m_manager->contentRegistry()->captureMeterItem(*item,prior);
+                if(m_hydratedEntries.contains(prior.id) && entry==m_hydratedEntries.value(prior.id)) { entry=m_originalEntries.value(prior.id); }
                 if (d.layout==ContentLayout::VerticalStack && !prior.id.isEmpty()) {
                     entry.canvasRect=prior.canvasRect;
                     for(const QString& key:{QStringLiteral("stackSlot"),QStringLiteral("slotLocalY"),QStringLiteral("slotLocalH")}) { if(prior.context.contains(key)) { entry.context[key]=prior.context[key]; } else { entry.context.remove(key); } }
@@ -1769,18 +1908,23 @@ void ContainerSettingsDialog::applyToContainer()
                 }
                 replacements.append(entry);
             }
-            QVector<ContentEntry> contents; bool inserted=false;
+            QVector<ContentEntry> contents; int next=0;
             for (const auto& entry : d.contents) {
-                if (editedIds.contains(entry.id)) { if (!inserted) { contents+=replacements; inserted=true; } }
+                if (editedIds.contains(entry.id)) { if(next<replacements.size()) { contents.append(replacements[next++]); } }
                 else { contents.append(entry); }
             }
-            if (!inserted) { contents+=replacements; }
-            d.contents=contents;
+            while(next<replacements.size()) { contents.append(replacements[next++]); }
+            d.contents=contents; m_editedIds.clear();
+            for(const auto& entry:replacements) { m_editedIds.insert(entry.id); }
             break;
         }
-        m_manager->commitWorkspace(document,document.revision);
-        return;
+        m_editSession->setDraft(document);
     }
+}
+void ContainerSettingsDialog::applyToContainer()
+{
+    if (m_editSession) { applyDraft(); return; }
+    if (!m_container) { return; }
 
     // Apply container-level properties
     m_container->setNotes(m_titleEdit->text());

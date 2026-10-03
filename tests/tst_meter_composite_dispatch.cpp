@@ -126,6 +126,9 @@ private slots:
         const QJsonObject context{{"sliceId",7}};
         MeterWidget w, preview; auto* face=new TwoChannel(&w); w.addItem(face); p.setTargetContext(&w,context);
         auto* copy=new TwoChannel(&preview); preview.addItem(copy);
+        // Initial registration now seeds from the sanctioned current GUI cache;
+        // the shared frame still performs one lookup per context/binding.
+        QCOMPARE(reads,9); QCOMPARE(face->readings.value(0),-40.0); reads=0;
         QSignalSpy cadence(&p,&MeterPoller::frameAdvanced);
         QVERIFY(QMetaObject::invokeMethod(&p,"poll",Qt::DirectConnection)); QCOMPARE(reads,9);
         ready=false; QVERIFY(QMetaObject::invokeMethod(&p,"poll",Qt::DirectConnection));

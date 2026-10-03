@@ -528,3 +528,77 @@ external-revision and invalid-external-document failure boundaries also pass
 run. Both accepted chrome binaries include the retained custom caption fixture.
 R1 GUI access and test-registration checks pass with exit 0. Broad gates remain
 Task 10.
+
+
+## Task 8 — draft transactions and inert native preview
+
+Implemented against signed freshness merge `7acd357f4f749dfaae948b5abad5b39183d58b86`
+(Task 7 `de317e7370a062d077037831e8d710c23c15883b` plus accepted Core
+Settings/logger `5d425542048fb4c2348553c99a3ec79ab4929829`). No mutable Core
+source was copied; the accepted actual-slice pan resolver and DSS fold are retained.
+
+ContainerEditSession reloads the latest Store before conflict comparison and final
+raw/revision CAS. Stable entry identity catches competing moves, deletion,
+configuration changes and return-container references. Unrelated live containers,
+workspace extensions and main identity merge without overwrite. Partial Reload
+adopts only selected containers and linked entry placements, retaining unrelated
+names/configuration. Workspace extension conflicts belong to the main container;
+reloading it resolves that conflict without losing another container's rename.
+Save failure/invalid future bytes retain saved state, real views and draft.
+
+The production settings dialog edits independent draft snapshots across selection,
+property changes, reorder/add/delete/duplicate and legacy load. Apply publishes one
+complete Saved Store transaction; the existing Manager committed connection performs
+one reconciliation. Cancel/window close perform no saved/live ownership mutation.
+Unchanged hydration and edit-undo preserve raw opaque fields and original entry
+positions. Task 9 retains final Contents/property editor and portable exchange work;
+the intermediate composite row still uses the old serialized label.
+
+Prominent native ContainerPreviewWidget uses real Preview meter factories and
+explicit inert existing-applet presentation tiles/snapshots. It never invokes a live
+singleton factory, reparents a singleton, registers another poll target, creates a
+model/subscription/endpoint transport, or starts a timer. Parentless Metal leaves
+attach before painting. Valid unpolled slices seed directly from sanctioned GUI
+caches. Continuing shared frameAdvanced samples preserve dynamics/history; changes
+reconstruct only affected native leaves. GUID+variable MMIO stays independent.
+Explicit foreign sessions refuse window-global TX/PA/hardware at initial replay,
+live push and preview sampling; matching/inherited sessions retain global readings
+with missing RX slices. Session changes cannot relabel old cache before the next
+tick or first new producer callback. Offline clocks remain independent.
+
+Final post-transition focused checks: GPU 11/11, exit 0, 23.87 seconds; CPU 11/11,
+exit 0, 24.95 seconds. Each raw Qt record contains 125 passes, zero failures/skips.
+Named EXCLUDE_FROM_ALL targets were rebuilt first in both graphs, exit 0; Ninja,
+RelWithDebInfo, Qt /opt/homebrew, ccache, both LTO flags OFF, GPU ON/OFF respectively.
+Final logs are `.crew/2026-10-02-containers-and-objects-plan/task-8-{build,tests}-{gpu,cpu}-final-session.log`,
+with raw `task-8-qt-{gpu,cpu}-final-session.log`. Included targets: edit_session,
+preview, workspace_store, content_host, content_host_native, composite_dispatch,
+pan_actions_per_pan, persistence, mini_display_composition, meter_poller_tx_bindings
+and multimeter_unit_conversion. R1 GUI/DSP access and test-registration checks pass.
+
+Meaningful red regressions are retained: foreign-session live cached power was
+50 W instead of no-reading (`task-8-tests-session-red.log`, exit 1); switching
+session before a first tick replayed the same old 50 W
+(`task-8-tests-session-transition-red.log`, exit 1). Both repaired boundaries pass,
+including matching/inherited live+preview TX/PA/volts, fresh 80 W/24 V after identity
+change and independent foreign-session clock/MMIO. Earlier fixture/source build
+failures are retained with their repairs in the Task 8 report, without assertion
+weakening. The initial successful build wrapper used zsh's readonly `status`
+variable; subsequent wrappers record explicit EXIT_STATUS correctly.
+
+Actual native screenshots are in `task-8-captures/{gpu,cpu}/`: main-slice-b-preview,
+meter-preview, mixed-preview, settings-preview and existing host fixture captures.
+GPU frameSubmitted/Metal framebuffer readback and CPU QWidget captures pass.
+Visual inspection shows the prominent 7.074100 MHz / LSB / 2.9k / 40m Slice B
+preview with clock and inert selected band/mode controls. This is actual product
+rendering against an isolated fake model/profile, with no radio command/connection.
+Physical pointer interaction is still unobserved on the locked desktop. Windows,
+Linux native/GPU and physical monitor-removal evidence and broad final gates remain
+Task 10. No cross-platform or full-suite success is claimed.
+
+Reference study: immutable Aether `5766bb13:src/gui/AppletPanel.cpp` lines 340–398
+uses a live single-meter editor/settings snapshot in its container. This change
+uses original Nereus whole-workspace drafts and read-only preview projection with
+stricter singleton/native ownership; no upstream editor code was copied. Existing
+upstream notices/inline tags remain, with Nereus modification histories and
+THETIS-PROVENANCE updated.

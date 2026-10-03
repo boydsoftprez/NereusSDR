@@ -11,6 +11,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -7462,9 +7464,14 @@ void MainWindow::buildUI()
     // Task 3.2: expose ContainerManager via RadioModel so MultimeterPage
     // can broadcast unit-mode changes to all live MeterItems.
     m_radioModel->setContainerManager(m_containerManager);
-    const auto cachedMaxBin = MeterPoller::panMaxBinSource([this](const QString& key) -> SpectrumWidget* {
-        return m_panStack ? m_panStack->spectrum(key) : nullptr;
+    const auto cachedMaxBin = MeterPoller::panMaxBinSourceForSlice([this](const SliceModel* slice) -> SpectrumWidget* {
+        if (!slice || !m_panStack || slice->streamIndex() < 0 || markerOnlyPlacement(slice->sliceIndex())) { return nullptr; }
+        PanadapterApplet* pan=m_panStack->panadapter(windowPanFor(slice));
+        SliceModel* displayed=pan ? m_radioModel->sliceById(pan->activeSliceIndex()) : nullptr;
+        if (!displayed || displayed->streamIndex()!=slice->streamIndex() || displayed->streamEpoch()!=slice->streamEpoch()) { return nullptr; }
+        return pan->spectrumWidget();
     });
+    m_meterPoller->setSessionIdSource([this] { return containerSessionId(); });
     m_meterPoller->setRxReadingSource([this, cachedMaxBin](const QJsonObject& context, int binding) {
         const bool remote = m_radioModel->role() == RadioModel::Role::Remote;
         const bool ready = m_radioModel->isConnected() && (!remote || (m_stationClient && m_stationClient->isHandshakeComplete()));
@@ -7472,6 +7479,13 @@ void MainWindow::buildUI()
         return ContainerSourceAdapter::reading(m_radioModel, context, windowRxSlice(), binding, ready, extended, cachedMaxBin, containerSessionId());
     });
     m_meterPoller->rescalePowerMeters(paMaxWattsFor(m_radioModel->hardwareProfile().model));
+    m_containerManager->setPreviewPoller(m_meterPoller);
+    connect(m_containerManager,&ContainerManager::previewPresentationRequested,this,[this](MeterWidget* meter,const QJsonObject& context){
+        for(auto* item:meter->items()) {
+            const auto source=item->property("containerSourceContext");
+            refreshContainerMeter(nullptr,meter,item,source.isValid()?source.toJsonObject():context);
+        }
+    });
     connect(m_containerManager, &ContainerManager::meterContextReady, m_meterPoller, &MeterPoller::setTargetContext);
     connect(m_containerManager, &ContainerManager::meterReadyForPolling, this, [this](MeterWidget* meter) {
         if (!meter || !m_meterPoller) { return; }
@@ -13238,9 +13252,9 @@ void MainWindow::refreshContainer(ContainerWidget* c, MeterItem* only)
 }
 void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, MeterItem* only, const QJsonObject& context)
 {
-    if (m_shuttingDown || !c || !meter || !m_radioModel || !m_containerButtons) { return; }
+    if (m_shuttingDown || !meter || !m_radioModel || !m_containerButtons) { return; }
     const bool unsupported = only && only->property("containerUnsupportedSource").toBool();
-    SliceModel* source = unsupported ? nullptr : ContainerSourceAdapter::slice(m_radioModel, context, windowRxSlice(), containerSessionId());
+    SliceModel* source = unsupported || (!c && !m_radioModel->isConnected()) ? nullptr : ContainerSourceAdapter::slice(m_radioModel, context, windowRxSlice(), containerSessionId());
     const int rxSource = source ? source->sliceIndex()+1 : 0;
     SliceModel* slice = m_containerButtons->sliceFor(rxSource);
     QVector<MeterItem*> items;

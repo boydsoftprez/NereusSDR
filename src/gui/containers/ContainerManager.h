@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -79,6 +81,7 @@ class ContainerContentHost;
 class ContainerWidget;
 class FloatingContainer;
 class MeterItem;
+class MeterPoller;
 class MeterWidget;
 enum class DockMode;
 
@@ -107,6 +110,8 @@ public:
     void reconcileWorkspace(const WorkspaceDocument& document);
     CommitResult commitWorkspace(const WorkspaceDocument& document, quint64 expectedRevision);
     void setTransmitting(bool transmitting);
+    void setPreviewPoller(MeterPoller* poller);
+    MeterPoller* previewPoller() const;
     ContainerArrangeController* arrangeController() const { return m_arrange; }
     QString storageError() const { return m_storageError; }
     bool isReconciling() const { return m_reconciling; }
@@ -178,6 +183,7 @@ signals:
     void meterReadyForPolling(MeterWidget* meter);
     void meterContextReady(MeterWidget* meter, const QJsonObject& context);
     void workspaceReconciled();
+    void previewPresentationRequested(MeterWidget* meter, const QJsonObject& context);
     void workspaceError(const QString& error);
 
 protected:
@@ -185,6 +191,7 @@ protected:
 private:
     bool commitDockMode(const QString& id, DockMode mode);
     ContainerArrangeController* m_arrange = nullptr;
+    QPointer<MeterPoller> m_previewPoller;
     QPointer<ContainerWorkspaceStore> m_store;
     QPointer<ContainerContentRegistry> m_registry;
     bool m_reconciling = false;

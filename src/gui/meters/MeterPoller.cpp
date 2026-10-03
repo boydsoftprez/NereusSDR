@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
@@ -592,6 +594,33 @@ void MeterPoller::setRxReadingSource(std::function<double(const QJsonObject&, in
     m_rxReadingSource = std::move(source);
     invalidateReadings(true, false, false);
 }
+void MeterPoller::setSessionIdSource(std::function<QString()> source)
+{
+    m_sessionIdSource = std::move(source);
+    m_cachedSessionId = m_sessionIdSource ? m_sessionIdSource() : QString();
+    invalidateReadings(false, true, true);
+}
+void MeterPoller::refreshGlobalSession()
+{
+    const QString sessionId = m_sessionIdSource ? m_sessionIdSource() : QString();
+    if (sessionId == m_cachedSessionId) { return; }
+    m_cachedSessionId = sessionId;
+    // Publish callbacks can arrive before the next shared poll. Clear the
+    // preceding station's samples before accepting the first new sample.
+    invalidateReadings(false, true, true);
+}
+bool MeterPoller::acceptsGlobalReading(const QJsonObject& context) const
+{
+    const QString requested = context.value("sessionId").toString();
+    return requested.isEmpty() || requested == (m_sessionIdSource ? m_sessionIdSource() : QString());
+}
+QString MeterPoller::globalAvailability(const QJsonObject& context, int binding) const
+{
+    const bool windowGlobal = (binding >= MeterBinding::TxPower && binding <= MeterBinding::TxCfcPeak)
+        || (binding >= MeterBinding::HwVolts && binding <= MeterBinding::HwTemperature);
+    return windowGlobal && !acceptsGlobalReading(context)
+        ? tr("This meter belongs to another radio session.") : m_availability.value(binding);
+}
 void MeterPoller::setUnitMode(MeterItem::MeterUnit unit)
 {
     m_unitMode = unit;
@@ -632,17 +661,29 @@ void MeterPoller::replayReadings(MeterWidget* widget, const QJsonObject& context
     widget->resetForTxTransition(m_inTx);
     widget->setUnitMode(m_unitMode);
     widget->rescalePowerMeters(m_powerScale);
-    for (auto it = m_availability.cbegin(); it != m_availability.cend(); ++it) { widget->setBindingUnavailable(it.key(), it.value()); }
+    copyCachedReadings(widget, context);
+}
+void MeterPoller::copyCachedReadings(MeterWidget* widget, const QJsonObject& context) const
+{
+    if (!widget) { return; }
+    if (widget->unitMode()!=m_unitMode) { widget->setUnitMode(m_unitMode); }
+    if (m_powerScale>0 && widget->powerScale()!=m_powerScale) { widget->rescalePowerMeters(m_powerScale); }
+    for (auto it = m_availability.cbegin(); it != m_availability.cend(); ++it) { widget->setBindingUnavailable(it.key(), globalAvailability(context,it.key())); }
     const auto readings = m_contextReadings.value(contextKey(context));
     const bool remoteReady = !m_remoteRole || (m_remoteModel && m_remoteModel->isConnected() && m_remoteSnapshotReady && m_remoteSnapshotReady());
     for (int b = MeterBinding::SignalPeak; b <= MeterBinding::PbSnr; ++b) {
-        widget->updateMeterValue(b, remoteReady && m_localRxReadingAvailable ? readings.value(b, kNoMeterReadingDbm) : kNoMeterReadingDbm);
+        const double value = remoteReady && m_localRxReadingAvailable && !m_inTx
+            ? (m_rxReadingSource ? m_rxReadingSource(context,b) : readings.value(b,kNoMeterReadingDbm)) : kNoMeterReadingDbm;
+        widget->updateMeterValue(b, std::isfinite(value) ? value : kNoMeterReadingDbm);
     }
-    for (auto it = m_globalReadings.cbegin(); it != m_globalReadings.cend(); ++it) { widget->updateMeterValue(it.key(), remoteReady ? it.value() : kNoMeterReadingDbm); }
+    const bool sameCachedSession = m_cachedSessionId == (m_sessionIdSource ? m_sessionIdSource() : QString());
+    for (auto it = m_globalReadings.cbegin(); it != m_globalReadings.cend(); ++it) { widget->updateMeterValue(it.key(), remoteReady && sameCachedSession && acceptsGlobalReading(context) ? it.value() : kNoMeterReadingDbm); }
     for (int b = MeterBinding::TxPower; b <= MeterBinding::TxCfcPeak; ++b) {
+        widget->setBindingUnavailable(b,globalAvailability(context,b));
         if (!m_globalReadings.contains(b)) { widget->updateMeterValue(b, kNoMeterReadingDbm); }
     }
     for (int b = MeterBinding::HwVolts; b <= MeterBinding::HwTemperature; ++b) {
+        widget->setBindingUnavailable(b,globalAvailability(context,b));
         if (!m_globalReadings.contains(b)) { widget->updateMeterValue(b, kNoMeterReadingDbm); }
     }
     for (MeterItem* item : widget->items()) { if (item->hasMmioBinding()) { replayMmioReading(widget, item); } }
@@ -661,17 +702,20 @@ void MeterPoller::publishContextReading(const QJsonObject& context, int binding,
 }
 void MeterPoller::publishGlobalReading(int binding, double value)
 {
+    refreshGlobalSession();
     m_globalReadings[binding] = value;
     QSet<QByteArray> contexts;
     for (const auto& target : m_targets) {
         if (!target) { continue; }
-        target->updateMeterValue(binding, value);
         const QJsonObject context = m_targetContexts.value(target);
-        if (!contexts.contains(contextKey(context))) { contexts.insert(contextKey(context)); emit readingUpdated(context, binding, value); }
+        const double delivered = acceptsGlobalReading(context) ? value : kNoMeterReadingDbm;
+        target->setBindingUnavailable(binding,globalAvailability(context,binding));
+        target->updateMeterValue(binding, delivered);
+        if (!contexts.contains(contextKey(context))) { contexts.insert(contextKey(context)); emit readingUpdated(context, binding, delivered); }
     }
     for (auto it = m_knownContexts.cbegin(); it != m_knownContexts.cend(); ++it) {
         if (!contexts.contains(it.key())) {
-            contexts.insert(it.key()); emit readingUpdated(it.value(), binding, value);
+            contexts.insert(it.key()); emit readingUpdated(it.value(), binding, acceptsGlobalReading(it.value()) ? value : kNoMeterReadingDbm);
         }
     }
     if (!contexts.contains(contextKey({}))) { emit readingUpdated({}, binding, value); }
@@ -681,7 +725,7 @@ void MeterPoller::publishAvailability(int binding, const QString& reason)
     const bool changed = !m_availability.contains(binding) || m_availability.value(binding) != reason;
     m_availability[binding] = reason;
     if (changed) { emit bindingAvailabilityChanged(binding, reason); }
-    for (const auto& target : m_targets) { if (target) { target->setBindingUnavailable(binding, reason); } }
+    for (const auto& target : m_targets) { if (target) { target->setBindingUnavailable(binding, globalAvailability(m_targetContexts.value(target),binding)); } }
 }
 void MeterPoller::invalidateReadings(bool rx, bool tx, bool hardware)
 {
@@ -796,6 +840,7 @@ void MeterPoller::stop()
 
 void MeterPoller::poll()
 {
+    refreshGlobalSession();
     const qint64 timestamp = m_monotonicSource ? m_monotonicSource() : m_clock.elapsed();
     const auto frame = qScopeGuard([this, timestamp] {
         for (const auto& target : m_targets) { if (target) { target->advanceMeters(timestamp); } }

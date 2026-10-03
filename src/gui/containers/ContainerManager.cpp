@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -57,6 +59,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ContainerManager.h"
+#include "gui/meters/MeterPoller.h"
 #include "ContainerArrangeController.h"
 #include <QGuiApplication>
 #include <QScreen>
@@ -142,6 +145,9 @@ ContainerManager::ContainerManager(QWidget* dockParent, QSplitter* splitter,
     });
     qCDebug(lcContainer) << "ContainerManager created";
 }
+
+void ContainerManager::setPreviewPoller(MeterPoller* poller) { m_previewPoller=poller; }
+MeterPoller* ContainerManager::previewPoller() const { return m_previewPoller; }
 
 ContainerManager::~ContainerManager()
 {

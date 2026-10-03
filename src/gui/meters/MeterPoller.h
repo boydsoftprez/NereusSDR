@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
@@ -313,10 +315,15 @@ public:
     // No new channel/subscription/WDSP read belongs in this callback. Return
     // kNoMeterReadingDbm for absent slices; setter changes invalidate RX replay.
     void setRxReadingSource(std::function<double(const QJsonObject&, int)> source);
+    // Current GUI window identity; explicit foreign sessions cannot consume
+    // window-global TX/PA/hardware caches, independent of RX slice availability.
+    void setSessionIdSource(std::function<QString()> source);
     // Seeds state, availability and current samples without registering or
     // polling the widget. Read-only previews then listen to readingUpdated,
     // frameAdvanced, and bindingAvailabilityChanged.
     void replayReadings(MeterWidget* widget, const QJsonObject& context) const;
+    void copyCachedReadings(MeterWidget* widget, const QJsonObject& context) const;
+    bool inTx() const { return m_inTx; }
     QString bindingUnavailableReason(int binding) const { return m_availability.value(binding); }
     // Explicit shared presentation settings for hosts/previews. Legacy hosts
     // that set these on MeterWidget are also sampled at replacement.
@@ -476,6 +483,9 @@ private:
     void publishContextReading(const QJsonObject& context, int binding, double value);
     void publishGlobalReading(int binding, double value);
     void publishAvailability(int binding, const QString& reason);
+    void refreshGlobalSession();
+    bool acceptsGlobalReading(const QJsonObject& context) const;
+    QString globalAvailability(const QJsonObject& context, int binding) const;
     void invalidateReadings(bool rx, bool tx, bool hardware);
     void pollContextReadings();
     void invalidateTxAudioReadings();
@@ -486,6 +496,8 @@ private:
     QHash<int, double> m_globalReadings;
     QHash<int, QString> m_availability;
     std::function<double(const QJsonObject&, int)> m_rxReadingSource;
+    std::function<QString()> m_sessionIdSource;
+    QString m_cachedSessionId;
     QElapsedTimer m_clock;
     std::function<qint64()> m_monotonicSource;
     MeterItem::MeterUnit m_unitMode{MeterItem::MeterUnit::dBm};

@@ -19,6 +19,9 @@
 #include "gui/meters/presets/ContestPresetItem.h"
 #include "gui/meters/presets/SMeterPresetItem.h"
 #include <memory>
+#include <QLabel>
+#include <QVBoxLayout>
+#include "gui/meters/MeterWidget.h"
 #include <cmath>
 #include "gui/meters/SpacerItem.h"
 #include "gui/meters/FadeCoverItem.h"
@@ -347,6 +350,27 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     if (mode != ContentRenderMode::Live) { item->blockSignals(true); }
     item->setParent(parent);
     return item.release();
+}
+QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWidget* parent) const
+{
+    if (!entry.typeId.startsWith("applet:") && isAvailable(entry.typeId)) {
+        auto meter=std::make_unique<MeterWidget>();
+        if (auto* item=createMeterItem(entry,meter.get(),ContentRenderMode::Preview)) {
+            meter->addItem(item); meter->setAttribute(Qt::WA_TransparentForMouseEvents);
+            meter->setParent(parent); return meter.release();
+        }
+    }
+    auto* tile=new QWidget(parent); auto* layout=new QVBoxLayout(tile);
+    tile->setMinimumHeight(64); tile->setStyleSheet("background:#172534;color:#c8d8e8;border:1px solid #203040;");
+    const QString reason=!isAvailable(entry.typeId) ? unavailableReason(entry.typeId)
+        : (entry.typeId.startsWith("applet:") ? tr("Existing live applet presentation. Draft source changes take effect on Apply; controls are disabled here.")
+        : tr("Unsupported configuration; original data retained."));
+    auto* title=new QLabel(entry.name+QStringLiteral(" — ")+reason,tile); title->setWordWrap(true); layout->addWidget(title);
+    if (auto* view=singletonView(entry.typeId); view && view->isVisible() && isAvailable(entry.typeId)) {
+        // Existing presentation only. This never constructs or reparents a singleton.
+        auto* snapshot=new QLabel(tile); snapshot->setPixmap(view->grab().scaledToWidth(480,Qt::SmoothTransformation)); layout->addWidget(snapshot);
+    }
+    return tile;
 }
 ContentEntry ContainerContentRegistry::captureMeterItem(const MeterItem& item, const ContentEntry& prior) const {
     ContentEntry entry = prior.id.isEmpty() ? item.property(kEntryProperty).value<ContentEntry>() : prior;

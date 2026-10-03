@@ -441,27 +441,27 @@ Its constructor consumes `ContainerContentRegistry&` and `MeterPoller&`, plus
 `QWidget* parent`; it replays/listens to Task 3's read-only GUI feed.
 Registry adds `createPreview(const ContentEntry&, QWidget* parent) const -> QWidget*`.
 
-- [ ] Test rename/change/order/create/delete across two container drafts; switching
+- [x] Test rename/change/order/create/delete across two container drafts; switching
   selection retains edits; Cancel and window close leave store/settings/views
   unchanged; successful Apply commits all once. External move/delete/config
   change produces Conflict naming affected containers. Reload resolves only
   affected drafts; unrelated live changes merge without silent overwrite.
-- [ ] Test live singleton stays parented to its existing host during preview;
+- [x] Test live singleton stays parented to its existing host during preview;
   no factory creates a second singleton, no radio signal fires and no extra
   poll target/Core subscription is added. Meter preview receives read-only copies of
   existing cached readings; missing source shows the existing unavailable state.
-- [ ] Build/run both new targets; expect current direct mutation/empty preview
+- [x] Build/run both new targets; expect current direct mutation/empty preview
   assumptions to fail.
-- [ ] Implement base/draft snapshots and touched-container/reference comparison
+- [x] Implement base/draft snapshots and touched-container/reference comparison
   against current revision. Rebase unaffected edits onto current state; return
   Conflict before writing overlapping changes. Apply validates/commits, then
   reconciles; failed save leaves real views and draft intact. Preview uses the
   real meter factory and inert applet presentation adapters, never actual radio
   controls or reparented live widgets. Unknown content gets an explanatory tile.
-- [ ] Build/run new tests and `tst_container_workspace_store`,
+- [x] Build/run new tests and `tst_container_workspace_store`,
   `tst_container_content_host`; expected pass. Ensure preview reconstruction
   seeds unchanged readings and only invalidates affected surfaces.
-- [ ] Commit: `feat: edit container drafts with safe live previews`.
+- [x] Commit: `feat: edit container drafts with safe live previews`.
 
 ### Task 9: Usable settings, property editors and portable content
 
