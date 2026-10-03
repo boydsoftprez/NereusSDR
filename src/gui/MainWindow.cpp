@@ -11560,9 +11560,11 @@ QString MainWindow::tnfAddRejectedNotice(const QString& reason)
 
 void MainWindow::buildStatusBar()
 {
-    // AetherSDR double-height status bar (46px fixed height, 3-section layout)
+    // Keep the double-height baseline while allowing the layout's intrinsic
+    // minimum to fit all three Core banner rows with their resolved fonts.
     QStatusBar* sb = statusBar();
-    sb->setFixedHeight(46);
+    sb->setMinimumHeight(46);
+    sb->installEventFilter(this);
     sb->setSizeGripEnabled(false);
     sb->setStyleSheet(QStringLiteral(
         "QStatusBar { background: #0a0a14; border-top: 1px solid #203040; }"
@@ -14706,6 +14708,13 @@ void MainWindow::resizeEvent(QResizeEvent* event)
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    if (auto* bar = qobject_cast<QStatusBar*>(watched); bar && event->type() == QEvent::LayoutRequest) {
+        // An explicit baseline minimum suppresses QLayout's automatic minimum
+        // propagation. Retain the baseline, but follow the actual row/font
+        // minima when the connected Core adds its third banner line.
+        bar->setMinimumHeight(std::max(46, bar->minimumSizeHint().height()));
+    }
+
     if (!m_shuttingDown
         && (qobject_cast<ContainerWidget*>(watched)
             || qobject_cast<MeterWidget*>(watched))
