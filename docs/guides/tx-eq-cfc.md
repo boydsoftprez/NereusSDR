@@ -18,7 +18,7 @@ When **Use Q Factors** is enabled, drag either width handle on the selected band
 
 The mouse wheel adjusts the selected band's Q when Q is enabled. Hold Shift to adjust gain, or Ctrl to adjust frequency. The endpoint bands retain their existing frequency locks; use Curve range to change the endpoints.
 
-Choose **5, 10 or 18 bands** in the parametric editor. Changing the count resets the curve: use Apply to accept that reset or Cancel to keep your current settings. Undo can restore an applied count change.
+Choose **5, 10 or 18 bands** in the parametric editor. The checked count shows the curve currently in use. Choosing another count shows a pending change: click **Apply 5/10/18 bands** to reset the curve and switch its controls, or **Cancel** to keep your settings. Undo can restore an applied count change.
 
 ## Use CFC
 
@@ -38,6 +38,6 @@ Undo and Redo operate on whole edits: one drag, completed entry, reset or applie
 
 With **Live Update** on, dragging updates audio as you move. With it off, a drag applies when you release it. Exact entries remain available in either case.
 
-Expand **Advanced** for the existing algorithm controls, range and display options. **Curve range** changes the curve's frequencies, including its endpoints; it is more than a view zoom. Its minimum spread is 1000 Hz.
+Expand **Advanced** in the header for the existing algorithm controls, range and display options. The button stays in place and the extra controls open directly below it. **Curve range** changes the curve's frequencies, including its endpoints; it is more than a view zoom. Its minimum spread is 1000 Hz.
 
 The TX EQ graph shows the configured curve, rather than a measured filter response. The TX audio engine receives all configured 5, 10 or 18 band frequencies and gains, plus Q factors when enabled. CFC sends all configured bands and both enabled Q vectors directly to its existing WDSP profile path.

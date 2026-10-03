@@ -1109,6 +1109,91 @@ private slots:
     }
 
     // ── 6a. Band-count radio: switch to 5 changes both widgets' point counts ─
+    void advancedDisclosureKeepsHeaderAnchor()
+    {
+        RadioModel rm;
+        TxCfcDialog dlg(&rm.transmitModel(), nullptr);
+        dlg.resize(760, 730);
+        dlg.show();
+        QApplication::processEvents();
+        auto* toggle = dlg.findChild<QPushButton*>("TxCfcAdvanced");
+        QVERIFY(toggle);
+        const QPoint anchor = toggle->mapTo(&dlg, QPoint());
+        QVERIFY2(anchor.y() < dlg.compWidget()->mapTo(&dlg, QPoint()).y(),
+                 "Advanced disclosure must stay in the fixed header above the plots");
+        QVERIFY(toggle->width() < 200);
+        QWidget* advanced = dlg.lowSpin()->parentWidget();
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            toggle->click();
+            QApplication::processEvents();
+            QCOMPARE(toggle->mapTo(&dlg, QPoint()), anchor);
+            QVERIFY(advanced->isVisible());
+            const int top = advanced->mapTo(&dlg, QPoint()).y();
+            QVERIFY(top >= anchor.y() + toggle->height());
+            QVERIFY(top - (anchor.y() + toggle->height()) <= 20);
+            QVERIFY(advanced->mapTo(&dlg, QPoint(0, advanced->height())).y()
+                    <= dlg.compWidget()->mapTo(&dlg, QPoint()).y());
+            toggle->click();
+            QApplication::processEvents();
+            QCOMPARE(toggle->mapTo(&dlg, QPoint()), anchor);
+            QVERIFY(!advanced->isVisible());
+        }
+    }
+
+    void bandCountRequestReflectsAppliedCountAndRebuildsVisibleSelectors()
+    {
+        RadioModel rm;
+        TxCfcDialog dlg(&rm.transmitModel(), nullptr);
+        dlg.show();
+        auto* apply = dlg.findChild<QPushButton*>("TxCfcApplyBands");
+        auto* cancel = dlg.findChild<QPushButton*>("TxCfcCancelBands");
+        auto* undo = dlg.findChild<QPushButton*>("TxCfcUndo");
+        auto* redo = dlg.findChild<QPushButton*>("TxCfcRedo");
+        QVERIFY(apply && cancel && undo && redo);
+        for (int count : {5, 18, 10}) {
+            const auto original = rm.transmitModel().effectiveCfcProfile();
+            const int current = dlg.currentBandCount();
+            auto* requested = count == 5 ? dlg.bands5Radio()
+                : count == 18 ? dlg.bands18Radio() : dlg.bands10Radio();
+            auto* actual = current == 5 ? dlg.bands5Radio()
+                : current == 18 ? dlg.bands18Radio() : dlg.bands10Radio();
+            QSignalSpy writes(&rm.transmitModel(), &TransmitModel::cfcEditProfileChanged);
+            requested->click();
+            QVERIFY(actual->isChecked());
+            QCOMPARE(dlg.currentBandCount(), current);
+            QCOMPARE(writes.count(), 0);
+            QCOMPARE(apply->text(), QString("Apply %1 bands").arg(count));
+            QVERIFY(apply->isVisible());
+            cancel->click();
+            QVERIFY(actual->isChecked());
+            QCOMPARE(rm.transmitModel().effectiveCfcProfile(), original);
+            QCOMPARE(writes.count(), 0);
+            requested->click();
+            apply->click();
+            QApplication::processEvents();
+            QCOMPARE(dlg.currentBandCount(), count);
+            QCOMPARE(dlg.postEqWidget()->bandCount(), count);
+            QCOMPARE(rm.transmitModel().effectiveCfcProfile().compression.frequenciesHz.size(), count);
+            QCOMPARE(rm.transmitModel().effectiveCfcProfile().postEq.frequenciesHz.size(), count);
+            QVERIFY(requested->isChecked());
+            int selectors = 0;
+            for (auto* button : dlg.findChildren<QPushButton*>()) {
+                if (button->objectName().startsWith("TxCfcBand")) {
+                    ++selectors;
+                    QVERIFY(button->isVisible());
+                }
+            }
+            QCOMPARE(selectors, count);
+            QCOMPARE(writes.count(), 1);
+            QVERIFY(!apply->isVisible());
+            undo->click();
+            QCOMPARE(dlg.currentBandCount(), current);
+            QCOMPARE(rm.transmitModel().effectiveCfcProfile(), original);
+            redo->click();
+            QCOMPARE(dlg.currentBandCount(), count);
+        }
+    }
+
     void bandCountRadio_5_switchesBothWidgets()
     {
         RadioModel rm;

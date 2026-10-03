@@ -137,6 +137,7 @@ class QCloseEvent;
 class QComboBox;
 class QDoubleSpinBox;
 class QPushButton;
+class QScrollArea;
 class QRadioButton;
 class QSlider;
 class QSpinBox;
@@ -247,6 +248,7 @@ private:
     void undoEdit();
     void redoEdit();
     void refreshHistoryButtons();
+    void refreshAdvancedHeight();
     void rebuildBandSelectors();
     void cancelBandCount();
     void applyBandCount();
@@ -285,6 +287,9 @@ private:
     QSlider* m_widthSlider = nullptr;
     QPushButton* m_undoBtn = nullptr;
     QPushButton* m_redoBtn = nullptr;
+    QScrollArea* m_advancedScroll = nullptr;
+    QWidget* m_advancedControls = nullptr;
+    QPushButton* m_applyCountBtn = nullptr;
     QWidget* m_countNotice = nullptr;
     QLabel* m_countMessage = nullptr;
     QLabel* m_selectedLabel = nullptr;

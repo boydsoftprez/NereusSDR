@@ -351,6 +351,7 @@ private:
     QPushButton* m_applyBandsBtn = nullptr;
     QPushButton* m_cancelBandsBtn = nullptr;
     QWidget* m_countNotice = nullptr;
+    QLabel* m_countMessage = nullptr;
     int m_pendingBandCount = 0;
     QSlider* m_compQSlider = nullptr;
     QSlider* m_eqQSlider = nullptr;

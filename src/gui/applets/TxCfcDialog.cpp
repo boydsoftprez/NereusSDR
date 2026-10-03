@@ -308,6 +308,7 @@ void TxCfcDialog::buildUi()
     for (auto* radio : {m_bands5Radio, m_bands10Radio, m_bands18Radio}) {
         const int count = radio == m_bands5Radio ? 5 : radio == m_bands10Radio ? 10 : 18;
         radio->setAccessibleName(tr("%1 CFC bands").arg(count));
+        radio->setToolTip(tr("Choose a count, then Apply to reset both curves. The checked count is currently applied."));
         m_bandCountGroup->addButton(radio, count);
         toolbar->addWidget(radio);
     }
@@ -317,7 +318,17 @@ void TxCfcDialog::buildUi()
     m_redoBtn = button(tr("Redo"), "TxCfcRedo");
     toolbar->addWidget(m_undoBtn);
     toolbar->addWidget(m_redoBtn);
+    auto* advancedToggle = button(tr("Advanced ▸"), "TxCfcAdvanced");
+    advancedToggle->setCheckable(true);
+    advancedToggle->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    toolbar->addWidget(advancedToggle);
     outer->addLayout(toolbar);
+    auto* advancedScroll = new QScrollArea(this);
+    advancedScroll->setObjectName(QStringLiteral("TxCfcAdvancedScroll"));
+    advancedScroll->setWidgetResizable(true);
+    advancedScroll->setFrameShape(QFrame::NoFrame);
+    advancedScroll->hide();
+    outer->addWidget(advancedScroll);
     m_invalidCurveGuidance = new QLabel(tr("The stored legacy frequencies do not span 1000 Hz. Choose another band count and Apply to reset both curves."), this);
     m_invalidCurveGuidance->setObjectName(QStringLiteral("TxCfcInvalidCurve"));
     m_invalidCurveGuidance->setWordWrap(true);
@@ -326,9 +337,9 @@ void TxCfcDialog::buildUi()
     m_countNotice = new QWidget(this);
     auto* notice = new QHBoxLayout(m_countNotice);
     notice->setContentsMargins(0, 0, 0, 0);
-    auto* noticeText = new QLabel(tr("Changing band count resets both curves."), m_countNotice);
-    noticeText->setWordWrap(true);
-    notice->addWidget(noticeText, 1);
+    m_countMessage = new QLabel(m_countNotice);
+    m_countMessage->setWordWrap(true);
+    notice->addWidget(m_countMessage, 1);
     m_applyBandsBtn = button(tr("Apply"), "TxCfcApplyBands");
     m_cancelBandsBtn = button(tr("Cancel"), "TxCfcCancelBands");
     notice->addWidget(m_applyBandsBtn);
@@ -492,10 +503,8 @@ void TxCfcDialog::buildUi()
     globals->addWidget(m_resetCompBtn, 1, 0, 1, 2);
     globals->addWidget(m_resetEqBtn, 1, 2, 1, 2);
     controlLayout->addLayout(globals);
-    auto* advancedToggle = button(tr("Advanced ▸"), "TxCfcAdvanced");
-    advancedToggle->setCheckable(true);
-    controlLayout->addWidget(advancedToggle);
-    auto* advanced = new QWidget(controls);
+    auto* advanced = new QWidget(this);
+    advanced->setObjectName(QStringLiteral("TxCfcAdvancedControls"));
     auto* advancedLayout = new QGridLayout(advanced);
     advancedLayout->setContentsMargins(0, 0, 0, 0);
     m_lowSpin = intSpin("TxCfcLowSpin", kFreqHzMin, kFreqHzMax, tr("Curve range low frequency"));
@@ -512,10 +521,12 @@ void TxCfcDialog::buildUi()
     m_ogGuideLink = button(tr("OG CFC Guide by W1AEX"), "TxCfcGuide");
     m_ogGuideLink->setCursor(Qt::PointingHandCursor);
     advancedLayout->addWidget(m_ogGuideLink, 3, 1);
-    controlLayout->addWidget(advanced);
-    advanced->hide();
-    connect(advancedToggle, &QPushButton::toggled, this, [advanced, advancedToggle](bool on) {
-        advanced->setVisible(on);
+    advancedScroll->setWidget(advanced);
+    connect(advancedToggle, &QPushButton::toggled, this, [advanced, advancedScroll, advancedToggle](bool on) {
+        // Keep the disclosure anchored in the header; expanded controls
+        // scroll at small heights instead of displacing the main edit row.
+        advancedScroll->setFixedHeight(qMin(180, advanced->sizeHint().height()));
+        advancedScroll->setVisible(on);
         advancedToggle->setText(on ? tr("Advanced ▾") : tr("Advanced ▸"));
     });
     controlLayout->addStretch();
@@ -527,6 +538,9 @@ void TxCfcDialog::wireSignals()
 {
     connect(m_bandCountGroup, &QButtonGroup::idToggled, this, [this](int, bool checked) {
         if (checked && !m_ignoreUpdates) { onBandCountChanged(); }
+    });
+    connect(m_bandCountGroup, &QButtonGroup::idClicked, this, [this](int count) {
+        if (count == currentBandCount()) { cancelBandCount(); }
     });
     connect(m_applyBandsBtn, &QPushButton::clicked, this, &TxCfcDialog::applyBandCount);
     connect(m_cancelBandsBtn, &QPushButton::clicked, this, &TxCfcDialog::cancelBandCount);
@@ -1098,8 +1112,17 @@ void TxCfcDialog::updateEditRowFromSelection(int) { refreshControls(); }
 
 void TxCfcDialog::onBandCountChanged()
 {
-    m_pendingBandCount = m_bandCountGroup->checkedId();
-    m_countNotice->setVisible(m_pendingBandCount != currentBandCount());
+    const int requested = m_bandCountGroup->checkedId();
+    if (requested == currentBandCount()) { cancelBandCount(); return; }
+    m_pendingBandCount = requested;
+    {
+        QSignalBlocker blocker(m_bandCountGroup);
+        m_bandCountGroup->button(currentBandCount())->setChecked(true);
+    }
+    m_countMessage->setText(tr("Currently %1 bands → %2 requested. Applying resets both curves.")
+                           .arg(currentBandCount()).arg(requested));
+    m_applyBandsBtn->setText(tr("Apply %1 bands").arg(requested));
+    m_countNotice->show();
 }
 
 void TxCfcDialog::cancelBandCount()

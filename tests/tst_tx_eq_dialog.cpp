@@ -73,6 +73,7 @@ void CloseChannel(int);
 #include <QDir>
 #include <QDoubleSpinBox>
 #include <QLineEdit>
+#include <QLabel>
 #include <QStyleOptionSlider>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -685,6 +686,98 @@ private slots:
         QTest::keyClicks(gain, "12.5"); QTest::keyClick(gain, Qt::Key_Return);
         QCOMPARE(graph->points()[3].gainDb, 12.5); QVERIFY(undo->isEnabled());
         undo->click(); QCOMPARE(graph->saveEditState(), before); QVERIFY(!undo->isEnabled());
+    }
+
+    void advancedDisclosureKeepsHeaderAnchor_data()
+    {
+        QTest::addColumn<bool>("legacy");
+        QTest::newRow("graphic") << true;
+        QTest::newRow("parametric") << false;
+    }
+
+    void advancedDisclosureKeepsHeaderAnchor()
+    {
+        QFETCH(bool, legacy);
+        RadioModel rm;
+        TxEqDialog dlg(&rm);
+        dlg.modeSelector()->button(legacy ? 0 : 1)->click();
+        dlg.resize(1000, 720);
+        dlg.show();
+        QApplication::processEvents();
+        auto* toggle = dlg.findChild<QPushButton*>("TxEqAdvancedToggle");
+        auto* advanced = dlg.findChild<QWidget*>("TxEqAdvancedControls");
+        auto* enable = dlg.findChild<QCheckBox*>("TxEqEnableChk");
+        QVERIFY(toggle && advanced && enable);
+        const QPoint anchor = toggle->mapTo(&dlg, QPoint());
+        QVERIFY2(qAbs(anchor.y() - enable->mapTo(&dlg, QPoint()).y()) <= 8,
+                 "Advanced must remain beside Enable in the fixed header");
+        QVERIFY(toggle->width() < 200);
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            toggle->click();
+            QApplication::processEvents();
+            QCOMPARE(toggle->mapTo(&dlg, QPoint()), anchor);
+            QVERIFY(advanced->isVisible());
+            const int top = advanced->mapTo(&dlg, QPoint()).y();
+            QVERIFY(top >= anchor.y() + toggle->height());
+            QVERIFY(top - (anchor.y() + toggle->height()) <= 20);
+            auto* advancedScroll = dlg.findChild<QScrollArea*>("TxEqAdvancedScroll");
+            QVERIFY(advancedScroll);
+            // The visible section is capped; taller controls remain scrollable.
+            QVERIFY(advancedScroll->mapTo(&dlg, QPoint(0, advancedScroll->height())).y()
+                    <= dlg.panelStack()->mapTo(&dlg, QPoint()).y());
+            toggle->click();
+            QApplication::processEvents();
+            QCOMPARE(toggle->mapTo(&dlg, QPoint()), anchor);
+            QVERIFY(!advanced->isVisible());
+        }
+    }
+
+    void bandCountRequestReflectsAppliedCountAndRebuildsVisibleSelectors()
+    {
+        RadioModel rm;
+        TxEqDialog dlg(&rm);
+        dlg.modeSelector()->button(1)->click();
+        dlg.show();
+        auto* graph = dlg.parametricWidget();
+        auto* selectors = dlg.findChild<QButtonGroup*>("TxEqBandSelector");
+        auto* apply = dlg.findChild<QPushButton*>("TxEqCountApplyBtn");
+        auto* cancel = dlg.findChild<QPushButton*>("TxEqCountCancelBtn");
+        QVERIFY(selectors && apply && cancel);
+        for (int count : {5, 18, 10}) {
+            const int current = graph->bandCount();
+            const QByteArray original = graph->saveEditState();
+            QSignalSpy writes(&rm.transmitModel(), &TransmitModel::txEqParaEqDataChanged);
+            dlg.bandCountGroup()->button(count)->click();
+            QCOMPARE(dlg.bandCountGroup()->checkedId(), current);
+            QCOMPARE(graph->saveEditState(), original);
+            QCOMPARE(writes.count(), 0);
+            QVERIFY(apply->isVisible());
+            QCOMPARE(apply->text(), QString("Apply %1 bands").arg(count));
+            cancel->click();
+            QCOMPARE(dlg.bandCountGroup()->checkedId(), current);
+            QCOMPARE(graph->saveEditState(), original);
+            QCOMPARE(writes.count(), 0);
+            dlg.bandCountGroup()->button(count)->click();
+            apply->click();
+            QApplication::processEvents();
+            QCOMPARE(graph->bandCount(), count);
+            QCOMPARE(graph->points().size(), count);
+            QCOMPARE(curveOf(rm.transmitModel()).value("points").toArray().size(), count);
+            compareToWidget(curveOf(rm.transmitModel()), graph, kSavedFreqToleranceHz);
+            QCOMPARE(dlg.bandCountGroup()->checkedId(), count);
+            QCOMPARE(selectors->buttons().size(), count);
+            for (auto* button : selectors->buttons()) {
+                QVERIFY(button->isVisible());
+            }
+            QCOMPARE(writes.count(), 1);
+            QVERIFY(!apply->isVisible());
+            dlg.findChild<QPushButton*>("TxEqUndoBtn")->click();
+            QCOMPARE(graph->saveEditState(), original);
+            QCOMPARE(selectors->buttons().size(), current);
+            dlg.findChild<QPushButton*>("TxEqRedoBtn")->click();
+            QCOMPARE(graph->bandCount(), count);
+            QCOMPARE(selectors->buttons().size(), count);
+        }
     }
 
     void countApplyCancelAndUndo()

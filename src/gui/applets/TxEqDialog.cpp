@@ -354,14 +354,32 @@ void TxEqDialog::buildUi()
     outer->addLayout(modeRow);
     m_enableChk = new QCheckBox(tr("Enable TX EQ"), this);
     m_enableChk->setObjectName(QStringLiteral("TxEqEnableChk"));
-    outer->addWidget(m_enableChk);
-    auto* advancedToggle = new QPushButton(tr("Advanced"), this);
+    auto* enableRow = new QHBoxLayout;
+    enableRow->addWidget(m_enableChk);
+    enableRow->addStretch();
+    auto* advancedToggle = new QPushButton(tr("Advanced ▸"), this);
     advancedToggle->setObjectName(QStringLiteral("TxEqAdvancedToggle"));
     advancedToggle->setCheckable(true); advancedToggle->setAutoDefault(false);
-    auto* advanced = new QWidget(this); advanced->setObjectName(QStringLiteral("TxEqAdvancedControls"));
-    advanced->hide();
-    auto* advancedLayout = new QVBoxLayout(advanced);
-    connect(advancedToggle, &QPushButton::toggled, advanced, &QWidget::setVisible);
+    advancedToggle->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    enableRow->addWidget(advancedToggle);
+    outer->addLayout(enableRow);
+    m_advancedControls = new QWidget(this);
+    m_advancedControls->setObjectName(QStringLiteral("TxEqAdvancedControls"));
+    auto* advancedLayout = new QVBoxLayout(m_advancedControls);
+    advancedLayout->setContentsMargins(0, 0, 0, 0);
+    advancedLayout->setAlignment(Qt::AlignTop);
+    m_advancedScroll = new QScrollArea(this);
+    m_advancedScroll->setObjectName(QStringLiteral("TxEqAdvancedScroll"));
+    m_advancedScroll->setWidgetResizable(true);
+    m_advancedScroll->setFrameShape(QFrame::NoFrame);
+    m_advancedScroll->setWidget(m_advancedControls);
+    m_advancedScroll->hide();
+    outer->addWidget(m_advancedScroll);
+    connect(advancedToggle, &QPushButton::toggled, this, [this, advancedToggle](bool on) {
+        refreshAdvancedHeight();
+        m_advancedScroll->setVisible(on);
+        advancedToggle->setText(on ? tr("Advanced ▾") : tr("Advanced ▸"));
+    });
 
     // ── Top strip: Enable + WDSP filter combos ──────────────────────
     QHBoxLayout* topRow = new QHBoxLayout;
@@ -447,13 +465,8 @@ void TxEqDialog::buildUi()
     // one collapsible section, reachable in either mode.
     auto* paraAdvanced = m_parametricPanel->findChild<QWidget*>(QStringLiteral("TxEqParaAdvancedControls"));
     advancedLayout->addWidget(paraAdvanced);
-    outer->addWidget(advancedToggle);
-    auto* advancedScroll = new QScrollArea(this); advancedScroll->setWidgetResizable(true);
-    advancedScroll->setFrameShape(QFrame::NoFrame); advancedScroll->setWidget(advanced);
-    advancedScroll->setMaximumHeight(180); advancedScroll->hide();
-    connect(advancedToggle, &QPushButton::toggled, advancedScroll, &QWidget::setVisible);
-    outer->addWidget(advancedScroll);
     paraAdvanced->setVisible(!legacy);
+    refreshAdvancedHeight();
     for (auto* button : findChildren<QPushButton*>()) { button->setAutoDefault(false); }
     setMinimumSize(500, 400);
     const QSize available = screen() ? screen()->availableGeometry().size() : QSize(1280, 800);
@@ -905,6 +918,9 @@ QWidget* TxEqDialog::buildParametricPanel()
         m_bandCountGroup->addButton(m_paraBands5Radio,  5);
         m_bandCountGroup->addButton(m_paraBands10Radio, 10);
         m_bandCountGroup->addButton(m_paraBands18Radio, 18);
+        for (auto* radio : {m_paraBands5Radio, m_paraBands10Radio, m_paraBands18Radio}) {
+            radio->setToolTip(tr("Choose a count, then Apply to reset band frequencies, gains and widths. The checked count is currently applied."));
+        }
 
         gv->addWidget(m_paraBands5Radio);
         gv->addWidget(m_paraBands10Radio);
@@ -967,6 +983,7 @@ QWidget* TxEqDialog::buildParametricPanel()
     auto* apply = new QPushButton(tr("Apply"), m_countNotice); apply->setObjectName(QStringLiteral("TxEqCountApplyBtn"));
     auto* cancel = new QPushButton(tr("Cancel"), m_countNotice); cancel->setObjectName(QStringLiteral("TxEqCountCancelBtn"));
     apply->setAutoDefault(false); cancel->setAutoDefault(false); noticeRow->addWidget(apply); noticeRow->addWidget(cancel);
+    m_applyCountBtn = apply;
     connect(apply, &QPushButton::clicked, this, &TxEqDialog::applyBandCount);
     connect(cancel, &QPushButton::clicked, this, &TxEqDialog::cancelBandCount);
     col->insertWidget(1, m_countNotice); m_countNotice->hide();
@@ -1050,6 +1067,9 @@ void TxEqDialog::wireSignals()
     connect(m_bandCountGroup, &QButtonGroup::idToggled,
             this, [this](int /*id*/, bool checked) {
         if (checked) onParametricBandCountChanged();
+    });
+    connect(m_bandCountGroup, &QButtonGroup::idClicked, this, [this](int count) {
+        if (count == m_parametricWidget->bandCount()) { cancelBandCount(); }
     });
     connect(m_paraLowSpin, qOverload<double>(&QDoubleSpinBox::valueChanged),
             this, &TxEqDialog::onParametricLowFreqChanged);
@@ -1208,6 +1228,7 @@ void TxEqDialog::onLegacyToggled(bool legacy)
     m_committed[legacy ? 0 : 1] = captureEditState(legacy);
     refreshHistoryButtons();
     if (auto* advanced = findChild<QWidget*>(QStringLiteral("TxEqParaAdvancedControls"))) { advanced->setVisible(!legacy); }
+    refreshAdvancedHeight();
     if (!m_updatingFromModel && m_radio) {
         const QScopedValueRollback<bool> guard(m_updatingFromModel, true);
         m_radio->transmitModel().setTxEqUseLegacy(legacy);
@@ -1226,6 +1247,7 @@ void TxEqDialog::syncLegacyFromModel()
         m_modeSelector->button(legacy ? 0 : 1)->setChecked(true);
         m_panelStack->setCurrentIndex(legacy ? 0 : 1);
         if (auto* advanced = findChild<QWidget*>(QStringLiteral("TxEqParaAdvancedControls"))) { advanced->setVisible(!legacy); }
+        refreshAdvancedHeight();
         rebaseEditHistory();
     }
 }
@@ -1318,12 +1340,27 @@ void TxEqDialog::onParametricResetClicked()
     changed();
 }
 
+void TxEqDialog::refreshAdvancedHeight()
+{
+    if (!m_advancedScroll || !m_advancedControls) { return; }
+    m_advancedControls->layout()->invalidate();
+    // Compact in Graphic mode; scroll the larger Parametric section without
+    // moving the header disclosure or taking all of the graph's height.
+    m_advancedScroll->setFixedHeight(qMin(180, m_advancedControls->sizeHint().height()));
+}
+
 void TxEqDialog::onParametricBandCountChanged()
 {
     const int count = m_bandCountGroup->checkedId();
     if (count == m_parametricWidget->bandCount()) { cancelBandCount(); return; }
     m_pendingCount = count;
-    m_countMessage->setText(tr("Changing to %1 bands resets band frequencies, gains and widths. Apply this change?").arg(count));
+    {
+        QSignalBlocker blocker(m_bandCountGroup);
+        m_bandCountGroup->button(m_parametricWidget->bandCount())->setChecked(true);
+    }
+    m_countMessage->setText(tr("Currently %1 bands → %2 requested. Applying resets frequencies, gains and widths.")
+                           .arg(m_parametricWidget->bandCount()).arg(count));
+    m_applyCountBtn->setText(tr("Apply %1 bands").arg(count));
     m_countNotice->show();
 }
 
