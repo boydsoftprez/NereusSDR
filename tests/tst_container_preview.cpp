@@ -7,6 +7,8 @@
 #include <QListWidget>
 #include <QSplitter>
 #include <QCheckBox>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QPushButton>
 #include <QScopeGuard>
 #include "core/RadioDiscovery.h"
@@ -40,6 +42,107 @@ class TstContainerPreview : public QObject {
         config["attack"]=1; config["decay"]=1; config["ignoreHistoryMs"]=0; entry.config["properties"]=config; return entry;
     }
 private slots:
+    void largeSignalFontFitsTitleReadingAndPeak() {
+        ContainerContentRegistry registry; auto entry=registry.makeEntry("meter.signalText");
+        auto properties=entry.config.value("properties").toObject(); properties["fontSize"]=56; properties["faceHeight"]=120; entry.config["properties"]=properties;
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr)); auto* face=qobject_cast<CompositePresetItem*>(item.get()); QVERIFY(face);
+        QFont font; font.setPixelSize(56); QFont peakFont; peakFont.setPixelSize(14);
+        const int textHeight=2*QFontMetrics(font).height()+QFontMetrics(peakFont).height();
+        qInfo()<<"STACK font-aware minimum"<<textHeight<<"preferred"<<face->preferredFaceHeight();
+        QVERIFY2(face->preferredFaceHeight()>=textHeight,"Supported Signal font must have distinct full-height title, reading and peak lines");
+        QVERIFY2(face->minimumFaceSize().width()>=QFontMetrics(font).horizontalAdvance("-140.0 dBm")+16,"The chosen Signal font must fit the supported reading at minimum width");
+        QCOMPARE(face->configuration()["fontSize"].toInt(),56); QCOMPARE(face->configuration()["faceHeight"].toInt(),120);
+    }
+    void verticalStackKeepsConfiguredRowsInSmallViewport_data() {
+        QTest::addColumn<QStringList>("types"); QTest::addColumn<int>("width");
+        const QStringList bars{"meter.signalText","meter.comp","meter.eq","meter.leveler","meter.cfc","meter.cfcGain","meter.alcGain"};
+        const QStringList mixed{"meter.signalText","meter.historyGraph","meter.clock","meter.sMeter","meter.vfoDisplay","meter.contest"};
+        QTest::newRow("bars-640")<<bars<<640; QTest::newRow("bars-360")<<bars<<360; QTest::newRow("bars-260")<<bars<<260;
+        QTest::newRow("mixed-640")<<mixed<<640; QTest::newRow("mixed-360")<<mixed<<360;
+    }
+    void verticalStackKeepsConfiguredRowsInSmallViewport() {
+        QFETCH(QStringList,types); QFETCH(int,width);
+        ContainerContentRegistry registry; MeterPoller poller; int sourceReads=0;
+        poller.setRxReadingSource([&](const QJsonObject&,int){ ++sourceReads; return -73.0; });
+        ContainerDocument d; d.id="stack-regression"; d.layout=ContentLayout::VerticalStack; d.autoHeight=true;
+        for(const QString& type : types) {
+            auto entry=registry.makeEntry(type); auto properties=entry.config.value("properties").toObject();
+            if(type=="meter.signalText") { properties["fontSize"]=56; properties["faceHeight"]=120; }
+            else if(types.size()==7 || type=="meter.sMeter") { properties["rowHeight"]=72; }
+            properties["futureGeometryNote"]="retained"; entry.config["properties"]=properties;
+            std::unique_ptr<MeterItem> imported(registry.createMeterItem(entry,nullptr,ContentRenderMode::Validation)); QVERIFY(imported);
+            entry.config["legacyRecord"]=imported->serialize(); entry.extensions["futurePlacement"]=QJsonObject{{"x",999}};
+            entry.canvasRect=QRectF(.12,.23,.67,.19); d.contents.append(entry);
+        }
+        QScrollArea viewport; viewport.setWidgetResizable(true); auto* preview=new ContainerPreviewWidget(registry,poller); viewport.setWidget(preview);
+        connect(preview,&ContainerPreviewWidget::presentationRequested,preview,[](MeterWidget* meter,const QJsonObject&) {
+            for(auto* item:meter->items()) { if(auto* face=qobject_cast<CompositePresetItem*>(item)) { face->setFrequency(14225000); face->setModeLabel("USB"); face->setBandLabel("20m"); face->setUnavailableText({}); } }
+        });
+        preview->setDocument(d); poller.frameAdvanced(100); const int setupReads=sourceReads; viewport.resize(width,260); viewport.show(); QTest::qWait(150);
+        const auto meters=preview->findChildren<MeterWidget*>(); QCOMPARE(meters.size(),types.size());
+        const QString baseCapture=qEnvironmentVariable("PREVIEW_STACK_CAPTURE_DIR");
+        const QString capture=baseCapture.isEmpty()?QString():baseCapture+"/"+QString::fromLatin1(QTest::currentDataTag());
+        if(!capture.isEmpty()) { QVERIFY(QDir().mkpath(capture)); QVERIFY(viewport.grab().save(capture+"/short-top.png")); }
+        for(auto* meter:meters) { qInfo()<<"STACK row"<<meter->geometry()<<"item"<<meter->items()[0]->x()<<meter->items()[0]->y()<<meter->items()[0]->itemWidth()<<meter->items()[0]->itemHeight(); }
+        qInfo()<<"STACK preview"<<preview->size()<<"minimum"<<preview->minimumSize()<<"scroll"<<viewport.verticalScrollBar()->maximum();
+        QVERIFY(viewport.verticalScrollBar()->maximum()>0);
+        if(width==260) { QVERIFY(viewport.horizontalScrollBar()->maximum()>0); }
+        QVERIFY2(preview->height()>=552,"The viewport must scroll the full configured stack instead of clipping rows");
+        QCOMPARE(preview->document(),d); QCOMPARE(poller.targetCountForTest(),0);
+        for(int i=1;i<meters.size();++i) { QVERIFY(meters[i]->geometry().top()>=meters[i-1]->geometry().bottom()); }
+        ContainerContentHost live(registry); live.reconcile(d); live.resize(width,preview->height()+8); live.show(); QTest::qWait(100);
+        QCOMPARE(live.meterSurfaces().size(),1);
+        const auto captured=live.captureDocument();
+        for(int i=0;i<d.contents.size();++i) {
+            QCOMPARE(captured.contents[i].canvasRect,d.contents[i].canvasRect);
+            QCOMPARE(captured.contents[i].extensions,d.contents[i].extensions);
+            QCOMPARE(captured.contents[i].config["legacyRecord"],d.contents[i].config["legacyRecord"]);
+            QCOMPARE(captured.contents[i].config["properties"].toObject()["futureGeometryNote"],QJsonValue("retained"));
+            for(const QString& key:{QString("fontSize"),QString("faceHeight"),QString("rowHeight")}) {
+                if(d.contents[i].config["properties"].toObject().contains(key)) { QCOMPARE(captured.contents[i].config["properties"].toObject()[key],d.contents[i].config["properties"].toObject()[key]); }
+            }
+        }
+        for(int i=0;i<live.entryRows().size();++i) {
+            const auto& row=live.entryRows()[i]; const QRect boundary=live.entryBoundary(row.entryId);
+            qInfo()<<"STACK live"<<boundary; QVERIFY(qAbs(boundary.height()-meters[i]->height())<=1);
+            if(i>0) { QVERIFY(boundary.top()>=live.entryBoundary(live.entryRows()[i-1].entryId).bottom()); }
+            for(int binding:row.item->readingBindings()) { row.item->pushBindingValue(binding,-73); } row.item->advanceMeter(100);
+            if(auto* face=qobject_cast<CompositePresetItem*>(row.item.data())) { face->setFrequency(14225000); face->setModeLabel("USB"); face->setBandLabel("20m"); face->setUnavailableText({}); }
+        }
+        viewport.verticalScrollBar()->setValue(viewport.verticalScrollBar()->maximum()); QTest::qWait(100);
+        QVERIFY(viewport.viewport()->rect().intersects(QRect(meters.last()->mapTo(viewport.viewport(),QPoint()),meters.last()->size())));
+        if(!capture.isEmpty()) { QVERIFY(viewport.grab().save(capture+"/short-bottom.png")); }
+        viewport.resize(width,preview->minimumHeight()+2); viewport.verticalScrollBar()->setValue(0); QTest::qWait(150);
+        for(int i=0;i<meters.size();++i) {
+#ifdef NEREUS_GPU_SPECTRUM
+            QSignalSpy frames(meters[i],&QRhiWidget::frameSubmitted); meters[i]->update(); QTRY_VERIFY_WITH_TIMEOUT(frames.count()>0,3000);
+            const QImage image=meters[i]->grabFramebuffer();
+#else
+            const QImage image=meters[i]->grab().toImage();
+#endif
+            QVERIFY(!image.isNull()); QVERIFY(meters[i]->items()[0]->signalsBlocked());
+            if(auto* face=qobject_cast<CompositePresetItem*>(meters[i]->items()[0])) { for(auto* child:face->internalItems()) { QVERIFY(child->signalsBlocked()); } }
+            if(types.size()==6 && i==4) {
+                int clippedFrequencyPixels=0; const qreal scale=qreal(image.width())/meters[i]->width();
+                for(int y=4;y<int(image.height()*.6);++y) { for(int x=image.width()-qRound(9*scale);x<image.width()-qRound(6*scale);++x) { const QColor c=image.pixelColor(x,y); clippedFrequencyPixels+=int(c.red()>180 && c.green()>70 && c.green()<230 && c.blue()<50); } }
+                qInfo()<<"STACK VFO frequency pixels at inner right edge"<<clippedFrequencyPixels;
+                QCOMPARE(clippedFrequencyPixels,0);
+            }
+            if(!capture.isEmpty()) { QVERIFY(image.save(capture+QString("/preview-row-%1.png").arg(i))); }
+        }
+#ifdef NEREUS_GPU_SPECTRUM
+        auto* surface=live.meterSurfaces().first(); QSignalSpy frames(surface,&QRhiWidget::frameSubmitted); surface->update(); QTRY_VERIFY_WITH_TIMEOUT(frames.count()>0,3000);
+        const QImage liveImage=surface->grabFramebuffer();
+#else
+        const QImage liveImage=live.meterSurfaces().first()->grab().toImage();
+#endif
+        if(!capture.isEmpty()) { QVERIFY(preview->grab().save(capture+"/full-preview.png")); QVERIFY(liveImage.save(capture+"/live-run.png")); }
+        viewport.resize(width+80,260); QTest::qWait(100);
+        QCOMPARE(meters[0]->height(),qobject_cast<CompositePresetItem*>(meters[0]->items()[0])->preferredFaceHeight());
+        QCOMPARE(preview->document(),d); QCOMPARE(poller.targetCountForTest(),0); QCOMPARE(sourceReads,setupReads);
+        d.layout=ContentLayout::LegacyCanvas; preview->setDocument(d); const auto legacy=preview->findChild<MeterWidget*>()->items();
+        for(auto* item:legacy) { QVERIFY(qAbs(item->x()-.12f)<1e-6); QVERIFY(qAbs(item->y()-.23f)<1e-6); QVERIFY(qAbs(item->itemHeight()-.19f)<1e-6); }
+    }
     void unpolledSourcesSharedCadenceAndNativeInertness() {
         QWidget liveParent; QWidget singleton(&liveParent); ContainerContentRegistry registry; registry.attachSingleton("applet:rx",&singleton);
         MeterPoller poller; double value=-72; poller.setRxReadingSource([&](const QJsonObject& context,int){ return context.value("sliceId").toInt()==1 ? value : -400.0; });

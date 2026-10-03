@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-03 — Reserve distinct Signal font lines in stack faces by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-03 — Independent history sampling cadence by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-03 — Draw ANAN selector once in the static layer by J.J. Boyd
@@ -102,6 +104,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/meters/ClockItem.h"
 #include <QPainter>
 #include <QPainterPath>
+#include <QFontMetrics>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QMouseEvent>
@@ -241,8 +244,30 @@ void CompositePresetItem::setBandLabel(const QString& text) { if(m_stateBand!=te
 void CompositePresetItem::setUnavailableText(const QString& text) { if(m_stateUnavailable!=text) { m_stateUnavailable=text; markPresentationDirty(); } if(m_vfo) { m_vfo->setUnavailableText(text); } if(m_bands) { m_bands->setAllButtonsAvailable(text.isEmpty()&&!m_inert,text); m_modes->setAllButtonsAvailable(text.isEmpty()&&!m_inert,text); } }
 QVector<MeterItem*> CompositePresetItem::internalItems() const { QVector<MeterItem*> result; for(auto* child:{static_cast<MeterItem*>(m_vfo),static_cast<MeterItem*>(m_bands),static_cast<MeterItem*>(m_modes),static_cast<MeterItem*>(m_clock)}) { if(child) { result.append(child); } } return result; }
 void CompositePresetItem::setPreviewInert(bool inert) { m_inert=inert; for(MeterItem* child:internalItems()) { child->blockSignals(inert); } if(m_bands && inert) { m_bands->setAllButtonsAvailable(false,"Preview controls are inactive"); m_modes->setAllButtonsAvailable(false,"Preview controls are inactive"); } }
-int CompositePresetItem::preferredFaceHeight() const { return m_config["faceHeight"].toInt(); }
-QSize CompositePresetItem::minimumFaceSize() const { return {m_face==Face::Anan || m_face==Face::Cross || m_face==Face::Contest?360:260,preferredFaceHeight()}; }
+int CompositePresetItem::preferredFaceHeight() const {
+    int height=m_config["faceHeight"].toInt();
+    if(m_face==Face::SignalText) {
+        // NereusSDR stack presentation reserves separate lines without rewriting
+        // the imported face height or the user's chosen font.
+        QFont font; font.setPixelSize(m_config["fontSize"].toInt());
+        QFont peakFont; peakFont.setPixelSize(14);
+        const int lines=int(m_config["showTitle"].toBool())+int(m_config["showReadout"].toBool());
+        height=qMax(height,lines*QFontMetrics(font).height()+
+            (m_config["showPeakValue"].toBool()?QFontMetrics(peakFont).height():0)+12);
+    }
+    return height;
+}
+QSize CompositePresetItem::minimumFaceSize() const {
+    int width=m_face==Face::Anan || m_face==Face::Cross || m_face==Face::Contest?360:260;
+    if(m_face==Face::SignalText) {
+        QFont font; font.setPixelSize(m_config["fontSize"].toInt()); const QFontMetrics metrics(font);
+        if(m_config["showTitle"].toBool()) { width=qMax(width,metrics.horizontalAdvance(m_config["title"].toString())+8); }
+        if(m_config["showReadout"].toBool()) {
+            for(double value:{m_config["minValue"].toDouble(),m_config["maxValue"].toDouble()}) { width=qMax(width,metrics.horizontalAdvance(signalReadout(value))+16); }
+        }
+    }
+    return {width,preferredFaceHeight()};
+}
 double CompositePresetItem::channelValue(int i) const { return m_channels.value(i).dynamics.value(); }
 double CompositePresetItem::channelPeak(int i) const { return m_channels.value(i).dynamics.maxHistory(); }
 bool CompositePresetItem::channelHasReading(int i) const { return i>=0 && i<m_channels.size() && m_channels[i].dynamics.hasReading(); }
@@ -487,17 +512,26 @@ void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer l
     if(layer==Layer::Background) {
         p.fillRect(r,color(m_config,"backdropColor"));
         if(m_face==Face::Anan || m_face==Face::Cross) { paintNeedles(p,r,true); }
-        else if(m_config["showTitle"].toBool() && !m_vfo && !m_clock && m_face!=Face::PowerSwr) { p.setPen(color(m_config,"titleColor")); p.drawText(r.adjusted(4,2,-4,0),Qt::AlignTop|Qt::AlignHCenter,m_config["title"].toString()); }
+        else if(m_config["showTitle"].toBool() && !m_vfo && !m_clock && m_face!=Face::PowerSwr) {
+            p.setPen(color(m_config,"titleColor"));
+            const QRectF title=m_face==Face::SignalText ? QRectF(r.left()+4,r.top()+2,r.width()-8,QFontMetrics(font).height()) : r.adjusted(4,2,-4,0);
+            p.drawText(title,Qt::AlignTop|Qt::AlignHCenter,m_config["title"].toString());
+        }
     } else if(layer==Layer::OverlayDynamic) {
         if(m_face==Face::PowerSwr) { for(int i=0;i<2;++i) { paintBar(p,QRectF(r.left(),r.top()+r.height()*i/2,r.width(),r.height()/2),i); } }
         if(m_face==Face::Anan || m_face==Face::Cross) { paintNeedles(p,r,false); }
         if(m_face==Face::Eye) { paintEye(p,r); }
         if(m_face==Face::History) { paintHistory(p,r); }
         if(m_face==Face::SignalText) {
-            const Channel& c=m_channels.first(); const QRectF main=r.adjusted(8,26,-8,-26); font.setPixelSize(qMin(m_config["fontSize"].toInt(),int(r.height()*.38))); p.setFont(font); p.setPen(color(c.config,"color"));
+            const Channel& c=m_channels.first();
+            const int titleHeight=m_config["showTitle"].toBool()?QFontMetrics(font).height():0;
+            QFont peakFont=font; peakFont.setPixelSize(14);
+            const int peakHeight=m_config["showPeakValue"].toBool()?QFontMetrics(peakFont).height():0;
+            const QRectF main(r.left()+8,r.top()+2+titleHeight,r.width()-16,r.height()-12-titleHeight-peakHeight);
+            p.setPen(color(c.config,"color"));
             if(m_config["showReadout"].toBool()) { p.drawText(main,Qt::AlignCenter,c.dynamics.hasReading()?signalReadout(c.dynamics.value()):"--"); }
             font.setPixelSize(14); p.setFont(font); p.setPen(color(m_config,"lowColor"));
-            if(m_config["showPeakValue"].toBool()) { p.drawText(r.adjusted(8,0,-8,-5),Qt::AlignBottom|Qt::AlignHCenter,"Peak "+(c.dynamics.hasReading()?signalReadout(c.dynamics.maxHistory()):QStringLiteral("--"))); }
+            if(m_config["showPeakValue"].toBool()) { p.drawText(QRectF(r.left()+8,r.bottom()-8-peakHeight,r.width()-16,peakHeight),Qt::AlignBottom|Qt::AlignHCenter,"Peak "+(c.dynamics.hasReading()?signalReadout(c.dynamics.maxHistory()):QStringLiteral("--"))); }
             if(c.config["showHistory"].toBool() && c.dynamics.hasReading()) { const double a=calibratedPoint(0,c.dynamics.minHistory()).x(),b=calibratedPoint(0,c.dynamics.maxHistory()).x(); p.fillRect(QRectF(r.left()+r.width()*a,r.bottom()-3,r.width()*(b-a),3),color(c.config,"historyColor")); }
             if(c.config["peakHold"].toBool() && c.dynamics.hasReading()) { const double x=r.left()+r.width()*calibratedPoint(0,c.dynamics.maxHistory()).x(); p.setPen(QPen(color(c.config,"color"),2)); p.drawLine(QPointF(x,r.bottom()-8),QPointF(x,r.bottom())); }
         }

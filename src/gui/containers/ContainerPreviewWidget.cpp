@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original inert preview projection, no polling targets.
 // Modification history (NereusSDR):
+//   2026-10-03 — Scroll the full configured preview stack by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Safe previews by J.J. Boyd (KG4VCF), OpenAI Codex assisted.
 #include "ContainerPreviewWidget.h"
 #include "ContainerContentRegistry.h"
@@ -18,6 +20,7 @@ ContainerPreviewWidget::ContainerPreviewWidget(ContainerContentRegistry& registr
 {
     setObjectName("containerDraftPreview"); setMinimumHeight(180);
     m_layout->setContentsMargins(0,0,0,0); m_layout->setSpacing(0);
+    m_layout->setSizeConstraint(QLayout::SetMinimumSize);
     connect(&poller,&MeterPoller::frameAdvanced,this,&ContainerPreviewWidget::advance);
     connect(&poller,&MeterPoller::bindingAvailabilityChanged,this,[this]{
         if(!m_poller) { return; }
