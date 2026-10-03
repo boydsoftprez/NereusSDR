@@ -11,6 +11,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
+//                Take and select action, with current access and target
+//                lifetime checks. AI-assisted via OpenAI Codex.
+//   2026-10-02 - J.J. Boyd (KG4VCF). Clarity grid and waterfall output
+//                follow the selected pan and survive original-pan retirement.
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Opt-in numeric TX-choice timestamps
 //                for RX history diagnosis. AI-assisted via OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Remote Max Bin follows the window
@@ -806,6 +812,7 @@ warren@wpratt.com
 #include "gui/HostingSliceActions.h"
 #include "gui/LevelCalGridFollowGuard.h"
 #include "core/session/RemoteDevicesState.h"
+#include "core/session/PathRacer.h"
 #include "ConnectionPanel.h"
 #include "NetworkDiagnosticsDialog.h"
 #include "OperatorReasonText.h"
@@ -826,6 +833,7 @@ warren@wpratt.com
 #include "models/RadioModel.h"
 #include "models/StationTciModel.h"
 #include "core/session/IStationLink.h"
+#include "core/session/RemoteTransmitClient.h"
 #include "models/AccessoryDataModel.h"
 #include "models/SliceModel.h"
 #include "widgets/VfoWidget.h"
@@ -2476,8 +2484,12 @@ void MainWindow::refreshDesktopStationState()
             // transmit there (the arbiter drops MOX first, ruling 8.10).
             m_txApplet->setTransmitSliceChoices(
                 [this](int id) { return desktopSliceAllowed(id); },
-                [this](int id) { requestTransmitSlice(id); },
-                [this]() { return transmitSliceChoiceReason(); });
+                [this](int id) { activateTransmitSlice(id, true); },
+                {},
+                [this](int id) {
+                    const TxSliceAction action = txSliceAction(id);
+                    return TxApplet::TransmitSliceChoice{action.enabled, action.effectiveWords};
+                });
         } else {
             m_txApplet->setDesktopKeyHandlers({}, {}, {}, {});
             m_txApplet->setDesktopTwoToneHandler({});
@@ -2814,15 +2826,22 @@ void MainWindow::wireRemoteTransmitMeters()
                                                             : nullptr;
                 return !access || !access->entry(id).has_value() || access->controlledHere(id);
             },
-            [this](int id) { requestTransmitSlice(id); },
-            [this]() { return transmitSliceChoiceReason(); });
+            [this](int id) { activateTransmitSlice(id, true); },
+            {},
+            [this](int id) {
+                const TxSliceAction action = txSliceAction(id);
+                return TxApplet::TransmitSliceChoice{action.enabled, action.effectiveWords};
+            });
         connect(state, &TransmitState::holderChanged, m_txApplet,
                 &TxApplet::refreshTransmitSliceChoices);
         connect(m_stationClient, &StationClient::handshakeComplete, m_txApplet,
                 &TxApplet::refreshTransmitSliceChoices);
         if (SliceAccessMirror* access = m_stationClient->sliceAccess()) {
             connect(access, &SliceAccessMirror::changed, m_txApplet,
-                    [this](int) { if (m_txApplet) { m_txApplet->refreshTransmitSliceChoices(); } });
+                    [this](int) {
+                        if (m_txApplet) { m_txApplet->refreshTransmitSliceChoices(); }
+                        continueTxBadgeTake();
+                    });
         }
     }
 }
@@ -2964,6 +2983,7 @@ void MainWindow::ensureSliceChooser()
                 flag->setSliceAccessPending(QString());
             }
             if (m_rxApplet) { m_rxApplet->setSliceAccessPending(QString()); }
+            if (m_txApplet) { m_txApplet->refreshTransmitSliceChoices(); }
             if (!words.isEmpty()) { showToast(words, ToastSeverity::Info, 4000); }
         });
     }
@@ -3083,6 +3103,7 @@ void MainWindow::runFlagAccessAction(SliceChooserAction action, int sliceId)
         if (flag) { flag->setSliceAccessPending(QString()); }
         if (m_rxApplet) { m_rxApplet->setSliceAccessPending(QString()); }
     }
+    if (m_txApplet) { m_txApplet->refreshTransmitSliceChoices(); }
 }
 
 std::pair<int, bool> MainWindow::listenVolumeFor(int sliceId)
@@ -3629,6 +3650,8 @@ void MainWindow::ensureRemoteSession()
         }
 
         m_stationClient = new StationClient(m_radioModel, proxy, this);
+        connect(m_radioModel, &RadioModel::remoteMicSourceStateChanged,
+                this, [this]() { applyRemoteRoleGating(); });
         // iPhone app Task 18 (R-IOS-08): this computer's own device key.
         // A Core it paired with is signed in to by key, and a token
         // sign-in to a Core with an identity enrols the key (the link
@@ -3843,6 +3866,8 @@ void MainWindow::ensureRemoteSession()
                 refreshRemoteConnectionUi();
             }
         });
+        connect(m_stationClient->remoteDevices(), &RemoteDevicesState::coreInfoChanged,
+                this, &MainWindow::refreshRemoteConnectionUi);
         connect(m_stationClient, &StationClient::pathChanged,
                 this, &MainWindow::refreshRemoteConnectionUi);
         connect(m_remoteMedia, &RemoteMediaController::networkPathChanged,
@@ -4148,7 +4173,7 @@ void MainWindow::showRemoteConnectionPanel()
 {
     if (!m_remoteConnection) { return; }
     if (!m_remoteConnectionPanel) {
-        m_remoteConnectionPanel = new RemoteConnectionPanel(m_remoteConnection, this, m_remoteMedia);
+        m_remoteConnectionPanel = new RemoteConnectionPanel(m_remoteConnection, this, m_remoteMedia, m_remoteTelemetry);
     }
     m_remoteConnectionPanel->show();
     m_remoteConnectionPanel->raise();
@@ -4218,11 +4243,32 @@ void MainWindow::refreshRemoteConnectionUi()
         }
     }
     if (m_stationBlock) {
-        m_stationBlock->setRadioName(tr("Core %1").arg(m_remoteConnection->endpointText()));
-        m_stationBlock->setHardwareLine(
-            m_remoteConnection->state() == ConnectionState::Connected
-                ? m_remoteConnection->radioText() : m_remoteConnection->statusText(), {});
-        m_stationBlock->setToolTip(m_remoteConnection->detailText());
+        const CoreSettingsContext context = coreSettingsSnapshot();
+        const QString reported = context.authenticated ? context.coreName.trimmed() : QString();
+        const QString name = !reported.isEmpty() ? reported
+            : !m_savedCoreName.isEmpty() ? tr("%1 (last known)").arg(m_savedCoreName)
+            : tr("Core name not reported");
+        m_stationBlock->setRadioName(name);
+        const auto compactPath = [](const std::optional<NetworkPathSnapshot>& path) {
+            if (!path) { return tr("path unknown"); }
+            const QString kind = path->kind == NetworkPathSnapshot::Kind::Direct ? tr("direct")
+                : path->kind == NetworkPathSnapshot::Kind::Relayed ? tr("via relay") : tr("path unknown");
+            QHostAddress peer;
+            return peer.setAddress(path->remoteAddress)
+                ? QStringLiteral("%1 %2").arg(kind, peer.toString()) : kind;
+        };
+        const bool current = context.authenticated;
+        const auto control = current && m_stationClient->transport()
+            ? m_stationClient->transport()->networkPathSnapshot() : std::optional<NetworkPathSnapshot>{};
+        const auto media = current && m_remoteMedia ? m_remoteMedia->currentNetworkPath() : std::optional<NetworkPathSnapshot>{};
+        m_stationBlock->setConnectionLines(current ? tr("Controls %1").arg(compactPath(control))
+            : m_remoteConnection->statusText(), current ? tr("Audio/display %1 · %2").arg(compactPath(media),
+                m_remoteMedia ? remoteAudioBannerWord(m_remoteMedia->audioStatus().state) : tr("unavailable")) : QString());
+        m_stationBlock->setToolTip(name + QLatin1Char('\n') + context.controls
+            + QLatin1Char('\n') + context.audioAndDisplay + QLatin1Char('\n')
+            + m_remoteConnection->detailText() + QLatin1Char('\n')
+            + tr("Radio: %1\nListener: %2\nReached through: %3")
+                .arg(context.radio, context.listener, context.reachedThrough));
         if (m_chromeBar && m_chromeBarWidget) {
             m_chromeBar->setNaturalWidth(m_stationBlock, m_stationBlock->sizeHint().width());
             m_chromeBar->relayout(m_chromeBarWidget->width());
@@ -4613,10 +4659,10 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // remote window asks the Core (tx.setTxSlice) instead of moving its own
     // model's arbiter, which binds nothing.
     connect(newFlag, &VfoWidget::txHandoffRequested, this,
-            [this](int idx) { requestTransmitSlice(idx); });
+            [this](int idx) { activateTransmitSlice(idx, false); });
     // TX badge take (JJ's ruling, 2026-09-30).
     connect(newFlag, &VfoWidget::txTakeRequested, this,
-            [this](int idx) { startTxBadgeTake(idx); });
+            [this](int idx) { activateTransmitSlice(idx, false); });
     // Phase 3F Sub-Epic I closeout, defect G2: route to the slice's DDC
     // stream. This used to write SliceModel::setSampleRateHz, which stopped
     // reaching the wire once buildStreamConfigsForCodec began sourcing the
@@ -8234,7 +8280,7 @@ void MainWindow::buildUI()
     // calls were silently overwriting the user's saved thresholds via
     // scheduleSettingsSave() on every Clarity tick.
     connect(m_clarityController, &ClarityController::waterfallThresholdsChanged,
-            activeSpectrumWidget(), [this](float low, float high) {
+            this, [this](float low, float high) {
         // PR #212 follow-up bench fix (KG4VCF, 2026-05-10): suppress
         // Clarity threshold updates while MOX is active.  Clarity tracks
         // RX noise floor and would otherwise re-enable itself with
@@ -8257,16 +8303,24 @@ void MainWindow::buildUI()
         if (m_moxDisplay && m_moxDisplay->isKeyed()) {
             return;
         }
-        activeSpectrumWidget()->setClarityActive(true);
-        activeSpectrumWidget()->setClarityWaterfallThresholds(low, high);
+        if (SpectrumWidget* sw = activeSpectrumWidget()) {
+            sw->setClarityActive(true);
+            sw->setClarityWaterfallThresholds(low, high);
+        }
     });
 
     // Clarity → SpectrumWidget NF-aware grid (Task 2.9).
     // NereusSDR-original — no Thetis equivalent.
     // noiseFloorChanged fires after EWMA smoothing but before the deadband
     // gate so the grid tracks the floor at every cadence tick.
+    // The window owns both output routes; retiring the initial pane must
+    // neither disconnect them nor leave its grid receiving another pane's floor.
     connect(m_clarityController, &ClarityController::noiseFloorChanged,
-            activeSpectrumWidget(), &SpectrumWidget::onNoiseFloorChanged);
+            this, [this](float nf) {
+        if (SpectrumWidget* sw = activeSpectrumWidget()) {
+            sw->onNoiseFloorChanged(nf);
+        }
+    });
 
     // Task 2.10: per-band NF priming — settle detector.
     // NereusSDR-original — no Thetis equivalent.
@@ -9083,7 +9137,7 @@ void MainWindow::populateDefaultMeter()
                 [this]() {
                     return m_stationClient && m_stationClient->isHandshakeComplete();
                 },
-                MeterPoller::panMaxBinSource([this](const SliceModel* slice) -> SpectrumWidget* {
+                MeterPoller::panMaxBinSourceForSlice([this](const SliceModel* slice) -> SpectrumWidget* {
                     if (!slice || !m_panStack || slice->streamIndex() < 0
                         || markerOnlyPlacement(slice->sliceIndex())) {
                         return nullptr;
@@ -13552,6 +13606,10 @@ void MainWindow::wireSetupDialog(SetupDialog* dialog)
     }
     connect(dialog, &SetupDialog::connectionsRequested,
             this, &MainWindow::connectionRequestedByOperator);
+    connect(dialog, &SetupDialog::coreConnectionDetailsRequested,
+            this, &MainWindow::showRemoteConnectionPanel);
+    connect(dialog, &SetupDialog::coreDiagnosticsRequested,
+            this, &MainWindow::openNetworkDiagnostics);
     if (m_txApplet) {
         connect(dialog, &SetupDialog::cfcDialogRequested,
                 m_txApplet, &TxApplet::requestOpenCfcDialog);
@@ -14655,6 +14713,63 @@ void MainWindow::openNetworkDiagnostics()
     dlg->show();
 }
 
+void MainWindow::setSavedCoreName(const QString& name)
+{
+    if (m_savedCoreName == name) { return; }
+    m_savedCoreName = name;
+    refreshRemoteConnectionUi();
+}
+
+CoreSettingsContext MainWindow::coreSettingsSnapshot() const
+{
+    CoreSettingsContext context;
+    context.connectionDetailsAvailable = m_remoteConnection != nullptr;
+    context.diagnosticsAvailable = m_radioModel != nullptr;
+    context.audioAvailable = m_remoteMedia != nullptr;
+    context.stationSettingsAvailable = stationSettingsAvailable();
+    context.stationSettingsReason = stationSettingsReason();
+    context.listener = tr("Not reported");
+    context.controls = tr("Path unavailable");
+    context.audioAndDisplay = tr("Path unavailable");
+    context.reachedThrough = tr("Not known");
+    if (!m_stationClient) { return context; }
+    context.epoch = m_stationClient->sessionEpoch(); // Host replaces this source stamp with a UI epoch.
+    context.pairedIdentity = m_stationClient->stationIdentityFingerprint();
+    context.authenticated = m_stationClient->isHandshakeComplete() && m_stationClient->signedInWithDeviceKey();
+    if (!context.authenticated) { return context; }
+    context.coreName = m_stationClient->remoteDevices()->coreInfo().stationLabel;
+    context.radio = m_remoteConnection ? m_remoteConnection->radioText() : tr("Radio unknown");
+    const auto controls = m_stationClient->transport()
+        ? m_stationClient->transport()->networkPathSnapshot() : std::optional<NetworkPathSnapshot>{};
+    context.controls = ConnectionSegment::routeText(controls);
+    context.audioAndDisplay = ConnectionSegment::routeText(m_remoteMedia
+        ? m_remoteMedia->currentNetworkPath() : std::optional<NetworkPathSnapshot>{});
+    const int rank = m_stationClient->pathRank();
+    if (rank == PathRacer::ThisNetwork) { context.reachedThrough = tr("This network"); }
+    else if (rank == PathRacer::Direct) { context.reachedThrough = tr("A direct address"); }
+    else if (rank >= PathRacer::ServiceDirect) { context.reachedThrough = tr("Remote access introduction"); }
+    // A diagnostic socket/ICE peer is never reusable listener evidence.
+    const QUrl listener = m_stationClient->connectedUrl();
+    QHostAddress numeric;
+    if (rank >= PathRacer::ThisNetwork && rank <= PathRacer::Direct
+        && listener.scheme() == QStringLiteral("wss")
+        && listener.port() > 0 && listener.port() <= 65535 && numeric.setAddress(listener.host())) {
+        context.listener = numeric.toString();
+    }
+    return context;
+}
+
+void MainWindow::openCoreSettings(const QString& targetId)
+{
+    SetupDialog* dialog = createSetupDialog();
+    if (!dialog) { return; }
+    // createSetupDialog emits setupDialogCreated before returning, so the host
+    // installs its canonical store/context and lazy page binder before inspection.
+    dialog->inspectCoreTarget(targetId);
+    dialog->show();
+    dialog->raise();
+}
+
 SetupDialog* MainWindow::createSetupDialog()
 {
     // R-R3-21 / R-R3-10: Setup opens in every state. A remote window that is
@@ -14697,10 +14812,19 @@ SetupDialog* MainWindow::createSetupDialog()
     if (m_remoteMedia != nullptr && !m_remoteMedia->micLineOpen()) {
         dialog->setVoxPermitted(false, TxRefusals::micNotConnected().text);
     }
+    if (m_stationClient && m_stationClient->remoteTransmit()) {
+        const auto* source = m_stationClient->remoteTransmit();
+        if (!source->micSourceSettled() || source->acceptedMicSource() == RemoteMicSource::RadioMic) {
+            dialog->setVoxPermitted(false,
+                !source->micSourceSettled() ? source->micSourceReason() : remoteRadioVoxReason());
+        }
+    }
     // Station VOX: a hosting window's, while another device holds transmit.
     if (const QString holderReason = desktopVoxHolderReason(); !holderReason.isEmpty()) {
         dialog->setVoxPermitted(false, holderReason);
     }
+    dialog->setCoreAudioSources(m_remoteMedia, m_remoteTelemetry);
+    dialog->setCoreAudioContext(coreSettingsSnapshot());
     dialog->setStationSettingsAvailable(stationSettingsAvailable(), stationSettingsReason());
     seedReceiverAudioNote(dialog, [this] { return receiverAudioNoteFor(m_remoteMedia); });
     dialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -14997,11 +15121,13 @@ bool MainWindow::windowHoldsTransmit() const
     return true;
 }
 
-void MainWindow::applyTxBadgeOffer(VfoWidget* flag) const
+MainWindow::TxSliceAction MainWindow::txSliceAction(int id) const
 {
-    if (!flag) { return; }
-    const int id = flag->sliceIndex();
-    VfoWidget::TxBadgeOffer offer;
+    TxSliceAction offer;
+    if (!m_radioModel || !m_radioModel->sliceById(id)) { return offer; }
+    const VfoWidget::SliceAccess access = windowSliceAccess(
+        windowSliceRows(*m_radioModel, sliceAccessServer(), sliceAccessClient())).value(id);
+    const bool listening = access.state == VfoWidget::SliceAccess::State::Listening;
     // Whether this window may take transmit, and from whom (empty when
     // nobody holds it: the take is at once).
     bool takesTransmit = false;
@@ -15054,13 +15180,13 @@ void MainWindow::applyTxBadgeOffer(VfoWidget* flag) const
             && m_stationClient->transmitState()->keyed();
     }
     const bool holds = windowHoldsTransmit();
-    if (flag->isListening()) {
+    if (listening) {
         // Case 3: a slice another device controls. The refusals keep their
         // words: on the air, and the Core's own refusal of the take.
         if (onAir) {
             offer.heldReason = SliceAccessController::takeWhileTransmittingWords(id);
-        } else if (!flag->sliceAccess().takeHeldReason.isEmpty()) {
-            offer.heldReason = flag->sliceAccess().takeHeldReason;
+        } else if (!access.takeHeldReason.isEmpty()) {
+            offer.heldReason = access.takeHeldReason;
         } else if (sliceTakes && !holds && !takeRefusal.isEmpty()) {
             offer.heldReason = takeRefusal;
         } else if (sliceTakes && (holds || takesTransmit)) {
@@ -15080,17 +15206,84 @@ void MainWindow::applyTxBadgeOffer(VfoWidget* flag) const
             ? tr("Take transmit and make this the TX slice")
             : tr("Take transmit from %1 and make this the TX slice").arg(holderName);
     }
-    flag->setTxBadgeOffer(offer);
+    const bool permitted = transmitControlsPermitted() && transmitSliceChoiceReason().isEmpty();
+    QString reason = !transmitControlsPermitted() ? remoteTransmitReason()
+        : (!transmitSliceChoiceReason().isEmpty() ? transmitSliceChoiceReason() : access.heldReason);
+    const bool pending = m_flagRequestSlice == id && m_sliceChooser && m_sliceChooser->isPending();
+    const bool radioPtt = m_stationClient && m_stationClient->knowsTransmitHolder()
+        && m_stationClient->transmitState()->keyed()
+        && m_stationClient->transmitState()->holderSource() == QStringLiteral("radioPtt")
+        && m_stationClient->transmitState()->txSliceId() == id;
+    if (!offer.heldReason.isEmpty()) { reason = offer.heldReason; }
+    else if (offer.offered && pending) { reason = tr("Asking the Core…"); }
+    else if (radioPtt) { reason = VfoWidget::inUseByRadioText(); }
+    offer.enabled = !radioPtt && ((offer.offered && !pending && (!permitted || listening))
+                                  || (permitted && !listening));
+    offer.effectiveWords = offer.enabled ? offer.toolTip : reason;
+    return offer;
+}
+
+void MainWindow::applyTxBadgeOffer(VfoWidget* flag) const
+{
+    if (!flag) { return; }
+    const TxSliceAction action = txSliceAction(flag->sliceIndex());
+    flag->setTxBadgeOffer({action.offered, action.toolTip, action.heldReason});
+}
+
+void MainWindow::activateTransmitSlice(int sliceId, bool controlledOnly)
+{
+    // A delivered old letter intent must still name a controlled slice.
+    // Flags retain their Take control path for a listened slice.
+    if (controlledOnly && !windowControlsSlice(sliceId)) { return; }
+    const TxSliceAction action = txSliceAction(sliceId);
+    if (!action.enabled) {
+        if (desktopHosting() && !action.heldReason.isEmpty()) {
+            showToast(action.heldReason, ToastSeverity::Info, 3000);
+        }
+        return;
+    }
+    if (action.offered) { startTxBadgeTake(sliceId); }
+    else {
+        abandonTxBadgeTake();
+        requestTransmitSlice(sliceId);
+    }
+}
+
+quint64 MainWindow::txSliceIncarnation(int sliceId) const
+{
+    if (desktopHosting() && m_radioModel->sliceOwnership()) {
+        return m_radioModel->sliceOwnership()->incarnation(sliceId);
+    }
+    if (StationClient* client = sliceAccessClient()) {
+        if (const auto entry = client->sliceAccess()->entry(sliceId)) { return entry->incarnation; }
+    }
+    return 0;
+}
+
+bool MainWindow::txTakeTargetValid(int sliceId, SliceModel* target, quint64 incarnation,
+                                  bool requireControl) const
+{
+    return target && m_radioModel && m_radioModel->sliceById(sliceId) == target
+        && txSliceIncarnation(sliceId) == incarnation
+        && (!requireControl || windowControlsSlice(sliceId));
 }
 
 void MainWindow::startTxBadgeTake(int sliceId)
 {
     // A new click replaces a take still waiting.
     abandonTxBadgeTake();
-    VfoWidget* flag = m_vfoWidgetsBySlice.value(sliceId);
-    if (!m_radioModel || !flag || !flag->txBadgeOffer().offered) { return; }
+    // The old hosting dialog's rejected handler must run before the new
+    // take enters Transmit; otherwise it abandons the replacement intent.
+    const QPointer<MainWindow> self(this);
+    if (m_desktopTakeDialog) { m_desktopTakeDialog->close(); }
+    if (!self) { return; }
+    const TxSliceAction action = txSliceAction(sliceId);
+    if (!m_radioModel || !action.offered || !action.enabled) { return; }
     m_txBadgeTakeSlice = sliceId;
-    if (!flag->isListening()) {
+    m_txBadgeTarget = m_radioModel->sliceById(sliceId);
+    m_txBadgeIncarnation = txSliceIncarnation(sliceId);
+    m_txBadgeTakingSlice = !windowControlsSlice(sliceId);
+    if (windowControlsSlice(sliceId)) {
         takeTransmitForTxBadge(sliceId);
         return;
     }
@@ -15166,6 +15359,10 @@ void MainWindow::continueTxBadgeTake()
 
 void MainWindow::takeTransmitForTxBadge(int sliceId)
 {
+    if (!txTakeTargetValid(sliceId, m_txBadgeTarget, m_txBadgeIncarnation, false)) {
+        abandonTxBadgeTake();
+        return;
+    }
     m_txBadgeTakeSlice = sliceId;
     m_txBadgeTakeStage = TxBadgeStage::Transmit;
     if (windowHoldsTransmit()) {
@@ -15254,13 +15451,24 @@ void MainWindow::finishTxBadgeTakeIfHeld()
         return;
     }
     const int sliceId = m_txBadgeTakeSlice;
+    if (!txTakeTargetValid(sliceId, m_txBadgeTarget, m_txBadgeIncarnation, false)) {
+        abandonTxBadgeTake();
+        return;
+    }
+    // The Core answers slice.takeControl before publishing control. A
+    // flag's Case 3 waits for that word; a letter never takes slice control.
+    if (m_txBadgeTakingSlice && !windowControlsSlice(sliceId)) { return; }
+    m_txBadgeTakingSlice = false;
+    const QPointer<SliceModel> target = m_txBadgeTarget;
+    const quint64 incarnation = m_txBadgeIncarnation;
     abandonTxBadgeTake();
     const quint64 serial = m_txBadgeSerial;
     // Queued: the Core binds a new holder's transmit slice as the take
     // completes (a slice it took is not chosen for it, ruling Q8), and the
     // choice made here must come after that binding, not before it.
-    QTimer::singleShot(0, this, [this, sliceId, serial]() {
-        if (serial != m_txBadgeSerial || !m_radioModel || !m_radioModel->sliceById(sliceId)
+    QTimer::singleShot(0, this, [this, sliceId, serial, target, incarnation]() {
+        if (serial != m_txBadgeSerial
+            || !txTakeTargetValid(sliceId, target, incarnation, true)
             || !windowHoldsTransmit()) {
             return;
         }
@@ -15273,6 +15481,9 @@ void MainWindow::finishTxBadgeTakeIfHeld()
 void MainWindow::abandonTxBadgeTake()
 {
     m_txBadgeTakeSlice = -1;
+    m_txBadgeTarget.clear();
+    m_txBadgeIncarnation = 0;
+    m_txBadgeTakingSlice = false;
     m_txBadgeTakeStage = TxBadgeStage::None;
     m_txBadgeHostTakeId = 0;
     m_txBadgeCommandId = 0;
@@ -15291,6 +15502,7 @@ void MainWindow::abandonTxBadgeTake()
 
 void MainWindow::refreshFlagTransmitGates()
 {
+    if (m_txApplet) { m_txApplet->refreshTransmitSliceChoices(); }
     for (VfoWidget* flag : m_vfoWidgetsBySlice) {
         applyFlagTransmitGate(flag);
     }
@@ -15429,6 +15641,13 @@ void MainWindow::applyRemoteRoleGating()
     // Core's refusal of arming it stays the backstop).
     bool voxLine = m_remoteMedia == nullptr || m_remoteMedia->micLineOpen();
     QString voxReason = voxLine ? QString() : TxRefusals::micNotConnected().text;
+    if (m_stationClient && m_stationClient->remoteTransmit()) {
+        const auto* source = m_stationClient->remoteTransmit();
+        if (!source->micSourceSettled() || source->acceptedMicSource() == RemoteMicSource::RadioMic) {
+            voxLine = false;
+            voxReason = !source->micSourceSettled() ? source->micSourceReason() : remoteRadioVoxReason();
+        }
+    }
     // iPhone app plan Task 77 (rulings 7.7, 8.4): while another device
     // holds transmit, the transmitter's settings are its own, and VOX
     // follows the holder: every transmit control here is shown disabled

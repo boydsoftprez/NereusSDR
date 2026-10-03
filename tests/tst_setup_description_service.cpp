@@ -3567,7 +3567,7 @@ private slots:
         stableHello.remove("challenge");
         stableHello.remove("identity");
         QCOMPARE(QJsonDocument(stableHello).toJson(QJsonDocument::Compact), QByteArrayLiteral(
-            "{\"features\":{\"deviceAuth\":1,\"pairing\":1,\"sessionHolder\":1},"
+            "{\"features\":{\"deviceAuth\":1,\"pairing\":1,\"radioMic\":2,\"sessionHolder\":1},"
             "\"major\":1,\"majors\":[1],\"minor\":11,\"peer\":\"nereusd\","
             "\"settingsSchema\":0,\"type\":\"hello\"}"));
         QVERIFY(!hasSetupTraffic(*legacy.app));

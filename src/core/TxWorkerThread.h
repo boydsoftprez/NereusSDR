@@ -166,6 +166,8 @@ public:
     /// the RADE path, ahead of VAX and the PC microphone. The TCI branch
     /// returns before RADE and is not reused. Null clears.
     void setRemoteMicFeed(RemoteMicFeed* feed);
+    void setRemoteRadioMicActive(bool active)
+    { m_remoteRadioMicActive.store(active, std::memory_order_release); }
 
     /// Start the worker.  Internally calls QThread::start().  Idempotent.
     void startPump();
@@ -483,6 +485,7 @@ private:
     std::vector<float> m_pcMicBuf;
 
     // Task 36: the remote microphone ring, and one block of it.
+    std::atomic<bool> m_remoteRadioMicActive{false};
     std::atomic<RemoteMicFeed*> m_remoteMicFeed{nullptr};
     std::vector<float> m_remoteMicBuf;
 

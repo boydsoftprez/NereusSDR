@@ -53,6 +53,10 @@
 #include <QApplication>
 #include <QMetaMethod>
 #include <QComboBox>
+#include <QAbstractItemView>
+#include "gui/RemoteAudioWidget.h"
+#include "gui/widgets/GuardedSlider.h"
+#include <QStandardItemModel>
 #include <QCoreApplication>
 #include <QLabel>
 #include <QMouseEvent>
@@ -63,6 +67,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QFile>
+#include <QDir>
 #include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -125,6 +130,7 @@
 #include "OperatorWording.h"
 #include "gui/OperatorReasonText.h"
 #include "fakes/RemoteAudioSessionHarness.h"
+#include "fakes/FakeAudioBus.h"
 #include "fakes/UpgradedCoreToken.h"
 
 using namespace NereusSDR;
@@ -7539,6 +7545,384 @@ private slots:
         audio.stop();
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
+    // Wrong desktop default or missing migration must fail at the user's control.
+    void savedAudioChoicesMigrateToHighAndLossless()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        RemoteConnectionController controls(&h.client, &h.remote, {});
+        for (const auto& fixture : {std::pair{QStringLiteral("Opus"), 0},
+                                   std::pair{QStringLiteral("Lossless"), 2},
+                                   std::pair{QStringLiteral("SaveData"), 1},
+                                   std::pair{QString(), 0}}) {
+            AppSettings::instance().setValue(
+                QLatin1String(RemoteMediaController::kAudioProfileSettingKey), fixture.first);
+            RemoteMediaController media(&h.client, &h.remote, nullptr);
+            RemoteConnectionPanel panel(&controls, nullptr, &media);
+            auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+            QVERIFY(choice);
+            QCOMPARE(choice->count(), 3);
+            QCOMPARE(choice->itemText(0), QStringLiteral("High — 48 kbps"));
+            QCOMPARE(choice->itemText(1), QStringLiteral("Save data — 24 kbps"));
+            QCOMPARE(choice->itemText(2), QStringLiteral("Lossless"));
+            QCOMPARE(choice->currentIndex(), fixture.second);
+        }
+    }
+
+    // Wrong wire gating must fail even though High remains selectable on an old Core.
+    void legacyCoreKeepsHighUsableAndSaveDataUnavailable()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.client.withholdFeatureForTest(QByteArrayLiteral("audioQuality"));
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        daemon.setAudioTargetBitrate(24000);
+        QSignalSpy outbound(&h.server, &StationServer::mediaControlReceived);
+        RemoteConnectionController controls(&h.client, &h.remote, {});
+        RemoteConnectionPanel panel(&controls, nullptr, &media);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedAudioContext()
+            && media.acceptedAudioContext()->encoder, 15000);
+        auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        auto* details = panel.findChild<QLabel*>(QStringLiteral("remoteAudioDetails"));
+        QVERIFY(choice && details);
+        QCOMPARE(choice->count(), 3);
+        auto* rows = qobject_cast<QStandardItemModel*>(choice->model());
+        QVERIFY(rows);
+        QVERIFY(rows->item(0)->isEnabled());
+        QVERIFY(!rows->item(1)->isEnabled());
+        QVERIFY(rows->item(1)->toolTip().contains(QStringLiteral("Core")));
+        QCOMPARE(media.acceptedAudioContext()->encoder->targetBitrate, 24000);
+        for (const QJsonObject& control : controlsFor(outbound, QStringLiteral("audio"))) {
+            QVERIFY(!control.contains(QStringLiteral("opusBitrate")));
+        }
+        QVERIFY(details->text().contains(QStringLiteral("Requested quality: High")));
+        QVERIFY(details->text().contains(QStringLiteral("24\u00A0kbit/s target")));
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    void missingCatalogueKeepsHighUsableWithoutClaiming48()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.hideAudioCatalogue = true;
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        daemon.setAudioTargetBitrate(24000);
+        QSignalSpy outbound(&h.server, &StationServer::mediaControlReceived);
+        RemoteConnectionController controls(&h.client, &h.remote, {});
+        RemoteConnectionPanel panel(&controls, nullptr, &media);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedAudioContext()
+            && media.acceptedAudioContext()->encoder, 15000);
+        auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        QVERIFY(choice);
+        QCOMPARE(choice->count(), 3);
+        auto* rows = qobject_cast<QStandardItemModel*>(choice->model());
+        QVERIFY(rows && rows->item(0)->isEnabled());
+        QVERIFY(!rows->item(1)->isEnabled());
+        QVERIFY(rows->item(1)->toolTip().contains(QStringLiteral("Checking")));
+        QCOMPARE(media.acceptedAudioContext()->encoder->targetBitrate, 24000);
+        for (const QJsonObject& control : controlsFor(outbound, QStringLiteral("audio"))) {
+            QVERIFY(!control.contains(QStringLiteral("opusBitrate")));
+        }
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    void preAuthCatalogueCannotOfferAudioRates_data()
+    {
+        QTest::addColumn<bool>("delta");
+        QTest::newRow("object-create") << false;
+        QTest::newRow("delta") << true;
+    }
+
+    void preAuthCatalogueCannotOfferAudioRates()
+    {
+        QFETCH(bool, delta);
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        RemoteConnectionController controls(&h.client, &h.remote, {});
+        RemoteConnectionPanel panel(&controls, nullptr, &media);
+        auto* station = new Test::RewritingTransport(QStringLiteral("station"), std::nullopt);
+        auto* clientEnd = new Test::RewritingTransport(QStringLiteral("client"), std::nullopt);
+        station->hideAudioCatalogue = true;
+        h.stationLink = station;
+        station->linkTo(clientEnd);
+        h.client.startSession(clientEnd, h.server.token());
+        QSignalSpy rates(&h.client, &StationClient::audioOpusBitratesChanged);
+        const QList<MirrorUpdate> bag{{0, QByteArrayLiteral("json"), MirrorWireKind::Utf8, QStringLiteral(
+            "{\"audio\":{\"opusProfiles\":[{\"bitrate\":24000},{\"bitrate\":48000}]}}")}};
+        const auto catalogue = delta
+            ? SessionMessages::delta(QByteArrayLiteral("catalog"), bag)
+            : SessionMessages::objectCreate(QByteArrayLiteral("catalog"),
+                                            QByteArrayLiteral("StationCatalog"), bag);
+        // Active transport, before authentication: neither mirrored shape
+        // may advertise a rate to the subsequently authenticated session.
+        emit clientEnd->textReceived(SessionMessages::encode(catalogue));
+        QVERIFY2(!h.client.audioOpusBitrates(), "Pre-auth catalogue became an offered audio table");
+        QCOMPARE(rates.size(), 0);
+        h.server.acceptTransport(station);
+        QTRY_VERIFY(h.client.isHandshakeComplete());
+        QVERIFY(!h.client.audioOpusBitrates());
+        auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        QVERIFY(choice);
+        auto* rows = qobject_cast<QStandardItemModel*>(choice->model());
+        QVERIFY(rows && !rows->item(1)->isEnabled());
+        // The same session can accept its legitimate catalogue after auth;
+        // admission must not wait for some unrelated reconnect or UI action.
+        station->hideAudioCatalogue = false;
+        station->sendText(SessionMessages::encode(catalogue));
+        QTRY_VERIFY(h.client.audioOpusBitrates().has_value());
+        QCOMPARE(*h.client.audioOpusBitrates(), QList<int>({24000, 48000}));
+        QCOMPARE(rates.size(), 1);
+        QVERIFY(rows->item(1)->isEnabled());
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    void savedSaveDataIntentSurvivesAnUnsupportedCore()
+    {
+        const RestoreAudioChoice restore;
+        AppSettings::instance().setValue(
+            QLatin1String(RemoteMediaController::kAudioProfileSettingKey), QStringLiteral("SaveData"));
+        Test::RemoteAudioSessionHarness h;
+        h.client.withholdFeatureForTest(QByteArrayLiteral("audioQuality"));
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        daemon.setAudioTargetBitrate(24000);
+        QSignalSpy outbound(&h.server, &StationServer::mediaControlReceived);
+        RemoteConnectionController controls(&h.client, &h.remote, {});
+        RemoteConnectionPanel panel(&controls, nullptr, &media);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedAudioContext()
+            && media.acceptedAudioContext()->encoder, 15000);
+        auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        auto* details = panel.findChild<QLabel*>(QStringLiteral("remoteAudioDetails"));
+        QVERIFY(choice && details);
+        QCOMPARE(choice->currentIndex(), 1);
+        QVERIFY(details->text().contains(QStringLiteral("Requested quality: Save data")));
+        QCOMPARE(AppSettings::instance().value(
+            QLatin1String(RemoteMediaController::kAudioProfileSettingKey)).toString(), QStringLiteral("SaveData"));
+        for (const QJsonObject& control : controlsFor(outbound, QStringLiteral("audio"))) {
+            QVERIFY(!control.contains(QStringLiteral("opusBitrate")));
+        }
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // A quality switch must discard an incomplete uplink packet before
+    // samples for its new encoder arrive. Exercise the actual packet sender.
+    void radioSourceAckAloneStopsMacMicrophoneAndRestoresCleanClientPackets()
+    {
+        const RestoreAudioChoice restore;
+        AppSettings::instance().setValue(
+            QLatin1String(RemoteMediaController::kAudioProfileSettingKey), QStringLiteral("High"));
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.server.setRemoteTransmitAllowed(true);
+        // Keep capture empty so a resumed wall-clock fake cannot obscure
+        // the partial program packet boundary exercised below.
+        auto microphone = std::make_unique<FakeAudioBus>();
+        QVERIFY(microphone->open(AudioFormat{48000, 1, AudioFormat::Sample::Float32}));
+        h.remote.audioEngine()->setTxInputBusForTest(std::move(microphone));
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QVERIFY(h.client.remoteMicSourceAvailable());
+        media.setHoldsTransmit(true);
+        QVERIFY(media.micUplinkRunning());
+        auto* uplink = h.stationLink->peerForTest();
+        QVERIFY(uplink);
+        uplink->setHoldsOutgoing(true);
+        QVERIFY(h.client.requestMicSource(MicSource::Radio).sent);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(!h.client.remoteTransmit()->micSourceSettled());
+        const std::vector<float> samples(960, 0.25f);
+        media.pushProgramAudio(samples.data(), 959, 1, 48000);
+        uplink->setHoldsOutgoing(false);
+        QTRY_VERIFY(h.client.remoteTransmit()->micSourceSettled());
+        QVERIFY(!media.micUplinkRunning());
+        QVERIFY(media.audioStatus().microphoneFormat.contains(QStringLiteral("Radio microphone at the Core")));
+        QVERIFY(!media.audioStatus().microphoneFormat.contains(QStringLiteral("Opus")));
+        const quint64 stopped = media.micPacketsSent();
+        media.pushProgramAudio(samples.data(), 960, 1, 48000);
+        media.setMicKeyDown(true);
+        media.setMicKeyDown(false);
+        QCOMPARE(media.micPacketsSent(), stopped);
+        QVERIFY(h.client.requestMicSource(MicSource::Pc).sent);
+        QTRY_VERIFY(h.client.remoteTransmit()->micSourceSettled());
+        QVERIFY(media.micUplinkRunning());
+        QCOMPARE(media.micPacketsSent(), stopped);
+        media.pushProgramAudio(samples.data(), 1, 1, 48000);
+        media.setMicKeyDown(true);
+        media.setMicKeyDown(false);
+        QCOMPARE(media.micPacketsSent(), stopped);
+        media.pushProgramAudio(samples.data(), 959, 1, 48000);
+        media.setMicKeyDown(true);
+        media.setMicKeyDown(false);
+        QCOMPARE(media.micPacketsSent(), stopped + 1);
+        media.setHoldsTransmit(false);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    void microphoneQualitySwitchDiscardsPartialPackets()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        attachRemoteMicrophone(h, 0.0f, 1000.0);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        RemoteConnectionController controls(&h.client, &h.remote, {});
+        RemoteConnectionPanel panel(&controls, nullptr, &media);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        media.setHoldsTransmit(true);
+        QVERIFY(media.micUplinkRunning());
+        auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        QVERIFY(choice);
+        const std::vector<float> samples(960, 0.25f);
+        for (const int index : {1, 0}) {
+            media.pushProgramAudio(samples.data(), 959, 1, 48000);
+            choice->setCurrentIndex(index);
+            const quint64 before = media.micPacketsSent();
+            const int target = index == 1 ? 24 : 48;
+            QVERIFY(media.audioStatus().microphoneFormat.contains(
+                QStringLiteral("%1\u00A0kbit/s target").arg(target)));
+            media.pushProgramAudio(samples.data(), 1, 1, 48000);
+            // These public uplink state changes synchronously drain available
+            // samples while holdsTransmit keeps the microphone line active.
+            media.setMicKeyDown(true);
+            media.setMicKeyDown(false);
+            QCOMPARE(media.micPacketsSent(), before);
+            media.pushProgramAudio(samples.data(), 959, 1, 48000);
+            media.setMicKeyDown(true);
+            media.setMicKeyDown(false);
+            QCOMPARE(media.micPacketsSent(), before + 1);
+        }
+        media.setHoldsTransmit(false);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // A missing per-device request, stale headphone encoder, or applying the
+    // listening rate to receiver streams must fail the real Core's answers.
+    void qualityChangesListeningAndKeepsReceiverAppsAt48()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        const auto routes = qScopeGuard([&h] { h.resetOutputRoutes(); });
+        h.attachRemoteHeadphones();
+        h.station.sliceById(h.sliceB)->setOutputRoute(SliceModel::OutputRoute::Headphones);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        daemon.setAudioTargetBitrate(24000);
+        QSignalSpy outbound(&h.server, &StationServer::mediaControlReceived);
+        QSignalSpy inbound(&h.client, &StationClient::mediaControlReceived);
+        RemoteConnectionController controls(&h.client, &h.remote, {});
+        RemoteConnectionPanel panel(&controls, nullptr, &media);
+        Test::CollectingReceiverSink sink;
+        media.requestReceiverAudio(h.sliceA, &sink);
+        const auto release = qScopeGuard([&] { media.releaseReceiverAudio(h.sliceA, &sink); });
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        QVERIFY(choice);
+        const auto heardHeadphones = [&]() -> std::optional<RemoteAudioContextMessage> {
+            const auto all = controlsFor(inbound, QStringLiteral("headphones-audio-context"));
+            return all.isEmpty() ? std::nullopt : decodeHeadphonesAudioContext(all.constLast());
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedAudioContext()
+            && media.acceptedAudioContext()->encoder
+            && media.acceptedAudioContext()->encoder->targetBitrate == 48000, 15000);
+        QTRY_VERIFY_WITH_TIMEOUT(heardHeadphones() && heardHeadphones()->encoder
+            && heardHeadphones()->encoder->targetBitrate == 48000, 10000);
+        const QString captureDirectory = qEnvironmentVariable("NEREUS_AUDIO_CAPTURE_DIR");
+        if (!captureDirectory.isEmpty()) {
+            QDir().mkpath(captureDirectory);
+            panel.show();
+            QCoreApplication::processEvents();
+            QVERIFY(panel.grab().save(captureDirectory + QStringLiteral("/high.png")));
+        }
+        const quint32 firstHeadphoneGeneration = heardHeadphones()->generation;
+        const quint32 firstReceiveGeneration = media.acceptedAudioContext()->generation;
+        QCOMPARE(choice->count(), 3);
+        choice->setCurrentIndex(1);
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedAudioContext()->encoder
+            && media.acceptedAudioContext()->encoder->targetBitrate == 24000, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(heardHeadphones() && heardHeadphones()->encoder
+            && heardHeadphones()->encoder->targetBitrate == 24000, 10000);
+        QVERIFY(heardHeadphones()->generation != firstHeadphoneGeneration);
+        QVERIFY(media.acceptedAudioContext()->generation != firstReceiveGeneration);
+        QCOMPARE(controlsFor(outbound, QStringLiteral("audio")).constLast()
+            .value(QStringLiteral("opusBitrate")).toInt(), 24000);
+        QTRY_VERIFY_WITH_TIMEOUT(!media.audioStatus().receivers.isEmpty()
+            && media.audioStatus().receivers.constFirst().encoder, 10000);
+        QCOMPARE(media.audioStatus().receivers.constFirst().encoder->targetBitrate, 48000);
+        if (!captureDirectory.isEmpty()) {
+            QCoreApplication::processEvents();
+            QVERIFY(panel.grab().save(captureDirectory + QStringLiteral("/save-data.png")));
+        }
+        QCOMPARE(AppSettings::instance().value(
+            QLatin1String(RemoteMediaController::kAudioProfileSettingKey)).toString(),
+            QStringLiteral("SaveData"));
+        // Muting the main stream leaves headphones running at the selected rate.
+        h.remote.audioEngine()->setMasterMuted(true);
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedAudioContext() && !media.acceptedAudioContext()->enabled, 5000);
+        const quint32 headphoneGenerationAt24 = heardHeadphones()->generation;
+        const qsizetype headphoneRequests = controlsFor(outbound, QStringLiteral("headphones-audio")).size();
+        // An app/phone main-only request must also update the existing headset.
+        const quint32 mainRevision = media.acceptedAudioContext()->revision;
+        QJsonObject mainOnly{{QStringLiteral("op"), QStringLiteral("audio")},
+            {QStringLiteral("connectionId"), media.acceptedAudioContext()->connectionId},
+            {QStringLiteral("revision"), double(mainRevision + 1)},
+            {QStringLiteral("enabled"), false}, {QStringLiteral("profile"), QStringLiteral("opus")},
+            {QStringLiteral("opusBitrate"), 48000}};
+        QVERIFY(h.client.sendMediaControl(mainOnly, h.client.sessionEpoch()));
+        QTRY_VERIFY_WITH_TIMEOUT(heardHeadphones()->encoder
+            && heardHeadphones()->encoder->targetBitrate == 48000, 10000);
+        QVERIFY(heardHeadphones()->generation != headphoneGenerationAt24);
+        QCOMPARE(controlsFor(outbound, QStringLiteral("headphones-audio")).size(), headphoneRequests);
+        const quint32 unchangedHeadphoneGeneration = heardHeadphones()->generation;
+        mainOnly.insert(QStringLiteral("revision"), double(mainRevision + 2));
+        QVERIFY(h.client.sendMediaControl(mainOnly, h.client.sessionEpoch()));
+        QTRY_VERIFY_WITH_TIMEOUT(controlsFor(inbound, QStringLiteral("audio-context")).constLast()
+            .value(QStringLiteral("revision")).toInteger() == mainRevision + 2, 5000);
+        QCOMPARE(heardHeadphones()->generation, unchangedHeadphoneGeneration);
+
+        // The saved Save data intent replays on a new session, including while muted.
+        h.client.disconnectFromStation(QStringLiteral("test saved quality replay"));
+        QTRY_VERIFY_WITH_TIMEOUT(!h.client.isHandshakeComplete(), 5000);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.audioStreamBitrate() == 24000 && heardHeadphones()->encoder
+            && heardHeadphones()->encoder->targetBitrate == 24000, 10000);
+        QCOMPARE(choice->currentIndex(), 1);
+        QVERIFY(media.audioStatus().headphonesFormat
+            && media.audioStatus().headphonesFormat->contains(QStringLiteral("24\u00A0kbit/s target")));
+        if (!captureDirectory.isEmpty()) {
+            QCoreApplication::processEvents();
+            QVERIFY(panel.grab().save(captureDirectory + QStringLiteral("/save-data-headphones-only.png")));
+        }
+        choice->setCurrentIndex(0);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.audioStreamBitrate() == 48000 && heardHeadphones()->encoder
+            && heardHeadphones()->encoder->targetBitrate == 48000, 10000);
+        QCOMPARE(controlsFor(outbound, QStringLiteral("audio")).constLast()
+            .value(QStringLiteral("enabled")).toBool(), false);
+        h.remote.audioEngine()->setMasterMuted(false);
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedAudioContext()->encoder
+            && media.acceptedAudioContext()->encoder->targetBitrate == 48000, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(heardHeadphones() && heardHeadphones()->encoder
+            && heardHeadphones()->encoder->targetBitrate == 48000, 10000);
+        QCOMPARE(media.audioStatus().receivers.constFirst().encoder->targetBitrate, 48000);
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // R-R3-23: the app's link trial. Lossless is chosen and the Core
     // accepts it, but the network cannot carry it: about 5 s in, the
     // trial returns this computer to Opus with the plain reason, and Opus
@@ -7616,7 +8000,7 @@ private slots:
         QVERIFY(!status.losslessEncoder.has_value());
         QCOMPARE(status.chosenProfile, RemoteAudioProfile::Lossless);
         QVERIFY(formatRemoteAudioDetails(status, remoteMedia.audioTelemetry()).contains(
-            QStringLiteral("Audio quality: Opus\nThe network could not carry lossless audio; "
+            QStringLiteral("Requested quality: Lossless\nThe network could not carry lossless audio; "
                            "staying on Opus.\n")));
         QCOMPARE(remoteMedia.audioProfileChoice(), RemoteAudioProfile::Lossless);
         QCOMPARE(AppSettings::instance()
@@ -7628,6 +8012,30 @@ private slots:
         QTest::qWait(1500);
         QCOMPARE(links.constLast()->dropped, droppedAtOpus);
         QCOMPARE(errors.count(), 1);
+
+        // The shared Settings/panel control deliberately reselects the saved
+        // Lossless item to retry the actual link trial, even under ControlsLock.
+        // Wheel protection must not change this computer-wide preference path.
+        RemoteAudioWidget qualityWidget(&remoteMedia, nullptr);
+        qualityWidget.show();
+        auto* quality = qualityWidget.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        QVERIFY(quality);
+        const bool previousLock = ControlsLock::isLocked();
+        const auto restoreLock = qScopeGuard([previousLock] { ControlsLock::setLocked(previousLock); });
+        for (const bool locked : {false, true}) {
+            QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioStatus().qualityReason,
+                std::optional<RemoteAudioQualityReason>(RemoteAudioQualityReason::NetworkTooSlow), 12000);
+            ControlsLock::setLocked(locked);
+            QCOMPARE(quality->currentData().toInt(), int(RemoteAudioQualityChoice::Lossless));
+            const int requestsBeforeRetry = int(requestedProfiles(coreControls).size());
+            QTest::mouseClick(quality, Qt::LeftButton);
+            QTRY_VERIFY(quality->view()->isVisible());
+            QTest::keyClick(quality->view(), Qt::Key_Return);
+            QTRY_VERIFY_WITH_TIMEOUT(requestedProfiles(coreControls).size() > requestsBeforeRetry, 5000);
+            QCOMPARE(requestedProfiles(coreControls).at(requestsBeforeRetry), QStringLiteral("lossless"));
+            QVERIFY(!remoteMedia.audioStatus().qualityReason.has_value());
+            QCOMPARE(remoteMedia.audioQualityChoice(), RemoteAudioQualityChoice::Lossless);
+        }
 
         // The next connection replays the stored choice.
         const int controlsBefore = int(requestedProfiles(coreControls).size());
@@ -7866,13 +8274,13 @@ private slots:
         auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
         auto* details = panel.findChild<QLabel*>(QStringLiteral("remoteAudioDetails"));
         QVERIFY(choice && details);
-        QCOMPARE(choice->count(), 2);
-        QCOMPARE(choice->itemText(0), QStringLiteral("Opus"));
-        QCOMPARE(choice->itemText(1), QStringLiteral("Lossless"));
-        QCOMPARE(choice->currentText(), QStringLiteral("Opus"));
-        QVERIFY(details->text().contains(QStringLiteral("Audio quality: Opus\nAudio format: Opus")));
+        QCOMPARE(choice->count(), 3);
+        QCOMPARE(choice->itemText(0), QStringLiteral("High — 48 kbps"));
+        QCOMPARE(choice->itemText(2), QStringLiteral("Lossless"));
+        QCOMPARE(choice->currentText(), QStringLiteral("High — 48 kbps"));
+        QVERIFY(details->text().contains(QStringLiteral("Current receive format: Opus")));
 
-        choice->setCurrentIndex(1);
+        choice->setCurrentIndex(2);
         QCOMPARE(remoteMedia.audioProfileChoice(), RemoteAudioProfile::Lossless);
         QCOMPARE(AppSettings::instance()
                      .value(QLatin1String(RemoteMediaController::kAudioProfileSettingKey))
@@ -7886,7 +8294,7 @@ private slots:
         QCOMPARE(remoteMedia.audioStatus().runningProfile,
                  std::optional<RemoteAudioProfile>(RemoteAudioProfile::Opus));
         QTRY_VERIFY(details->text().contains(QStringLiteral(
-            "Audio quality: Opus\nThis Core does not allow lossless audio.\n")));
+            "Requested quality: Lossless\nThis Core does not allow lossless audio.\n")));
         // A refusal is an answer, not a fault: no alert, no trial.
         QCOMPARE(errors.count(), 0);
         QVERIFY(!remoteMedia.findChild<QTimer*>(
@@ -8343,6 +8751,14 @@ const QStringList kAudioFunctions{
     QStringLiteral("lateFaultFromAnEndedSessionChangesNothing"),
     QStringLiteral("minorSevenCorePlaysWithoutCodecDetail"),
     QStringLiteral("coreReasonsShowAsCoreCouldNotStartAndRadioOffline"),
+    QStringLiteral("savedAudioChoicesMigrateToHighAndLossless"),
+    QStringLiteral("legacyCoreKeepsHighUsableAndSaveDataUnavailable"),
+    QStringLiteral("qualityChangesListeningAndKeepsReceiverAppsAt48"),
+    QStringLiteral("missingCatalogueKeepsHighUsableWithoutClaiming48"),
+    QStringLiteral("preAuthCatalogueCannotOfferAudioRates"),
+    QStringLiteral("savedSaveDataIntentSurvivesAnUnsupportedCore"),
+    QStringLiteral("microphoneQualitySwitchDiscardsPartialPackets"),
+    QStringLiteral("radioSourceAckAloneStopsMacMicrophoneAndRestoresCleanClientPackets"),
     QStringLiteral("losslessFallsBackToOpusWhenTheNetworkCannotCarryIt"),
     QStringLiteral("retiredReceiverStreamStopsWithItsReasonAndDoesNotLoop"),
     QStringLiteral("losslessTrialCountsEveryLosslessStreamAndFallsBackOnce"),

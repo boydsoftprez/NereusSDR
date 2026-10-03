@@ -556,10 +556,19 @@ QString StationServer::withHolderNames(const QString& reason, const QByteArray& 
 
 void StationServer::answerHere(SessionTransport* transport, const SessionMessage& result)
 {
-    send(transport, result);
-    if (transport == m_dispatchingTransport) {
-        m_resultSentInDispatch = true;
+    const Peer* peer = peerPtr(transport);
+    const quint64 sessionId = peer != nullptr ? peer->sessionId : 0;
+    if (!hasReplySession(transport, sessionId)) { return; }
+    const QPointer<SessionTransport> to(transport);
+    const ResultKey key{sessionId, result.commandVerb, result.commandId};
+    for (InvokeFrame* frame = m_invokeFrame; frame != nullptr; frame = frame->parent) {
+        if (frame->transport == to && frame->key == key && !frame->terminalResultSent) {
+            frame->resultSent = true;
+            frame->terminalResultSent = isLastResult(result);
+            break;
+        }
     }
+    send(to, result);
 }
 
 // ── Commands: the pin, a C-Tune move, adding a slice or a pan ────────────

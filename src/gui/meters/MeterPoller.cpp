@@ -1003,6 +1003,17 @@ void MeterPoller::handOutTxReading(int bindingId, double value)
 }
 
 std::function<double(const SliceModel*)> MeterPoller::panMaxBinSource(
+    std::function<SpectrumWidget*(const QString& panKey)> spectrumFor)
+{
+    return panMaxBinSourceForSlice(
+        [spectrumFor = std::move(spectrumFor)](const SliceModel* slice) -> SpectrumWidget* {
+            return slice && spectrumFor ? spectrumFor(slice->panKey()) : nullptr;
+        });
+}
+
+// 2026-10-02 KG4VCF, Codex: inherited TX slice-host dependency, retaining
+// the established QString resolver contract for other window/test callers.
+std::function<double(const SliceModel*)> MeterPoller::panMaxBinSourceForSlice(
     std::function<SpectrumWidget*(const SliceModel* slice)> spectrumFor)
 {
     return [spectrumFor = std::move(spectrumFor)](const SliceModel* slice) -> double {

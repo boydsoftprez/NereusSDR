@@ -675,6 +675,7 @@
 //  redesign (2026-04-29) deleted MicReBlocker; replaced with
 //  TxWorkerThread which drives TxChannel directly.)
 #include <algorithm>  // std::clamp (used by computeWireDriveForTest)
+#include "core/session/RemoteMicSource.h"
 #include <atomic>     // AM Mod Monitor flags
 #include <array>      // std::array (HL2 temp averaging ring)
 #include <functional> // R-R3-21 DSP > Options apply observer (test seam)
@@ -994,6 +995,10 @@ public:
     // allocates or deletes it.
     void attachStation(NereusSDR::IStationLink* link) { m_station = link; }
     IStationLink* stationLink() const { return m_station; }
+    bool requestMicSource(MicSource desired, std::function<void()> accepted = {});
+    QString micSourceChangeReason(MicSource desired) const;
+    bool pcCaptureGatesKeyingForTest() const { return pcCaptureGatesKeying(); }
+
     void detachStation() { m_station = nullptr; }
     void reportStationLinkStateChanged();
 
@@ -2584,6 +2589,13 @@ public:
     // device's audio is never mixed into another's transmission.
 
     /// The ring the transmit pump pulls (null on a remote window's model).
+    void setRemoteMicSelection(const QString& owner, const QByteArray& device, RemoteMicSource source);
+    RemoteMicSource remoteMicSelection(const QString& owner, const QByteArray& device) const;
+    void forgetRemoteMicSession(const QString& owner);
+    void beginRemoteRadioKeyAttempt(const QString& owner, const QByteArray& device, quint32 commandId);
+    void finishRemoteRadioKeyAttempt(const QString& owner, const QByteArray& device,
+                                    quint32 commandId, quint32 acceptedEpoch);
+    bool remoteRadioMicKeyActive(const QByteArray& device) const;
     RemoteMicFeed* remoteMicFeed() const { return m_remoteMicFeed.get(); }
     /// `deviceId`'s media carries a microphone line now (opened once per
     /// media connection that carries one; closed as often).
@@ -5940,6 +5952,7 @@ signals:
     /// refused a MOX, TUNE or two-tone press from this remote window (or its
     /// release). Shown as a local refusal is; the buttons follow the Core.
     void remoteTransmitRefused(const QString& reason);
+    void remoteMicSourceStateChanged();
 
     // ── Plan 4 D8: per-profile TX filter relay signal ─────────────────────────
     //
@@ -7277,6 +7290,13 @@ private:
     // ring stays the source (silence) until that key ends, so a remote key
     // never falls back to the station's own microphone.
     QByteArray m_remoteMicKeyedDevice;
+    struct RemoteMicSelection { QByteArray device; RemoteMicSource source; };
+    QHash<QString, RemoteMicSelection> m_remoteMicSelections;
+    struct RemoteRadioKey { QString owner; QByteArray device; quint32 commandId{0}; quint32 epoch{0}; };
+    std::optional<RemoteRadioKey> m_remoteRadioCandidate;
+    std::optional<RemoteRadioKey> m_remoteRadioKey;
+    void setRemoteRadioMicActive(bool active);
+    bool m_remoteRadioMicActive{false};
     // Set while setTune(true, keyer) runs: the keyer TUNE asks and keys for.
     const KeyerIdentity* m_tuneKeyer{nullptr};
     // iPhone app Task 73 (ruling 5.11): the frequency the FreeDV Reporter
@@ -8210,6 +8230,16 @@ private:
     /// Task 77: how long a device's cycle waits for the tuner to start its
     /// sweep once the carrier is up (TunerApplet's short watchdog, 3 s).
     static constexpr int kTgxlDeviceCycleStartMs = 3000;
+    static constexpr int kTgxlCarrierReadyMs = 3000;
+    static constexpr int kTgxlRfSettleMs = 150;
+    // Completion ownership: actual channel, its latest run request and
+    // the tune cycle that requested it. The completion is always queued.
+    QPointer<TxChannel> m_tgxlCarrierChannel;
+    quint64 m_tgxlCarrierSequence{0};
+    quint64 m_tgxlCarrierCycle{0};
+    bool m_tgxlCarrierReady{false};
+    bool m_tgxlSettlePending{false};
+    bool m_tgxlCommandSent{false};
     /// Task 77: the cycle ended (or never keyed): the amplifier's state
     /// restored, the flags cleared.
     /// Task 77 fix round 4: `unkeyedReason`, the words for a cycle that ends
@@ -8306,7 +8336,11 @@ private:
     QString beginTgxlAutotune(bool fromHardware);
     bool m_awaitingInterlockForAutotune{false};
     void continueTgxlAutotuneAfterStandby();
-    void sendTgxlAutotuneCmd();
+    void onTgxlRfGateOpened(TxChannel* channel, quint64 sequence);
+    bool tgxlCarrierEligible(quint64 cycle, TxChannel* channel, quint64 sequence) const;
+    void scheduleTgxlAutotune();
+    void sendTgxlAutotuneCmd(quint64 cycle, TxChannel* channel, quint64 sequence);
+    void armTgxlSweepStartWatchdog();
 
     // RF-flow gate state (NereusSDR-native, deck item #3).
     //

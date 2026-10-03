@@ -2208,6 +2208,27 @@ RadioModel::RadioModel(Role role, QObject* parent)
     //udRX2StepAttData.Enabled = true; //[2.10.3.6]MW0LGE att_fixes  [console.cs:29648]
     // Display.TXAttenuatorOffset = 0; //[2.10.3.6]MW0LGE att_fixes  [console.cs:29659]
     m_moxController = new MoxController(this);
+    // Source commits only after admission, before the hardware-on fanout.
+    connect(m_moxController, &MoxController::txAboutToBegin, this, [this]() {
+        const auto& keyer = m_moxController->currentKeyer();
+        if (m_remoteRadioCandidate && keyer.deviceId == m_remoteRadioCandidate->device
+            && keyer.session == m_remoteRadioCandidate->owner
+            && remoteMicSelection(keyer.session, keyer.deviceId) == RemoteMicSource::RadioMic) {
+            m_remoteRadioKey = m_remoteRadioCandidate;
+            setRemoteRadioMicActive(true);
+        } else {
+            // A newly admitted non-Radio key supersedes a retained Radio
+            // drain/tail even when its old hardware-off timer was cancelled.
+            m_remoteRadioKey.reset();
+            setRemoteRadioMicActive(false);
+        }
+    });
+    connect(m_moxController, &MoxController::hardwareFlipped, this, [this](bool on) {
+        if (!on && m_remoteRadioKey) {
+            m_remoteRadioKey.reset();
+            setRemoteRadioMicActive(false);
+        }
+    });
 
     // iPhone app plan Task 36 (R-IOS-13): the remote microphone ring, on the
     // Core's model only. Its source follows who is keyed and MOX itself.
@@ -3601,25 +3622,13 @@ RadioModel::RadioModel(Role role, QObject* parent)
                 }
             }
 
-            // Autotune gate (deck item #2): TGXL autotune cmd was held
-            // for 150 ms post-grant so the TRANSMITTING frame on :4992
-            // and the `autotune` cmd on :9010 land on TGXL in the right
-            // order without a TCP-socket race.
-            if (!m_awaitingInterlockForAutotune) { return; }
-            if (!m_tgxlAutotuneInProgress) {
-                // Cycle was cancelled before grant; clear the gate.
+            // Arm before setTune: a grant can arrive synchronously.
+            // Actual lane completion, not this interlock frame, starts
+            // the carrier settle. The RF gate tracks either signal order.
+            if (m_tgxlAutotuneInProgress) {
                 m_awaitingInterlockForAutotune = false;
-                return;
+                scheduleTgxlAutotune();
             }
-            m_awaitingInterlockForAutotune = false;
-            qCInfo(lcConnection)
-                << "TGXL autotune: interlock TRANSMITTING confirmed (source="
-                << source << "), sending autotune in 150 ms";
-            QTimer::singleShot(150, this, [this]() {
-                if (m_tgxlAutotuneInProgress) {
-                    sendTgxlAutotuneCmd();
-                }
-            });
         });
     }
 
@@ -7994,6 +8003,7 @@ void RadioModel::wireTxWorkerRade(TxWorkerThread* worker)
 void RadioModel::installTxWorkerForTest(std::unique_ptr<TxWorkerThread> worker)
 {
     m_txWorker = std::move(worker);
+    if (m_txWorker) { m_txWorker->setRemoteRadioMicActive(m_remoteRadioMicActive); }
     wireTxWorkerRade(m_txWorker.get());
 }
 #endif
@@ -15981,6 +15991,10 @@ void RadioModel::setKeyedBy(const KeyedBy& keyedBy)
         return;
     }
     m_keyedBy = keyedBy;
+    if (m_remoteRadioKey && keyedBy.deviceId == m_remoteRadioKey->device
+        && m_moxController->currentKeyer().session == m_remoteRadioKey->owner) {
+        m_remoteRadioKey->epoch = keyedBy.epoch;
+    }
     // The Radio Status page's PTT source follows the key (a paired device's
     // key is Remote, its VOX key VOX; iPhone app plan Task 36).
     refreshRadioStatusPtt();
@@ -15991,6 +16005,67 @@ void RadioModel::setKeyedBy(const KeyedBy& keyedBy)
 
 // iPhone app plan Task 36 (R-IOS-13): the remote microphone source. Fix
 // wave C2: by device, with one writer at a time.
+void RadioModel::setRemoteMicSelection(const QString& owner, const QByteArray& device,
+                                       RemoteMicSource source)
+{
+    if (m_role == Role::Local && !owner.isEmpty() && !device.isEmpty()) {
+        m_remoteMicSelections.insert(owner, RemoteMicSelection{device, source});
+    }
+}
+
+RemoteMicSource RadioModel::remoteMicSelection(const QString& owner, const QByteArray& device) const
+{
+    const auto it = m_remoteMicSelections.constFind(owner);
+    return it != m_remoteMicSelections.cend() && it->device == device
+        ? it->source : RemoteMicSource::ClientAudio;
+}
+
+void RadioModel::forgetRemoteMicSession(const QString& owner)
+{
+    m_remoteMicSelections.remove(owner);
+    if (m_remoteRadioCandidate && m_remoteRadioCandidate->owner == owner) {
+        m_remoteRadioCandidate.reset();
+    }
+    // The admitted source outlives its session until hardware dekeys.
+}
+
+void RadioModel::beginRemoteRadioKeyAttempt(const QString& owner, const QByteArray& device,
+                                           quint32 commandId)
+{
+    if (remoteMicSelection(owner, device) == RemoteMicSource::RadioMic) {
+        m_remoteRadioCandidate = RemoteRadioKey{owner, device, commandId, 0};
+    }
+}
+
+void RadioModel::finishRemoteRadioKeyAttempt(const QString& owner, const QByteArray& device,
+                                            quint32 commandId, quint32 acceptedEpoch)
+{
+    if (!m_remoteRadioCandidate || m_remoteRadioCandidate->owner != owner
+        || m_remoteRadioCandidate->device != device || m_remoteRadioCandidate->commandId != commandId) {
+        return;
+    }
+    if (acceptedEpoch != 0 && m_remoteRadioKey && m_remoteRadioKey->owner == owner
+        && m_remoteRadioKey->device == device && m_remoteRadioKey->commandId == commandId) {
+        m_remoteRadioKey->epoch = acceptedEpoch;
+    }
+    m_remoteRadioCandidate.reset();
+}
+
+bool RadioModel::remoteRadioMicKeyActive(const QByteArray& device) const
+{
+    return m_remoteRadioMicActive && m_remoteRadioKey && m_remoteRadioKey->device == device
+        && m_moxController && m_moxController->currentKeyer().deviceId == device
+        && m_moxController->currentKeyer().session == m_remoteRadioKey->owner
+        && (m_remoteRadioKey->epoch == 0 || m_keyedBy.epoch == m_remoteRadioKey->epoch);
+}
+
+void RadioModel::setRemoteRadioMicActive(bool active)
+{
+    m_remoteRadioMicActive = active;
+    if (m_txWorker) { m_txWorker->setRemoteRadioMicActive(active); }
+    updateRemoteMicSource();
+}
+
 void RadioModel::openRemoteMicLine(const QByteArray& deviceId)
 {
     if (m_role != Role::Local || deviceId.isEmpty()) {
@@ -16085,7 +16160,8 @@ void RadioModel::updateRemoteMicSource()
     }
     const bool mox = m_moxController != nullptr && m_moxController->isMox();
     const QByteArray keyedDevice =
-        mox && remoteMicLineOpen(m_keyedBy.deviceId) ? m_keyedBy.deviceId : QByteArray();
+        mox && !m_remoteRadioMicActive && remoteMicLineOpen(m_keyedBy.deviceId)
+            ? m_keyedBy.deviceId : QByteArray();
     // A key that started on a device's line stays on the ring until it
     // ends, even if the line goes away meanwhile: the transmitter then
     // hears silence, never the station's own microphone.
@@ -16101,11 +16177,11 @@ void RadioModel::updateRemoteMicSource()
     // else, unkeyed, the VOX device's. While another key is on, none (that
     // key's audio is its own source).
     QByteArray writer = keyedDevice;
-    if (writer.isEmpty() && remoteMicLineOpen(m_remoteMicPrimingDevice)
+    if (!m_remoteRadioMicActive && writer.isEmpty() && remoteMicLineOpen(m_remoteMicPrimingDevice)
         && (!mox || m_keyedBy.isEmpty() || m_keyedBy.deviceId == m_remoteMicPrimingDevice)) {
         writer = m_remoteMicPrimingDevice;
     }
-    if (writer.isEmpty() && !mox) {
+    if (!m_remoteRadioMicActive && writer.isEmpty() && !mox) {
         writer = remoteVoxDevice();
     }
     const bool inUse = lineLostMidKey || !writer.isEmpty();
@@ -18405,6 +18481,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                 // iPhone app plan Task 36: the remote microphone ring,
                 // which outlives the worker.
                 m_txWorker->setRemoteMicFeed(m_remoteMicFeed.get());
+                m_txWorker->setRemoteRadioMicActive(m_remoteRadioMicActive);
                 // R-R3-39: the TX channel stays on this thread. Its setters
                 // post their WDSP calls to the transmit lane (applied even
                 // while no mic block arrives); the worker only runs the
@@ -19937,6 +20014,35 @@ SliceModel* RadioModel::txBoundSlice() const
     return sliceById(m_txSliceArbiter->txBoundSliceId());
 }
 
+QString RadioModel::micSourceChangeReason(MicSource desired) const
+{
+    if (m_role != Role::Remote) { return {}; }
+    if (!m_station) { return remoteMicLegacyReason(); }
+    if (auto* tx = m_station->remoteTransmit()) {
+        if (tx->micSourcePending()) { return tx->micSourceReason(); }
+        if (tx->micKeyDown() || tx->screenKeyDown() || tx->tuneAsked() || m_transmitModel.isMox()) {
+            return QStringLiteral("Release transmit before changing the microphone source.");
+        }
+    }
+    if (desired == MicSource::Radio && !m_station->remoteMicSourceAvailable()) {
+        return remoteMicLegacyReason();
+    }
+    return {};
+}
+
+bool RadioModel::requestMicSource(MicSource desired, std::function<void()> accepted)
+{
+    const QString reason = micSourceChangeReason(desired);
+    if (!reason.isEmpty()) { return false; }
+    if (m_role == Role::Remote) {
+        return m_station && m_station->requestMicSource(desired, std::move(accepted)).sent;
+    }
+    m_transmitModel.setMicSource(desired);
+    if (m_transmitModel.micSource() != desired) { return false; }
+    if (accepted) { accepted(); }
+    return true;
+}
+
 void RadioModel::installBandPlanMoxCheck()
 {
     if (!m_moxController) {
@@ -20156,6 +20262,18 @@ bool RadioModel::pcCaptureGatesKeying() const
     // now; the PC microphone is not read, so its readiness does not gate
     // the key and its loss does not release it.
     if (m_remoteMicInUse) {
+        return false;
+    }
+    const auto attempt = m_moxController ? m_moxController->keyAttemptIdentity() : std::nullopt;
+    if (attempt) {
+        if (m_remoteRadioCandidate && attempt->deviceId == m_remoteRadioCandidate->device
+            && attempt->session == m_remoteRadioCandidate->owner
+            && remoteMicSelection(attempt->session, attempt->deviceId) == RemoteMicSource::RadioMic) {
+            return false;
+        }
+    } else if (m_moxController && m_moxController->isMox()
+               && remoteRadioMicKeyActive(m_moxController->currentKeyer().deviceId)
+               && (m_remoteRadioKey->epoch == 0 || m_keyedBy.epoch == m_remoteRadioKey->epoch)) {
         return false;
     }
     // TCI audio: the TX worker takes TCI audio instead of the microphone
@@ -25390,6 +25508,11 @@ void RadioModel::wireTxChannelKeying()
     if (!m_txChannel || !m_moxController) {
         return;
     }
+    const QPointer<TxChannel> channel = m_txChannel;
+    connect(m_txChannel, &TxChannel::rfGateOpened, this,
+            [this, channel](quint64 sequence) {
+                onTgxlRfGateOpened(channel.data(), sequence);
+            }, Qt::QueuedConnection);
     // F.1 — txReady → setRunning(true), GATED on interlockGranted.
     // From Thetis console.cs:29595 [v2.10.3.13] — TX-on callsite after
     // Thread.Sleep(rf_delay) in chkMOX_CheckedChanged2.
@@ -30152,6 +30275,8 @@ bool RadioModel::startTgxlAutotuneFor(const KeyerIdentity& keyer, QString* reaso
     QString refusal;
     if (!m_tgxlConnection || !m_tgxlConnection->isConnected()) {
         refusal = QStringLiteral("No Tuner Genius is connected to the Core.");
+    } else if (!m_txChannel) {
+        refusal = tunerTuneEndedReason(TunerTuneEnd::CarrierNotStarted);
     } else if (m_tgxlAutotuneInProgress || m_isTuning) {
         refusal = QStringLiteral("The tuner is already tuning.");
     } else if (tgxlRfFlowing()) {
@@ -30221,6 +30346,10 @@ void RadioModel::finishTgxlAutotuneCycle(const QString& unkeyedReason)
     if (!m_tgxlAutotuneInProgress) {
         return;
     }
+    m_tgxlCarrierChannel.clear();
+    m_tgxlCarrierSequence = 0;
+    m_tgxlCarrierReady = false;
+    m_tgxlSettlePending = false;
     setTgxlAutotuneInProgress(false);
     // TGXL tune lane fix round (M5): a take still running for this cycle
     // keys nothing when it ends.
@@ -30427,7 +30556,7 @@ void RadioModel::endAmpChangeover()
             && m_moxController && m_moxController->isMox()) {
             qCInfo(lcConnection) << "RF-flow gate: the amplifier finished switching;"
                                     " starting TxChannel";
-            m_txChannel->setRunningAsync(true);
+            openTxRfGate();
         }
     }
     retryOwedAmpRestore();
@@ -30450,7 +30579,20 @@ void RadioModel::openTxRfGate()
                                 " switches";
         return;
     }
-    m_txChannel->setRunningAsync(true);
+    const bool tuningCycle = m_tgxlAutotuneInProgress && m_isTuning;
+    const quint64 cycle = m_tgxlCycleGeneration;
+    const QPointer<TxChannel> channel = m_txChannel;
+    if (tuningCycle) {
+        m_tgxlCarrierChannel = channel;
+        m_tgxlCarrierCycle = cycle;
+        m_tgxlCarrierReady = false;
+        m_tgxlSettlePending = false;
+    }
+    const quint64 sequence = channel->setRunningAsync(true);
+    if (tuningCycle && m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
+        && channel == m_txChannel && channel == m_tgxlCarrierChannel) {
+        m_tgxlCarrierSequence = sequence;
+    }
 }
 
 void RadioModel::onAmpHoldDeadline()
@@ -30565,6 +30707,12 @@ QString RadioModel::beginTgxlAutotune(bool fromHardware)
     // Matches TunerApplet autotune's existing safe behavior that JJ
     // confirmed works correctly.
 
+    if (!m_txChannel) {
+        const QString reason = tunerTuneEndedReason(TunerTuneEnd::CarrierNotStarted);
+        emit tuneRefused(reason);
+        return reason;
+    }
+
     // Snapshot PGXL state. m_ampOperate is the radio's view of PGXL's
     // operate-family state (IDLE / OPERATE / TRANSMIT_A / TRANSMIT_B).
     // iPhone app plan Task 77 fix wave: a restore still owed from the last
@@ -30578,6 +30726,13 @@ QString RadioModel::beginTgxlAutotune(bool fromHardware)
     const quint64 generation = ++m_tgxlCycleGeneration;
     m_tgxlAutotuneFromHardware = fromHardware;
     m_tgxlAutotuneTunerPress = tunerPress;
+    m_tgxlCarrierChannel.clear();
+    m_tgxlCarrierSequence = 0;
+    m_tgxlCarrierCycle = generation;
+    m_tgxlCarrierReady = false;
+    m_tgxlSettlePending = false;
+    m_tgxlCommandSent = false;
+    m_tgxlDeviceCycleSawTuning = m_tunerModel && m_tunerModel->isTuning();
     // Need to await STANDBY confirm? Only while it is operating now.
     m_pgxlStandbyPending = m_hasAmplifier && m_ampOperate;
 
@@ -30665,9 +30820,9 @@ QString RadioModel::beginTgxlAutotune(bool fromHardware)
 // The fix is the same event-driven pattern we use for the PGXL standby
 // confirmation: set a flag, wait for the signal, then proceed. The flag
 // is m_awaitingInterlockForAutotune, the signal is interlockGranted from
-// SmartSdrApiListener (wired in the ctor). A 1.5 s failsafe sends the
-// autotune anyway if interlockGranted never fires (e.g. amps all
-// disconnected mid-cycle before they could ACK).
+// SmartSdrApiListener (wired in the ctor). Actual TX-lane completion
+// then starts the precise carrier settle. Recovery uses the same final
+// eligibility checks, and a separate bound ends an unready cycle.
 void RadioModel::continueTgxlAutotuneAfterStandby()
 {
     if (receiveOnlyTxOperationsBlocked()) {
@@ -30729,6 +30884,7 @@ void RadioModel::continueTgxlAutotuneAfterStandby()
         gateCapture = connect(m_moxController, &MoxController::moxRefused, this,
                               [&gateRefusal](const TxRefusal& refusal) { gateRefusal = refusal; });
     }
+    m_awaitingInterlockForAutotune = !m_tgxlAutotuneFromHardware;
     if (!m_tgxlAutotuneDeviceId.isEmpty()) {
         // iPhone app plan Task 77: a device's cycle keys as that device,
         // through the keying gate (its session, the holder, the watchdog).
@@ -30787,86 +30943,127 @@ void RadioModel::continueTgxlAutotuneAfterStandby()
         finishTgxlAutotuneCycle(unkeyedReason);
         return;
     }
-    if (!m_tgxlAutotuneDeviceId.isEmpty() || m_tgxlAutotuneFromHardware) {
-        // iPhone app plan Task 77: a device's cycle has no Tuner page on the
-        // Core to watch the tuner, so the Core does what the local page
-        // does (TunerApplet's short watchdog and tuningChanged(false)): the
-        // carrier drops when the tuner finishes, and after 3 s when the
-        // tuner never started its sweep.
-        // TGXL tune lane (JJ's ruling): the tuner's front-panel cycle too,
-        // since it may now take transmit from another device and key.
-        m_tgxlDeviceCycleSawTuning = m_tunerModel && m_tunerModel->isTuning();
-        const QByteArray device = m_tgxlAutotuneDeviceId;
-        const quint64 cycle = m_tgxlCycleGeneration;
-        QTimer::singleShot(kTgxlDeviceCycleStartMs, this, [this, device, cycle]() {
-            if (m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
-                && m_tgxlAutotuneDeviceId == device && !m_tgxlDeviceCycleSawTuning) {
-                qCInfo(lcConnection) << "TGXL autotune: the tuner never started its sweep"
-                                        " for the cycle; dropping the carrier";
-                if (!device.isEmpty()) {
-                    cancelTgxlAutotuneFor(device);
-                } else if (m_isTuning) {
-                    // The carrier drops; manualMoxChanged(false) finishes
-                    // the cycle.
-                    setTune(false);
-                } else {
-                    finishTgxlAutotuneCycle();
-                }
+    // A separate readiness bound covers the lane/interlock/amp wait. The
+    // no-sweep watchdog begins only once the tuner can actually act.
+    const quint64 cycle = m_tgxlCycleGeneration;
+    QTimer::singleShot(kTgxlCarrierReadyMs, Qt::PreciseTimer, this, [this, cycle]() {
+        if (m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
+            && (!m_tgxlCarrierReady || (!m_tgxlAutotuneFromHardware && !m_tgxlCommandSent))) {
+            qCWarning(lcConnection) << "TGXL autotune: carrier readiness timed out";
+            // Invalidate pending lane work before publishing the ending.
+            if (m_tgxlCarrierChannel) {
+                m_tgxlCarrierChannel->closeRfGate();
+            }
+            finishTgxlAutotuneCycle(tunerTuneEndedReason(TunerTuneEnd::CarrierNotStarted));
+            // An ending observer may start another cycle synchronously.
+            if (cycle == m_tgxlCycleGeneration && m_isTuning) {
+                setTune(false);
+            }
+        }
+    });
+    if (!m_tgxlAutotuneFromHardware) {
+        // Recovery may retry eligibility, but never clears an interlock
+        // prerequisite or starts a sweep without the actual carrier gate.
+        QTimer::singleShot(1500, this, [this, cycle]() {
+            if (m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration) {
+                scheduleTgxlAutotune();
             }
         });
     }
+}
 
-    if (m_tgxlAutotuneFromHardware) {
-        // TGXL initiated this cycle via LAN PTT (`transmit tune on`); it's
-        // already sweeping its own relays and just needed the carrier.
-        // No `autotune` command to send and no interlock wait to gate on.
+bool RadioModel::tgxlCarrierEligible(quint64 cycle, TxChannel* channel,
+                                     quint64 sequence) const
+{
+    return m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
+        && cycle == m_tgxlCarrierCycle && channel && channel == m_txChannel
+        && channel == m_tgxlCarrierChannel && sequence == m_tgxlCarrierSequence
+        && channel->isRfGateOpenForSequence(sequence) && m_isTuning
+        && m_moxController && m_moxController->isMox() && m_txReadyReceived
+        && !m_awaitingInterlockForTx
+        && !m_pgxlStandbyPending && !ampChangingOver() && !m_rfHeldForAmp
+        && !m_transmitStopHold && !receiveOnlyTxOperationsBlocked()
+        && m_tgxlConnection && m_tgxlConnection->isConnected();
+}
+
+void RadioModel::onTgxlRfGateOpened(TxChannel* channel, quint64 sequence)
+{
+    if (!tgxlCarrierEligible(m_tgxlCycleGeneration, channel, sequence)
+        || m_tgxlCarrierReady) {
         return;
     }
+    // A generic RF interlock recovery may have opened the gate before
+    // the actual grant arrives. Record the completion now; software
+    // submission still requires that grant in schedule/send below.
+    m_tgxlCarrierReady = true;
+    if (m_tgxlAutotuneFromHardware) {
+        // The hardware is already sweeping; only its carrier/watchdog is
+        // ours. Never send an additional autotune for this origin.
+        armTgxlSweepStartWatchdog();
+    } else {
+        scheduleTgxlAutotune();
+    }
+}
 
-    // Arm the gate: when interlockGranted fires (TRANSMITTING was just
-    // broadcast to all clients including TGXL), the lambda in the ctor
-    // sends the autotune command after a small 50 ms TCP socket settle.
-    m_awaitingInterlockForAutotune = true;
-
-    // Failsafe: amps usually ACK in <100 ms (and the listener's lenient
-    // 500 ms timeout grants anyway). If 1500 ms elapses without
-    // interlockGranted firing -- e.g. every amp disconnected mid-cycle
-    // before it could ACK -- send the autotune anyway so the operator's
-    // TUNE isn't stranded. Mirrors the standby failsafe in startTgxl-
-    // Autotune (same 1.5 s budget, same "proceed with warning" semantic).
-    // Task 77 fix round 4: only for this cycle.
-    const quint64 generation = m_tgxlCycleGeneration;
-    QTimer::singleShot(1500, this, [this, generation]() {
-        if (generation != m_tgxlCycleGeneration) {
+void RadioModel::scheduleTgxlAutotune()
+{
+    if (m_tgxlAutotuneFromHardware || m_tgxlCommandSent || m_tgxlSettlePending
+        || m_awaitingInterlockForAutotune || !m_tgxlCarrierReady
+        || !tgxlCarrierEligible(m_tgxlCycleGeneration, m_tgxlCarrierChannel.data(),
+                                m_tgxlCarrierSequence)) {
+        return;
+    }
+    m_tgxlSettlePending = true;
+    const quint64 cycle = m_tgxlCycleGeneration;
+    const QPointer<TxChannel> channel = m_tgxlCarrierChannel;
+    const quint64 sequence = m_tgxlCarrierSequence;
+    QTimer::singleShot(kTgxlRfSettleMs, Qt::PreciseTimer, this,
+                      [this, cycle, channel, sequence]() {
+        if (cycle != m_tgxlCycleGeneration || channel != m_tgxlCarrierChannel
+            || sequence != m_tgxlCarrierSequence) {
             return;
         }
-        if (m_awaitingInterlockForAutotune && m_tgxlAutotuneInProgress) {
-            qCWarning(lcConnection)
-                << "TGXL autotune: interlockGranted didn't fire within"
-                   " 1.5 s, sending autotune anyway (failsafe)";
-            m_awaitingInterlockForAutotune = false;
-            sendTgxlAutotuneCmd();
-        }
+        m_tgxlSettlePending = false;
+        sendTgxlAutotuneCmd(cycle, channel.data(), sequence);
     });
 }
 
-// Send the `autotune` command on the TGXL :9010 control socket. Called
-// from the interlockGranted handler (event-driven path, normal case) or
-// from the 1.5 s failsafe timer in continueTgxlAutotuneAfterStandby
-// (degraded path, no interlock confirmation arrived).
-void RadioModel::sendTgxlAutotuneCmd()
+void RadioModel::sendTgxlAutotuneCmd(quint64 cycle, TxChannel* channel, quint64 sequence)
 {
-    if (receiveOnlyTxOperationsBlocked()) {
-        setTgxlAutotuneInProgress(false);
-        m_awaitingInterlockForAutotune = false;
-        setTune(false);
+    if (m_tgxlAutotuneFromHardware || m_tgxlCommandSent
+        || m_awaitingInterlockForAutotune || !m_tgxlCarrierReady
+        || !tgxlCarrierEligible(cycle, channel, sequence)) {
         return;
     }
-    if (m_tgxlConnection && m_tgxlConnection->isConnected()
-        && m_tgxlAutotuneInProgress) {
-        m_tgxlConnection->sendCommand(QStringLiteral("autotune"));
-        qCInfo(lcConnection) << "TGXL autotune: sent autotune cmd";
+    // Mark before the socket write: reentrant tuner replies cannot submit
+    // a second command or arm a second watchdog for this cycle.
+    m_tgxlCommandSent = true;
+    armTgxlSweepStartWatchdog();
+    m_tgxlConnection->sendCommand(QStringLiteral("autotune"));
+    qCInfo(lcConnection) << "TGXL autotune: sent autotune cmd after carrier settle";
+}
+
+void RadioModel::armTgxlSweepStartWatchdog()
+{
+    if (m_tgxlAutotuneDeviceId.isEmpty() && !m_tgxlAutotuneFromHardware) {
+        return;
     }
+    const QByteArray device = m_tgxlAutotuneDeviceId;
+    const quint64 cycle = m_tgxlCycleGeneration;
+    QTimer::singleShot(kTgxlDeviceCycleStartMs, Qt::PreciseTimer, this, [this, device, cycle]() {
+        if (m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
+            && m_tgxlAutotuneDeviceId == device && !m_tgxlDeviceCycleSawTuning) {
+            qCInfo(lcConnection) << "TGXL autotune: the tuner never started its sweep;"
+                                    " dropping the carrier";
+            if (!device.isEmpty()) {
+                cancelTgxlAutotuneFor(device);
+            } else if (m_isTuning) {
+                setTune(false);
+            } else {
+                finishTgxlAutotuneCycle();
+            }
+        }
+    });
 }
 
 // Phase 3P-II Phase 4 Task 96: auto-recall TGXL tune memory on band change.

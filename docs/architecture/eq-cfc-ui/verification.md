@@ -2,6 +2,18 @@
 
 Execution branch: `codex/eq-cfc-ui`. Historical implementation base: `e342467fb3482bb84a61324fb10cef90491533de`. Historical implementation revision: `39fa0402032ff01e0fe5b254e6f93a79ccb56a05`. Component captures reflect `b344b03e3b3ad1c31ae64ecff24474ada33ac5db`; the subsequent correction changes publication/history and teardown rather than layout.
 
+## Accepted Core GUI integration
+
+The next preview combines the previously signed EQ/CFC/latest-main/Radxa source (`ba147d0d420ec2129f8678a04a9ad117b5d055a2`) with the immutable signed Core Settings/logger/audio/PS component source (`5d425542048fb4c2348553c99a3ec79ab4929829`). The handoff packet and all nineteen artifact hashes were verified, including its raw 1,081-case ordinary test result. Input acceptance was distinguished from verification of this combined source.
+
+Eleven merge conflicts were reconciled without replacing the native EQ/CFC editors, exact model state or four guarded audio bind/replay methods. Both Max Bin interfaces and the actual slice-host, history, authenticated endpoint and transport-retirement fixes remain. Independent integration review found one build blocker: duplicate waterfall fixture accessors. Removing the duplicate pair left the original API and all rendering behavior unchanged; scoped re-review found no remaining Critical or Important finding.
+
+The corrected frozen source tree `d1e85e372b68e2101166994c1366a72c24f5e732` was rebuilt in **`build-core-gui`**, separately from the running `build-latest` preview. Its application, focused targets and full `all_tests` target built successfully. The full ordinary gate passed **1,085/1,085** suites, exit 0 (263.14 seconds); the separately leased realtime gate passed **22/22**, exit 0 (401.37 seconds). All **1,107 registered suites passed** across these two runs. All thirteen current compliance, attribution and architecture checks also passed.
+
+The initial focused run passed 53/54 suites; its sole failure was an unbuilt sibling fake-capture executable. Building `tst_capture_admission` and rerunning the unchanged `tst_tx_worker_remote_ring` suite passed (8.41 seconds). The subsequent full run includes both and passed without that failure. No source or assertion change was made for the fixture issue. Raw evidence is retained as `accepted-core-gui-*.log`, corresponding result JSON files and `accepted-core-compliance-*.log` in `.crew/2026-10-02-eq-cfc-ui-plan/`.
+
+The running `radxa_5c_r3` preview remains the verified `ba147d0d4` application until native control can close it normally and launch the replacement. Its files were not overwritten. The deployed Radxa Core was not installed, replaced or restarted. Whole-application EQ/CFC/Settings interaction and scaling checks remain pending on an unlocked Mac; these automated results do not claim live radio/audio verification.
+
 ## Latest-main integration
 
 The implementation is reconciled with `origin/main` at `dd53da5af65127840e2e6e145c7104286ef5453f`, including its current Core/GUI architecture, remote CFC profile validation and full TX parametric F/G/Q audio path. The older gate below applies only to the pre-integration source.
@@ -41,7 +53,7 @@ These fixture images use example settings, not the application's default profile
 
 ## Pending desktop verification
 
-Actual application checks at normal, 125% and 150% scaling on a 1280×800 display remain pending. Native computer control reports that the Mac is locked; an unlock request is pending. Component renders do not satisfy the whole-application scaling and interaction acceptance check. No radio was connected or operated for this verification.
+Actual application checks at normal, 125% and 150% scaling on a 1280×800 display remain pending. Native computer control reports that the Mac is locked; an unlock request is pending. Component renders do not satisfy the whole-application scaling and interaction acceptance check. No live radio/audio correctness or transmit operation was performed for these checks. The separately launched Radxa-profile preview follows its saved startup behavior; its connection and visible window have not been verified while the Mac is locked.
 
 ## Audio compatibility
 

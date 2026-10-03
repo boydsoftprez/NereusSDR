@@ -706,10 +706,18 @@ public:
     /// `supportedMajors` (iPhone app Task 4) is the link majors this client
     /// supports, oldest first. The default is the build's own
     /// (kSupportedSessionMajors); tests inject theirs.
+    enum class SessionPurpose { Ordinary, RenameOnly };
+    SessionPurpose sessionPurpose() const { return m_sessionPurpose; }
+    /// A temporary rename rechecks desktop exclusion immediately before auth.
+    void setAdmissionGuard(std::function<bool()> guard) { m_admissionGuard = std::move(guard); }
+    QByteArray deviceIdentityFingerprint() const;
+    /// Returns only the key already installed by ordinary initialization; never loads/creates.
+    std::shared_ptr<const ClientDeviceIdentity> existingDeviceIdentity() const { return m_deviceIdentity; }
     explicit StationClient(RadioModel* radioModel, SettingsProxy* settingsProxy,
                            QObject* parent = nullptr,
                            const QList<quint16>& supportedMajors =
-                               LinkVersion::supportedMajors());
+                               LinkVersion::supportedMajors(),
+                           SessionPurpose purpose = SessionPurpose::Ordinary);
     ~StationClient() override;
 
     StationClient(const StationClient&) = delete;
@@ -809,6 +817,12 @@ public:
     };
     void setServiceRoute(const ServiceRoute& route) { m_serviceRoute = route; }
     ServiceRoute serviceRoute() const { return m_serviceRoute; }
+    struct ConnectionCandidates { QList<QUrl> addresses; ServiceRoute service; };
+    /// Only ordinary initial/retry races consume this; nullopt retires the saved lease.
+    using CandidateSource = std::function<std::optional<ConnectionCandidates>()>;
+    void setCandidateSource(CandidateSource source) { m_candidateSource = std::move(source); }
+    void setCandidateUnavailableReasonSource(std::function<QString()> source)
+    { m_candidateUnavailableReasonSource = std::move(source); }
     /// The paired Core's hello proves it: its identity key is the one
     /// `expectedIdentity` fingerprints and its certificate binding verifies
     /// for `certSha256`, the certificate that connection presented (link
@@ -968,6 +982,9 @@ public:
     /// The station's descriptor as applied. Default-constructed before the
     /// capability exchange.
     const StationCapabilities& capabilities() const { return m_capabilities; }
+    /// The Core catalogue's advertised audio bitrates; absent until its JSON
+    /// arrives, empty if it carries no audio table. No local measured table.
+    const std::optional<QList<int>>& audioOpusBitrates() const { return m_audioOpusBitrates; }
     /// Test seam: declare a hello feature this window does not (an app's,
     /// such as audioQuality). Before startSession().
     void declareFeatureForTest(const QByteArray& name, int version)
@@ -1190,7 +1207,7 @@ public:
     /// `session.leave`, when the Core offers it: the operator is done with
     /// the Core here (Disconnect, or quitting). Sent before the link
     /// closes; nothing waits for its answer.
-    void leaveSession();
+    quint32 leaveSession();
     /// The reason a held change carries while its question is asked.
     static bool isAwaitingConfirmation(const QString& reason);
     /// session.takeover (iPhone app plan Task 78 item 7, G-53): the answer
@@ -1579,6 +1596,8 @@ public:
     /// the Core told this window remoteTxVersion 1 or later.
     RemoteTransmitClient* remoteTransmit() override { return m_remoteTransmit; }
     bool remoteTransmitAvailable() const;
+    bool remoteMicSourceAvailable() const override;
+    CommandOutcome requestMicSource(MicSource desired, std::function<void()> accepted = {}) override;
 
     void setHeartbeatIntervalMs(int ms);
     int heartbeatIntervalMs() const { return m_heartbeatIntervalMs; }
@@ -1646,6 +1665,7 @@ signals:
     /// Every full state publication, including reseeding an existing session.
     /// Does not recreate media or reset the session epoch.
     void stateSnapshotApplied();
+    void audioOpusBitratesChanged();
 
     /// The session ended, with the station's own reason where it gave one
     /// (a version refusal, a failed authentication, or being displaced by
@@ -1803,6 +1823,7 @@ private:
     /// answer the question this asks.
     void reconcileSlicesAgainstStation();
 
+    void handleAudioCatalogue(const QList<MirrorUpdate>& updates);
     void handleObjectCreate(const SessionMessage& message);
     void handleObjectDestroy(const SessionMessage& message);
     void handleDelta(const SessionMessage& message);
@@ -1871,6 +1892,11 @@ private:
     void send(const SessionMessage& message);
     void watchForOutbound(const QByteArray& objectKey, QObject* object);
 
+    const SessionPurpose m_sessionPurpose;
+    std::function<bool()> m_admissionGuard;
+    CandidateSource m_candidateSource;
+    std::function<QString()> m_candidateUnavailableReasonSource;
+    quint64 m_connectionRequestGeneration = 0;
     QPointer<RadioModel> m_radioModel;
     quint32 m_hygieneValidateId{0};
     quint32 m_hygieneValidateEpoch{0};
@@ -1886,6 +1912,7 @@ private:
     QString m_lastError;
     StationEndReport m_lastEndReport;
     bool m_handshakeComplete = false;
+    std::optional<QList<int>> m_audioOpusBitrates;
     bool m_authenticated = false;
     bool m_signedInWithDeviceKey = false;
     // R-IOS-13 / R-R3-49: the Mod Monitor's source the window wants (-1
@@ -1922,6 +1949,8 @@ private:
     QHash<QByteArray, int> m_declaredFeatures;
     /// Desktop remote transmit: owned (child).
     RemoteTransmitClient* m_remoteTransmit = nullptr;
+    std::optional<QPair<quint64, MicSource>> m_requestedLocalMicSource;
+    std::function<void()> m_micSourceAccepted;
     void refreshRemoteTransmit();
     bool directWatchEligible() const;
     bool relayWatchEligible(bool newAdmission) const;

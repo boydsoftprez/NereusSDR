@@ -18,6 +18,9 @@
 
 #include <QtTest>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QScopeGuard>
 #include <QStringList>
 #include "core/CoreInit.h"
 #include "core/AppSettings.h"
@@ -36,7 +39,23 @@ private slots:
     void initializeUsesGivenProfileForLogDirectory()
     {
         const QString profile = QStringLiteral("r1task8test");
+        const QString directory = AppSettings::resolveConfigDir(profile);
+        QVERIFY(QDir().mkpath(directory));
+        QFile legacy(QDir(directory).filePath("nereussdr-99991231-235959.log"));
+        QVERIFY(legacy.open(QIODevice::WriteOnly));
+        QCOMPARE(legacy.write(QByteArray(33 * 1024 * 1024, 'x') + "\nlegacy-recent-diagnostic\n"),
+                 qint64(33 * 1024 * 1024 + 26));
+        legacy.close();
+        const auto cleanup = qScopeGuard([&]() { legacy.close(); QFile::remove(legacy.fileName()); });
         QVERIFY(CoreInit::initialize(profile));
+        // The production startup path must bound legacy logs as well as
+        // use the sink's rotation; a restarted profile retains its tail.
+        QVERIFY(QFileInfo::exists(legacy.fileName()));
+        QVERIFY(QFileInfo(legacy.fileName()).size() <= 32 * 1024 * 1024);
+        QVERIFY(legacy.open(QIODevice::ReadOnly));
+        QVERIFY(legacy.seek(qMax(qint64(0), legacy.size() - 100)));
+        QVERIFY(legacy.readAll().endsWith("legacy-recent-diagnostic\n"));
+        legacy.close();
         QCOMPARE(CoreInit::initializeRunCount(), 1);
 
         const QString logDir = AppSettings::resolveConfigDir(profile);
@@ -91,6 +110,13 @@ private slots:
         // no-op claim, not just "every migration happens to be idempotent
         // on replay".
         QCOMPARE(NereusSDR::CoreInit::initializeRunCount(), 1);
+    }
+
+    void cleanupTestCase()
+    {
+        CoreInit::shutdown();
+        QVERIFY(!QFileInfo::exists(QDir(AppSettings::resolveConfigDir("r1task8test"))
+                                      .filePath("nereussdr-log.lock")));
     }
 
     // ---- redactPii (Remote Daemon R2, security fix round) ---------------

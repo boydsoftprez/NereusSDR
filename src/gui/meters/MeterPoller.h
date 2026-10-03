@@ -209,10 +209,13 @@ public:
     // the displayed trace after the detector and averaging, exactly as the
     // local window's reading (SpectrumWidget::peakDbmInSlicePassband, fed
     // by MainWindow's spectrumFrameRendered hook). `spectrumFor` finds a
-    // slice's actual subscribed pan in this window; no pan, or a passband
-    // off it, reads the
+    // pan's spectrum by its key; no pan, or a passband off it, reads the
     // no-reading value (-400).
     static std::function<double(const SliceModel*)> panMaxBinSource(
+        std::function<SpectrumWidget*(const QString& panKey)> spectrumFor);
+    // 2026-10-02 KG4VCF, Codex: retain key-based callers while allowing a
+    // remote window to resolve an empty Core pan key by its actual slice host.
+    static std::function<double(const SliceModel*)> panMaxBinSourceForSlice(
         std::function<SpectrumWidget*(const SliceModel* slice)> spectrumFor);
 
     // R-R3-13 / R-R3-49 (remote-window parity Task 15): whether the Core

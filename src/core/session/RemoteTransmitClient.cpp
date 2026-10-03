@@ -103,8 +103,47 @@ RemoteTransmitClient::RemoteTransmitClient(Sender sender, QObject* parent)
             &RemoteTransmitClient::forgetReleases);
 }
 
+void RemoteTransmitClient::setMicSourceCapability(bool available)
+{
+    if (m_micSourceAvailable == available) { return; }
+    m_micSourceAvailable = available;
+    if (!available && m_acceptedMicSource == RemoteMicSource::RadioMic) {
+        m_micSourceSettled = false;
+        m_micSourceReason = remoteMicLegacyReason();
+    }
+    emit micSourceChanged(m_acceptedMicSource, m_micSourceSettled, m_micSourceReason);
+}
+
+bool RemoteTransmitClient::requestMicSource(RemoteMicSource source)
+{
+    if (!m_available || !m_micSourceAvailable || m_micSourcePending) {
+        return false;
+    }
+    const QPointer<RemoteTransmitClient> self(this);
+    const quint64 generation = m_sessionGeneration;
+    m_requestedMicSource = source;
+    m_micSourceSettled = false;
+    m_micSourcePending = true;
+    m_micSourceReason = QStringLiteral("Waiting for the Core to confirm the microphone source.");
+    emit micSourceChanged(m_acceptedMicSource, false, m_micSourceReason);
+    if (!self || generation != m_sessionGeneration) { return false; }
+    const quint32 id = send("tx.setMicSource",
+                           {utf8Argument("source", remoteMicSourceName(source))}, Kind::MicSource);
+    if (!self || generation != m_sessionGeneration) { return false; }
+    if (id == 0) {
+        m_micSourcePending = false;
+        m_micSourceReason = QString::fromLatin1(kNoLinkReason);
+        emit micSourceChanged(m_acceptedMicSource, false, m_micSourceReason);
+    }
+    return id != 0;
+}
+
 void RemoteTransmitClient::setVoxArmed(bool armed)
 {
+    if (armed && (!m_micSourceSettled || m_acceptedMicSource == RemoteMicSource::RadioMic)) {
+        emit refused(m_micSourceSettled ? remoteRadioVoxReason() : m_micSourceReason, {}, {});
+        return;
+    }
     if (m_voxArmed == armed) {
         return;
     }
@@ -262,6 +301,10 @@ quint32 RemoteTransmitClient::send(const QByteArray& verb, const QList<MirrorUpd
 void RemoteTransmitClient::setScreenKey(bool down)
 {
     if (down) {
+        if (microphoneRequired() && !m_micSourceSettled) {
+            emit refused(m_micSourceReason, {}, {});
+            return;
+        }
         if (m_screen.phase != Phase::Idle) {
             return;  // already pressed
         }
@@ -428,6 +471,12 @@ void RemoteTransmitClient::setTwoTone(bool on)
 
 void RemoteTransmitClient::keyForProgram(std::function<void(const Answer&)> answer)
 {
+    if (microphoneRequired() && (!m_micSourceSettled || m_acceptedMicSource == RemoteMicSource::RadioMic)) {
+        Answer refusedAnswer;
+        refusedAnswer.reason = m_micSourceSettled ? remoteRadioProgramReason() : m_micSourceReason;
+        if (answer) { answer(refusedAnswer); }
+        return;
+    }
     if (m_program.phase == Phase::Waiting) {
         // One program key at a time (the TCI server asks one at a time).
         Answer refusedAnswer;
@@ -521,6 +570,23 @@ void RemoteTransmitClient::commandFinished(quint32 commandId, const QByteArray& 
                                        << (accepted ? "accepted" : "refused:") << reason;
 
     switch (kind) {
+    case Kind::MicSource: {
+        m_micSourcePending = false;
+        const bool valid = values.size() == 1 && values.first().ordinal == 0
+            && values.first().name == "source" && values.first().kind == MirrorWireKind::Utf8
+            && remoteMicSourceFromName(values.first().value.toString()) == m_requestedMicSource;
+        m_micSourceSettled = accepted && valid;
+        if (m_micSourceSettled) {
+            m_acceptedMicSource = m_requestedMicSource;
+            m_micSourceReason.clear();
+        } else {
+            m_micSourceReason = accepted
+                ? QStringLiteral("The Core did not confirm the microphone source. Choose the input again.")
+                : shown;
+        }
+        emit micSourceChanged(m_acceptedMicSource, m_micSourceSettled, m_micSourceReason);
+        return;
+    }
     case Kind::ScreenKey:
         if (m_screen.phase != Phase::Waiting || m_screen.commandId != commandId) {
             // Released before the answer: the release already went.
@@ -683,6 +749,15 @@ void RemoteTransmitClient::reset()
     m_releaseFailureSticky = false;
     m_releaseFailureNotified = false;
     ++m_sessionGeneration;
+    m_micSourceAvailable = false;
+    m_micSourcePending = false;
+    m_micSourceSettled = true;
+    m_acceptedMicSource = RemoteMicSource::ClientAudio;
+    m_requestedMicSource = RemoteMicSource::ClientAudio;
+    m_micSourceReason.clear();
+    const QPointer<RemoteTransmitClient> sourceSelf(this);
+    emit micSourceChanged(m_acceptedMicSource, true, {});
+    if (!sourceSelf) { return; }
     auto reply = std::exchange(m_programAnswer, {});
     const QPointer<RemoteTransmitClient> self(this);
     publish();

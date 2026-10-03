@@ -483,9 +483,12 @@
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
 
+#include <QJsonDocument>
+#include <QJsonArray>
 #include "core/session/NetworkTrouble.h"
 #include "core/session/SystemProxy.h"
 #include "core/session/StationClient.h"
+#include "core/session/RemoteStationOptions.h"
 #include "core/session/BandLinkFit.h"
 #include "core/session/ModMonitorRecord.h"
 
@@ -797,8 +800,9 @@ QString StationClient::connectionFailureReason(QAbstractSocket::SocketError erro
 }
 
 StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProxy,
-                             QObject* parent, const QList<quint16>& supportedMajors)
+                             QObject* parent, const QList<quint16>& supportedMajors, SessionPurpose purpose)
     : QObject(parent)
+    , m_sessionPurpose(purpose)
     , m_radioModel(radioModel)
     , m_settingsProxy(settingsProxy)
     , m_supportedMajors(supportedMajors.isEmpty() ? LinkVersion::supportedMajors()
@@ -867,6 +871,8 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // window transmits through the Core (link section 18.6), so its hello
     // says so and the Core answers with txPermitted and remoteTxVersion.
     m_declaredFeatures.insert(QByteArrayLiteral("remoteTx"), 1);
+    m_declaredFeatures.insert(QByteArrayLiteral("radioMic"), 2);
+    m_declaredFeatures.insert(QByteArrayLiteral("audioQuality"), 1);
     // G-38: 2 adds Repair invalid settings (station.repairSettings).
     m_declaredFeatures.insert(QByteArrayLiteral("settingsHygiene"), 2);
     m_declaredFeatures.insert(QByteArrayLiteral("coreBuildInfo"), 1);
@@ -951,6 +957,38 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // iPhone app plan Task 37 (R-IOS-13): the Core's watchdog hears from
     // this window every 100 ms while it transmits or has VOX armed; on the
     // session a keepalive goes once (a lost one is overtaken by the next).
+    m_remoteTransmit->setMicrophoneRequirement([this]() {
+        const auto* slice = m_radioModel ? m_radioModel->txBoundSlice() : nullptr;
+        return !slice || (slice->dspMode() != DSPMode::CWL && slice->dspMode() != DSPMode::CWU);
+    });
+    connect(m_remoteTransmit, &RemoteTransmitClient::micSourceChanged, this,
+            [this](RemoteMicSource source, bool settled, const QString&) {
+        const QPointer<StationClient> sourceSelf(this);
+        if (settled && m_requestedLocalMicSource && m_radioModel && remoteTransmitAvailable()
+            && m_requestedLocalMicSource->first == m_sessionEpoch
+            && source == (m_requestedLocalMicSource->second == MicSource::Radio
+                ? RemoteMicSource::RadioMic : RemoteMicSource::ClientAudio)) {
+            const auto desired = m_requestedLocalMicSource->second;
+            m_requestedLocalMicSource.reset();
+            auto accepted = std::move(m_micSourceAccepted);
+            m_micSourceAccepted = {};
+            const QPointer<StationClient> self(this);
+            const quint64 epoch = m_sessionEpoch;
+            m_radioModel->transmitModel().setMicSource(desired);
+            if (self && accepted && epoch == m_sessionEpoch && remoteTransmitAvailable()
+                && m_remoteTransmit->micSourceSettled()
+                && m_remoteTransmit->acceptedMicSource() == source) { accepted(); }
+        } else if (!m_remoteTransmit->micSourcePending()) {
+            m_requestedLocalMicSource.reset();
+            m_micSourceAccepted = {};
+            if (settled && source == RemoteMicSource::ClientAudio && m_radioModel
+                && m_radioModel->transmitModel().micSource() == MicSource::Radio) {
+                m_radioModel->transmitModel().setMicSource(MicSource::Pc);
+            }
+        }
+        if (!sourceSelf) { return; }
+        if (m_radioModel) { emit m_radioModel->remoteMicSourceStateChanged(); }
+    });
     m_remoteTransmit->setSessionKeepalive([this](quint64 sequence, quint32 epoch) {
         if (!remoteTransmitAvailable()) {
             return false;
@@ -1174,6 +1212,14 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
                     send(SessionMessages::settingsRemove(key));
                 });
     }
+    if (m_sessionPurpose == SessionPurpose::RenameOnly) {
+        m_declaredFeatures.clear();
+    }
+}
+
+QByteArray StationClient::deviceIdentityFingerprint() const
+{
+    return m_deviceIdentity ? m_deviceIdentity->fingerprint() : QByteArray();
 }
 
 StationClient::~StationClient()
@@ -1194,6 +1240,7 @@ void StationClient::connectToStation(const QUrl& url, const QString& token,
                                      bool allowUnpinned,
                                      const QByteArray& stationIdentityFingerprint)
 {
+    ++m_connectionRequestGeneration;
     // Fix round 1, Important 2. Every OTHER entry into connectToStation()
     // cancels a pending retry as a side effect of reaching attachTransport()
     // (which does this too, unconditionally, for the case where a caller
@@ -1844,6 +1891,7 @@ void StationClient::startSession(SessionTransport* transport, const QString& tok
                                  const QString& expectedFingerprint,
                                  const QByteArray& stationIdentityFingerprint)
 {
+    ++m_connectionRequestGeneration;
     // A pin this caller states is a pin this session owes, exactly as on
     // the dial path. With no fingerprint (the default, and every adopted
     // transport in the tree today) there is nothing to compare and nothing
@@ -2066,6 +2114,7 @@ void StationClient::attachTransport(SessionTransport* transport, const QString& 
 
 void StationClient::disconnectFromStation(const QString& reason, bool attemptReconnect)
 {
+    ++m_connectionRequestGeneration;
     // Not reconnecting (the operator's Disconnect, a permanent end): no
     // radio change is being waited out any more.
     if (!attemptReconnect) {
@@ -2327,6 +2376,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     // ids (resolveOrCreate(), unchanged by this task), which is what lets
     // a GUI holding a raw pointer to one survive a reconnect unchanged.
     m_objects.clear();
+    m_audioOpusBitrates.reset();
     m_outboundMirror->unwatchAll();
     m_outboundCoalescer.clear();
     // iPhone app plan Task 39: nothing is on the air as far as this window
@@ -2598,6 +2648,7 @@ bool StationClient::reconnectBackoffExhausted() const
 
 void StationClient::scheduleReconnect()
 {
+    if (m_sessionPurpose == SessionPurpose::RenameOnly) { return; }
     // Same schedule as PgxlConnection.cpp:30's kBackoffSec and
     // TgxlConnection.cpp:30's kTgxlBackoffSec ({1, 2, 5, 10, 30, 60} in
     // both, verified against this tree), reused for consistency with an
@@ -2827,13 +2878,13 @@ void StationClient::onTransportText(const QByteArray& wire)
         // Only now: everything that moved before this point was the
         // station's own burst landing, and forwarding any of it would tell
         // the station its own state back.
-        m_forwardLocalChanges = true;
-        m_writeFlushTimer->start();
+        m_forwardLocalChanges = m_sessionPurpose == SessionPurpose::Ordinary;
+        if (m_forwardLocalChanges) { m_writeFlushTimer->start(); }
         refreshRemoteTransmit();
         // Parity Task 19 (R-IOS-25): the Core's spots and its spot sources'
         // console lines, each backlog first. Each (re)connect starts from
         // the Core's newest records.
-        if (spotSourcesAvailable()) {
+        if (m_sessionPurpose == SessionPurpose::Ordinary && spotSourcesAvailable()) {
             if (!m_radioModel.isNull()) {
                 // Fix wave, I3: the spots only; the radio list's own
                 // subscription replaces it.
@@ -3224,6 +3275,22 @@ bool StationClient::verifyStationIdentity(const SessionMessage& hello,
 
 bool StationClient::signIn(const SessionMessage& hello)
 {
+    if (m_sessionPurpose == SessionPurpose::RenameOnly && m_stationIdentity.size() != 32) {
+        refuseStation(QStringLiteral("Rename requires an already paired Core identity."),
+                      StationEndReport::Kind::Refused, QString());
+        return false;
+    }
+    const QPointer<StationClient> guardedSelf(this);
+    const quint32 guardedEpoch = m_sessionEpoch;
+    const auto admissionGuard = m_admissionGuard;
+    if (admissionGuard && !admissionGuard()) {
+        if (guardedSelf && m_sessionEpoch == guardedEpoch) {
+            refuseStation(QStringLiteral("The rename session is no longer permitted."),
+                          StationEndReport::Kind::Refused, QString());
+        }
+        return false;
+    }
+    if (!guardedSelf || m_sessionEpoch != guardedEpoch) { return false; }
     const bool keyUsable = m_deviceIdentity && m_deviceIdentity->isValid();
     bool challengeOk = false;
     const QByteArray challenge = StationIdentity::fromBase64Url(hello.challenge, &challengeOk);
@@ -3263,10 +3330,10 @@ bool StationClient::signIn(const SessionMessage& hello)
         // another device did, and may take transmit.
         QHash<QByteArray, int> features = m_declaredFeatures;
         const auto* relayPrimary = qobject_cast<const DataChannelTransport*>(transport());
-        m_watchRelayDeclared = m_agreedMinor >= kRadioIdentitySessionProtocolMinor
+        m_watchRelayDeclared = m_sessionPurpose == SessionPurpose::Ordinary && m_agreedMinor >= kRadioIdentitySessionProtocolMinor
             && certificate.size() == 32 && relayPrimary != nullptr
             && relayPrimary->canOpenWatchRelay();
-        m_directWatchDeclared = m_agreedMinor >= kRadioIdentitySessionProtocolMinor
+        m_directWatchDeclared = m_sessionPurpose == SessionPurpose::Ordinary && m_agreedMinor >= kRadioIdentitySessionProtocolMinor
             && certificate.size() == 32
             && (qobject_cast<WebSocketTransport*>(transport()) != nullptr
                 || m_watchRelayDeclared);
@@ -3281,11 +3348,24 @@ bool StationClient::signIn(const SessionMessage& hello)
             // Slice control plan Task 4: listening to and taking another
             // device's slice (the rest of the window's side is Task 5).
             // Take-over parity: 2, Take it back on controlTaken.
-            features.insert(QByteArrayLiteral("sliceAccess"), m_sliceAccessDeclared);
+            if (m_sessionPurpose == SessionPurpose::Ordinary) {
+                features.insert(QByteArrayLiteral("sliceAccess"), m_sliceAccessDeclared);
+            }
         }
         m_declaredSessionHolder = m_declaresSessionHolder;
         send(SessionMessages::hello(m_agreedMajor, kSessionProtocolMinor, m_localSettingsSchema,
                                     peerNameForThisProcess(), m_supportedMajors, features));
+        // Hello delivery can synchronously retire a temporary rename's authority.
+        // Check again at the admission boundary, before any auth.request goes out.
+        if (!guardedSelf || m_sessionEpoch != guardedEpoch) { return false; }
+        if (m_sessionPurpose == SessionPurpose::RenameOnly && admissionGuard && !admissionGuard()) {
+            if (guardedSelf && m_sessionEpoch == guardedEpoch) {
+                refuseStation(QStringLiteral("The rename session is no longer permitted."),
+                              StationEndReport::Kind::Refused, QString());
+            }
+            return false;
+        }
+        if (!guardedSelf || m_sessionEpoch != guardedEpoch) { return false; }
         send(SessionMessages::authRequest(
             QString(), deviceBlockFor(*m_deviceIdentity, m_deviceName, m_deviceShortName,
                                       challenge, certificate, stationSpki)));
@@ -4145,8 +4225,47 @@ void StationClient::reconcileSlicesAgainstStation()
     }
 }
 
+void StationClient::handleAudioCatalogue(const QList<MirrorUpdate>& updates)
+{
+    // The authenticated snapshot precedes handshakeComplete. Admit its
+    // offered table only after this active session negotiated quality.
+    if (!m_sessionActive || !m_authenticated
+        || m_agreedMinor < kRadioIdentitySessionProtocolMinor
+        || m_capabilities.audioQualityVersion < 1) {
+        return;
+    }
+    for (const MirrorUpdate& update : updates) {
+        if (update.name != QByteArrayLiteral("json")) { continue; }
+        const QJsonDocument document = QJsonDocument::fromJson(update.value.toString().toUtf8());
+        if (!document.isObject()) { continue; }
+        QList<int> bitrates;
+        const QJsonArray profiles = document.object().value(QStringLiteral("audio")).toObject()
+            .value(QStringLiteral("opusProfiles")).toArray();
+        for (const QJsonValue& entry : profiles) {
+            const QJsonValue bitrate = entry.toObject().value(QStringLiteral("bitrate"));
+            const int value = bitrate.toInt(0);
+            if (bitrate.isDouble() && value > 0 && bitrate.toDouble() == value
+                && !bitrates.contains(value)) {
+                bitrates.append(value);
+            }
+        }
+        if (m_audioOpusBitrates != std::optional<QList<int>>(bitrates)) {
+            m_audioOpusBitrates = bitrates;
+            const QPointer<StationClient> self(this);
+            const quint64 epoch = m_sessionEpoch;
+            emit audioOpusBitratesChanged();
+            if (!self || m_sessionEpoch != epoch) { return; }
+        }
+    }
+}
+
 void StationClient::handleObjectCreate(const SessionMessage& message)
 {
+    if (message.objectKey == QByteArrayLiteral("catalog")) {
+        m_pendingStationSchemas.remove(message.className);
+        handleAudioCatalogue(message.updates);
+        return;
+    }
     // iPhone app plan Task 78: who else is on the Core and their slices,
     // plain state for the window's screens; no model object stands for
     // them here.
@@ -4205,6 +4324,10 @@ void StationClient::handleObjectDestroy(const SessionMessage& message)
 
 void StationClient::handleDelta(const SessionMessage& message)
 {
+    if (message.objectKey == QByteArrayLiteral("catalog")) {
+        handleAudioCatalogue(message.updates);
+        return;
+    }
     if (RemoteDevicesState::holdsKey(message.objectKey)) {
         m_remoteDevices->applyObject(message.objectKey, message.updates);
         return;
@@ -5083,7 +5206,9 @@ void StationClient::onWriteFlushTick()
 quint32 StationClient::invokeCommand(const QByteArray& verb,
                                      const QList<MirrorUpdate>& arguments)
 {
-    if (m_transport == nullptr || !m_authenticated) {
+    if ((m_sessionPurpose == SessionPurpose::RenameOnly
+         && verb != QByteArrayLiteral("station.rename") && verb != QByteArrayLiteral("session.leave"))
+        || m_transport == nullptr || !m_authenticated) {
         return 0;
     }
     const quint32 id = m_nextCommandId++;
@@ -6838,8 +6963,8 @@ StationClient::CommandOutcome StationClient::requestFourO3AEnabled(bool enabled)
 
 bool StationClient::remoteTransmitAvailable() const
 {
-    return stationLinkReady() && m_agreedMinor >= kRadioIdentitySessionProtocolMinor
-        && m_capabilities.remoteTxVersion >= 1;
+    return m_sessionPurpose == SessionPurpose::Ordinary && stationLinkReady()
+        && m_agreedMinor >= kRadioIdentitySessionProtocolMinor && m_capabilities.remoteTxVersion >= 1;
 }
 
 bool StationClient::directWatchReady() const
@@ -6940,6 +7065,7 @@ void StationClient::retryDirectWatch(const QString& reason)
 
 void StationClient::requestWatchAttempt()
 {
+    if (m_sessionPurpose == SessionPurpose::RenameOnly) { return; }
     if (directWatchEligible()) {
         requestDirectWatchTicket();
     } else if (relayWatchEligible(true)) {
@@ -7263,10 +7389,41 @@ void StationClient::handleRelayWatchResult(const SessionMessage& message)
     }
 }
 
+bool StationClient::remoteMicSourceAvailable() const
+{
+    return remoteTransmitAvailable() && m_capabilities.radioMicVersion >= 2;
+}
+
+IStationLink::CommandOutcome StationClient::requestMicSource(MicSource desired, std::function<void()> accepted)
+{
+    if (!m_radioModel || !m_remoteTransmit) { return {false, remoteMicLegacyReason()}; }
+    if (!remoteMicSourceAvailable()) {
+        if (desired != MicSource::Radio && m_remoteTransmit->micSourceSettled()
+            && m_remoteTransmit->acceptedMicSource() == RemoteMicSource::ClientAudio) {
+            m_radioModel->transmitModel().setMicSource(desired);
+            if (accepted) { accepted(); }
+            return {true, {}};
+        }
+        return {false, remoteMicLegacyReason()};
+    }
+    if (desired == MicSource::Radio && !m_radioModel->boardCapabilities().radioMicSelectable()) {
+        return {false, QStringLiteral("This radio does not offer a radio microphone input.")};
+    }
+    if (m_remoteTransmit->micSourcePending()) {
+        return {false, m_remoteTransmit->micSourceReason()};
+    }
+    m_requestedLocalMicSource = QPair<quint64, MicSource>{m_sessionEpoch, desired};
+    m_micSourceAccepted = std::move(accepted);
+    const bool sent = m_remoteTransmit->requestMicSource(desired == MicSource::Radio
+        ? RemoteMicSource::RadioMic : RemoteMicSource::ClientAudio);
+    return {sent, sent ? QString() : m_remoteTransmit->micSourceReason()};
+}
+
 void StationClient::refreshRemoteTransmit()
 {
     if (m_remoteTransmit != nullptr) {
         m_remoteTransmit->setAvailable(remoteTransmitAvailable());
+        m_remoteTransmit->setMicSourceCapability(remoteMicSourceAvailable());
     }
 }
 
@@ -7407,7 +7564,7 @@ void StationClient::handleCommandResult(const SessionMessage& message)
     }
     if (message.commandVerb == "tx.key" || message.commandVerb == "tx.unkey"
         || message.commandVerb == "tx.tune" || message.commandVerb == "tx.tunerTune"
-        || message.commandVerb == "tx.twoTone") {
+        || message.commandVerb == "tx.twoTone" || message.commandVerb == "tx.setMicSource") {
         const QPointer<StationClient> self(this);
         if (m_remoteTransmit != nullptr) {
             m_remoteTransmit->commandFinished(message.commandId, message.commandVerb,
@@ -7701,6 +7858,13 @@ void StationClient::handleCommandResult(const SessionMessage& message)
 
 void StationClient::send(const SessionMessage& message)
 {
+    if (m_sessionPurpose == SessionPurpose::RenameOnly
+        && message.kind != SessionMessageKind::Hello && message.kind != SessionMessageKind::AuthRequest
+        && !(message.kind == SessionMessageKind::CommandInvoke
+             && (message.commandVerb == QByteArrayLiteral("station.rename")
+                 || message.commandVerb == QByteArrayLiteral("session.leave")))) {
+        return;
+    }
     if (m_transport == nullptr) {
         return;
     }
@@ -7979,7 +8143,7 @@ std::optional<AuxiliaryWatchTelemetry> StationClient::auxiliaryWatchTelemetry() 
 
 bool StationClient::mediaAvailable() const
 {
-    return m_sessionActive && m_authenticated && m_handshakeComplete
+    return m_sessionPurpose == SessionPurpose::Ordinary && m_sessionActive && m_authenticated && m_handshakeComplete
         && m_transport && m_transport->isOpen()
         && m_agreedMinor >= kMediaSessionProtocolMinor
         && m_capabilities.remoteMediaVersion >= 1;
@@ -8323,12 +8487,12 @@ bool StationClient::answerHeld(const QString& deviceId)
     return true;
 }
 
-void StationClient::leaveSession()
+quint32 StationClient::leaveSession()
 {
     if (!sessionHolderAvailable()) {
-        return;
+        return 0;
     }
-    invokeCommand(QByteArrayLiteral("session.leave"), {});
+    return invokeCommand(QByteArrayLiteral("session.leave"), {});
 }
 
 bool StationClient::isAwaitingConfirmation(const QString& reason)
@@ -8423,6 +8587,37 @@ PathRacer* StationClient::newRacer(bool upgrade)
 
 void StationClient::startRace()
 {
+    if (m_sessionPurpose == SessionPurpose::Ordinary && m_candidateSource) {
+        const quint64 request = m_connectionRequestGeneration;
+        const QPointer<StationClient> self(this);
+        const CandidateSource source = m_candidateSource;
+        const auto candidates = source();
+        if (!self || request != m_connectionRequestGeneration) { return; }
+        if (!candidates) {
+            const auto reasonSource = m_candidateUnavailableReasonSource;
+            const QString suppliedReason = reasonSource ? reasonSource() : QString();
+            if (!self || request != m_connectionRequestGeneration) { return; }
+            const QString reason = suppliedReason.isEmpty()
+                ? QStringLiteral("The saved Core changed; choose it again to connect.") : suppliedReason;
+            const bool active = m_sessionActive;
+            disconnectFromStation(reason);
+            m_dialPlan.clear();
+            m_serviceRoute = {};
+            m_raceMode = false;
+            m_lastError = reason;
+            if (!active) { emit sessionEnded(reason); }
+            return;
+        }
+        m_cachedAddresses = candidates->addresses;
+        m_serviceRoute = candidates->service;
+        m_dialPlan.clear();
+        for (const QUrl& address : m_cachedAddresses) {
+            if (RemoteStationOptions::isValidStationUrl(address.toString()) && !m_dialPlan.contains(address)) {
+                m_dialPlan.append(address);
+            }
+        }
+        if (!m_lastUrl.isEmpty() && !m_dialPlan.contains(m_lastUrl)) { m_dialPlan.append(m_lastUrl); }
+    }
     stopRace();
     m_lastError.clear();
     startDialPlan();
@@ -8573,7 +8768,7 @@ void StationClient::onRaceFailed(const QString& reason)
 
 bool StationClient::canMovePathNow() const
 {
-    if (!m_handshakeComplete || m_capabilities.controlSwitchVersion < 1
+    if (m_sessionPurpose == SessionPurpose::RenameOnly || !m_handshakeComplete || m_capabilities.controlSwitchVersion < 1
         || sessionTransport() == nullptr || sessionTransport()->switching()) {
         return false;
     }
@@ -8607,7 +8802,7 @@ bool StationClient::moveSessionForTest(SessionTransport* next, int rank, const Q
 void StationClient::scheduleUpgrade(bool advance)
 {
     m_upgradeTimer->stop();
-    if (!m_raceMode || m_pathRank <= PathRacer::ThisNetwork || !m_handshakeComplete
+    if (m_sessionPurpose == SessionPurpose::RenameOnly || !m_raceMode || m_pathRank <= PathRacer::ThisNetwork || !m_handshakeComplete
         || m_capabilities.controlSwitchVersion < 1 || m_upgradeScheduleMs.isEmpty()) {
         return;
     }

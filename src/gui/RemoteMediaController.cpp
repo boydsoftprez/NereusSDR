@@ -236,14 +236,18 @@ bool linkInterruption(RemoteAudioReceiver::Fault fault)
     return fault == RemoteAudioReceiver::Fault::NoPackets;
 }
 
-RemoteAudioProfile storedAudioProfileChoice()
+RemoteAudioQualityChoice storedAudioQualityChoice()
 {
-    return AppSettings::instance()
-                   .value(QLatin1String(RemoteMediaController::kAudioProfileSettingKey),
-                          QStringLiteral("Opus"))
-                   .toString()
-               == QLatin1String("Lossless")
-        ? RemoteAudioProfile::Lossless : RemoteAudioProfile::Opus;
+    const QString value = AppSettings::instance()
+        .value(QLatin1String(RemoteMediaController::kAudioProfileSettingKey), QStringLiteral("High"))
+        .toString();
+    if (value == QLatin1String("Lossless")) { return RemoteAudioQualityChoice::Lossless; }
+    if (value == QLatin1String("SaveData")) { return RemoteAudioQualityChoice::SaveData; }
+    if (value == QLatin1String("Opus")) {
+        AppSettings::instance().setValue(QLatin1String(RemoteMediaController::kAudioProfileSettingKey),
+                                         QStringLiteral("High"));
+    }
+    return RemoteAudioQualityChoice::High;
 }
 // R-R3-45: the link trial's stream number for the headphones mix (the
 // speakers' mix is -1, a receiver stream its slice id).
@@ -1272,6 +1276,7 @@ struct RemoteMediaController::Private {
     // Opus is asked for until the session ends or the operator chooses
     // again. The trial itself and its 1 s sampling timer.
     RemoteAudioProfile audioProfileChoice = RemoteAudioProfile::Opus;
+    RemoteAudioQualityChoice audioQualityChoice = RemoteAudioQualityChoice::High;
     bool audioProfileRequested = false;
     bool losslessFallback = false;
     RemoteAudioLinkTrial linkTrial;
@@ -1497,7 +1502,9 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     });
     d->audio = std::make_unique<RemoteAudioReceiver>(model->audioEngine());
     d->selectedOutput = selectedSpeakerOutput();
-    d->audioProfileChoice = storedAudioProfileChoice();
+    d->audioQualityChoice = storedAudioQualityChoice();
+    d->audioProfileChoice = d->audioQualityChoice == RemoteAudioQualityChoice::Lossless
+        ? RemoteAudioProfile::Lossless : RemoteAudioProfile::Opus;
     d->linkTrialTimer = new QTimer(this);
     d->linkTrialTimer->setObjectName(QStringLiteral("remoteAudioLinkTrialTimer"));
     d->linkTrialTimer->setInterval(kLinkTrialSampleMs);
@@ -1654,6 +1661,7 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     d->micTimer->setInterval(kMicPumpIntervalMs);
     connect(d->micTimer, &QTimer::timeout, this, &RemoteMediaController::reconcileMicUplink);
     d->micEncoder = std::make_unique<RemoteMicEncoder>();
+    resetMicrophoneQuality();
     d->micScratch.resize(static_cast<size_t>(RemoteMicConfig::kOpusFrameSamples));
     // Desktop remote transmit (R-IOS-13): the uplink's production callers.
     // The window's transmit client says when its key is down and when its
@@ -1664,6 +1672,15 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
                 &RemoteMediaController::setMicKeyDown);
         connect(transmit, &RemoteTransmitClient::holdsTransmitChanged, this,
                 &RemoteMediaController::setHoldsTransmit);
+        connect(transmit, &RemoteTransmitClient::micSourceChanged, this,
+                [this](RemoteMicSource accepted, bool, const QString&) {
+            if (accepted == RemoteMicSource::RadioMic) {
+                d->micPending.clear();
+                d->programPending.clear();
+                d->programUntilMs = -1;
+            }
+            reconcileMicUplink();
+        });
         d->micKeyDown = transmit->micKeyDown();
         d->holdsTransmit = transmit->holdsTransmit();
         // Task 37: the keepalive rides this connection's "tx" data channel
@@ -1795,6 +1812,12 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         });
     }
     connect(client, &StationClient::handshakeComplete, this, &RemoteMediaController::start);
+    connect(client, &StationClient::audioOpusBitratesChanged, this, [this] {
+        const QPointer<RemoteMediaController> self(this);
+        requestAudio();
+        if (!self) { return; }
+        refreshAudioStatus();
+    });
     connect(client, &StationClient::mediaSessionEnded, this, [this](quint32 epoch) {
         if (epoch == d->epoch) {
             stop();
@@ -2086,6 +2109,42 @@ RemoteAudioProfile RemoteMediaController::audioProfileChoice() const
 {
     return d->audioProfileChoice;
 }
+RemoteAudioQualityChoice RemoteMediaController::audioQualityChoice() const
+{
+    return d->audioQualityChoice;
+}
+
+bool RemoteMediaController::audioQualityNegotiated() const
+{
+    return audioProfileNegotiated() && d->client->agreedMinor() >= 11
+        && d->client->capabilities().audioQualityVersion >= 1;
+}
+
+QString RemoteMediaController::audioQualityUnavailableReason(RemoteAudioQualityChoice choice) const
+{
+    if (choice == RemoteAudioQualityChoice::High || !d->client
+        || !d->client->isHandshakeComplete()) { return {}; }
+    if (choice == RemoteAudioQualityChoice::SaveData) {
+        if (!audioQualityNegotiated()) {
+            return QStringLiteral("This Core does not offer a choice of audio quality. Updating the Core may help.");
+        }
+        const auto& bitrates = d->client->audioOpusBitrates();
+        if (!bitrates) { return QStringLiteral("Checking what this Core offers."); }
+        if (!bitrates->contains(24000)) {
+            return QStringLiteral("This Core does not offer this audio quality.");
+        }
+    } else {
+        if (!audioProfileNegotiated()) {
+            return remoteAudioQualityReasonText(RemoteAudioQualityReason::CoreCannotSend);
+        }
+        if (d->acceptedAudioContext && d->acceptedAudioContext->profileRefusal
+            == RemoteAudioProfileRefusal::NotAllowed) {
+            return remoteAudioQualityReasonText(RemoteAudioQualityReason::CoreNotAllowed);
+        }
+    }
+    return {};
+}
+
 bool RemoteMediaController::audioProfileNegotiated() const
 {
     return audioDetailNegotiated() && d->client->capabilities().audioProfileVersion >= 1;
@@ -2221,35 +2280,52 @@ void RemoteMediaController::setTransmitHolder(quint64 holderEpoch, bool holderAw
     QTimer::singleShot(0, this, &RemoteMediaController::refreshSubscriptions);
 }
 
+void RemoteMediaController::resetMicrophoneQuality()
+{
+    d->micPending.clear();
+    d->programPending.clear();
+    d->programUntilMs = -1;
+    if (d->micEncoder) {
+        d->micEncoder->setBitrate(d->audioQualityChoice == RemoteAudioQualityChoice::SaveData
+            ? 24000 : 48000);
+        d->micEncoder->reset();
+    }
+}
+
 void RemoteMediaController::setAudioProfileChoice(RemoteAudioProfile profile)
 {
-    const bool changed = profile != d->audioProfileChoice;
-    d->audioProfileChoice = profile;
+    setAudioQualityChoice(profile == RemoteAudioProfile::Lossless
+        ? RemoteAudioQualityChoice::Lossless : RemoteAudioQualityChoice::High);
+}
+
+void RemoteMediaController::setAudioQualityChoice(RemoteAudioQualityChoice choice)
+{
+    const bool changed = choice != d->audioQualityChoice;
+    d->audioQualityChoice = choice;
+    d->audioProfileChoice = choice == RemoteAudioQualityChoice::Lossless
+        ? RemoteAudioProfile::Lossless : RemoteAudioProfile::Opus;
     AppSettings::instance().setValue(QLatin1String(kAudioProfileSettingKey),
-                                     remoteAudioProfileName(profile));
-    // Choosing again gives lossless a fresh chance on this link.
+        choice == RemoteAudioQualityChoice::SaveData ? QStringLiteral("SaveData")
+                                                   : remoteAudioQualityChoiceName(choice));
+    // Choosing again gives lossless a fresh chance without changing saved intent.
     const bool wasFallback = std::exchange(d->losslessFallback, false);
     d->linkTrial.end();
     d->linkTrialTimer->stop();
+    if (changed || wasFallback) { resetMicrophoneQuality(); }
     const bool askAgain = (changed || wasFallback) && audioProfileNegotiated() && d->peer
         && d->peer->isReady();
     if (askAgain) {
-        // R-R3-43: every receiver stream follows the one choice, muted
-        // speakers or not; a stream this computer stopped gets its chance.
-        for (auto& [sliceId, stream] : d->receiverStreams) { stream.faulted = false; }
         const QPointer<RemoteMediaController> self(this);
+        // The main audio request sets this device's bitrate even when muted,
+        // before headphones consumes it. Receiver-for-app streams stay fixed48.
+        requestAudio();
+        if (!self) { return; }
+        for (auto& [sliceId, stream] : d->receiverStreams) { stream.faulted = false; }
         requestWantedReceiverAudio();
         if (!self) { return; }
-        // R-R3-45: the headphones mix too, muted speakers or not. A choice
-        // of quality retries failed headphones (a decoder that could not
-        // start depends on it); a media reconnect does not.
         d->headphonesFaulted = false;
         requestHeadphonesAudio();
         if (!self) { return; }
-    }
-    if (askAgain && d->model && !d->model->audioEngine()->masterMuted()) {
-        requestAudio();
-        return;
     }
     refreshAudioStatus();
 }
@@ -2291,6 +2367,7 @@ void RemoteMediaController::fallBackToOpus(const QString& cause)
     d->linkTrial.end();
     d->linkTrialTimer->stop();
     d->losslessFallback = true;
+    resetMicrophoneQuality();
     const QString text = remoteAudioQualityReasonText(RemoteAudioQualityReason::NetworkTooSlow);
     qCInfo(lcRemoteMedia).noquote()
         << QStringLiteral("Remote audio: lossless link trial failed (%1); asking Core for Opus")
@@ -2409,6 +2486,10 @@ void RemoteMediaController::noteMicLine()
 
 bool RemoteMediaController::micUplinkWanted() const
 {
+    if (const auto* tx = d->client->remoteTransmit();
+        tx && tx->acceptedMicSource() == RemoteMicSource::RadioMic) {
+        return false;
+    }
     if (!micLineNegotiated() || !d->peer || !d->peer->isReady() || d->peer->micAudioSsrc() == 0
         || !d->model || d->model->audioEngine() == nullptr) {
         return false;
@@ -2437,7 +2518,9 @@ void RemoteMediaController::reconcileMicUplink()
             qCInfo(lcRemoteMedia) << "Microphone uplink stopped";
         }
     }
-    if (!d->micRunning) {
+    const QPointer<RemoteMediaController> self(this);
+    refreshAudioStatus();
+    if (!self || !d->micRunning) {
         return;
     }
     // A program's audio, while it keeps coming, replaces the microphone:
@@ -2503,6 +2586,10 @@ void RemoteMediaController::sendMicAudio(std::vector<float>& pending)
 void RemoteMediaController::pushProgramAudio(const float* samples, int frames, int channels,
                                              int sampleRateHz)
 {
+    if (const auto* tx = d->client->remoteTransmit();
+        tx && tx->acceptedMicSource() == RemoteMicSource::RadioMic) {
+        return;
+    }
     if (samples == nullptr || frames <= 0 || channels < 1 || channels > 2 || sampleRateHz <= 0
         || !micLineNegotiated()) {
         return;
@@ -2716,6 +2803,33 @@ void RemoteMediaController::refreshAudioStatus()
             || status.state == RemoteAudioStatus::State::CoreCouldNotStart);
     // R-R3-23: the choice, what Core runs, and why Lossless is not running.
     status.chosenProfile = d->audioProfileChoice;
+    status.chosenQuality = d->audioQualityChoice;
+    status.saveDataUnavailableReason = audioQualityUnavailableReason(RemoteAudioQualityChoice::SaveData);
+    status.losslessUnavailableReason = audioQualityUnavailableReason(RemoteAudioQualityChoice::Lossless);
+    const auto* transmit = d->client->remoteTransmit();
+    if (transmit && transmit->acceptedMicSource() == RemoteMicSource::RadioMic) {
+        status.microphoneFormat = QStringLiteral("Radio microphone at the Core (no microphone stream from this computer)");
+    } else if (micLineOpen()) {
+        const bool losslessMic = d->peer->micLosslessNegotiated()
+            && d->audioProfileChoice == RemoteAudioProfile::Lossless && !d->losslessFallback;
+        if (losslessMic) {
+            status.microphoneFormat = QStringLiteral("Lossless stereo, 16-bit, 48 kHz, 4 ms packets");
+        } else if (d->micEncoder && d->micEncoder->isReady()) {
+            status.microphoneFormat = QStringLiteral("Opus mono, %1\u00A0kbit/s target, 20\u00A0ms packets")
+                .arg(d->micEncoder->targetBitrate() / 1000);
+        } else {
+            status.microphoneFormat = QStringLiteral("The microphone encoder could not start");
+        }
+        status.microphoneFormat += d->micRunning ? QStringLiteral(" (sending)")
+                                                : QStringLiteral(" (not sending)");
+    }
+    if (d->headphonesContext) {
+        RemoteAudioStatus headphones;
+        headphones.detailNegotiated = true;
+        headphones.encoder = d->headphonesContext->encoder;
+        headphones.losslessEncoder = d->headphonesContext->losslessEncoder;
+        status.headphonesFormat = remoteAudioCodecText(headphones);
+    }
     status.profileChoiceAvailable = inputs.mediaSession && audioProfileNegotiated();
     if (const auto& context = d->acceptedAudioContext) {
         if (context->profile) {
@@ -2724,6 +2838,7 @@ void RemoteMediaController::refreshAudioStatus()
             status.runningProfile = RemoteAudioProfile::Opus; // a Core without the choice
         }
         status.losslessEncoder = context->losslessEncoder;
+        status.bitrateRefusal = context->opusBitrateRefusal;
     }
     if (d->audioProfileChoice == RemoteAudioProfile::Lossless && inputs.mediaSession) {
         if (d->losslessFallback) {
@@ -5177,6 +5292,11 @@ void RemoteMediaController::requestAudio()
             d->audioProfileChoice == RemoteAudioProfile::Lossless && !d->losslessFallback
                 ? RemoteAudioProfile::Lossless : RemoteAudioProfile::Opus));
         d->audioProfileRequested = true;
+        const int bitrate = d->audioQualityChoice == RemoteAudioQualityChoice::SaveData ? 24000 : 48000;
+        const auto& offered = d->client->audioOpusBitrates();
+        if (audioQualityNegotiated() && offered && offered->contains(bitrate)) {
+            control.insert(QStringLiteral("opusBitrate"), bitrate);
+        }
     }
     send(control);
     if (!self) { return; }

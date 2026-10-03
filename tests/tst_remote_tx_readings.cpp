@@ -902,14 +902,22 @@ void TstRemoteTxReadings::maxBinReadsTheSlicesOwnPanAsALocalWindowDoes()
     slice->setFilter(500, 2500);
     window.setActiveSlice(0);
 
-    const auto source = MeterPoller::panMaxBinSource([&](const SliceModel* owner) -> SpectrumWidget* {
+    const auto source = MeterPoller::panMaxBinSourceForSlice([&](const SliceModel* owner) -> SpectrumWidget* {
         const QString key = owner->panKey();
         if (key == QLatin1String("pan-a")) { return &panA; }
         if (key == QLatin1String("pan-b")) { return &panB; }
         return nullptr;
     });
-    // The slice's own pan (B), not the first one.
+    // Both retained resolver APIs select the slice's own pan (B), not the first one.
+    const auto keyedSource = MeterPoller::panMaxBinSource([&](const QString& key) -> SpectrumWidget* {
+        if (key == QLatin1String("pan-a")) { return &panA; }
+        if (key == QLatin1String("pan-b")) { return &panB; }
+        return nullptr;
+    });
     QCOMPARE(source(slice), -71.0);
+    QCOMPARE(keyedSource(slice), -71.0);
+    QCOMPARE(source(nullptr), -400.0);
+    QCOMPARE(keyedSource(nullptr), -400.0);
     // The local reading of the same widget, tuned and filtered as the slice.
     panB.setVfoFrequency(slice->frequency());
     panB.setFilterOffset(slice->filterLow(), slice->filterHigh());
@@ -925,6 +933,8 @@ void TstRemoteTxReadings::maxBinReadsTheSlicesOwnPanAsALocalWindowDoes()
     QCOMPARE(meter.levelDbm(), -71.0f);
     // A pan that is gone: no reading, never 0.
     slice->setPanKey(QStringLiteral("pan-gone"));
+    QCOMPARE(source(slice), -400.0);
+    QCOMPARE(keyedSource(slice), -400.0);
     tick(poller);
     QCOMPARE(meter.sUnitsText(), QStringLiteral("--"));
 }

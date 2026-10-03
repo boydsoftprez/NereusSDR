@@ -63,6 +63,8 @@ struct LogSinkLine {
     QString text;
 };
 
+class BoundedLogFile;
+
 class LogSink {
 public:
     static constexpr std::size_t kQueueCapacity = 8192;   // a power of two
@@ -87,6 +89,13 @@ public:
     /// Where the writer writes: a file already open for writing (or null
     /// for none) and whether it also writes stderr. Set before start().
     void setOutputs(QFile* file, bool toStderr);
+
+    /// Opens bounded per-profile logs, owned by this sink. Set before start().
+    /// maxBytes must be at least 64, maxFiles at least 2 (preserve the last
+    /// good file until a rotation succeeds). Defaults: 32 MiB each, five files.
+    /// Returns false when file logging is unavailable; stderr/recent remain usable.
+    bool setRotatingOutput(const QString& directory, bool toStderr,
+                           qint64 maxBytes = 32 * 1024 * 1024, int maxFiles = 5);
 
     /// Starts the writer thread (no change when it runs).
     void start();
@@ -135,6 +144,7 @@ private:
 
     std::mutex m_drainMutex;          // the writer, drainNow() and tryDrainNow(), never offer()
     QFile* m_file = nullptr;
+    std::unique_ptr<BoundedLogFile> m_rotatingFile;
     bool m_toStderr = false;
     std::function<void()> m_beforeWrite;
     std::function<void()> m_afterTake;

@@ -19,6 +19,9 @@
 
 namespace NereusSDR {
 class RemoteConnectionController;
+class StationClient;
+class CoreSettingsHost;
+class ClientDeviceIdentity;
 
 // Application-scoped connection UI. Selecting/editing a row never replaces
 // the live session; an explicit Connect queues retirement after the originating
@@ -31,6 +34,12 @@ public:
     void start(const StationStartupRequest&);
     void shutdown();
     GuiSessionCoordinator* sessions() { return &m_sessions; }
+    CoreTargetStore& coreTargetStore() { return m_store; }
+    bool coreTargetStoreLoaded() const { return m_storeLoaded; }
+    static RemoteStationOptions connectionOptionsForTarget(const SavedCoreTarget& target);
+    /// Authenticated learned service metadata is separate from selected credentials.
+    static bool authenticatedSelectionMatchesSaved(const StationStartupSelection& selection,
+                                                   const SavedCoreTarget& target);
     ConnectionSelector* selector() const { return m_selector.get(); }
 
     /// iPhone app Task 18 (R-IOS-08): a Core on this network as the
@@ -76,6 +85,12 @@ private:
     StationPairingClient* pairingClient();
     bool choose(const StationStartupSelection&, bool startConnection);
 
+    bool observationLeaseCurrent(StationClient* client) const;
+    bool needsFreshCanonicalSession(const SavedCoreTarget& target) const;
+    bool canExplicitlyReplaceStaleCore(const SavedCoreTarget& target) const;
+    QString m_windowTargetId;
+    quint64 m_windowTargetIncarnation = 0;
+    quint64 m_windowCoordinatorGeneration = 0;
     CoreTargetStore m_store;
     GuiSessionCoordinator m_sessions;
     StationLanDiscovery m_lan;
@@ -90,5 +105,8 @@ private:
     bool m_storeLoaded = false;
     bool m_shuttingDown = false;
     QTimer m_negativeExpiryTimer;
+    std::shared_ptr<const ClientDeviceIdentity> m_existingDeviceIdentity;
+    std::unique_ptr<CoreSettingsHost> m_coreSettings;
+    QByteArray m_pendingConnectionIdentity;
 };
 } // namespace NereusSDR

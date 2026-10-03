@@ -801,6 +801,7 @@ private slots:
         QCOMPARE(hello.value(QStringLiteral("features")).toObject(),
                  (QJsonObject{{QStringLiteral("deviceAuth"), 1},
                               {QStringLiteral("pairing"), 1},
+                              {QStringLiteral("radioMic"), 2},
                               // iPhone app Task 71: several devices at once.
                               {QStringLiteral("sessionHolder"), 1}}));
         const QJsonObject identity = hello.value(QStringLiteral("identity")).toObject();

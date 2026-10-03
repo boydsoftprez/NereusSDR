@@ -2065,6 +2065,9 @@ private slots:
     {
         const QString txReason = QStringLiteral("Remote transmit is unavailable");
         RadioModel remote(RadioModel::Role::Remote);
+        // An older client/Core path retains this computer's PC/VAX choices;
+        // the radio input still requires the negotiated source command.
+        StationClient client(&remote, nullptr);
         SetupDialog dialog(&remote);
         dialog.setTransmitPermitted(false, txReason);
 
@@ -2128,6 +2131,22 @@ private slots:
         // microphone groups'.
         dialog.setTransmitPermitted(true);
         QVERIFY(page->micSourceGroup()->isEnabled());
+        QRadioButton* pc = nullptr;
+        QRadioButton* vax = nullptr;
+        QRadioButton* radio = nullptr;
+        for (QRadioButton* button : page->micSourceGroup()->findChildren<QRadioButton*>()) {
+            if (button->text() == QStringLiteral("PC Mic")) { pc = button; }
+            if (button->text().startsWith(QStringLiteral("VAX TX"))) { vax = button; }
+            if (button->text() == QStringLiteral("Radio Mic")) { radio = button; }
+        }
+        QVERIFY(pc && vax && radio);
+        QVERIFY(pc->isEnabled());
+        QVERIFY(vax->isEnabled());
+        QVERIFY(!radio->isEnabled());
+        vax->click();
+        QCOMPARE(tx.micSource(), MicSource::Vax);
+        pc->click();
+        QCOMPARE(tx.micSource(), MicSource::Pc);
         QVERIFY(!page->micGainSlider()->isEnabled());
         dialog.setTransmitSettingsPermitted(true, QString(), 3);
         QVERIFY(page->micGainSlider()->isEnabled());

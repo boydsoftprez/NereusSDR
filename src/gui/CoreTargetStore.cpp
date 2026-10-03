@@ -33,11 +33,14 @@
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+// 2026-10-02: Separate manual listener retention and current-target leases.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
 
 #include "gui/CoreTargetStore.h"
 
 #include "core/AppSettings.h"
 #include "core/security/StationIdentity.h"
+#include "core/security/StationLabel.h"
 #include "core/session/RendezvousWire.h"
 #include "core/session/CoreAddresses.h"
 #include "core/session/IceConfiguration.h"
@@ -47,6 +50,7 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QJsonValue>
+#include <QHostAddress>
 #include <QDateTime>
 #include <QLatin1String>
 #include <QRegularExpression>
@@ -55,6 +59,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <atomic>
 #include <utility>
 
 namespace NereusSDR {
@@ -70,6 +75,7 @@ constexpr qsizetype kIdentityBytes = 32;
 constexpr auto kLocalId = "local";
 constexpr qsizetype kMaxDocumentBytes = 1024 * 1024;
 constexpr qsizetype kMaxRecords = 128;
+std::atomic<quint64> s_nextTargetIncarnation{1};
 
 const QRegularExpression kIdPattern(
     QStringLiteral("^[A-Za-z0-9_-]{1,64}$"));
@@ -108,6 +114,28 @@ bool isBounded(const QString& text, qsizetype maximum)
     return text.size() <= maximum;
 }
 
+QString canonicalManualUrl(const QString& address, QString* error)
+{
+    if (address.size() > 4096 || !address.startsWith(QLatin1String("wss://"), Qt::CaseInsensitive)) {
+        setError(error, QStringLiteral("Enter a secure Core listener address."));
+        return {};
+    }
+    // Parse the authority ourselves so decimal IPv4 leading zeroes are not
+    // interpreted as octal by URL/IP parsers. Stored scope escapes are decoded
+    // by QUrl, as in the existing LAN-listener and PathRacer contracts.
+    const QString authority = address.mid(6);
+    if (authority.contains(QLatin1Char('%'))) {
+        const QUrl url(address, QUrl::StrictMode);
+        if (!url.isValid() || !url.userInfo().isEmpty() || !url.path().isEmpty()
+            || url.hasQuery() || url.hasFragment() || url.port() < 1) {
+            setError(error, QStringLiteral("Enter only the Core listener host and port."));
+            return {};
+        }
+        return CoreTargetStore::normalizeManualAddress(url.host(), url.port(), error);
+    }
+    return CoreTargetStore::normalizeManualAddress(authority, -1, error);
+}
+
 bool validateTarget(const SavedCoreTarget& target, QString* error, int version = kVersion)
 {
     if (!isSavedId(target.id)) {
@@ -136,6 +164,31 @@ bool validateTarget(const SavedCoreTarget& target, QString* error, int version =
         && target.connection.identityFingerprint.size() != kIdentityBytes) {
         setError(error, QStringLiteral("Saved Core target has an invalid Core identity."));
         return false;
+    }
+    if (version >= kVersion && target.lastKnownCoreName) {
+        const AuthenticatedCoreName& observation = *target.lastKnownCoreName;
+        const auto parsed = StationLabel::parse(observation.name);
+        if (!parsed || parsed->display() != observation.name
+            || observation.pairedIdentity.size() != kIdentityBytes
+            || observation.pairedIdentity != target.connection.identityFingerprint
+            || target.connection.allowUnpinned || observation.observedMs < 0
+            || observation.observedMs > 9007199254740991LL) {
+            setError(error, QStringLiteral("Saved Core name lacks authenticated paired identity provenance."));
+            return false;
+        }
+    }
+    if (target.manualAddresses.size() > CoreTargetStore::kMaxManualAddresses) {
+        setError(error, QStringLiteral("A Core can retain at most four manual addresses."));
+        return false;
+    }
+    QSet<QString> manualSeen;
+    for (const QString& address : target.manualAddresses) {
+        if (address.isEmpty() || !isBounded(address, 4096) || canonicalManualUrl(address, nullptr) != address
+            || manualSeen.contains(address)) {
+            setError(error, QStringLiteral("Saved Core target has invalid manual addresses."));
+            return false;
+        }
+        manualSeen.insert(address);
     }
     if (!target.connection.rendezvousId.isEmpty()
         && !RendezvousWire::isRendezvousId(target.connection.rendezvousId)) {
@@ -222,6 +275,17 @@ QJsonObject toJson(const SavedCoreTarget& target, int version)
     };
     if (version >= kVersion && !target.connection.coreAddresses.isEmpty()) {
         object.insert(QStringLiteral("coreAddresses"), QJsonArray::fromStringList(target.connection.coreAddresses));
+    }
+    if (version >= kVersion && !target.manualAddresses.isEmpty()) {
+        object.insert(QStringLiteral("manualAddresses"), QJsonArray::fromStringList(target.manualAddresses));
+    }
+    if (version >= kVersion && target.lastKnownCoreName) {
+        const AuthenticatedCoreName& observation = *target.lastKnownCoreName;
+        object.insert(QStringLiteral("lastKnownCoreName"), QJsonObject{
+            {QStringLiteral("name"), observation.name},
+            {QStringLiteral("identity"), StationIdentity::toBase64Url(observation.pairedIdentity)},
+            {QStringLiteral("observedMs"), static_cast<double>(observation.observedMs)},
+        });
     }
     if (version >= kV2Version) {
         object.insert(QStringLiteral("identity"),
@@ -364,6 +428,38 @@ bool parseDocument(const QString& text, int expectedVersion, QList<SavedCoreTarg
                 }
             }
             if (expectedVersion >= kVersion) {
+                // Optional presentation cache: malformed or mismatched provenance
+                // means unknown, and never compromises the saved pairing record.
+                const QJsonObject observation = object.value(QStringLiteral("lastKnownCoreName")).toObject();
+                const QJsonValue name = observation.value(QStringLiteral("name"));
+                const QJsonValue identityValue = observation.value(QStringLiteral("identity"));
+                const QJsonValue observed = observation.value(QStringLiteral("observedMs"));
+                const auto parsedName = name.isString() ? StationLabel::parse(name.toString()) : std::nullopt;
+                bool decodedNameIdentity = false;
+                const QByteArray nameIdentity = identityValue.isString()
+                    ? StationIdentity::fromBase64Url(identityValue.toString(), &decodedNameIdentity) : QByteArray();
+                const double stamp = observed.toDouble(-1);
+                if (parsedName && parsedName->display() == name.toString()
+                    && decodedNameIdentity && nameIdentity.size() == kIdentityBytes
+                    && nameIdentity == target.connection.identityFingerprint && !target.connection.allowUnpinned
+                    && observed.isDouble() && stamp >= 0 && stamp <= 9007199254740991.0
+                    && stamp == static_cast<double>(static_cast<qint64>(stamp))) {
+                    target.lastKnownCoreName = AuthenticatedCoreName{name.toString(), nameIdentity, static_cast<qint64>(stamp)};
+                }
+                const QJsonValue manual = object.value(QStringLiteral("manualAddresses"));
+                if (!manual.isUndefined()) {
+                    if (!manual.isArray()) {
+                        setError(error, QStringLiteral("Saved Core targets document has invalid manual addresses."));
+                        return false;
+                    }
+                    for (const QJsonValue& address : manual.toArray()) {
+                        if (!address.isString()) {
+                            setError(error, QStringLiteral("Saved Core targets document has invalid manual addresses."));
+                            return false;
+                        }
+                        target.manualAddresses.append(address.toString());
+                    }
+                }
                 const QJsonValue learned = object.value(QStringLiteral("coreAddresses"));
                 if (!learned.isUndefined()) {
                     if (!learned.isArray()) {
@@ -454,6 +550,103 @@ CoreTargetStore::CoreTargetStore(AppSettings& settings, std::function<qint64()> 
 {
 }
 
+QString CoreTargetStore::normalizeManualAddress(const QString& hostOrEndpoint, int port,
+                                               QString* error)
+{
+    const auto refuse = [error] {
+        setError(error, QStringLiteral("Enter a Core listener hostname or IP address and a port from 1 to 65535."));
+        return QString();
+    };
+    if (hostOrEndpoint.isEmpty() || hostOrEndpoint.size() > 4096) { return refuse(); }
+    for (const QChar character : hostOrEndpoint) {
+        if (character.isSpace() || QStringLiteral("/@?#\\").contains(character)) { return refuse(); }
+    }
+    QString host = hostOrEndpoint;
+    QString pastedPort;
+    const bool bracketed = host.startsWith(QLatin1Char('['));
+    if (bracketed) {
+        const qsizetype close = host.indexOf(QLatin1Char(']'));
+        if (close < 0 || close != host.lastIndexOf(QLatin1Char(']'))) { return refuse(); }
+        const QString remainder = host.mid(close + 1);
+        if (!remainder.isEmpty()) {
+            if (!remainder.startsWith(QLatin1Char(':'))) { return refuse(); }
+            pastedPort = remainder.mid(1);
+            if (pastedPort.isEmpty()) { return refuse(); }
+        }
+        host = host.mid(1, close - 1);
+    } else if (host.count(QLatin1Char(':')) == 1) {
+        const qsizetype colon = host.indexOf(QLatin1Char(':'));
+        pastedPort = host.mid(colon + 1);
+        host = host.left(colon);
+        if (pastedPort.isEmpty()) { return refuse(); }
+    }
+    if (host.isEmpty() || host.contains(QLatin1Char('[')) || host.contains(QLatin1Char(']'))) { return refuse(); }
+    if (!pastedPort.isEmpty()) {
+        static const QRegularExpression digits(QStringLiteral("^[0-9]+$"));
+        bool valid = false;
+        port = pastedPort.toInt(&valid, 10);
+        if (!valid || !digits.match(pastedPort).hasMatch()) { return refuse(); }
+    }
+    if (port < 1 || port > 65535) { return refuse(); }
+
+    QString canonicalHost;
+    if (host.contains(QLatin1Char(':'))) {
+        QString scope;
+        const qsizetype separator = host.indexOf(QLatin1Char('%'));
+        if (separator >= 0) {
+            scope = host.mid(separator + 1);
+            host = host.left(separator);
+            static const QRegularExpression scopePattern(QStringLiteral("^[A-Za-z0-9_.-]{1,64}$"));
+            if (!scopePattern.match(scope).hasMatch()) { return refuse(); }
+        }
+        const QHostAddress address(host);
+        if (address.protocol() != QAbstractSocket::IPv6Protocol) { return refuse(); }
+        canonicalHost = address.toString().toLower();
+        // PathRacer and StationLanAnnouncement preserve scoped IPv6; QUrl
+        // encodes this raw scope separator as %25 in the listener URL.
+        if (!scope.isEmpty()) { canonicalHost += QLatin1Char('%') + scope; }
+    } else {
+        if (bracketed || host.contains(QLatin1Char('%'))) { return refuse(); }
+        static const QRegularExpression numeric(QStringLiteral("^[0-9.]+$"));
+        if (numeric.match(host).hasMatch()) {
+            const QStringList octets = host.split(QLatin1Char('.'));
+            if (octets.size() != 4) { return refuse(); }
+            QStringList canonical;
+            for (const QString& octet : octets) {
+                bool valid = false;
+                const uint value = octet.toUInt(&valid, 10);
+                if (!valid || value > 255) { return refuse(); }
+                canonical.append(QString::number(value));
+            }
+            canonicalHost = canonical.join(QLatin1Char('.'));
+        } else {
+            if (host.endsWith(QLatin1Char('.'))) { host.chop(1); }
+            if (host.isEmpty() || host.size() > 253) { return refuse(); }
+            static const QRegularExpression labelPattern(
+                QStringLiteral("^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"));
+            for (const QString& label : host.split(QLatin1Char('.'))) {
+                if (!labelPattern.match(label).hasMatch()) { return refuse(); }
+            }
+            canonicalHost = host.toLower();
+        }
+    }
+    QUrl url;
+    url.setScheme(QStringLiteral("wss"));
+    url.setHost(canonicalHost);
+    url.setPort(port);
+    if (!url.isValid()) { return refuse(); }
+    clearError(error);
+    return url.toString(QUrl::FullyEncoded);
+}
+
+void CoreTargetStore::renewTargetIncarnations()
+{
+    m_targetIncarnations.clear();
+    for (const SavedCoreTarget& target : std::as_const(m_targets)) {
+        m_targetIncarnations.insert(target.id, s_nextTargetIncarnation.fetch_add(1, std::memory_order_relaxed));
+    }
+}
+
 bool CoreTargetStore::load(QString* error)
 {
     // Keep the last successfully loaded contents visible for presentation,
@@ -479,6 +672,7 @@ bool CoreTargetStore::load(QString* error)
         m_targets = std::move(parsedTargets);
         m_selectedId = std::move(parsedSelectedId);
         m_loaded = true;
+        renewTargetIncarnations();
         clearError(error);
         return true;
     }
@@ -497,6 +691,7 @@ bool CoreTargetStore::load(QString* error)
         m_targets = std::move(v2Targets);
         m_selectedId = std::move(v2SelectedId);
         m_loaded = true;
+        renewTargetIncarnations();
         clearError(error);
         return true;
     }
@@ -520,6 +715,7 @@ bool CoreTargetStore::load(QString* error)
         m_targets = std::move(v1Targets);
         m_selectedId = std::move(v1SelectedId);
         m_loaded = true;
+        renewTargetIncarnations();
         clearError(error);
         return true;
     }
@@ -556,6 +752,7 @@ bool CoreTargetStore::load(QString* error)
     m_targets = std::move(migratedTargets);
     m_selectedId = std::move(migratedSelectedId);
     m_loaded = true;
+    renewTargetIncarnations();
     clearError(error);
     return true;
 }
@@ -580,21 +777,50 @@ QString CoreTargetStore::selectedId() const
     return m_selectedId;
 }
 
+quint64 CoreTargetStore::targetIncarnation(const QString& id) const
+{
+    return m_loaded ? m_targetIncarnations.value(id, 0) : 0;
+}
+
 bool CoreTargetStore::upsert(const SavedCoreTarget& target, QString* error)
 {
     if (!m_loaded) {
         setError(error, QStringLiteral("Saved Core targets must be loaded before changes can be made."));
         return false;
     }
-    if (!validateTarget(target, error)) {
+    SavedCoreTarget replacement = target;
+    const auto previous = this->target(target.id);
+    if ((previous && previous->connection.identityFingerprint != target.connection.identityFingerprint)
+        || target.connection.allowUnpinned) {
+        replacement.lastKnownCoreName.reset();
+    } else if (previous && previous->lastKnownCoreName) {
+        // Ordinary metadata writers cannot roll back a newer authenticated
+        // observation held by the store. rememberCoreName is its writer.
+        replacement.lastKnownCoreName = previous->lastKnownCoreName;
+    } else if (!replacement.lastKnownCoreName && target.connection.identityFingerprint.size() == kIdentityBytes) {
+        // A second saved route to the same paired Core shares its authoritative
+        // name, while retaining its own historical local nickname.
+        for (const SavedCoreTarget& candidate : std::as_const(m_targets)) {
+            if (candidate.connection.identityFingerprint == target.connection.identityFingerprint
+                && !candidate.connection.allowUnpinned && candidate.lastKnownCoreName) {
+                replacement.lastKnownCoreName = candidate.lastKnownCoreName;
+                break;
+            }
+        }
+    }
+    if (!validateTarget(replacement, error)) {
         return false;
     }
 
     QList<SavedCoreTarget> updated = m_targets;
     bool replaced = false;
+    bool identityChanged = false;
     for (SavedCoreTarget& existing : updated) {
         if (existing.id == target.id) {
-            existing = target;
+            identityChanged = existing.connection.identityFingerprint != target.connection.identityFingerprint
+                || existing.connection.fingerprint != target.connection.fingerprint
+                || existing.connection.allowUnpinned != target.connection.allowUnpinned;
+            existing = replacement;
             replaced = true;
             break;
         }
@@ -604,15 +830,79 @@ bool CoreTargetStore::upsert(const SavedCoreTarget& target, QString* error)
             setError(error, QStringLiteral("Saved Core target limit has been reached."));
             return false;
         }
-        updated.append(target);
+        updated.append(replacement);
     }
 
     if (!persist(updated, m_selectedId, error)) {
         return false;
     }
     m_targets = std::move(updated);
+    if (!replaced || identityChanged) {
+        m_targetIncarnations.insert(target.id, s_nextTargetIncarnation.fetch_add(1, std::memory_order_relaxed));
+    }
     clearError(error);
     return true;
+}
+
+bool CoreTargetStore::addManualAddress(const QString& id, const QString& address, QString* error)
+{
+    if (!m_loaded) {
+        setError(error, QStringLiteral("Saved Core targets must be loaded before changes can be made."));
+        return false;
+    }
+    const auto found = target(id);
+    if (!found) { setError(error, QStringLiteral("Saved Core target was not found.")); return false; }
+    const QString canonical = canonicalManualUrl(address, error);
+    if (canonical.isEmpty()) { return false; }
+    if (found->manualAddresses.contains(canonical)) {
+        setError(error, QStringLiteral("This Core address is already retained."));
+        return false;
+    }
+    if (found->manualAddresses.size() >= kMaxManualAddresses) {
+        setError(error, QStringLiteral("A Core can retain at most four manual addresses."));
+        return false;
+    }
+    SavedCoreTarget updated = *found;
+    updated.manualAddresses.append(canonical);
+    return upsert(updated, error);
+}
+
+bool CoreTargetStore::updateManualAddress(const QString& id, const QString& previousAddress,
+                                         const QString& address, QString* error)
+{
+    if (!m_loaded) {
+        setError(error, QStringLiteral("Saved Core targets must be loaded before changes can be made."));
+        return false;
+    }
+    const auto found = target(id);
+    if (!found) { setError(error, QStringLiteral("Saved Core target was not found.")); return false; }
+    const qsizetype index = found->manualAddresses.indexOf(previousAddress);
+    if (index < 0) { setError(error, QStringLiteral("The retained Core address changed or was removed.")); return false; }
+    const QString canonical = canonicalManualUrl(address, error);
+    if (canonical.isEmpty()) { return false; }
+    if (canonical == previousAddress) { clearError(error); return true; }
+    if (found->manualAddresses.contains(canonical)) {
+        setError(error, QStringLiteral("This Core address is already retained."));
+        return false;
+    }
+    SavedCoreTarget updated = *found;
+    updated.manualAddresses[index] = canonical;
+    return upsert(updated, error);
+}
+
+bool CoreTargetStore::removeManualAddress(const QString& id, const QString& address, QString* error)
+{
+    if (!m_loaded) {
+        setError(error, QStringLiteral("Saved Core targets must be loaded before changes can be made."));
+        return false;
+    }
+    const auto found = target(id);
+    if (!found) { setError(error, QStringLiteral("Saved Core target was not found.")); return false; }
+    const qsizetype index = found->manualAddresses.indexOf(address);
+    if (index < 0) { setError(error, QStringLiteral("The retained Core address changed or was removed.")); return false; }
+    SavedCoreTarget updated = *found;
+    updated.manualAddresses.removeAt(index);
+    return upsert(updated, error);
 }
 
 bool CoreTargetStore::rememberAddress(const QString& id, const QString& url, QString* error)
@@ -689,6 +979,33 @@ bool CoreTargetStore::rememberCoreAddresses(const QString& id, const QByteArray&
     SavedCoreTarget updated = *found;
     updated.connection.coreAddresses = addresses;
     return upsert(updated, error);
+}
+
+bool CoreTargetStore::rememberCoreName(const QString& id, const QByteArray& identity,
+                                     const QString& stationLabel, QString* error)
+{
+    const auto found = target(id);
+    if (!m_loaded || !found || identity.size() != kIdentityBytes
+        || found->connection.identityFingerprint != identity || found->connection.allowUnpinned) {
+        setError(error, QStringLiteral("Saved Core identity no longer matches this authenticated connection."));
+        return false;
+    }
+    const auto parsed = StationLabel::parse(stationLabel);
+    if (!parsed) {
+        setError(error, StationLabel::ruleText());
+        return false;
+    }
+    const AuthenticatedCoreName observation{parsed->display(), identity, m_clock()};
+    QList<SavedCoreTarget> updated = m_targets;
+    for (SavedCoreTarget& candidate : updated) {
+        if (candidate.connection.identityFingerprint == identity && !candidate.connection.allowUnpinned) {
+            candidate.lastKnownCoreName = observation;
+        }
+    }
+    if (!persist(updated, m_selectedId, error)) { return false; }
+    m_targets = std::move(updated);
+    clearError(error);
+    return true;
 }
 
 bool CoreTargetStore::rememberControlChannelVersion(const QString& id, int version,
@@ -811,6 +1128,7 @@ bool CoreTargetStore::remove(const QString& id, QString* error)
     }
     m_targets = std::move(updated);
     m_selectedId = updatedSelectedId;
+    m_targetIncarnations.remove(id);
     clearError(error);
     return true;
 }

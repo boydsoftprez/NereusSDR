@@ -92,6 +92,8 @@ struct RemoteStationOptions {
     /// Authenticated devices.coreAddresses, scoped to identityFingerprint.
     /// Separate from operator URL and four successful endpoints. Link 7.1.
     QStringList coreAddresses;
+    /// Transient ordinary-attempt snapshot; never serialized as successful history.
+    QStringList directCandidates;
 
 
     /// iPhone app plan Task 28 fix wave (R-IOS-16; the safety review's

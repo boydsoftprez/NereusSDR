@@ -582,7 +582,9 @@ struct StationCapabilities {
     /// and radioMicNote (whether the radio's own mic can be chosen, and the
     /// note that goes with it). Sent after rx2AttenuatorVersion and before
     /// coreBuildInfo, only to a peer whose hello declared `radioMic` 1; 0
-    /// otherwise.
+    /// otherwise. Version 2 additionally offers authenticated, session-scoped
+    /// tx.setMicSource to peers declaring radioMic 2 and remoteTx 1. Catalogue
+    /// version 1 alone never offers microphone selection.
     int radioMicVersion = 0;
     /// Shared-input filters, ruling (d): 1 means radio carries
     /// rxFilter0LowPassReason (why the receive low-pass on chain 0's input

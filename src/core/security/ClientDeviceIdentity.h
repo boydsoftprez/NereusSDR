@@ -69,6 +69,11 @@ public:
     /// says why; the file is left as it is.
     static ClientDeviceIdentity loadOrCreate(const QString& profileDir);
 
+    /// Read an existing key without creating/mutating its path. Missing/invalid is refused.
+    static ClientDeviceIdentity loadExisting(const QString& profileDir);
+    /// Shares the ordinary profile cache; failed read never poisons ordinary initialization.
+    static std::shared_ptr<const ClientDeviceIdentity> existingForThisProfile();
+
     /// This profile's key (AppSettings::resolveConfigDir of the profile
     /// in use), loaded or created once per process and shared after.
     static std::shared_ptr<const ClientDeviceIdentity> forThisProfile();

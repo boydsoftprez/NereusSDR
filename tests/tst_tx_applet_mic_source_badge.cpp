@@ -19,8 +19,13 @@
 
 #include <QtTest/QtTest>
 #include <QLabel>
+#include <QScopeGuard>
 
 #include "gui/applets/TxApplet.h"
+#include "gui/setup/AudioTxInputPage.h"
+#include "gui/styles/AppTheme.h"
+#include "core/session/StationClient.h"
+#include <QRadioButton>
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 
@@ -43,6 +48,37 @@ class TstTxAppletMicSourceBadge : public QObject {
     Q_OBJECT
 
 private slots:
+
+    void remoteRadioWithoutNegotiatedCommandIsDisabledAndCannotChangeInput()
+    {
+        const QPalette previousPalette = qApp->palette();
+        const QString previousQss = qApp->styleSheet();
+        const auto restoreTheme = qScopeGuard([previousPalette, previousQss]() {
+            qApp->setPalette(previousPalette);
+            qApp->setStyleSheet(previousQss);
+        });
+        if (!qEnvironmentVariable("NEREUS_RADIO_CAPTURE_DIR").isEmpty()) {
+            applyDarkPalette(*qApp);
+            applyAppBaselineQss(*qApp);
+        }
+        RadioModel model(RadioModel::Role::Remote);
+        model.setBoardForTest(HPSDRHW::Hermes);
+        StationClient client(&model, nullptr);
+        model.attachStation(&client);
+        model.transmitModel().setMicSourceLocked(false);
+        model.transmitModel().setMicSource(MicSource::Pc);
+        AudioTxInputPage page(&model);
+        QVERIFY(!page.radioMicButton()->isEnabled());
+        QVERIFY(page.radioMicButton()->toolTip().contains(QStringLiteral("Core")));
+        page.radioMicButton()->click();
+        QCOMPARE(model.transmitModel().micSource(), MicSource::Pc);
+        if (const QString captures = qEnvironmentVariable("NEREUS_RADIO_CAPTURE_DIR"); !captures.isEmpty()) {
+            page.resize(640, 760);
+            page.show();
+            QCoreApplication::processEvents();
+            QVERIFY(page.grab().save(captures + QStringLiteral("/radio-microphone-legacy-core.png")));
+        }
+    }
 
     void liveChange_Pc()
     {
