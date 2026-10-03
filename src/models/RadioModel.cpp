@@ -19,6 +19,9 @@
 // Modification history (NereusSDR):
 //   2026-10-03 - Diversity atomic reentry and slice-close/hydration lifetime
 //                 fences, J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-01 - #299: replay anti-VOX run and detector tau to each new
+//                 transmit worker after reconnect. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-01 - #256: replay the HL2 TuneSlider tone magnitude before
 //                 every TUNE key. J.J. Boyd (KG4VCF), AI-assisted via
 //                 OpenAI Codex.
@@ -352,6 +355,9 @@
 //                mirror of the Core's (mirrorTxProfilesFromStation).
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-01 - Related to #300: replace only session keying connections
+//                and reject retired interlock failsafes. NereusSDR-original.
+//                J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25 - R-R3-49 (parity Task 4): the TX channel gets the curve the
 //                Legacy EQ box (txEqUseLegacy) picks: the ten-band EQ, or
 //                the parametric curve in txEqParaEqData through ParaEqCurve,
@@ -7551,10 +7557,9 @@ void RadioModel::wireTransmitProcessingChain()
     // TM -> Mox -> TxChannel signal chain handles per-property
     // updates through recompute()'s computed-value guard.
     //
-    // antiVoxTau and antiVoxRun are not covered here -- their TM ->
-    // Mox connects are deferred to wireConnectionSignals (lines
-    // 5025/5051) where an explicit re-push already happens after
-    // TxWorkerThread is wired.
+    // antiVoxTau and antiVoxRun are replayed directly to each new
+    // TxWorkerThread in wireConnectionSignals, after their signal
+    // connections are installed.
     if (m_moxController) {
         m_moxController->primeWdspState();
     }
@@ -19987,10 +19992,9 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
                 m_txWorker.get(), &TxWorkerThread::setAntiVoxDetectorTau,
                 Qt::QueuedConnection);
 
-        // 3M-3a-iv: initial push of TM tau into MoxController so the first
-        // emission of antiVoxDetectorTauRequested aligns DEXP with whatever
-        // AppSettings restored.  The NaN sentinel inside MoxController
-        // forces the emit even if the value matches its default.
+        // Keep the persistent controller aligned with the restored model.
+        // Its idempotent setter may emit only on the first connection;
+        // the fresh worker receives an explicit replay below on every connect.
         m_moxController->setAntiVoxTau(m_transmitModel.antiVoxTauMs());
 
         // 3M-3a-iv scope-expansion: TransmitModel::antiVoxRunChanged ->
@@ -20013,12 +20017,21 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
                 m_txWorker.get(), &TxWorkerThread::setAntiVoxRun,
                 Qt::QueuedConnection);
 
-        // 3M-3a-iv scope-expansion: initial push of TM antiVoxRun into
-        // MoxController so the first emission of antiVoxRunRequested aligns
-        // TxChannel/atomic gate with whatever AppSettings restored.  The
-        // init guard inside MoxController forces the emit even if value
-        // matches default.
+        // Keep normal controller updates idempotent across reconnects.
         m_moxController->setAntiVoxRun(m_transmitModel.antiVoxRun());
+
+        // #299: MoxController survives disconnect, while TxWorkerThread
+        // and WDSP DEXP are recreated. Unchanged run/tau values therefore
+        // need replay even when the controller emits no property change.
+        // Queue to the same receiver as the normal updates so the new
+        // worker's reference gate and detector receive the restored state.
+        // Semantics: Thetis setup.cs:18980-18996 [v2.10.3.13].
+        QMetaObject::invokeMethod(m_txWorker.get(), "setAntiVoxDetectorTau",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(double, m_transmitModel.antiVoxTauMs() / 1000.0));
+        QMetaObject::invokeMethod(m_txWorker.get(), "setAntiVoxRun",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(bool, m_transmitModel.antiVoxRun()));
     }
 }
 
@@ -25102,6 +25115,10 @@ void RadioModel::teardownConnection()
     m_radioMicSource.reset();
     m_pcMicSource.reset();
 
+    // The disconnect's normal unkey and drain keep their wiring until here.
+    // Retire its remaining callbacks before the channel view is cleared.
+    disconnectTxChannelKeying();
+
     // Clear the non-owning TX channel view before WdspEngine::shutdown()
     // destroys the underlying WDSP channel. Any in-flight txReady / txaFlushed
     // slot calls are queued and will see m_txChannel == nullptr after this clear.
@@ -25891,16 +25908,39 @@ void RadioModel::setGanymedePresent(bool present)
 // the rf_delay ordering (MOX and relay first, the channel after txReady)
 // holds without the event loop waiting on WDSP.
 // ---------------------------------------------------------------------------
+void RadioModel::disconnectTxChannelKeying()
+{
+    // QObject::disconnect cannot retract an already queued slot or timer.
+    // Retire their authority before replacing the owned connections. These
+    // are only the connections this helper creates, never the permanent
+    // MoxController observers registered by RadioModel's constructor.
+    ++m_txKeyingGeneration;
+    for (const QMetaObject::Connection& connection : m_txKeyingConnections) {
+        QObject::disconnect(connection);
+    }
+    m_txKeyingConnections.clear();
+    m_txKeyingChannel.clear();
+}
+
 void RadioModel::wireTxChannelKeying()
 {
     if (!m_txChannel || !m_moxController) {
         return;
     }
+    // Repeating setup for the same live channel changes nothing, including
+    // an interlock failsafe that this session has already armed.
+    if (m_txKeyingChannel == m_txChannel) {
+        return;
+    }
+    disconnectTxChannelKeying();
+    m_txKeyingChannel = m_txChannel;
+    const quint64 keyingGeneration = m_txKeyingGeneration;
     const QPointer<TxChannel> channel = m_txChannel;
-    connect(m_txChannel, &TxChannel::rfGateOpened, this,
-            [this, channel](quint64 sequence) {
+    m_txKeyingConnections.append(connect(m_txChannel, &TxChannel::rfGateOpened, this,
+            [this, channel, keyingGeneration](quint64 sequence) {
+                if (keyingGeneration != m_txKeyingGeneration) { return; }
                 onTgxlRfGateOpened(channel.data(), sequence);
-            }, Qt::QueuedConnection);
+            }, Qt::QueuedConnection));
     // F.1 — txReady → setRunning(true), GATED on interlockGranted.
     // From Thetis console.cs:29595 [v2.10.3.13] — TX-on callsite after
     // Thread.Sleep(rf_delay) in chkMOX_CheckedChanged2.
@@ -25923,8 +25963,9 @@ void RadioModel::wireTxChannelKeying()
     //
     // 1500 ms failsafe armed if the grant never fires
     // (e.g. amp disconnected mid-cycle).
-    connect(m_moxController, &MoxController::txReady,
-            this, [this]() {
+    m_txKeyingConnections.append(connect(m_moxController, &MoxController::txReady,
+            this, [this, keyingGeneration]() {
+        if (keyingGeneration != m_txKeyingGeneration) { return; }
         if (!m_txChannel) { return; }
         // Task 33: a txReady from a key the emergency stop cut short.
         if (m_transmitStopHold) { return; }
@@ -25942,7 +25983,8 @@ void RadioModel::wireTxChannelKeying()
         qCInfo(lcConnection)
             << "RF-flow gate: txReady arrived; waiting interlock"
                "Granted before starting TxChannel";
-        QTimer::singleShot(1500, this, [this]() {
+        QTimer::singleShot(1500, this, [this, keyingGeneration]() {
+            if (keyingGeneration != m_txKeyingGeneration) { return; }
             if (m_awaitingInterlockForTx && m_txChannel && !m_transmitStopHold) {
                 qCWarning(lcConnection)
                     << "RF-flow gate: interlockGranted didn't fire"
@@ -25954,7 +25996,7 @@ void RadioModel::wireTxChannelKeying()
                 openTxRfGate();
             }
         });
-    });
+    }));
 
     // Task 33: txDrainRequested → setRunning(false): the TX channel
     // drains first, with the RF gate open and the hardware still keyed,
@@ -25969,35 +26011,38 @@ void RadioModel::wireTxChannelKeying()
     // the radio is going back to receive here, in RadioModel's context,
     // first, before the TX channel's drain (psform.Mox = tx comes before
     // SetChannelState in the Thetis lines above).
-    connect(m_moxController, &MoxController::txDrainRequested, this, [this]() {
+    m_txKeyingConnections.append(connect(m_moxController, &MoxController::txDrainRequested,
+            this, [this, keyingGeneration]() {
+        if (keyingGeneration != m_txKeyingGeneration) { return; }
         if (m_pureSignal) {
             if (m_txaFlushedPureSignalObserverForTest) { m_txaFlushedPureSignalObserverForTest(); }
             m_pureSignal->onMoxChanged(false);
         }
-    });
-    connect(m_moxController, &MoxController::txDrainRequested,
+    }));
+    m_txKeyingConnections.append(connect(m_moxController, &MoxController::txDrainRequested,
             m_txChannel, [this]() {
         if (!m_txChannel) { return; }
         m_pendingTxDrainSequence = m_txChannel->setRunningAsync(false);
-    });
-    connect(m_txChannel, &TxChannel::txDrained,
-            this, [this](quint64 sequence) {
+    }));
+    m_txKeyingConnections.append(connect(m_txChannel, &TxChannel::txDrained,
+            this, [this, keyingGeneration](quint64 sequence) {
+        if (keyingGeneration != m_txKeyingGeneration) { return; }
         // >= because without a lane the drain reports inside
         // setRunningAsync, before its sequence is stored; an older drain
         // arriving late is still ignored.
         if (sequence >= m_pendingTxDrainSequence && m_moxController) {
             m_moxController->onTxDrained();
         }
-    });
+    }));
     // Task 33: txaFlushed: after the drain and mox_delay the RF gate is
     // shut (it already is unless the drain wait timed out), just before
     // hardwareFlipped(false) drops the MOX bit.
-    connect(m_moxController, &MoxController::txaFlushed,
+    m_txKeyingConnections.append(connect(m_moxController, &MoxController::txaFlushed,
             m_txChannel, [this]() {
         if (m_txChannel) {
             m_txChannel->closeRfGate();
         }
-    });
+    }));
     m_moxController->setAwaitsTxDrain(true);
 }
 

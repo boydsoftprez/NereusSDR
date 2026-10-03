@@ -10,6 +10,10 @@
 // Modification history (NereusSDR):
 //   2026-10-01  J.J. Boyd / KG4VCF. Opt-in numeric RX history diagnostics.
 //                 AI-assisted via OpenAI Codex.
+//   2026-10-02 J.J. Boyd / KG4VCF : issues #141/#147: CPU paint, GPU
+//                 paint and interaction use the existing GPU panel layout;
+//                 divider drag reserves the same chrome height.
+//                 AI-assisted via OpenAI Codex.
 //   2026-09-30 J.J. Boyd / KG4VCF : GUI memory leak: renderGpuFrame writes
 //                 the 2D trace's line, fill and peak vertex buffers only in
 //                 a frame that binds them. A 3D pan (and a 2D pan with pan
@@ -4762,6 +4766,24 @@ const QVector<float>& SpectrumWidget::measurementPixels() const
                : m_renderedPixels;
 }
 
+SpectrumWidget::SpectrumLayout SpectrumWidget::spectrumLayout() const
+{
+    // Preserve the GPU panel ordering and split: fixed divider/frequency
+    // chrome is reserved before dividing the remaining spectrum/waterfall
+    // height. Both painters and their interaction geometry use these rects.
+    const int contentH = std::max(0, height() - kDividerH - kFreqScaleH);
+    const int specH = static_cast<int>(contentH * m_spectrumFrac);
+    const int plotW = width() - effectiveStripW();
+    const int freqY = specH + kDividerH;
+    const int wfY = freqY + kFreqScaleH;
+    return {contentH,
+            QRect(0, 0, plotW, specH),
+            QRect(0, specH, width(), kDividerH),
+            QRect(0, freqY, plotW, kFreqScaleH),
+            QRect(0, wfY, plotW, contentH - specH),
+            QRect(0, wfY, width(), contentH - specH)};
+}
+
 void SpectrumWidget::resizeEvent(QResizeEvent* event)
 {
     SpectrumBaseClass::resizeEvent(event);
@@ -4782,15 +4804,9 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
     }
 
     // Recreate waterfall image at new size
-    int w = width();
-    int h = height();
-#ifdef NEREUS_GPU_SPECTRUM
-    // GPU mode: waterfall clips at strip border (strip is in overlay on right edge)
-    int wfW = w - effectiveStripW();
-#else
-    int wfW = w - effectiveStripW();
-#endif
-    int wfH = static_cast<int>(h * (1.0f - m_spectrumFrac)) - kFreqScaleH - kDividerH;
+    const SpectrumLayout layout = spectrumLayout();
+    const int wfW = layout.waterfall.width();
+    const int wfH = layout.waterfall.height();
     if (wfW > 0 && wfH > 0 && (m_waterfall.isNull() ||
         m_waterfall.width() != wfW || m_waterfall.height() != wfH)) {
         traceRxHistoryEvent(RxHistoryEvent::LiveImageResize, -1, 0, QSize(wfW, wfH));
@@ -4840,22 +4856,20 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
 
-    int w = width();
-    int h = height();
-    int specH = static_cast<int>(h * m_spectrumFrac);
-    int wfTop = specH + kDividerH;
-    int wfH = h - wfTop - kFreqScaleH;
+    const int w = width();
+    const SpectrumLayout layout = spectrumLayout();
+    const int specH = layout.spectrum.height();
 
     // Spectrum area (left of dBm strip — strip lives on the right edge per
     // AetherSDR convention). From AetherSDR SpectrumWidget.cpp:4858 [@0cd4559]
-    QRect specRect(0, 0, w - effectiveStripW(), specH);
+    const QRect specRect = layout.spectrum;
     // Waterfall area
-    QRect wfRect(0, wfTop, w - effectiveStripW(), wfH);
+    const QRect wfRect = layout.waterfall;
     // Frequency scale bar
-    QRect freqRect(0, h - kFreqScaleH, w - effectiveStripW(), kFreqScaleH);
+    const QRect freqRect = layout.frequency;
 
     // Draw divider bar between spectrum and waterfall
-    p.fillRect(0, specH, w, kDividerH, QColor(0x30, 0x40, 0x50));
+    p.fillRect(layout.divider, QColor(0x30, 0x40, 0x50));
 
     // Draw components
     drawGrid(p, specRect);
@@ -4868,9 +4882,8 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     // recolours the markers rather than hiding them (Thetis
     // display.cs:8704-8707 [v2.10.3.15]).
     //
-    // notchSpecRect() rather than the local specRect above: it is the
-    // single notch geometry source the hit test also builds from, and the
-    // two agree by construction on this path.
+    // notchSpecRect() and the local specRect both use spectrumLayout(),
+    // so the hit-test and painted marker rectangles agree.
     drawNotchMarkers(p, notchSpecRect());
     // Phase 3J-2 Task E1: spot overlay between spectrum/waterfall and the
     // VFO marker so the spot label tick + pill sit on top of the trace
@@ -4920,7 +4933,7 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     // waterfall area (always painted; widens automatically when paused).
     // Use a full-width wfRect (not the clipped `wfRect` at line 1141) so the
     // strip lands in the same right-edge column as the dBm scale strip.
-    const QRect wfRectFull(0, wfRect.top(), width(), wfRect.height());
+    const QRect wfRectFull = layout.waterfallChrome;
     drawTimeScale(p, wfRectFull);
     // B8 Task 21: guard cursor frequency readout by m_showCursorFreq.
     if (m_showCursorFreq) {
@@ -9396,46 +9409,14 @@ bool SpectrumWidget::eventFilter(QObject* obj, QEvent* ev)
 // Hit-test priority from AetherSDR SpectrumWidget.cpp:824-1128
 // Filter edge drag, passband slide-to-tune, divider drag, dBm drag, click-to-tune
 
-// Mouse handlers must mirror the active render path's specH formula so the
-// hover/click hit-tests align with where the spectrum/divider/freq-scale/
-// waterfall rows are actually painted. The two render paths use DIFFERENT
-// layouts:
-//   - GPU path (renderGpuFrame:3313)  → contentH = h - chromeH; specH =
-//     contentH * spectrumFrac; freq bar between spectrum and waterfall.
-//   - QPainter path (paintEvent:1222) → specH = h * spectrumFrac;
-//     freq bar at h - kFreqScaleH (BOTTOM of widget).
-// Codex P1 (PR #140) fix — option B (conditional). Long-term plan is to
-// unify the two render paths around the GPU layout; tracked separately so
-// a non-GPU build can be verified before flipping.
-static int specHFromHeight(int widgetH, float spectrumFrac, int chromeH)
-{
-#ifdef NEREUS_GPU_SPECTRUM
-    const int contentH = widgetH - chromeH;
-    return static_cast<int>(contentH * spectrumFrac);
-#else
-    Q_UNUSED(chromeH);
-    return static_cast<int>(widgetH * spectrumFrac);
-#endif
-}
-
 // ===========================================================================
 // Notch (TNF) geometry -- design sections 8.1 and 8.2
 // ===========================================================================
-//
-// The single geometry source for the notch overlay.  Reproduces the rect
-// each paint site builds for itself, through the same specHFromHeight helper
-// so the GPU/CPU layout split is honoured without restating it: the QPainter
-// path puts the frequency bar at the bottom of the widget and takes
-// h * spectrumFrac, the QRhi path puts it between spectrum and waterfall and
-// takes (h - chrome) * spectrumFrac.
-//
-// Defined here rather than beside drawNotchMarkers because specHFromHeight is
-// a file-local static defined immediately above.
+// Both notch paint sites and the interaction layer use the shared panel
+// layout, including the same spectrum boundary in CPU and GPU builds.
 QRect SpectrumWidget::notchSpecRect() const
 {
-    const int specH = specHFromHeight(height(), m_spectrumFrac,
-                                      kFreqScaleH + kDividerH);
-    return QRect(0, 0, width() - effectiveStripW(), specH);
+    return spectrumLayout().spectrum;
 }
 
 // ===========================================================================
@@ -9743,11 +9724,10 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         }
     }
 
-    int w = width();
-    int h = height();
-    int specH = specHFromHeight(h, m_spectrumFrac, kFreqScaleH + kDividerH);
-    int dividerY = specH;
-    QRect specRect(0, 0, w - effectiveStripW(), specH);
+    const SpectrumLayout layout = spectrumLayout();
+    const int specH = layout.spectrum.height();
+    const int dividerY = layout.divider.top();
+    const QRect specRect = layout.spectrum;
     int mx = static_cast<int>(event->position().x());
     int my = static_cast<int>(event->position().y());
 
@@ -10199,13 +10179,12 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
     }
 
     // 3. Frequency scale bar (wider gray bar below divider) — zoom bandwidth left/right
-    int freqBarY = dividerY + kDividerH;
+    const int freqBarY = layout.frequency.top();
     if (my >= freqBarY && my < freqBarY + kFreqScaleH) {
         // Sub-epic E: the LIVE button sits in the freq-scale row, so its
         // hit-test MUST run before the bandwidth-drag below grabs the click.
         // From AetherSDR SpectrumWidget.cpp:1655-1660 [@0cd4559]
-        const int wfY = freqBarY + kFreqScaleH;
-        const QRect wfRect(0, wfY, w, h - wfY);
+        const QRect wfRect = layout.waterfallChrome;
         if (waterfallLiveButtonRect(wfRect).contains(event->position().toPoint())
             && event->button() == Qt::LeftButton) {
             setWaterfallLive(true);
@@ -10298,8 +10277,8 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
 
     // Sub-epic E: time-scale strip + LIVE button
     // From AetherSDR SpectrumWidget.cpp:1655-1693 [@0cd4559]
-    const int wfY = freqBarY + kFreqScaleH;
-    const QRect wfRect(0, wfY, w, h - wfY);
+    const int wfY = layout.waterfall.top();
+    const QRect wfRect = layout.waterfallChrome;
 
     // LIVE button click (sits in the freq-scale row above the waterfall)
     if (waterfallLiveButtonRect(wfRect).contains(event->position().toPoint())
@@ -10340,18 +10319,17 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
     m_mouseInWidget = true;
     int mx = static_cast<int>(event->position().x());
     int my = static_cast<int>(event->position().y());
-    int w = width();
-    int h = height();
-    int specH = specHFromHeight(h, m_spectrumFrac, kFreqScaleH + kDividerH);
-    QRect specRect(0, 0, w - effectiveStripW(), specH);
+    const int w = width();
+    const SpectrumLayout layout = spectrumLayout();
+    const int specH = layout.spectrum.height();
+    const QRect specRect = layout.spectrum;
 
     // --- Active drag modes ---
 
     // Sub-epic E: time-scale drag = scrub through history
     // From AetherSDR SpectrumWidget.cpp:2122-2145 [@0cd4559]
     if (m_draggingTimeScale) {
-        const int wfY = specH + kDividerH + kFreqScaleH;
-        const QRect wfRect(0, wfY, w, h - wfY);
+        const QRect wfRect = layout.waterfallChrome;
         const QRect timeScaleRect = waterfallTimeScaleRect(wfRect);
         const int dragHeight = std::max(1, timeScaleRect.height());
         const int maxOffset = maxWaterfallHistoryOffsetRows();
@@ -10608,7 +10586,8 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
 
     if (m_draggingDivider) {
         // Resize spectrum/waterfall split
-        float frac = static_cast<float>(my) / h;
+        const float frac = static_cast<float>(my)
+            / std::max(1, layout.contentHeight);
         m_spectrumFrac = std::clamp(frac, 0.10f, 0.90f);
 #ifdef NEREUS_GPU_SPECTRUM
         markOverlayDirty();
@@ -10638,22 +10617,22 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
     // --- Hover cursor feedback (not dragging) ---
     // From AetherSDR SpectrumWidget.cpp:1242-1344
 
-    int freqBarY = specH + kDividerH;
+    const int freqBarY = layout.frequency.top();
 
     // Sub-epic E: hover cursors for LIVE button + time scale
     // From AetherSDR SpectrumWidget.cpp:2200-2225 [@0cd4559]
     {
-        const int wfY = specH + kDividerH + kFreqScaleH;
-        if (my >= specH + kDividerH && my < wfY) {
+        const int wfY = layout.waterfall.top();
+        if (my >= freqBarY && my < wfY) {
             // In the freq-scale row — LIVE button overlaps here.
-            const QRect wfRect(0, wfY, w, h - wfY);
+            const QRect wfRect = layout.waterfallChrome;
             if (waterfallLiveButtonRect(wfRect).contains(event->position().toPoint())) {
                 setCursor(Qt::PointingHandCursor);
                 return;
             }
         }
         if (my >= wfY) {
-            const QRect wfRect(0, wfY, w, h - wfY);
+            const QRect wfRect = layout.waterfallChrome;
             const QRect timeScaleRect = waterfallTimeScaleRect(wfRect);
             if (timeScaleRect.contains(event->position().toPoint())) {
                 setCursor(Qt::SizeVerCursor);
@@ -10912,8 +10891,7 @@ void SpectrumWidget::notifyTxViewWindow()
 bool SpectrumWidget::isOnDbmStrip(const QPoint& pos) const
 {
     if (effectiveStripW() <= 0) { return false; }
-    const int specH = specHFromHeight(height(), m_spectrumFrac,
-                                      kFreqScaleH + kDividerH);
+    const int specH = spectrumLayout().spectrum.height();
     return pos.x() >= width() - kDbmStripW && pos.y() < specH;
 }
 
@@ -10986,9 +10964,7 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
             // and moves the slice just as surely: its own comment records
             // that MainWindow forwards it to slice frequency.
             if (dx <= 4 && !m_moxOverlay) {
-                int w = width();
-                int specH = static_cast<int>(height() * m_spectrumFrac);
-                QRect specRect(0, 0, w - effectiveStripW(), specH);
+                const QRect specRect = spectrumLayout().spectrum;
                 double hz = xToHz(static_cast<int>(event->position().x()), specRect);
                 hz = std::round(hz / m_stepHz) * m_stepHz;
 
@@ -11132,7 +11108,7 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
     // From AetherSDR SpectrumWidget.cpp:2630-2636 [@0cd4559]
     const int mx = static_cast<int>(event->position().x());
     const int my = static_cast<int>(event->position().y());
-    const int specH = static_cast<int>(height() * m_spectrumFrac);
+    const int specH = spectrumLayout().spectrum.height();
     // Sub-epic E: hit-test against the actual dBm-strip width, not the
     // effectiveStripW() layout reservation (which widens to 72px when paused
     // to make room for the time-scale strip's UTC labels — but the dBm strip
@@ -12000,17 +11976,14 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     const int h = height();
     if (w <= 0 || h <= kFreqScaleH + kDividerH + 2) { return; }
 
-    const int chromeH = kFreqScaleH + kDividerH;
-    const int contentH = h - chromeH;
-    const int specH = static_cast<int>(contentH * m_spectrumFrac);
-    const int wfY = specH + kDividerH + kFreqScaleH;
-    const int wfH = h - wfY;
+    const SpectrumLayout layout = spectrumLayout();
+    const int specH = layout.spectrum.height();
     // Strip lives on the right edge (overlay texture paints it there).
     // Clip GPU content to w - effectiveStripW() so the trace stops at the
     // strip's border instead of being drawn under it (or fills full width
     // when the strip is hidden).
-    const QRect specRect(0, 0, w - effectiveStripW(), specH);
-    const QRect wfRect(0, wfY, w - effectiveStripW(), wfH);
+    const QRect specRect = layout.spectrum;
+    const QRect wfRect = layout.waterfall;
 
     auto* batch = r->nextResourceUpdateBatch();
 
@@ -12193,9 +12166,9 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             // button (in the freq-scale row) is on top of the freq labels —
             // when paused the 40px button extends slightly past the
             // dBm-strip column's left edge into freq-scale territory.
-            const QRect wfRectFull(0, wfRect.top(), w, wfRect.height());
-            p.fillRect(0, specH, w, kDividerH, QColor(0x30, 0x40, 0x50));
-            drawFreqScale(p, QRect(0, specH + kDividerH, w - effectiveStripW(), kFreqScaleH));
+            const QRect wfRectFull = layout.waterfallChrome;
+            p.fillRect(layout.divider, QColor(0x30, 0x40, 0x50));
+            drawFreqScale(p, layout.frequency);
             drawTimeScale(p, wfRectFull);
             // TNF notch overlay, GPU static-overlay path.  Same relative
             // ordering as the CPU paintEvent above and as AetherSDR
@@ -13197,8 +13170,7 @@ void SpectrumWidget::updateVfoPositions()
         m_vfoOffScreen = VfoOffScreen::None;
     }
 
-    int specH = static_cast<int>(height() * m_spectrumFrac);
-    QRect specRect(0, 0, width() - effectiveStripW(), specH);
+    const QRect specRect = spectrumLayout().spectrum;
 
     // Each flag is placed from ITS OWN slice frequency, not from the pan's
     // m_vfoHz.
