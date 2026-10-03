@@ -17,6 +17,9 @@
 #include <QJsonDocument>
 #include <QLabel>
 #include <QSignalSpy>
+#include <QStyleFactory>
+#include <QMouseEvent>
+#include "gui/styles/AppTheme.h"
 #include "gui/applets/RxApplet.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -40,6 +43,68 @@ class TstContainerSettingsWorkflow:public QObject {
 private slots:
  void initTestCase() {AppSettings::setProfileOverride(QStringLiteral("task10-settings-%1").arg(QCoreApplication::applicationPid()));AppSettings::instance().clear();}
  void cleanupTestCase() {QFile::remove(AppSettings::instance().filePath());}
+ void selectionRemainsReadableWithAndWithoutFocus_data() {
+    QTest::addColumn<bool>("applicationTheme");
+    QTest::newRow("application-theme")<<true;
+    QTest::newRow("host-palette")<<false;
+ }
+ void selectionRemainsReadableWithAndWithoutFocus() {
+    QFETCH(bool,applicationTheme);
+    qApp->setStyle(QStyleFactory::create("Fusion"));
+    if(applicationTheme) {applyDarkPalette(*qApp);applyAppBaselineQss(*qApp);}
+    else {qApp->setPalette(qApp->style()->standardPalette());qApp->setStyleSheet({});}
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
+    WorkspaceDocument document;document.mainContainerId="A";ContainerDocument container;container.id="A";container.contents={registry.makeEntry("TEXT"),registry.makeEntry("BAR")};ContainerDocument second;second.id="B";second.name="Other container";document.containers={container,second};
+    QCOMPARE(manager.commitWorkspace(document,0).status,CommitStatus::Saved);
+    const auto saved=store.snapshot();
+    ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);dialog.show();dialog.activateWindow();
+    const QString baseCaptures=qEnvironmentVariable("CORE_REFRESH_CAPTURE_DIR");
+    const QString captures=baseCaptures.isEmpty()?QString():baseCaptures+"/"+QString::fromLatin1(QTest::currentDataTag());
+    if(!captures.isEmpty()) {QVERIFY(QDir().mkpath(captures));}
+    auto checkSelection=[&](QAbstractItemView* view,const QModelIndex& index,const QString& name) {
+        QCoreApplication::processEvents();
+        const QPixmap pixmap=view->viewport()->grab();
+        const QImage image=pixmap.toImage();const qreal scale=pixmap.devicePixelRatio();
+        const QRect row=view->visualRect(index);const QRect pixels(QPoint(qRound(row.left()*scale),qRound(row.top()*scale)),QSize(qRound(row.width()*scale),qRound(row.height()*scale)));
+        int cyan=0,dark=0;
+        for(int y=pixels.top();y<=pixels.bottom() && y<image.height();++y) {
+            for(int x=pixels.left();x<=pixels.right() && x<image.width();++x) {
+                const QColor color=image.pixelColor(x,y);
+                cyan+=color.green()>130 && color.blue()>160 && color.red()<60;
+                dark+=color.red()<70 && color.green()<70 && color.blue()<80;
+            }
+        }
+        qInfo()<<name<<"row"<<row<<"cyan"<<cyan<<"dark"<<dark<<"area"<<pixels.width()*pixels.height()<<"palette"<<view->palette().color(QPalette::Highlight)<<view->palette().color(QPalette::HighlightedText);
+        if(!captures.isEmpty()) {QVERIFY(pixmap.save(captures+"/"+name+".png"));QVERIFY(dialog.grab().save(captures+"/"+name+"-dialog.png"));}
+        QVERIFY2(cyan>pixels.width()*pixels.height()/3,qPrintable(name+" must retain a distinct cyan selection"));
+        QVERIFY2(dark>5,qPrintable(name+" must render contrasting dark selection text"));
+    };
+    for(const QString& name:{QString("containerAvailableContents"),QString("containerDraftContents")}) {
+        auto* list=dialog.findChild<QListWidget*>(name);QVERIFY(list);
+        int row=0;while(row<list->count() && !(list->item(row)->flags() & Qt::ItemIsSelectable)) {++row;}
+        QVERIFY(row<list->count());list->setCurrentRow(row);list->setFocus();QCoreApplication::processEvents();
+        checkSelection(list,list->currentIndex(),name+"-focused");
+        dialog.findChild<QLineEdit*>("containerDraftTitle")->setFocus();checkSelection(list,list->currentIndex(),name+"-unfocused");
+    }
+    for(const QString& name:{QString("containerHeader"),QString("containerLayout"),QString("containerPlacement"),QString("containerAnchor"),QString("containerRxSource"),QString("contentSlice"),QString("containerDraftSelection")}) {
+        auto* combo=dialog.findChild<QComboBox*>(name);QVERIFY(combo);
+        if(!captures.isEmpty()) {QVERIFY(combo->grab().save(captures+"/"+name+"-closed.png"));}
+        combo->showPopup();QCoreApplication::processEvents();
+        auto* view=combo->view();view->setCurrentIndex(combo->model()->index(0,0));view->setFocus();
+        checkSelection(view,view->currentIndex(),name+"-popup-focused");
+        view->clearFocus();checkSelection(view,view->currentIndex(),name+"-popup-unfocused");
+        const QModelIndex hover=combo->model()->index(1,0);view->scrollTo(hover);
+        const QPoint position=view->visualRect(hover).center();
+        QMouseEvent move(QEvent::MouseMove,position,view->viewport()->mapToGlobal(position),Qt::NoButton,Qt::NoButton,Qt::NoModifier);
+        QApplication::sendEvent(view->viewport(),&move);
+        QTRY_COMPARE(view->currentIndex(),hover);
+        checkSelection(view,hover,name+"-popup-hover");
+        QTest::mouseClick(view->viewport(),Qt::LeftButton,Qt::NoModifier,position);
+        QTRY_COMPARE(combo->currentIndex(),1);combo->hidePopup();
+    }
+    QCOMPARE(store.snapshot(),saved);QCOMPARE(poller.targetCountForTest(),0);dialog.reject();
+ }
  void completeRowsPropertiesApplyReloadCancelAndInvalidImport() {
     QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
     QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);

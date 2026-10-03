@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Explicit readable dropdown selection by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — New-copy return homes and retained unsupported preferences by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Plain meter-data-source tooltip by J.J. Boyd (KG4VCF),
@@ -199,6 +201,7 @@ mw0lge@grange-lane.co.uk
 #include "ContainerDocumentCodec.h"
 #include "ContainerArrangeController.h"
 #include "ContainerPreviewWidget.h"
+#include "../ComboStyle.h"
 #include "LegacyContainerImporter.h"
 #include <QSignalBlocker>
 #include <QScrollArea>
@@ -210,6 +213,8 @@ mw0lge@grange-lane.co.uk
 #include <QLineEdit>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QAbstractItemView>
+#include <QStyledItemDelegate>
 #include <QPushButton>
 #include <QLabel>
 #include <QFileDialog>
@@ -291,6 +296,23 @@ QPushButton* makeBtn(const QString& text, QWidget* parent)
     return btn;
 }
 
+void styleSelectorPopups(QWidget* parent)
+{
+    for (QComboBox* combo : parent->findChildren<QComboBox*>()) {
+        QAbstractItemView* view = combo->view();
+        // A native combo menu delegate can cover the highlight with its
+        // inherited dark frame background. Paint through the item view so
+        // its explicit selection colors apply in every focus state.
+        combo->setItemDelegate(new QStyledItemDelegate(combo));
+        view->setStyleSheet(
+            "QAbstractItemView { background: #0a0a18; color: #c8d8e8;"
+            "  border: 1px solid #205070;"
+            "  selection-background-color: #00b4d8; selection-color: #0f0f1a; }"
+            "QAbstractItemView::item:selected {"
+            "  background-color: #00b4d8; color: #0f0f1a; }");
+    }
+}
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -328,6 +350,7 @@ ContainerSettingsDialog::ContainerSettingsDialog(ContainerWidget* container,
     // happen AFTER buildLayout so populateItemList has already
     // captured items into m_workingItems from the live MeterWidget.
     takeSnapshot();
+    styleSelectorPopups(this);
 }
 
 ContainerSettingsDialog::~ContainerSettingsDialog()
@@ -949,6 +972,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     QLabel* rxLabel = new QLabel(QStringLiteral("Slice:"), bar);
     rxLabel->setStyleSheet(kLabelStyle);
     m_rxSourceCombo = new QComboBox(bar);
+    m_rxSourceCombo->setObjectName("containerRxSource");
     for (int rx = 1; rx <= 4; ++rx) {
         m_rxSourceCombo->addItem(ContainerWidget::sliceNameForRxSource(rx), rx);
     }
@@ -1040,7 +1064,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
         m_anchorCombo=new QComboBox(bar);m_anchorCombo->setObjectName("containerAnchor");
         const QStringList anchors{tr("Left"),tr("Top left"),tr("Top"),tr("Top right"),tr("Right"),tr("Bottom right"),tr("Bottom"),tr("Bottom left")};
         for(int i=0;i<anchors.size();++i) {m_anchorCombo->addItem(anchors[i],i);}modes->addWidget(m_anchorCombo);modes->addStretch();
-        for(auto* combo:{m_headerCombo,m_layoutCombo,m_placementCombo,m_anchorCombo}) {connect(combo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this]{updatePreview();});}
+        for(auto* combo:{m_headerCombo,m_layoutCombo,m_placementCombo,m_anchorCombo}) {applyComboStyle(combo);connect(combo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this]{updatePreview();});}
     } else {row2->addWidget(m_hideTitleCheck);}
     row2->addWidget(m_minimisesCheck);
     row2->addWidget(m_autoHeightCheck);
@@ -1202,6 +1226,7 @@ void ContainerSettingsDialog::onItemSelectionChanged()
             const auto entry=c.contents[row];
             auto* scroll=new QScrollArea(m_propertyStack); scroll->setWidgetResizable(true);
             m_contentEditor=new ContentPropertyEditor(*m_manager->contentRegistry()); m_contentEditor->setLayoutPolicy(c.layout); m_contentEditor->setContainerDefaults(c.config); m_contentEditor->setEntry(entry);
+            styleSelectorPopups(m_contentEditor);
             scroll->setWidget(m_contentEditor); m_currentTypeEditor=scroll; m_propertyStack->addWidget(scroll); m_propertyStack->setCurrentWidget(scroll);
             findChild<QPushButton*>("duplicateContent")->setEnabled(!entry.typeId.startsWith("applet:") && !c.locked);
             m_btnRemove->setText(entry.typeId.startsWith("applet:")?tr("Return / hide view"):tr("Remove object"));
@@ -1242,6 +1267,8 @@ void ContainerSettingsDialog::onItemSelectionChanged()
         m_propertyStack->setCurrentWidget(m_emptyPage);
         return;
     }
+
+    styleSelectorPopups(editor);
 
     // Phase 3G-6 block 4b: wrap every editor page in a QScrollArea
     // so tall editors (NeedleItemEditor with 26+ rows + calibration
