@@ -19,6 +19,9 @@
 // Modification history (NereusSDR):
 //   2026-10-03 - Diversity atomic reentry and slice-close/hydration lifetime
 //                 fences, J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-01 - #256: replay the HL2 TuneSlider tone magnitude before
+//                 every TUNE key. J.J. Boyd (KG4VCF), AI-assisted via
+//                 OpenAI Codex.
 //   2026-10-01 - TX diagnostics lane: the "Transmit microphone" lines name
 //                 the device by its id in hex, not its raw bytes; going back
 //                 to the station's own names the device it follows, and a
@@ -26562,6 +26565,17 @@ void RadioModel::setTune(bool on)
                     /*bFromTune=*/true, /*bTwoTone=*/false,
                     m_hardwareProfile.model);
                 tuneNewPwr = result.newPower;
+
+                // #256: setTuneTone resets gen1 magnitude at each TUN-on,
+                // while the model suppresses an unchanged magnitude signal.
+                // Replay the computed HL2 TuneSlider level before keying,
+                // as mi0bot console.cs:47660-47673 [v2.10.3.13-beta2] does
+                // on every tune-power calculation.
+                if (m_hardwareProfile.model == HPSDRModel::HERMESLITE
+                    && m_transmitModel.tuneDrivePowerSource() == DrivePowerSource::TuneSlider
+                    && m_txChannel) {
+                    m_txChannel->setPostGenToneMag(m_transmitModel.txPostGenToneMag());
+                }
 
                 // #202 deep-fix: TXPostGenRun=0 case for new_pwr==0 during TUNE.
                 // Mirrors ramdor Thetis console.cs:46749-46752 [v2.10.3.15]:

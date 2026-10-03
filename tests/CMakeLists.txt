@@ -7432,6 +7432,17 @@ nereus_add_test(tst_daemon_settings_profile)
 # named "WisdomThread" is ever live, and exposes ConnectableRadioModel
 # (tests/fakes/ConnectableRadioModel.{h,cpp}) as the reusable helper Tasks
 # 3, 12 and 20 build on.
+# Regression: actual TX state replay through RadioModel and the P1 fake.
+if(WDSP_FOUND)
+    nereus_add_test(tst_hl2_tune_magnitude_replay
+        fakes/P1FakeRadio.cpp fakes/ConnectableRadioModel.cpp WdspHl2TuneProbe.c)
+    set_source_files_properties(WdspHl2TuneProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    if(TARGET tst_hl2_tune_magnitude_replay)
+        target_include_directories(tst_hl2_tune_magnitude_replay PRIVATE ${FFTW3_INCLUDE_DIRS})
+        target_compile_definitions(tst_hl2_tune_magnitude_replay PRIVATE NEREUS_BUILD_TESTS WDSP_STATIC_BUILD)
+    endif()
+endif()
+
 nereus_add_test(tst_connectable_radio_model
     fakes/P1FakeRadio.cpp
     fakes/ConnectableRadioModel.cpp)
