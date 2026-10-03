@@ -187,7 +187,10 @@ Keep existing settings and profiles; let the application perform its migrations.
 
 This remains an alpha release. Software and package checks will be reported from the exact final commit; they do not substitute for every radio, operating system or on-air acceptance matrix.
 
-Cross-radio TNF listening, NNR quality, PureSignal RF improvement, RADE on-air interoperability, sustained SBC operation, accessory bench matrices and remaining native UI interactions retain their recorded pending status until exact evidence closes them. CW transmit, FM pre-emphasis, CAT/rigctld, skin import and WAV/IQ recording are not advertised as delivered here. The legacy PS-RX/PS-TX spectrum view and remaining unavailable container actions remain explicitly unavailable.
+Cross-radio TNF listening, NNR quality, PureSignal RF improvement, RADE on-air interoperability, sustained SBC operation, accessory bench matrices and remaining native UI interactions retain their recorded pending status until exact evidence closes them. CW transmit, FM pre-emphasis, CAT/rigctld, skin import and WAV/IQ recording are not advertised as delivered here. The legacy PS-RX/PS-TX spectrum view remains explicitly unavailable. Free
+Canvas placement/dragging/resizing and individual Thetis button objects
+remain planned container work; the accepted movement/reordering features
+operate through the implemented grips, menus and stacks.
 
 Final artifact list, signatures, checksums and installation links will come from the completed release workflow. Source archives and dependency notices accompany the binary distribution.
 

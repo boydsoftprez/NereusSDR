@@ -108,6 +108,21 @@ ARM64 package, enables `nereusd` at boot and walks through pairing a desktop
 or phone. A matching package and normal `apt` dependencies keep this separate
 from the Ubuntu package and the optional station-card image build.
 
+**Fresh SBC setup in five steps:**
+
+1. Flash 64-bit Raspberry Pi OS Lite or compatible Armbian Debian Trixie;
+   set your own login/hostname, enable SSH and connect Ethernet to the radio's LAN.
+2. Download `nereusd_<version>_arm64_trixie.deb` and verify the release's
+   signed checksums.
+3. Install with `sudo apt install ./nereusd_<version>_arm64_trixie.deb`, copy
+   `/usr/share/nereusd/nereusd.conf.sample` to `/etc/nereusd.conf` and review it.
+4. Run `sudo systemctl enable --now nereusd`, then `sudo nereusd status`.
+5. Choose that Core in the desktop or native phone/tablet console and pair;
+   `sudo nereusd pairing show` displays a code on the SBC.
+
+The [full command sequence](docs/guides/install-core-sbc.md) includes OS checks,
+download/signature verification and startup diagnostics.
+
 ### A native iPhone and iPad console
 
 The **native iPhone and iPad app** is another full operator console for the
@@ -237,7 +252,8 @@ records a specific hardware check; feature acceptance remains recorded separatel
 ## Roadmap and acceptance
 
 CW transmit/keyer/QSK, FM pre-emphasis, CAT/rigctld, legacy skin import and
-WAV/IQ recording remain future work. Disabled actions retain an explanation;
+WAV/IQ recording remain future work. Free Canvas placement/dragging/resizing
+and individual Thetis button objects also remain pending. Disabled actions retain an explanation;
 being represented by an applet or Setup page does not establish implementation.
 The iPhone/iPad app has an independent release process and calendar counter.
 
