@@ -5,6 +5,18 @@ context lean. `CLAUDE.md` keeps the rules; this file keeps the history, the
 per-phase status, and the long-form reference detail. Content below is
 verbatim from `CLAUDE.md` as of commit 86a1b20d6.
 
+## Current status
+
+The station and console changes since 0.5.2 are being assembled for the first
+CalVer release, 2026.10.0. See the [README](../../README.md),
+[release notes](../../CHANGELOG.md) and
+[tester guide](../debugging/v2026.10.0-alpha-tester-smoketest.md).
+The release summary in [MASTER-PLAN.md](../MASTER-PLAN.md) records current scope.
+
+The remaining text is an archived reference copied from the earlier agent
+context. Its phase scheduling, release status and class inventories can be
+out of date; use current source and feature verification packets for those facts.
+
 ## Key classes (full list)
 
 **Key classes:**

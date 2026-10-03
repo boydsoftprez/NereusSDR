@@ -93,6 +93,20 @@ Full conventions in [CONTRIBUTING.md](CONTRIBUTING.md). Non-negotiables:
   audio callback.
 * Don't remove code you didn't add.
 
+## Versioning
+
+Product releases use CalVer `YYYY.M.counter`: full year, unpadded month,
+counter starting at zero and increasing within that month. Tags are
+`vYYYY.M.counter`, with `-rcN` for release candidates; candidates do not
+consume a final-release counter. `CMakeLists.txt` owns the product version.
+Use `scripts/release-version.py next`, `last`, and `check` rather than
+calculating from tag sort order. The iOS client uses independent `ios-v`
+tags/counters and does not invoke the desktop release workflow.
+
+Product version, settings schema, driver bundle and station wire protocol
+versions are independent. Keep the PGXL discovery beacon at `0.5.2`; never
+substitute the product calendar version into that protocol field.
+
 ## Settings
 
 **`AppSettings`, never `QSettings`** (`src/core/AppSettings.h`, XML at
