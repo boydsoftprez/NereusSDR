@@ -145,8 +145,12 @@ void SliceAccessSet::refreshOne(int sliceId)
     SliceAccess* object = m_objects.value(sliceId, nullptr);
     // A slice being removed keeps the fields it had until its object goes:
     // its control revision reads 0 from then on, and that is not news.
+    // A synchronously initialized replacement may already own this ID while
+    // the old removal dispatch is unfinished. Its fields belong only to the
+    // replacement access object, after destroy-before-create publication.
     const SliceOwnership* ownership = m_radio ? m_radio->sliceOwnership() : nullptr;
-    if (object != nullptr && m_resolver && ownership != nullptr && ownership->isLive(sliceId)) {
+    if (object != nullptr && m_resolver && ownership != nullptr
+        && ownership->matches({sliceId, static_cast<quint64>(object->incarnation())})) {
         object->setFields(m_resolver(sliceId));
     }
 }

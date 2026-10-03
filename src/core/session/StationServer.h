@@ -2758,6 +2758,8 @@ private:
     /// still owed routed back to it.
     std::optional<std::pair<QString, QString>>
     runInvoke(SessionTransport* transport, const SessionMessage& message);
+    friend class RadioModel; // Private trusted admission and canonical metadata only.
+    bool handleDiversityControl(SessionTransport* transport, const SessionMessage& message);
     struct SettingsExportJob {
         SettingsBackupTransferSource source;
         QByteArray transferId;

@@ -1265,6 +1265,7 @@ set(CORE_SOURCES
     # call further down).
     src/core/daemon/DaemonApp.cpp
     src/core/station/StationHost.cpp
+    src/core/station/StationSliceOwnershipPolicy.cpp
     src/core/station/StationHandover.cpp
     # iPhone app Task 17 (R-IOS-08): the Core's read-only status page, its
     # owner-only console socket and the console commands it answers.

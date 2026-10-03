@@ -84,6 +84,7 @@
 #include "LogCategories.h"
 
 #include <QThread>
+#include <QPointer>
 
 #include "codec/IP1Codec.h"
 #include "codec/IP2Codec.h"
@@ -121,6 +122,7 @@ int ReceiverManager::createReceiver()
 
     m_receivers.insert(index, config);
     qCDebug(lcReceiver) << "Created receiver" << index;
+    locker.unlock(); // No member-mutex cleanup may span an application callback.
     emit receiverCreated(index);
     return index;
 }
@@ -196,6 +198,7 @@ void ReceiverManager::reset()
 
 void ReceiverManager::activateReceiver(int receiverIndex)
 {
+    const QPointer<ReceiverManager> self(this);
     if (!m_receivers.contains(receiverIndex)) {
         return;
     }
@@ -205,6 +208,7 @@ void ReceiverManager::activateReceiver(int receiverIndex)
 
     m_receivers[receiverIndex].active = true;
     rebuildHardwareMapping();
+    if (!self) { return; }
 
     qCDebug(lcReceiver) << "Activated receiver" << receiverIndex;
     emit receiverActivated(receiverIndex);
@@ -212,6 +216,7 @@ void ReceiverManager::activateReceiver(int receiverIndex)
 
 void ReceiverManager::deactivateReceiver(int receiverIndex)
 {
+    const QPointer<ReceiverManager> self(this);
     if (!m_receivers.contains(receiverIndex)) {
         return;
     }
@@ -221,6 +226,7 @@ void ReceiverManager::deactivateReceiver(int receiverIndex)
 
     m_receivers[receiverIndex].active = false;
     rebuildHardwareMapping();
+    if (!self) { return; }
 
     qCDebug(lcReceiver) << "Deactivated receiver" << receiverIndex;
     emit receiverDeactivated(receiverIndex);
@@ -302,6 +308,39 @@ void ReceiverManager::setReceiverSampleRate(int receiverIndex, int sampleRate)
     m_receivers[receiverIndex].sampleRate = sampleRate;
 }
 
+void ReceiverManager::applyDdcMapping(const std::array<int, 5>& mapping, quint32 activeStreams)
+{
+    const QPointer<ReceiverManager> self(this);
+    QMutexLocker locker(&m_routingMutex);
+    QList<int> activated;
+    QList<int> deactivated;
+    bool changed = false;
+    for (auto it = m_receivers.begin(); it != m_receivers.end(); ++it) {
+        const int st = it->receiverIndex;
+        if (st < 0 || st >= int(mapping.size())) { continue; }
+        const bool active = mapping[st] >= 0 && (activeStreams & (1u << st));
+        if (it->active != active) {
+            (active ? activated : deactivated).append(st);
+            changed = true;
+        }
+        changed |= it->active && it->ddcIndex != mapping[st];
+        it->ddcIndex = mapping[st];
+        it->active = active;
+    }
+    if (!changed) { return; }
+    locker.unlock();
+    rebuildHardwareMapping();
+    if (!self) { return; }
+    for (int st : deactivated) {
+        emit receiverDeactivated(st);
+        if (!self) { return; }
+    }
+    for (int st : activated) {
+        emit receiverActivated(st);
+        if (!self) { return; }
+    }
+}
+
 void ReceiverManager::setDdcMapping(int receiverIndex, int ddcIndex)
 {
     if (!m_receivers.contains(receiverIndex)) {
@@ -310,7 +349,7 @@ void ReceiverManager::setDdcMapping(int receiverIndex, int ddcIndex)
 
     // Change gate. Before Phase 3F Sub-Epic I this ran once per connect, so
     // an unconditional rebuild cost nothing. It is now called by
-    // RadioModel::publishDdcAssignment for every active stream on every
+    // the original RadioModel::publishDdcAssignment for every active stream on every
     // requestDdcAssignment, which fires on every slice frequencyChanged --
     // so on every VFO tick, with the mapping unchanged in steady state.
     //
@@ -470,6 +509,7 @@ void ReceiverManager::flushHeldIq(QVector<HeldIqBatch>& batches)
 
 void ReceiverManager::rebuildHardwareMapping()
 {
+    const QPointer<ReceiverManager> self(this);
     QMutexLocker locker(&m_routingMutex);
     m_hwToLogical.clear();
 
@@ -496,18 +536,28 @@ void ReceiverManager::rebuildHardwareMapping()
 
     qCDebug(lcReceiver) << "Hardware mapping rebuilt:" << count << "active receivers";
 
+    QList<QPair<int, quint64>> frequencies;
+    for (auto it = m_receivers.constBegin(); it != m_receivers.constEnd(); ++it) {
+        if (it->active && it->hardwareRx >= 0) {
+            frequencies.append({it->hardwareRx, it->frequencyHz});
+        }
+    }
+    locker.unlock();
     emit activeReceiverCountChanged(count);
+    if (!self) { return; }
     // Slots first, then the count: a Protocol 1 connection sizes the frame
     // from both, and seeing the slots first means the count arrives against
     // the slot set it belongs to (Phase 3F section 16.3.2).
     emit hardwareSlotsChanged(slotMask);
+    if (!self) { return; }
     emit hardwareReceiverCountChanged(count);
+    if (!self) { return; }
 
-    // Re-emit frequency for each active receiver
-    for (auto it = m_receivers.constBegin(); it != m_receivers.constEnd(); ++it) {
-        if (it->active && it->hardwareRx >= 0) {
-            emit hardwareFrequencyChanged(it->hardwareRx, it->frequencyHz);
-        }
+    // Re-emit the frequencies of this mapping, without a live-map iterator
+    // or member-mutex scope spanning a synchronous notification.
+    for (const auto& frequency : frequencies) {
+        emit hardwareFrequencyChanged(frequency.first, frequency.second);
+        if (!self) { return; }
     }
 }
 

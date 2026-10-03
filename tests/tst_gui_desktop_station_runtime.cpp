@@ -12,6 +12,12 @@
 #include "core/security/StationIdentity.h"
 #include "core/security/DeviceStore.h"
 #include "core/ConnectionState.h"
+#include "core/SliceOwnership.h"
+#include "core/ReceiverManager.h"
+#include "core/ReceiveLayoutStore.h"
+#include "core/codec/P2CodecOrionMkII.h"
+#include "core/session/SessionMessages.h"
+#include "models/SliceModel.h"
 #include "core/settings/ISettingsBackend.h"
 #include "core/settings/SettingsScope.h"
 #include <QCheckBox>
@@ -54,6 +60,31 @@ QByteArray fileBytes(const QString& path)
 {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray{};
+}
+
+SessionMessage diversityRequest(const RadioModel& model, int source, int target)
+{
+    const auto* own = model.sliceOwnership();
+    const auto number = [](const char* name, qint64 value) {
+        return MirrorUpdate{0, name, MirrorWireKind::Int64, value};
+    };
+    return SessionMessages::commandInvoke("diversity.setTarget", 902,
+        {{0, "enabled", MirrorWireKind::Bool, target >= 0},
+         number("stateRevision", model.diversityStateRevision()),
+         number("sourceSliceId", source), number("sourceIncarnation", source < 0 ? 0 : own->incarnation(source)),
+         number("sourceControlRevision", source < 0 ? 0 : own->controlRevision(source)),
+         number("targetSliceId", target), number("targetIncarnation", target < 0 ? 0 : own->incarnation(target)),
+         number("targetControlRevision", target < 0 ? 0 : own->controlRevision(target))});
+}
+
+StationServiceOptions isolatedService(AppSettings& settings, const QString& home)
+{
+    StationServiceOptions service;
+    service.profileDirectory = QFileInfo(settings.filePath()).absolutePath();
+    service.homeDirectory = home;
+    service.inheritActiveProfile = false;
+    service.runner = [](const QString&, const QStringList&) { return StationServiceCommandResult{0, {}}; };
+    return service;
 }
 
 QString preservedSettingsPath(const QString& path)
@@ -135,6 +166,311 @@ private slots:
                  SettingsScope::OperatorLocal);
     }
 
+    // 2026-10-02 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+    // Real desktop bootstrap, no caller-side owner mark or CreatorScope.
+    void runOffBootstrapOwnsOrdinaryLocalSlicesWithoutStartingHost()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        AppSettings& settings = AppSettings::instance();
+        QVERIFY(writeConfig(serviceConfigPath(settings), 8443));
+        settings.setValue(QStringLiteral("DesktopCore/Run"), false);
+        P2CodecOrionMkII codec;
+        RadioModel model;
+        const int a = model.addSlice(QStringLiteral("pan-0"));
+        QVERIFY(a >= 0);
+        QVERIFY(model.sliceOwnership()->mark(a).owner.isEmpty());
+        StationServiceOptions service;
+        service.profileDirectory = QFileInfo(settings.filePath()).absolutePath();
+        service.homeDirectory = temp.filePath(QStringLiteral("home"));
+        service.inheritActiveProfile = false;
+        service.runner = [](const QString&, const QStringList&) {
+            return StationServiceCommandResult{0, {}};
+        };
+        GuiDesktopStationRuntime runtime(&model, &settings, AppSettings::profileOverride(), true, service);
+        QVERIFY(runtime.restore());
+        QCOMPARE(model.sliceOwnership()->mark(a).owner, SliceOwnership::stationDevice());
+        const int b = model.addSlice(QStringLiteral("pan-0"));
+        const int c = model.addSlice(QStringLiteral("pan-0"));
+        QVERIFY(b >= 0 && c >= 0);
+        QCOMPARE(model.sliceOwnership()->mark(b).owner, SliceOwnership::stationDevice());
+        QCOMPARE(model.sliceOwnership()->mark(c).owner, SliceOwnership::stationDevice());
+        QVERIFY(!runtime.controller()->enabled());
+        QVERIFY(!runtime.controller()->server());
+        QVERIFY(!QFileInfo::exists(service.profileDirectory + QStringLiteral("/station-identity.pem")));
+        // Only software codec/resource seams; no radio discovery or connection.
+        model.setBoardForTest(HPSDRHW::OrionMKII);
+        model.setConnectionStateForTest(ConnectionState::Connected);
+        model.configureStreamPool(5, 5, 192000);
+        model.receiverManager()->setMaxReceivers(5);
+        model.bindUnboundSlices();
+        model.receiverManager()->setP2Codec(&codec);
+        for (const auto pair : {std::pair{-1, a}, std::pair{a, a}, std::pair{a, -1},
+                                std::pair{-1, b}, std::pair{b, c}, std::pair{c, b}, std::pair{b, -1}}) {
+            const auto result = model.invokeDiversityAsStationDevice(diversityRequest(model, pair.first, pair.second));
+            QVERIFY2(result.accepted, qPrintable(result.reason));
+            QCOMPARE(QJsonDocument::fromJson(model.diversityState().toUtf8()).object()
+                         .value("requested").toBool(), pair.second >= 0);
+        }
+        model.setConnectionStateForTest(ConnectionState::Disconnected);
+        model.setConnectionStateForTest(ConnectionState::Connected);
+        const int d = model.addSlice(QStringLiteral("pan-0"));
+        QVERIFY(d >= 0);
+        QCOMPARE(model.sliceOwnership()->mark(d).owner, SliceOwnership::stationDevice());
+        QVERIFY(runtime.restore());
+        QVERIFY(!runtime.controller()->server());
+    }
+
+    void invalidListenerConfigDoesNotBlockLocalOwnershipOrCreateIdentity()
+    {
+        QTemporaryDir temp;
+        auto& settings = AppSettings::instance();
+        const QString path = serviceConfigPath(settings);
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QByteArray bytes("remote_port = 70000\n");
+        QCOMPARE(file.write(bytes), bytes.size());
+        file.close();
+        RadioModel model;
+        const int a = model.addSlice("pan-0");
+        auto service = isolatedService(settings, temp.filePath("home"));
+        GuiDesktopStationRuntime runtime(&model, &settings, AppSettings::profileOverride(), true, service);
+        QVERIFY(!runtime.restore()); // listener error still reported
+        QCOMPARE(model.sliceOwnership()->mark(a).owner, SliceOwnership::stationDevice());
+        const int b = model.addSlice("pan-0");
+        QCOMPARE(model.sliceOwnership()->mark(b).owner, SliceOwnership::stationDevice());
+        QCOMPARE(fileBytes(path), bytes);
+        QVERIFY(!runtime.controller()->server());
+        QVERIFY(!QFileInfo::exists(service.profileDirectory + "/station-identity.pem"));
+    }
+
+    void bootstrapPreservesExplicitMarksListenersActiveChoiceAndRevisions()
+    {
+        QTemporaryDir temp;
+        auto& settings = AppSettings::instance();
+        RadioModel model;
+        auto* own = model.sliceOwnership();
+        const int a = model.addSlice("pan-0");
+        int foreign;
+        { SliceOwnership::CreatorScope scope(own, "other"); foreign = model.addSlice("pan-0"); }
+        const int held = model.addSlice("pan-0");
+        own->hold(held, "absent");
+        const int listened = model.addSlice("pan-0");
+        own->join("listener", listened);
+        const quint64 foreignRevision = own->controlRevision(foreign);
+        GuiDesktopStationRuntime runtime(&model, &settings, AppSettings::profileOverride(), true,
+                                         isolatedService(settings, temp.filePath("home")));
+        QVERIFY(runtime.restore());
+        QCOMPARE(own->mark(a).owner, SliceOwnership::stationDevice());
+        QCOMPARE(own->mark(foreign).owner, QByteArray("other"));
+        QCOMPARE(own->controlRevision(foreign), foreignRevision);
+        QCOMPARE(own->mark(held).heldFor, QByteArray("absent"));
+        QVERIFY(own->mark(listened).owner.isEmpty());
+        QCOMPARE(own->listenersOf(listened), QList<QByteArray>{"listener"});
+        const quint64 revision = own->controlRevision(a);
+        const int b = model.addSlice("pan-0");
+        QVERIFY(model.setActiveSliceByIdFor(SliceOwnership::stationDevice(), b));
+        const int c = model.addSlice("pan-0");
+        QCOMPARE(own->activeFor(SliceOwnership::stationDevice()), b);
+        QVERIFY(runtime.restore());
+        QCOMPARE(own->controlRevision(a), revision);
+        QCOMPARE(own->activeFor(SliceOwnership::stationDevice()), b);
+        own->setOwner(c, {});
+        own->leave(SliceOwnership::stationDevice(), c);
+        QCoreApplication::processEvents();
+        QVERIFY(own->mark(c).owner.isEmpty()); // no adoption on mark/release
+        runtime.stop();
+        const int afterClose = model.addSlice("pan-0");
+        QVERIFY(own->mark(afterClose).owner.isEmpty());
+    }
+
+    void bootstrapRefusesWrongAuthority_data()
+    {
+        QTest::addColumn<int>("kind");
+        for (int kind = 0; kind < 6; ++kind) {
+            QTest::newRow(qPrintable(QString::number(kind))) << kind;
+        }
+    }
+    void bootstrapRefusesWrongAuthority()
+    {
+        QFETCH(int, kind);
+        QTemporaryDir temp;
+        auto& settings = AppSettings::instance();
+        AppSettings other(temp.filePath("other.settings"));
+        NeverBackend backend;
+        RadioModel model(kind == 3 ? RadioModel::Role::Remote : RadioModel::Role::Local);
+        const int a = kind == 3 ? -1 : model.addSlice("pan-0");
+        auto service = isolatedService(settings, temp.filePath("home"));
+        if (kind == 1) { service.profileDirectory = temp.path(); }
+        if (kind == 4) { settings.setRemoteBackend(&backend); }
+        const auto restoreBackend = qScopeGuard([&] { settings.setRemoteBackend(nullptr); });
+        GuiDesktopStationRuntime runtime(&model, kind == 2 ? &other : &settings,
+            AppSettings::profileOverride(), kind != 0, service);
+        if (kind == 5) { runtime.stop(); }
+        QVERIFY(!runtime.restore());
+        if (a >= 0) {
+            QVERIFY(model.sliceOwnership()->mark(a).owner.isEmpty());
+            const int b = model.addSlice("pan-0");
+            QVERIFY(model.sliceOwnership()->mark(b).owner.isEmpty());
+        }
+        QVERIFY(!runtime.controller()->server());
+    }
+
+    void adoptionMayRetireRuntimeWithoutLeavingAnAuthority()
+    {
+        QTemporaryDir temp;
+        auto& settings = AppSettings::instance();
+        RadioModel model;
+        const int a = model.addSlice("pan-0");
+        auto runtime = std::make_unique<GuiDesktopStationRuntime>(&model, &settings,
+            AppSettings::profileOverride(), true, isolatedService(settings, temp.filePath("home")));
+        QPointer<GuiDesktopStationRuntime> observed(runtime.get());
+        connect(model.sliceOwnership(), &SliceOwnership::markChanged, this,
+                [&](int id, const QByteArray&, const QByteArray&) { if (id == a) { runtime.reset(); } });
+        auto* current = runtime.get();
+        QVERIFY(!current->restore());
+        QVERIFY(!observed);
+        const int b = model.addSlice("pan-0");
+        QVERIFY(model.sliceOwnership()->mark(b).owner.isEmpty());
+    }
+
+    void laterSliceAdoptionMayRetireModelWithoutResumingCreation()
+    {
+        QTemporaryDir temp;
+        auto& settings = AppSettings::instance();
+        auto model = std::make_unique<RadioModel>();
+        model->addSlice("pan-0");
+        GuiDesktopStationRuntime runtime(model.get(), &settings, AppSettings::profileOverride(), true,
+                                         isolatedService(settings, temp.filePath("home")));
+        QVERIFY(runtime.restore());
+        QPointer<RadioModel> observed(model.get());
+        connect(model->sliceOwnership(), &SliceOwnership::markChanged, this,
+                [&](int, const QByteArray&, const QByteArray&) { model.reset(); });
+        auto* current = model.get();
+        QCOMPARE(current->addSlice("pan-0"), -1);
+        QVERIFY(!observed);
+    }
+
+    void hydrationAdoptsOnlyFinalUnclaimedRoster()
+    {
+        QTemporaryDir temp;
+        auto& settings = AppSettings::instance();
+        RadioModel model;
+        GuiDesktopStationRuntime runtime(&model, &settings, AppSettings::profileOverride(), true,
+                                         isolatedService(settings, temp.filePath("home")));
+        QVERIFY(runtime.restore());
+        ReceiveLayoutStore::LoadResult layout;
+        layout.state = ReceiveLayoutStore::LoadState::Loaded;
+        for (int id = 0; id < 4; ++id) {
+            layout.slices.append({id, "pan-0", 14'200'000.0 + id * 1000, DSPMode::USB});
+        }
+        layout.slices[1].owner = "other";
+        layout.slices[2].owner = SliceOwnership::stationDevice();
+        layout.slices[2].heldFor = "absent";
+        layout.slices[3].owner = SliceOwnership::stationDevice();
+        int intermediateStationOwners = 0;
+        connect(&model, &RadioModel::sliceAdded, this, [&](int id) {
+            if (model.sliceOwnership()->mark(id).owner == SliceOwnership::stationDevice()) {
+                ++intermediateStationOwners;
+            }
+        });
+        bool finalUnclaimedObserved = false;
+        QList<QByteArray> finalHeldListeners;
+        connect(&model, &RadioModel::receiveLayoutHydrated, this, [&] {
+            finalUnclaimedObserved = model.sliceOwnership()->mark(0).owner.isEmpty();
+            finalHeldListeners = model.sliceOwnership()->listenersOf(1);
+            qInfo() << "final held listeners BEFORE queued adoption" << finalHeldListeners;
+        });
+        RadioModel baseline;
+        QString reason;
+        QVERIFY2(baseline.hydrateReceiveLayout("AA:BB:CC:DD:EE:01", layout, &reason), qPrintable(reason));
+        const auto baselineHeldListeners = baseline.sliceOwnership()->listenersOf(1);
+        qInfo() << "raw baseline held listeners" << baselineHeldListeners;
+        QVERIFY2(model.hydrateReceiveLayout("AA:BB:CC:DD:EE:01", layout, &reason), qPrintable(reason));
+        QCOMPARE(intermediateStationOwners, 0);
+        QVERIFY(finalUnclaimedObserved);
+        auto* own = model.sliceOwnership();
+        const auto heldRevision = own->controlRevision(1);
+        QTRY_COMPARE(own->mark(0).owner, SliceOwnership::stationDevice());
+        QCOMPARE(own->mark(1).heldFor, QByteArray("other"));
+        QCOMPARE(own->controlRevision(1), heldRevision);
+        QCOMPARE(own->mark(2).heldFor, QByteArray("absent"));
+        QCOMPARE(finalHeldListeners, baselineHeldListeners);
+        QCOMPARE(own->listenersOf(1), baselineHeldListeners);
+        QCOMPARE(own->listenersOf(2), baseline.sliceOwnership()->listenersOf(2));
+        QCOMPARE(own->mark(3).owner, SliceOwnership::stationDevice());
+        QVERIFY(!runtime.controller()->server());
+    }
+
+    void authorityRetirementDuringAdoptionDoesNotClaimRemainingSlices_data()
+    {
+        QTest::addColumn<int>("kind");
+        QTest::newRow("close") << 0;
+        QTest::newRow("destroy-runtime") << 1;
+        QTest::newRow("settings-backend") << 2;
+    }
+    void authorityRetirementDuringAdoptionDoesNotClaimRemainingSlices()
+    {
+        QFETCH(int, kind);
+        QTemporaryDir temp;
+        auto& settings = AppSettings::instance();
+        NeverBackend backend;
+        const auto restoreBackend = qScopeGuard([&] { settings.setRemoteBackend(nullptr); });
+        RadioModel model;
+        const int a = model.addSlice("pan-0");
+        const int b = model.addSlice("pan-0");
+        auto runtime = std::make_unique<GuiDesktopStationRuntime>(&model, &settings,
+            AppSettings::profileOverride(), true, isolatedService(settings, temp.filePath("home")));
+        connect(model.sliceOwnership(), &SliceOwnership::markChanged, this,
+                [&](int id, const QByteArray&, const QByteArray&) {
+            if (id != a) { return; }
+            if (kind == 0) { runtime->stop(); }
+            else if (kind == 1) { runtime.reset(); }
+            else { settings.setRemoteBackend(&backend); }
+        });
+        auto* current = runtime.get();
+        QVERIFY(!current->restore());
+        QCOMPARE(model.sliceOwnership()->mark(a).owner, SliceOwnership::stationDevice());
+        QCOMPARE(model.sliceOwnership()->controlRevision(a), quint64(2));
+        QVERIFY(model.sliceOwnership()->mark(b).owner.isEmpty());
+        QCOMPARE(model.sliceOwnership()->controlRevision(b), quint64(1));
+    }
+
+    void adoptionKeepsAReentrantlyHeldRemainingSlice()
+    {
+        QTemporaryDir temp;
+        auto& settings = AppSettings::instance();
+        RadioModel model;
+        const int a = model.addSlice("pan-0");
+        const int b = model.addSlice("pan-0");
+        GuiDesktopStationRuntime runtime(&model, &settings, AppSettings::profileOverride(), true,
+                                         isolatedService(settings, temp.filePath("home")));
+        connect(model.sliceOwnership(), &SliceOwnership::markChanged, this,
+                [&](int id, const QByteArray&, const QByteArray&) {
+            if (id == a) { model.sliceOwnership()->hold(b, "other"); }
+        });
+        QVERIFY(runtime.restore());
+        QCOMPARE(model.sliceOwnership()->mark(a).owner, SliceOwnership::stationDevice());
+        QCOMPARE(model.sliceOwnership()->mark(b).heldFor, QByteArray("other"));
+    }
+
+    void adoptionActivePublicationMayRetireModel()
+    {
+        QTemporaryDir temp;
+        auto& settings = AppSettings::instance();
+        auto model = std::make_unique<RadioModel>();
+        const int a = model->addSlice("pan-0");
+        model->sliceById(a)->setActive(false);
+        GuiDesktopStationRuntime runtime(model.get(), &settings, AppSettings::profileOverride(), true,
+                                         isolatedService(settings, temp.filePath("home")));
+        QPointer<RadioModel> observed(model.get());
+        connect(model->sliceById(a), &SliceModel::activeChanged, this, [&](bool active) {
+            if (active) { model.reset(); }
+        });
+        QVERIFY(!runtime.restore());
+        QVERIFY(!observed);
+    }
+
     void defaultsDoNotStartAListener()
     {
         QTemporaryDir temp;
@@ -178,6 +514,10 @@ private slots:
             return StationServiceCommandResult{0, {}};
         };
         GuiDesktopStationRuntime runtime(&model, &settings, AppSettings::profileOverride(), true, service);
+        const int a = model.addSlice("pan-0");
+        QVERIFY(runtime.restore());
+        const quint64 revision = model.sliceOwnership()->controlRevision(a);
+        QCOMPARE(model.sliceOwnership()->mark(a).owner, SliceOwnership::stationDevice());
         QVERIFY(runtime.setRunCore(true));
         QVERIFY(runtime.controller()->enabled());
         QCOMPARE(settings.value(QStringLiteral("DesktopCore/Run")).toBool(), true);
@@ -200,6 +540,15 @@ private slots:
         QVERIFY(occupied.listen(QHostAddress::LocalHost, port));
         QCOMPARE(settings.value(QStringLiteral("DesktopCore/Run")).toBool(), false);
         QVERIFY(runtime.connectedDevices()->connectedDevices().isEmpty());
+        const int b = model.addSlice("pan-0");
+        QCOMPARE(model.sliceOwnership()->mark(b).owner, SliceOwnership::stationDevice());
+        QCOMPARE(model.sliceOwnership()->controlRevision(a), revision);
+        occupied.close(); // release this test's own port probe before restarting
+        QVERIFY(runtime.setRunCore(true));
+        QCOMPARE(model.sliceOwnership()->controlRevision(a), revision);
+        QVERIFY(runtime.setRunCore(false));
+        const int c = model.addSlice("pan-0");
+        QCOMPARE(model.sliceOwnership()->mark(c).owner, SliceOwnership::stationDevice());
     }
 
     // iPhone app plan Tasks 49 and 78 item 8: the reach line from the

@@ -87,6 +87,7 @@
 #include <QMap>
 #include <QMutex>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 
@@ -187,6 +188,9 @@ public:
     // every active receiver's frequency (see the change gate comment in
     // ReceiverManager.cpp).
     void setDdcMapping(int receiverIndex, int ddcIndex);
+    // Publish a complete codec plan once. A slot swap must never replay
+    // stored frequencies against an intermediate, duplicate receiver map.
+    void applyDdcMapping(const std::array<int, 5>& mapping, quint32 activeStreams);
     int ddcIndex(int receiverIndex) const;
 
     // Set which ADC feeds this receiver's DDC (for 2-ADC boards).

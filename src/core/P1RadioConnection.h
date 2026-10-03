@@ -135,6 +135,7 @@ namespace NereusSDR { class OcMatrix; }                  // forward decl — ful
 namespace NereusSDR { class CalibrationController; }     // R-R3-49: frequency correction
 namespace NereusSDR { class IoBoardHl2; }                // forward decl — full header in .cpp
 namespace NereusSDR { class HermesLiteBandwidthMonitor; }// forward decl — full header in .cpp
+namespace NereusSDR { struct DdcAssignment; }
 namespace NereusSDR { class TxMicSource; }               // forward decl — full header in audio/TxMicSource.h
 
 #include <atomic>
@@ -490,6 +491,7 @@ public slots:
     //     C4 |= (P1_en_diversity) << 7;		// if diversity, locks VFOs
     // Connection thread only (RadioModel marshals the call).
     void setDiversity(bool on);
+    void applyDiversityAssignment(const NereusSDR::DdcAssignment& assignment);
     bool diversityForTest() const { return m_diversity; }
 
     // Phase 3M-4 Task 17 P1 follow-up — read-only access to the per-board
@@ -800,6 +802,8 @@ private:
     // Set by setMox() on every call (Codex P2: safety effect before guard).
     // Cleared by sendCommandFrame() after it emits bank 0.
     bool    m_forceBank0Next{false};
+    int m_diversityFrequencyBanks{0};
+    std::array<int, 5> m_diversityStreamMap{{-1, -1, -1, -1, -1}};
 
     // 3M-1a E.4: force the next sendCommandFrame() to jump to bank 10 so
     // the T/R relay bit (C3 bit 7) lands on the wire within ≤1 frame of

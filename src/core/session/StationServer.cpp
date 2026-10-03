@@ -1023,6 +1023,7 @@
 #include "core/safety/RemoteTxWatchdog.h"
 #include "core/session/TxWatchServer.h"
 #include "core/safety/TransmitHolder.h"
+#include "core/safety/StationSliceFreeze.h"
 #include "core/TwoToneController.h"
 #include "core/session/RemoteKeying.h"
 #include "core/safety/UnkeyGate.h"
@@ -1474,6 +1475,7 @@ struct PeerOnlyProperty {
 constexpr PeerOnlyProperty kPeerOnlyProperties[] = {
     // The Diversity dialog's sensitivity pattern (diversityPatternVersion 1).
     {"SliceModel", "slice:", true, "diversityPattern", "diversityPattern"},
+    {"RadioModel", "radio", false, "diversityState", "diversityControl"},
     // The Support dialog's categories with labels (logCategoryListVersion 1).
     {"RadioModel", "radio", false, "logCategoryList", "logCategoryList"},
     // Why the Core's transmit is held off (txInhibitReasonVersion 1).
@@ -2344,7 +2346,9 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                               // Take-over parity: Take it back on
                               // controlTaken (sliceAccessVersion 2).
                               // Core-slice take-over: 3.
-                              {QByteArrayLiteral("sliceAccess"), 3}};
+                              {QByteArrayLiteral("sliceAccess"), 3},
+                              {QByteArrayLiteral("diversityControl"), 1},
+                              {QByteArrayLiteral("diversityPattern"), 1}};
     m_stationPeer.deviceId = SliceOwnership::stationDevice();
     m_stationPeer.sessionDeviceId = SliceOwnership::stationDevice();
     m_stationPeer.placeSettled = true;
@@ -4029,13 +4033,21 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
     connect(m_connectedDevices.get(), &ConnectedDevicesFacade::connectedDevicesChanged,
             this, [this]() { QMetaObject::invokeMethod(this, [this]() { refreshHeld(); },
                                                   Qt::QueuedConnection); });
+    // Last fully constructed Core server is canonical for this local model.
+    // A caller cannot install admission/freeze callbacks through this association.
+    if (m_radioModel && m_radioModel->role() == RadioModel::Role::Local) {
+        m_radioModel->m_diversityStationServer = this;
+    }
 }
 
 StationServer::~StationServer()
 {
+    const bool canonical = m_radioModel && m_radioModel->m_diversityStationServer == this;
+    if (canonical) { m_radioModel->m_diversityStationServer.clear(); }
+
     // iPhone app plan Task 34: the keying gate asks this object; the model
     // may outlive it.
-    if (m_radioModel && m_radioModel->moxController() != nullptr
+    if (canonical && m_radioModel && m_radioModel->moxController() != nullptr
         && m_radioModel->role() == RadioModel::Role::Local) {
         m_radioModel->moxController()->setKeyingGate({});
         m_radioModel->moxController()->setOtherDeviceHolds({});
@@ -4045,12 +4057,12 @@ StationServer::~StationServer()
     }
     // Parity Task 32: MON back on the Core's own outputs, as without a
     // station server.
-    if (m_radioModel && m_radioModel->role() == RadioModel::Role::Local
+    if (canonical && m_radioModel && m_radioModel->role() == RadioModel::Role::Local
         && m_radioModel->audioEngine() != nullptr) {
         m_radioModel->audioEngine()->setTxMonitorLocal(true);
     }
     // Task 77: the arbiter's freeze asks this object too.
-    if (m_radioModel && m_radioModel->txSliceArbiter() != nullptr
+    if (canonical && m_radioModel && m_radioModel->txSliceArbiter() != nullptr
         && m_radioModel->role() == RadioModel::Role::Local) {
         m_radioModel->txSliceArbiter()->setFrozen({});
     }
@@ -4355,6 +4367,7 @@ void StationServer::invokeAsStationDevice(const SessionMessage& invoke, StationA
         QByteArrayLiteral("addSliceOnPan"),      QByteArrayLiteral("setActiveSliceById"),
         QByteArrayLiteral("slice.listen"),       QByteArrayLiteral("slice.stopListening"),
         QByteArrayLiteral("slice.takeControl"),  QByteArrayLiteral("slice.release"),
+        QByteArrayLiteral("diversity.setTarget"),
         QByteArrayLiteral("slice.setListenLevel"), QByteArrayLiteral("confirm.proceed"),
         QByteArrayLiteral("confirm.cancel"),     QByteArrayLiteral("notice.takeBack"),
     };
@@ -7792,6 +7805,18 @@ QList<SessionPropertyResult> StationServer::applyPropertyWrite(
             refusals.insert(update.name, QStringLiteral("The Core does not have this setting, or not in this form."));
             continue;
         }
+        if (message.objectKey.startsWith("slice:") && update.name == "diversityEnabled") {
+            const int id = message.objectKey.mid(6).toInt();
+            QString refusal = m_radioModel->legacyDiversityRefusal(id, update.value.toBool());
+            if (refusal.isEmpty() && update.value.toBool()) {
+                refusal = m_radioModel->diversityEligibility(id);
+            }
+            if (refusal.isEmpty()) { refusal = stationFreezeRefusal(id).text; }
+            if (!refusal.isEmpty()) {
+                refusals.insert(update.name, refusal);
+                continue;
+            }
+        }
         if (transmitObjectWrite && (update.name == "mox" || update.name == "tune")) {
             refusals.insert(update.name, QString::fromLatin1(kPropertyNeverKeysReason));
             continue;
@@ -8721,6 +8746,29 @@ void StationServer::handleSettingsExport(SessionTransport* transport,
     reply(false, QStringLiteral("The Core does not know this settings export request."));
 }
 
+// Coordinated movable Diversity v1. No deferred partial writes: admission,
+// both participants and the resource plan are re-read on the model thread.
+bool StationServer::handleDiversityControl(SessionTransport* transport, const SessionMessage& message)
+{
+    if (message.commandVerb != "diversity.setTarget") { return false; }
+    if (!m_radioModel) {
+        send(transport, SessionMessages::commandResult(message.commandVerb, message.commandId,
+            false, QStringLiteral("Update this app and Core to move Diversity between slices."), {}));
+        return true;
+    }
+    const QPointer<StationServer> self(this);
+    const QPointer<SessionTransport> recipient(transport);
+    const quint64 sessionId = peerFor(transport).sessionId;
+    const SessionMessage result =
+        m_radioModel->invokeAdmittedDiversityControl(message, this, transport, false);
+    // Model publication can retire this server or replace the requesting
+    // session synchronously. A result belongs only to that original invoke.
+    if (self && recipient && self->hasReplySession(recipient, sessionId)) {
+        self->send(recipient, result);
+    }
+    return true;
+}
+
 std::optional<std::pair<QString, QString>>
 StationServer::runInvoke(SessionTransport* transport, const SessionMessage& message)
 {
@@ -8810,7 +8858,12 @@ StationServer::runInvoke(SessionTransport* transport, const SessionMessage& mess
     const QString antennaRefusal = radioAntennaRowRefusal(transport, message);
     const TxRefusal frozen = antennaRefusal.isEmpty() ? freezeRefusalFor(message)
                                                          : TxRefusal{};
-    if (!antennaRefusal.isEmpty()) {
+    if (message.commandVerb == "diversity.setTarget") {
+        // Spend this invocation's terminal result before observer-bearing
+        // admission/publication; nested invokes keep their own reply frame.
+        frame.resultSent = frame.terminalResultSent = true;
+        handleDiversityControl(transport, message);
+    } else if (!antennaRefusal.isEmpty()) {
         frame.resultSent = frame.terminalResultSent = true;
         consumeKeyingReply(frame.key);
         send(transport, SessionMessages::commandResult(
@@ -9501,6 +9554,21 @@ bool StationServer::fitPeerOnlyProperties(SessionTransport* transport,
                                           SessionMessage& message) const
 {
     const qsizetype before = message.updates.size();
+    // State remains available without pattern negotiation. Fit the nested
+    // pattern as well as the independent SliceModel property.
+    if (!peerGetsFeatureProperties(transport, QByteArrayLiteral("diversityPattern"))) {
+        for (MirrorUpdate& update : message.updates) {
+            if (message.objectKey == "radio" && update.name == "diversityState") {
+                QJsonObject state = QJsonDocument::fromJson(update.value.toString().toUtf8()).object();
+                if (state.value("live").isObject()) {
+                    QJsonObject live = state.value("live").toObject();
+                    live.insert("pattern", QJsonValue(QJsonValue::Null));
+                    state.insert("live", live);
+                    update.value = QString::fromUtf8(QJsonDocument(state).toJson(QJsonDocument::Compact));
+                }
+            }
+        }
+    }
     for (const PeerOnlyProperty& entry : kPeerOnlyProperties) {
         const bool peerGetsIt = entry.deviceKeyOnly
             ? peerGetsCoreAddresses(transport)
@@ -10112,28 +10180,19 @@ TxRefusal StationServer::onAirRefusal(const QByteArray& requester) const
 
 int StationServer::stationFrozenSlice() const
 {
-    // Ruling 8.11 (D64): while the station device is keyed (the radio's
-    // own mic or footswitch, or the Core's own keys), the slice it
-    // transmits on cannot be retuned, changed, moved or closed until the
-    // key ends, whoever owns that slice.
-    if (m_radioModel.isNull()) {
-        return -1;
-    }
-    const std::optional<TransmitHolder::Holder> holder = onAirHolder();
-    if (!holder || holder->deviceId != KeyerIdentity::kStationDeviceId) {
-        return -1;
-    }
+    if (!m_radioModel) { return -1; }
+    const auto holder = onAirHolder();
     const SliceModel* slice = m_radioModel->txBoundSlice();
-    return slice != nullptr ? slice->sliceIndex() : -1;
+    return StationSliceFreeze::frozenSlice(
+        holder && holder->deviceId == KeyerIdentity::kStationDeviceId,
+        slice ? slice->sliceIndex() : -1);
 }
 
 TxRefusal StationServer::stationFreezeRefusal(int sliceId) const
 {
-    if (sliceId < 0 || sliceId != stationFrozenSlice()) {
-        return {};
-    }
-    const std::optional<TransmitHolder::Holder> holder = onAirHolder();
-    return holder ? onAirWords(*holder) : TxRefusal{};
+    const auto holder = onAirHolder();
+    return StationSliceFreeze::refusal(sliceId, stationFrozenSlice(),
+                                     holder ? onAirWords(*holder) : TxRefusal{});
 }
 
 TxRefusal StationServer::freezeRefusalFor(const SessionMessage& message) const
@@ -13061,6 +13120,8 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             }
             // Phone wire batch: each slice's diversityPattern, after vax,
             // for a peer that declared diversityPattern 1.
+            caps.diversityControlVersion =
+                peerGetsFeatureProperties(transport, QByteArrayLiteral("diversityControl")) ? 1 : 0;
             caps.diversityPatternVersion =
                 peerGetsFeatureProperties(transport, QByteArrayLiteral("diversityPattern")) ? 1 : 0;
             // Phone wire batch: radio's logCategoryList, for a peer that

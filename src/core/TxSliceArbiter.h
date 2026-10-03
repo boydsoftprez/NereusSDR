@@ -117,7 +117,7 @@ public:
     /// never moves (the Core's session server sets it).
     using FrozenLookup = std::function<bool()>;
     void setFrozen(FrozenLookup frozen) { m_frozen = std::move(frozen); }
-    bool isFrozen() const { return m_frozen && m_frozen(); }
+    bool isFrozen() const { const FrozenLookup frozen = m_frozen; return frozen && frozen(); }
 
     /// Ruling 8.10: tx.setTxSlice from `requester`, for its own slices only.
     /// Refused (false, handoffBlocked) for a slice another owner has, and

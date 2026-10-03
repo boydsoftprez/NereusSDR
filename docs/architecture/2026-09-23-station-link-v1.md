@@ -1459,10 +1459,17 @@ When a feature is off, its version is 0:
   {name}`, `.reset {}`, `.setGain {band, value}`, `.setAdjust {band, step,
   value}`, `.setMaxPower {band, value}` and `.setUseMax {band, on}`, each as
   the desktop's page does it (Setup description version 14 gives the
-  ranges and words). Each is refused while the radio is on the air, with
-  the reason the Core gives the desktop's own PA profile writes on a
-  receive-only Core or to a device that may not transmit, and for a value
-  outside its range. None keys the radio.
+  ranges and words). While the radio is on the air, Select, New, Copy,
+  Delete and Reset are locked. The four value verbs (`.setGain`,
+  `.setAdjust`, `.setMaxPower` and `.setUseMax`) are allowed only for the
+  current transmitting band and only from the device that holds transmit;
+  another band, an unknown transmitting band or a non-holder is refused.
+  Setup description version 20 publishes these locks per control and per
+  table row, making only the holder's transmitting-band row available;
+  earlier negotiated versions retain the closed version 14 rows. The
+  Core's capability, receive-only, transmit-permission and value-range
+  checks still apply, with the reasons it gives the desktop's own PA
+  profile writes. None keys the radio.
 - `radeStatusVersion` (RADE on the phone's VFO flag): optional, sent only
   at agreed minor 11 to a peer whose hello declared `radeStatus` 1, while
   the Core has a radio model, after `paProfileVersion` (or after the

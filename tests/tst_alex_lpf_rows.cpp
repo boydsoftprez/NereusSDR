@@ -649,12 +649,14 @@ private slots:
         QVERIFY(property.hasNotifySignal());
         // Only paTransmitBand (paTransmitBandVersion, appended after it),
         // the four Level Cal run properties and the shared-input low-pass
-        // reason and slice (rxFilterLowPassVersion) follow it.
-        QCOMPARE(index, meta.propertyCount() - 8);
-        QCOMPARE(meta.indexOfProperty("paTransmitBand"), meta.propertyCount() - 7);
-        QCOMPARE(meta.indexOfProperty("levelCalSucceeded"), meta.propertyCount() - 3);
-        QCOMPARE(meta.indexOfProperty("rxFilter0LowPassReason"), meta.propertyCount() - 2);
-        QCOMPARE(meta.indexOfProperty("rxFilter0LowPassSlice"), meta.propertyCount() - 1);
+        // reason and slice (rxFilterLowPassVersion), then diversityState follow it.
+        QCOMPARE(index, meta.propertyCount() - 9);
+        QCOMPARE(meta.indexOfProperty("paTransmitBand"), meta.propertyCount() - 8);
+        QCOMPARE(meta.indexOfProperty("levelCalSucceeded"), meta.propertyCount() - 4);
+        QCOMPARE(meta.indexOfProperty("rxFilter0LowPassReason"), meta.propertyCount() - 3);
+        QCOMPARE(meta.indexOfProperty("rxFilter0LowPassSlice"), meta.propertyCount() - 2);
+        QCOMPARE(meta.indexOfProperty("diversityState"), meta.propertyCount() - 1);
+        QCOMPARE(meta.indexOfProperty("diversityState") - meta.propertyOffset(), 37);
         QCOMPARE(MirrorPolicy::directionFor(QByteArrayLiteral("RadioModel"), "alexLpfBits"),
                  MirrorDirection::Outbound);
         const MirrorPolicy::FeatureGate* gate =

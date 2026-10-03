@@ -22,6 +22,9 @@
 #include "core/BoardCapabilities.h"
 #include "core/RadioConnection.h"
 #include "core/ReceiverManager.h"
+#include "core/SliceOwnership.h"
+#include "core/session/SessionMessages.h"
+#include <QJsonDocument>
 #include "core/accessories/AlexController.h"
 #include "core/codec/AlexFilterMap.h"
 #include "core/codec/CodecContext.h"
@@ -493,6 +496,62 @@ private slots:
     //
     // 21.2 MHz (15 m) is the sharpest discriminator: band-pass answers 0x01
     // (the 11.0-22.0 MHz row), high-pass answers 0x02 (the 20 MHz HPF row).
+    void movable_b_owner_keeps_live_cohosts_coherent_and_excludes_away_unbound()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::OrionMKII);
+        model.configureStreamPool(5, 5, 192000);
+        model.receiverManager()->setMaxReceivers(5);
+        P2CodecOrionMkII codec;
+        model.receiverManager()->setP2Codec(&codec);
+        MockConnection mock;
+        model.injectConnectionForTest(&mock);
+        DetachConnection detach{&model};
+        auto* own = model.sliceOwnership();
+        const QByteArray station = SliceOwnership::stationDevice();
+        const auto add = [&](const QString& pan, double hz) {
+            SliceOwnership::CreatorScope creator(own, station);
+            const int id = model.addSlice(pan);
+            if (auto* slice = model.sliceById(id)) { slice->setFrequency(hz); }
+            return id;
+        };
+        const int a = add("pan-0", 14'200'000);
+        const int b = add("pan-1", 7'150'000);
+        const int c = add("pan-1", 7'155'000);
+        QCOMPARE(a, 0); QCOMPARE(b, 1); QCOMPARE(c, 2);
+        QCOMPARE(model.sliceById(b)->streamIndex(), model.sliceById(c)->streamIndex());
+        QVERIFY(model.sliceById(a)->streamIndex() != model.sliceById(b)->streamIndex());
+        const auto i = [](const QByteArray& name, qint64 v) {
+            return MirrorUpdate{0, name, MirrorWireKind::Int64, QVariant::fromValue(v)};
+        };
+        const auto result = model.invokeDiversityAsStationDevice(SessionMessages::commandInvoke(
+            "diversity.setTarget", 900,
+            {{0, "enabled", MirrorWireKind::Bool, true},
+             i("stateRevision", model.diversityStateRevision()),
+             i("sourceSliceId", -1), i("sourceIncarnation", 0), i("sourceControlRevision", 0),
+             i("targetSliceId", b), i("targetIncarnation", own->incarnation(b)),
+             i("targetControlRevision", own->controlRevision(b))}));
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        QCOMPARE(model.diversityTargetSlice(), model.sliceById(b));
+        QVERIFY(!mock.bpfCalls.isEmpty());
+        QCOMPARE(mock.bpfCalls.last().hpfBitsAdc0, 0x20);
+        QCOMPARE(mock.bpfCalls.last().hpfBitsAdc1, 0x20);
+
+        own->setOwner(a, "away-owner");
+        own->setAwayDevices({QByteArray("away-owner")});
+        // The away 20 m receiver no longer widens either coherent leg.
+        QCOMPARE(mock.bpfCalls.last().hpfBitsAdc0, mock.bpfCalls.last().hpfBitsAdc1);
+        QVERIFY(mock.bpfCalls.last().hpfBitsAdc0 != 0x20);
+        const int d = add("pan-2", 1'900'000);
+        QVERIFY(d >= 0);
+        model.sliceById(d)->setStreamIndex(-1);
+        model.sliceById(b)->setFrequency(7'151'000); // ordinary production reconciliation
+        QCOMPARE(mock.bpfCalls.last().hpfBitsAdc0, mock.bpfCalls.last().hpfBitsAdc1);
+        QVERIFY(mock.bpfCalls.last().hpfBitsAdc0 != 0x20);
+        QCOMPARE(model.diversityTargetSlice(), model.sliceById(b));
+        QCOMPARE(model.sliceById(c)->frequency(), 7'155'000.0);
+    }
+
     void per_adc_path_uses_board_appropriate_ladder_data()
     {
         QTest::addColumn<int>("board");

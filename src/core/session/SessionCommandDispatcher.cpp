@@ -970,6 +970,11 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         // and taking or releasing control of one, each naming the slice by
         // its id and incarnation (`access:<id>`), take and release with the
         // control revision the device saw.
+        {"diversity.setTarget",
+         {arg("enabled", kBool), arg("stateRevision", kInt), arg("sourceSliceId", kInt),
+          arg("sourceIncarnation", kInt), arg("sourceControlRevision", kInt),
+          arg("targetSliceId", kInt), arg("targetIncarnation", kInt), arg("targetControlRevision", kInt)},
+         "diversityControlVersion", 1, kRadioIdentitySessionProtocolMinor},
         {"slice.listen", {arg("sliceId", kInt), arg("incarnation", kInt)}, "sliceAccessVersion",
          1, kRadioIdentitySessionProtocolMinor},
         {"slice.stopListening", {arg("sliceId", kInt), arg("incarnation", kInt)},
@@ -1162,6 +1167,14 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
     if (invoke.commandVerb == "session.pathTicket") {
         emitResult(invoke.commandVerb, invoke.commandId, false,
                    QStringLiteral("The Core could not move this connection."), {});
+        return;
+    }
+    // Coordinated Diversity is admitted by StationServer with both
+    // participants and the current session. Standalone dispatch has no
+    // admitted peer and cannot mutate it.
+    if (invoke.commandVerb == "diversity.setTarget") {
+        emitResult(invoke.commandVerb, invoke.commandId, false,
+                   QStringLiteral("Update this app and Core to move Diversity between slices."), {});
         return;
     }
     // iPhone app Task 74: an answer to the Core's question, or Take it

@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 - Diversity atomic reentry and slice-close/hydration lifetime
+//                 fences, J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30 - Fix round 1 (minor 4): transmitLinkDownReason picks the
 //                 link-down words by state (the window's link to the Core,
 //                 the Core without a radio, the radio's link). J.J. Boyd
@@ -689,6 +691,10 @@ namespace NereusSDR { class VoltsAmpsLog; }
 namespace NereusSDR {
 
 class AppSettings;
+class StationServer;
+class StationSliceOwnershipPolicy;
+class SessionTransport;
+struct SessionMessage;
 enum class PreampMode;
 
 class ReceiverManager;
@@ -929,6 +935,7 @@ class RadioModel : public QObject {
     // before the feature (link document, section 17).
     Q_PROPERTY(QString rxFilter0LowPassReason READ rxFilter0LowPassReason NOTIFY lowPassHoldChanged)
     Q_PROPERTY(int rxFilter0LowPassSlice READ rxFilter0LowPassSlice NOTIFY lowPassHoldChanged)
+    Q_PROPERTY(QString diversityState READ diversityState NOTIFY diversityStateChanged)
 
 
 public:
@@ -4532,6 +4539,8 @@ public:
     // reachable without standing up a connection, a WDSP engine and a
     // PureSignal coordinator. Sticky once set; production code must never
     // call this.
+    // Isolate route-lifecycle tests from board/resource admission. Never a production caller.
+    void setDiversityAdmissionBypassForTest() { m_diversityAdmissionBypassForTest = true; }
     void setDdcContextForTest(bool mox, bool puresignalRun, bool diversity) {
         m_ddcCtxForTest    = true;
         m_ddcCtxMoxForTest = mox;
@@ -5585,6 +5594,7 @@ public slots:
     void updateFreedvReporterVisibility();
 
 signals:
+    void diversityStateChanged(const QString& state);
     void infoChanged();
     // Task 33: stopAllTx stopped a transmission. A non-empty message is for
     // the operator (MainWindow shows it for 10 s, as Thetis's
@@ -6689,6 +6699,31 @@ public:
     /// the filter decision and the DDC map to disagree about the same
     /// transmit-critical state.
     bool diversityActive() const;
+    bool diversityPairAssigned() const;
+    QString diversityState() const;
+    QString diversityStateForPeer(bool includePattern) const;
+    quint64 diversityStateRevision() const { return m_diversityStateRevision; }
+    /// Fixed station requester, synchronous on a Local model's thread.
+    /// Does not create a host, listener, network identity or session.
+    SessionMessage invokeDiversityAsStationDevice(const SessionMessage& invoke);
+private:
+    friend class StationServer;
+    friend class StationSliceOwnershipPolicy;
+    // Raw coordinator: only after the shared admitted transaction checks.
+    bool setDiversityTarget(int sliceId, QString* reason = nullptr);
+    SessionMessage invokeAdmittedDiversityControl(const SessionMessage& invoke,
+        StationServer* server, SessionTransport* transport, bool stationEntry);
+    QString diversityControlRefusal(const QByteArray& requester, int sliceId,
+                                    const StationServer* server) const;
+    // Set/cleared only by the canonical Core server, never by a GUI caller.
+    QPointer<StationServer> m_diversityStationServer;
+public:
+    QString diversityEligibility(int sliceId, QString* code = nullptr) const;
+    QString legacyDiversityRefusal(int sliceId, bool enabled) const;
+    void publishDiversityState(bool structural = true);
+    void wireDiversitySlice(SliceModel* slice);
+    std::optional<NereusSDR::DdcAssignment> computeDdcAssignmentForContext(
+        const NereusSDR::CodecContext& ctx) const;
 
     /// Reconcile the process-wide WDSP slot and the DSP worker's paired raw-DDC
     /// route against one complete codec assignment. This is the sole start
@@ -6991,7 +7026,8 @@ private:
     /// to the removal itself.
     /// `mayCloseLast` (slice control plan Task 7): the claims rule's close
     /// of an unclaimed slice, which may leave the Core with no slice.
-    void removeSliceImpl(int sliceId, bool persist = true, bool mayCloseLast = false);
+    void removeSliceImpl(int sliceId, bool persist = true, bool mayCloseLast = false,
+                         bool requireUnclaimed = false);
     void bindReceiveLayoutSlices();
     bool activateRestoredRadeReceiveOwner(QString* error);
     void setReceiveLayoutRestoreStatus(const QString& state, const QString& message);
@@ -7247,6 +7283,24 @@ private:
 
     // Slices and panadapters (client-managed)
     QList<SliceModel*> m_slices;
+    QList<QPointer<SliceModel>> m_sliceRemovalsInFlight;
+    // ID-keyed consumers must finish an old removal before seeing the next
+    // object with that ID. Construction/ownership still complete synchronously.
+    struct SlicePublication {
+        QPointer<SliceModel> object;
+        int id{-1};
+        quint64 incarnation{0};
+        bool constructing{true};
+        bool ready{false};
+        bool published{false};
+        quint64 serial{0}; // Exact pending record, including allocator address reuse.
+    };
+    QHash<SliceModel*, SlicePublication> m_slicePublications;
+    QHash<int, int> m_sliceRemovalBarriers;
+    quint64 m_nextSlicePublicationSerial{0};
+    bool currentSlicePublication(SliceModel* slice) const;
+    void publishReadySlices(int id);
+
     QList<PanadapterModel*> m_panadapters;
     SliceModel* m_activeSlice{nullptr};
     // iPhone app Task 73: whose each slice is. Qt-parented to this model.
@@ -7331,7 +7385,13 @@ private:
     // route itself is published/cleared synchronously on m_dspThread before
     // this state changes.
     static constexpr int kExternalDiversityId = 0;
-    static constexpr int kExternalDiversityTargetSliceId = 0;
+    int m_diversityTargetSliceId{-1};
+    bool m_diversityCommitting{false};
+#ifdef NEREUS_BUILD_TESTS
+    bool m_diversityAdmissionBypassForTest{false};
+#endif
+    quint64 m_diversityStateRevision{1};
+    QByteArray m_diversityStateShape;
     bool m_externalDiversityRouteActive{false};
     // R-R3-39: bumped by every route start and stop, so a lane answer about
     // an older start is ignored.
